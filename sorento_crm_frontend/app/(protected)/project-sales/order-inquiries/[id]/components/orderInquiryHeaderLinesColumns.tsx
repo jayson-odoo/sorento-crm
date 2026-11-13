@@ -607,7 +607,13 @@ function sparePartLineColumns({
       meta: { headerTitle: 'Product', skeleton: <Skeleton className="h-4 w-32" /> },
       cell: ({ row }) => (
         <span className="block min-w-0 truncate">
-          <ItemCodeCell row={row.original} />
+          {/* G1: the requester's own description under the code, else the product's name. */}
+          <ItemCodeCell
+            row={{
+              ...row.original,
+              product_name: row.original.line_description || row.original.product_name,
+            }}
+          />
         </span>
       ),
     },

@@ -468,7 +468,7 @@ describe('menu.config - Procurement > Supply Chain sub-group (AC-A1)', () => {
       'Proforma Invoices',
     ]);
     expect(findLeaf(supplyChain!.children!, 'Spare Part Requests')).toMatchObject({
-      path: '/project-sales/order-inquiries?inquiry_type=spare_part_request&state=all',
+      path: '/procurement-management/spare-part-requests',
       permission: 'procurement.spare_part_requests.create',
     });
     expect(findLeaf(supplyChain!.children!, 'Reorder Planning')).toMatchObject({

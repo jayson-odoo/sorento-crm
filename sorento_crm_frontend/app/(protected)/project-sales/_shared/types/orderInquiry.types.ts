@@ -532,6 +532,8 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
    * book, so the stock grid (`OrderInquiryStockGrid`) keys on this, never `item_code`. */
   product_id?: string | null;
   product_name?: string | null;
+  /** Hand-test round G1: a spare part line's own description (null on a sales-order row). */
+  line_description?: string | null;
   qty: string;
   delivery_date?: string | null;
   /** `BUIMACO / TUJU RESIDENCE`, or the core order's customer when there is no project.

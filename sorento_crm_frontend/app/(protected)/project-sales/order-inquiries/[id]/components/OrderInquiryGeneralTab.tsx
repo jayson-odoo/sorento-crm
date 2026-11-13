@@ -21,6 +21,81 @@ function NotStated() {
   return <span className="font-normal text-muted-foreground">Not stated</span>;
 }
 
+/** What the Request and Approval cards read: the OI header on the OI page, the request's own
+ *  detail on its record page (`SparePartRequestRecord`). */
+export type SparePartGeneralFields = Pick<
+  OrderInquiryHeaderDetail,
+  | 'state'
+  | 'currency'
+  | 'needed_by'
+  | 'default_location'
+  | 'reason'
+  | 'requested_by_name'
+  | 'submitted_at'
+  | 'approved_at'
+  | 'approved_by_name'
+  | 'reject_reason'
+  | 'total'
+>;
+
+/** A spare part request's Request and Approval cards (UAC P4, G3). */
+export function SparePartRequestGeneralCards({ header }: { header: SparePartGeneralFields }) {
+  return (
+    <>
+      <Card>
+        <CardHeader>
+          <CardHeading>
+            <CardTitle>Request</CardTitle>
+          </CardHeading>
+        </CardHeader>
+        <section aria-label="Request" className="grid grid-cols-1 gap-4 p-4 sm:grid-cols-2">
+          <Field label="Requested by">{header.requested_by_name ?? <NotStated />}</Field>
+          <Field label="Needed by">
+            {header.needed_by ? formatDateInMalaysia(header.needed_by) : <NotStated />}
+          </Field>
+          <Field label="Currency">{header.currency ?? <NotStated />}</Field>
+          <Field label="Default location">{header.default_location ?? <NotStated />}</Field>
+          <Field label="Total">
+            {header.total != null ? formatMoneyExact(header.total, header.currency) : <NotStated />}
+          </Field>
+          <div className="min-w-0 sm:col-span-2">
+            <dt className="text-xs text-muted-foreground">Reason</dt>
+            <dd className="whitespace-pre-line break-words text-sm font-medium">
+              {header.reason ?? <NotStated />}
+            </dd>
+          </div>
+        </section>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardHeading>
+            <CardTitle>Approval</CardTitle>
+          </CardHeading>
+        </CardHeader>
+        <section aria-label="Approval" className="grid grid-cols-1 gap-4 p-4 sm:grid-cols-2">
+          <Field label="Status">{sparePartStateLabel(header.state)}</Field>
+          <Field label="Submitted at">
+            {header.submitted_at ? formatDateTimeInMalaysia(header.submitted_at) : <NotStated />}
+          </Field>
+          <Field label="Approved by">{header.approved_by_name ?? <NotStated />}</Field>
+          <Field label="Approved at">
+            {header.approved_at ? formatDateTimeInMalaysia(header.approved_at) : <NotStated />}
+          </Field>
+          {header.reject_reason ? (
+            <div className="min-w-0 sm:col-span-2">
+              <dt className="text-xs text-muted-foreground">Reject reason</dt>
+              <dd className="whitespace-pre-line break-words text-sm font-medium">
+                {header.reject_reason}
+              </dd>
+            </div>
+          ) : null}
+        </section>
+      </Card>
+    </>
+  );
+}
+
 /**
  * General tab (AC-DP-07): the SO detail's own layout - an Order card and a Customer
  * card, each at most two columns of label/value - plus a Raise history card, one entry
@@ -57,57 +132,7 @@ export function OrderInquiryGeneralTab({ header }: { header: OrderInquiryHeaderD
   if (isSparePartInquiry(header)) {
     return (
       <div className="space-y-4">
-        <Card>
-          <CardHeader>
-            <CardHeading>
-              <CardTitle>Request</CardTitle>
-            </CardHeading>
-          </CardHeader>
-          <section aria-label="Request" className="grid grid-cols-1 gap-4 p-4 sm:grid-cols-2">
-            <Field label="Requested by">{header.requested_by_name ?? <NotStated />}</Field>
-            <Field label="Needed by">
-              {header.needed_by ? formatDateInMalaysia(header.needed_by) : <NotStated />}
-            </Field>
-            <Field label="Currency">{header.currency ?? <NotStated />}</Field>
-            <Field label="Default location">{header.default_location ?? <NotStated />}</Field>
-            <Field label="Total">
-              {header.total != null ? formatMoneyExact(header.total, header.currency) : <NotStated />}
-            </Field>
-            <div className="min-w-0 sm:col-span-2">
-              <dt className="text-xs text-muted-foreground">Reason</dt>
-              <dd className="whitespace-pre-line break-words text-sm font-medium">
-                {header.reason ?? <NotStated />}
-              </dd>
-            </div>
-          </section>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardHeading>
-              <CardTitle>Approval</CardTitle>
-            </CardHeading>
-          </CardHeader>
-          <section aria-label="Approval" className="grid grid-cols-1 gap-4 p-4 sm:grid-cols-2">
-            <Field label="Status">{sparePartStateLabel(header.state)}</Field>
-            <Field label="Submitted at">
-              {header.submitted_at ? formatDateTimeInMalaysia(header.submitted_at) : <NotStated />}
-            </Field>
-            <Field label="Approved by">{header.approved_by_name ?? <NotStated />}</Field>
-            <Field label="Approved at">
-              {header.approved_at ? formatDateTimeInMalaysia(header.approved_at) : <NotStated />}
-            </Field>
-            {header.reject_reason ? (
-              <div className="min-w-0 sm:col-span-2">
-                <dt className="text-xs text-muted-foreground">Reject reason</dt>
-                <dd className="whitespace-pre-line break-words text-sm font-medium">
-                  {header.reject_reason}
-                </dd>
-              </div>
-            ) : null}
-          </section>
-        </Card>
-
+        <SparePartRequestGeneralCards header={header} />
         {raiseHistory}
       </div>
     );

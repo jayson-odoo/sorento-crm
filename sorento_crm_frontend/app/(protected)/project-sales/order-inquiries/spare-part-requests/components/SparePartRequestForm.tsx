@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/context-menu';
 import { Skeleton } from '@/components/ui/skeleton';
 import { DatePickerField } from '@/components/ui/date-picker';
+import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { NumberInput } from '@/components/ui/number-input';
 import { Textarea } from '@/components/ui/textarea';
@@ -28,7 +29,14 @@ import { toast } from '@/lib/toast';
 import { formatMoneyExact } from '../../../_shared/lib/money';
 import { OrderInquiryStockGrid } from '../../../_shared/components/OrderInquiryStockGrid';
 import { SoLineAttachmentsButton } from '../../../_shared/components/SoLineAttachmentsButton';
-import { useSoLineAttachmentLookup } from '../../../_shared/hooks/useSoLineAttachments';
+import {
+  useSoLineAttachmentLookup,
+  useUploadSoLineAttachments,
+} from '../../../_shared/hooks/useSoLineAttachments';
+import {
+  SPARE_PART_REQUESTS_PATH,
+  canEditSparePartPhotos,
+} from '../../../_shared/lib/sparePartRequest';
 import {
   useSaveSparePartRequest,
   useSparePartLocations,
@@ -51,6 +59,8 @@ interface DraftLine {
   key: string;
   id?: string;
   product: SearchableSelectOption | null;
+  /** G1: starts as the picked product's name; the requester may change it. */
+  description: string;
   stockLocation: string;
   qty: number | null;
   unitPrice: number | null;
@@ -66,6 +76,7 @@ let lineSeq = 0;
 const newLine = (): DraftLine => ({
   key: `new-${(lineSeq += 1)}`,
   product: null,
+  description: '',
   stockLocation: '',
   qty: null,
   unitPrice: null,
@@ -103,6 +114,7 @@ function fromRequest(request: SparePartRequest): DraftLine[] {
           label: codeWithName(l.item_code, l.product_name ?? l.description),
         }
       : null,
+    description: l.description ?? '',
     stockLocation: l.stock_location ?? '',
     qty: l.qty == null ? null : Number(l.qty),
     unitPrice: l.unit_price == null ? null : Number(l.unit_price),
@@ -149,6 +161,10 @@ export function SparePartRequestForm({ id }: { id?: string } = {}) {
     setMenuLineKey(row.getAttribute('data-line-key'));
   };
   const [problems, setProblems] = useState<Problems>({ byLine: {} });
+  // G4: files picked on a line before it exists (keyed by the form's line key), uploaded to
+  // that line right after the save that makes it.
+  const [heldFiles, setHeldFiles] = useState<Record<string, File[]>>({});
+  const uploadPhotos = useUploadSoLineAttachments();
   const loadedRef = useRef(false);
 
   useEffect(() => {
@@ -207,9 +223,16 @@ export function SparePartRequestForm({ id }: { id?: string } = {}) {
     [lines],
   );
   const photos = useSoLineAttachmentLookup(savedRowIds, 'order_inquiry_row');
-  // A new form's draft is its requester's to edit once its first save has landed.
-  const canEditPhotos =
-    Boolean(existing.data?.can_edit) || (!id && Boolean(savedId));
+  // A new form's draft is its requester's to edit once its first save has landed. While it
+  // waits for approval the photos are the approver's (G5).
+  const canEditPhotos = existing.data
+    ? canEditSparePartPhotos(existing.data)
+    : !id && Boolean(savedId);
+  // G5: the requester's edit while pending saves straight back into approval.
+  const pending = existing.data?.state === 'pending_approval';
+  // A line not saved yet holds its photos until the save (never while pending: the
+  // upload after it would be refused).
+  const canHoldPhotos = !id || canEditPhotos;
 
   const updateLine = (key: string, patch: Partial<DraftLine>) =>
     setLines((prev) =>
@@ -226,6 +249,7 @@ export function SparePartRequestForm({ id }: { id?: string } = {}) {
       .map((l) => ({
         id: l.id ?? null,
         product_id: l.product?.value ?? null,
+        description: l.description.trim() || null,
         stock_location: l.stockLocation || null,
         qty: l.qty == null || Number.isNaN(l.qty) ? null : String(l.qty),
         unit_price:
@@ -278,6 +302,30 @@ export function SparePartRequestForm({ id }: { id?: string } = {}) {
   const notLoaded = Boolean(id) && !existing.data;
   const busy = save.isPending || submit.isPending || notLoaded;
 
+  const busyAll = busy || uploadPhotos.isPending;
+
+  /** G4: the held files go to the lines the save just made. True when every upload landed;
+   *  a failed one keeps its files on the form (the hook says why), so a second save retries. */
+  const uploadHeld = async (saved: SparePartRequest): Promise<boolean> => {
+    const placed = withSavedIds(lines, saved);
+    let ok = true;
+    for (const line of placed) {
+      const files = heldFiles[line.key];
+      if (!line.id || !files?.length) continue;
+      try {
+        await uploadPhotos.mutateAsync({ lineId: line.id, files, kind: 'order_inquiry_row' });
+        setHeldFiles((prev) => {
+          const next = { ...prev };
+          delete next[line.key];
+          return next;
+        });
+      } catch {
+        ok = false;
+      }
+    }
+    return ok;
+  };
+
   const persist = async () => {
     const saved = await save.mutateAsync({ id: savedId, body: body() });
     setSavedId(saved.id);
@@ -285,20 +333,25 @@ export function SparePartRequestForm({ id }: { id?: string } = {}) {
     return saved;
   };
 
+  /** G2: every save lands on the request's own record page. */
+  const openRecord = (savedRequestId: string) =>
+    router.push(`${SPARE_PART_REQUESTS_PATH}/${savedRequestId}`);
+
   const onSaveDraft = async () => {
     setProblems({ byLine: {} });
-    if (busy) return;
+    if (busyAll) return;
     try {
       const saved = await persist();
+      if (!(await uploadHeld(saved))) return;
       toast.success('Saved as draft');
-      router.push(`/project-sales/order-inquiries/${saved.id}`);
+      openRecord(saved.id);
     } catch (error) {
       showServerProblem(error);
     }
   };
 
   const onSubmit = async () => {
-    if (busy) return;
+    if (busyAll) return;
     const found = checkForSubmit();
     setProblems(found);
     if (found.currency || found.lines || Object.keys(found.byLine).length) {
@@ -308,8 +361,14 @@ export function SparePartRequestForm({ id }: { id?: string } = {}) {
     }
     try {
       const saved = await persist();
-      await submit.mutateAsync(saved.id);
-      router.push(`/project-sales/order-inquiries/${saved.id}`);
+      if (!(await uploadHeld(saved))) return;
+      if (pending) {
+        // G5: the save itself restarted approval at the first level.
+        toast.success('Submitted again for approval');
+      } else {
+        await submit.mutateAsync(saved.id);
+      }
+      openRecord(saved.id);
     } catch (error) {
       showServerProblem(error);
     }
@@ -347,7 +406,7 @@ export function SparePartRequestForm({ id }: { id?: string } = {}) {
   if (id && existing.data && !existing.data.can_edit) {
     return (
       <p className="text-sm text-muted-foreground">
-        This request is no longer a draft.
+        This request can no longer be edited.
       </p>
     );
   }
@@ -434,14 +493,15 @@ export function SparePartRequestForm({ id }: { id?: string } = {}) {
               className="relative overflow-x-auto"
               onContextMenuCapture={pickMenuLine}
             >
-              {/* 840px of columns: fits the card at 1280 (935px inside); below that the table
+              {/* 920px of columns: fits the card at 1280 (935px inside); below that the table
               scrolls inside its own box, so 375 stays usable. */}
-              <table className="w-full min-w-[840px] table-fixed text-sm">
+              <table className="w-full min-w-[920px] table-fixed text-sm">
                 <thead className="border-b border-border bg-muted/40 text-left text-xs text-muted-foreground">
                   <tr>
                     <th className="w-12 px-3 py-2 font-medium">No.</th>
-                    <th className="w-56 px-3 py-2 font-medium">Product</th>
-                    <th className="w-40 px-3 py-2 font-medium">Location</th>
+                    <th className="w-44 px-3 py-2 font-medium">Product</th>
+                    <th className="w-44 px-3 py-2 font-medium">Description</th>
+                    <th className="w-32 px-3 py-2 font-medium">Location</th>
                     <th className="w-24 px-3 py-2 text-right font-medium">
                       Qty
                     </th>
@@ -502,7 +562,13 @@ export function SparePartRequestForm({ id }: { id?: string } = {}) {
                             value={line.product?.value ?? ''}
                             onChange={() => undefined}
                             onOptionChange={(option) =>
-                              updateLine(line.key, { product: option })
+                              updateLine(line.key, {
+                                product: option,
+                                // G1: a new pick names the line after its product.
+                                ...(option
+                                  ? { description: option.name ?? option.label }
+                                  : {}),
+                              })
                             }
                             selectedOption={line.product ?? undefined}
                             fetchOptions={searchProducts}
@@ -515,6 +581,19 @@ export function SparePartRequestForm({ id }: { id?: string } = {}) {
                               {lineProblem}
                             </p>
                           ) : null}
+                        </td>
+                        <td className="px-3 py-2">
+                          <Input
+                            aria-label={`Description for line ${index + 1}`}
+                            value={line.description}
+                            onChange={(event) =>
+                              updateLine(line.key, {
+                                description: event.target.value,
+                              })
+                            }
+                            maxLength={4000}
+                            title={line.description}
+                          />
                         </td>
                         <td className="px-3 py-2">
                           <SearchableSelect
@@ -568,7 +647,23 @@ export function SparePartRequestForm({ id }: { id?: string } = {}) {
                         </td>
                         <td className="px-3 py-2">
                           <div className="flex items-center justify-end gap-1">
-                            {line.id ? (
+                            {heldFiles[line.key]?.length ||
+                            (!line.id && canHoldPhotos) ? (
+                              <SoLineAttachmentsButton
+                                lineId={line.key}
+                                label={`Line ${index + 1} ${line.product?.label ?? ''}`.trim()}
+                                attachments={[]}
+                                canEdit
+                                held={{
+                                  files: heldFiles[line.key] ?? [],
+                                  onChange: (files) =>
+                                    setHeldFiles((prev) => ({
+                                      ...prev,
+                                      [line.key]: files,
+                                    })),
+                                }}
+                              />
+                            ) : line.id ? (
                               <SoLineAttachmentsButton
                                 lineId={line.id}
                                 target={{
@@ -588,7 +683,7 @@ export function SparePartRequestForm({ id }: { id?: string } = {}) {
                           key={`${line.key}-stock`}
                           className="border-b border-border"
                         >
-                          <td colSpan={7} className="px-3 py-2">
+                          <td colSpan={8} className="px-3 py-2">
                             <OrderInquiryStockGrid
                               productId={line.product.value}
                               location={
@@ -603,7 +698,7 @@ export function SparePartRequestForm({ id }: { id?: string } = {}) {
                 </tbody>
                 <tfoot>
                   <tr>
-                    <td colSpan={5} className="px-3 py-2">
+                    <td colSpan={6} className="px-3 py-2">
                       <Button
                         type="button"
                         variant="ghost"
@@ -642,15 +737,18 @@ export function SparePartRequestForm({ id }: { id?: string } = {}) {
       </FormSection>
 
       <div className="flex flex-wrap justify-end gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          disabled={busy}
-          onClick={() => void onSaveDraft()}
-        >
-          Save as draft
-        </Button>
-        <Button type="button" disabled={busy} onClick={() => void onSubmit()}>
+        {/* G5: a pending request is never saved back to a draft; Submit restarts approval. */}
+        {pending ? null : (
+          <Button
+            type="button"
+            variant="outline"
+            disabled={busyAll}
+            onClick={() => void onSaveDraft()}
+          >
+            Save as draft
+          </Button>
+        )}
+        <Button type="button" disabled={busyAll} onClick={() => void onSubmit()}>
           Submit
         </Button>
       </div>

@@ -926,6 +926,7 @@ _COLUMNS = (
     OrderInquiryRow.unit_price.label("unit_price"),
     OrderInquiryRow.requested_qty.label("submitted_qty"),
     OrderInquiryRow.requested_unit_price.label("submitted_unit_price"),
+    OrderInquiryRow.description.label("row_description"),
     _CUSTOMER_NAME.label("customer_name"),
     Project.id.label("project_id"),
     _PROJECT_TITLE.label("project_title"),
@@ -2688,6 +2689,10 @@ class OrderInquiryWorklistService:
                 _qty_str(row.submitted_unit_price)
                 if row.submitted_unit_price is not None
                 else None
+            ),
+            # Hand-test round G1: what the requester called a spare part (null otherwise).
+            "line_description": (
+                row.row_description if row.inquiry_type == "spare_part_request" else None
             ),
             "delivery_date": row.delivery_date,
             "project_customer": project_customer_label(

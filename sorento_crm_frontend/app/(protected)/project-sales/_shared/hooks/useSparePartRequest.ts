@@ -1,6 +1,7 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import { toast } from '@/lib/toast';
 import { codeWithName } from '@/lib/product-display';
 import { searchStockVisibilityWarehouses } from '@/services/stockVisibilityService';
@@ -9,11 +10,13 @@ import {
   createSparePartRequest,
   editSparePartLine,
   getSparePartRequest,
+  listSparePartRequests,
   rejectSparePartRequest,
   reviseSparePartRequest,
   submitSparePartRequest,
   updateSparePartRequest,
   type SparePartRequestInput,
+  type SparePartRequestListParams,
 } from '../services/sparePartRequestService';
 import {
   ORDER_INQUIRY_HEADER_KEY,
@@ -28,6 +31,8 @@ import {
  * page it opens on (header, lines, history) and the Order Inquiries list.
  */
 export const SPARE_PART_REQUEST_KEY = 'spare-part-request';
+/** G3: the requests' own list. */
+export const SPARE_PART_REQUESTS_KEY = 'spare-part-requests';
 const LOCATIONS_KEY = ['spare-part-request', 'locations'] as const;
 
 export function useSparePartRequest(id: string | null | undefined) {
@@ -35,6 +40,21 @@ export function useSparePartRequest(id: string | null | undefined) {
     queryKey: [SPARE_PART_REQUEST_KEY, id],
     queryFn: () => getSparePartRequest(id as string),
     enabled: Boolean(id),
+  });
+}
+
+export function useSparePartRequests(params: SparePartRequestListParams) {
+  return useQuery({
+    ...LIST_QUERY_OPTIONS,
+    queryKey: [
+      SPARE_PART_REQUESTS_KEY,
+      params.pageIndex,
+      params.pageSize,
+      params.sorting,
+      params.searchQuery,
+      params.states,
+    ],
+    queryFn: () => listSparePartRequests(params),
   });
 }
 
@@ -64,6 +84,7 @@ function useRefreshInquiry() {
       void qc.invalidateQueries({ queryKey: id ? [key, id] : [key] });
     }
     void qc.invalidateQueries({ queryKey: [ORDER_INQUIRY_HEADERS_KEY] });
+    void qc.invalidateQueries({ queryKey: [SPARE_PART_REQUESTS_KEY] });
     void qc.invalidateQueries({ queryKey: [ORDER_INQUIRY_WORKLIST_KEY] });
   };
 }

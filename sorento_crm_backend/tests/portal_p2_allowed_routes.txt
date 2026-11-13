@@ -150,6 +150,7 @@ GET /sample-requests/products
 GET /sample-requests/{request_id}
 GET /sample-requests/{request_id}/consignments
 GET /sample-requests/{request_id}/pdf
+GET /spare-part-requests
 GET /spare-part-requests/{inquiry_id}
 GET /status-graph/{entity_type}
 GET /stock-debt

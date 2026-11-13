@@ -96,6 +96,7 @@ import { SparePartRequestActions } from './SparePartRequestActions';
 import { useEditSparePartLine } from '../../../_shared/hooks/useSparePartRequest';
 import {
   isPreApproval,
+  canEditSparePartPhotos,
   isSparePartInquiry,
   sparePartStateLabel,
   sparePartStateVariant,
@@ -1071,7 +1072,7 @@ export function OrderInquiryDetail({ id }: { id: string }) {
                     headerState: header.state,
                     canDecide: Boolean(header.can_decide),
                     // Photos: the requester while it is theirs to edit, the approver while pending.
-                    canEditPhotos: Boolean(header.can_edit || header.can_decide),
+                    canEditPhotos: canEditSparePartPhotos(header),
                     currency: header.currency,
                     onEditLine: handleEditSparePartLine,
                   }

@@ -440,6 +440,8 @@ class OrderInquiryWorklistRow(BaseModel):
     line_total: Optional[str] = None
     submitted_qty: Optional[str] = None
     submitted_unit_price: Optional[str] = None
+    #: Hand-test round G1: a spare part line's own description; null on a sales-order row.
+    line_description: Optional[str] = None
     #: Photos added / removed on a spare part request's line since it was last submitted
     #: (the Approve popup lists them); null on a sales-order row.
     photo_changes: Optional[Dict[str, int]] = None

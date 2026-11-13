@@ -665,7 +665,7 @@ export function OrderInquiryHeadersList() {
             primaryAction={
               canCreateSparePart ? (
                 <Button asChild>
-                  <Link href="/project-sales/order-inquiries/spare-part-requests/new">
+                  <Link href="/procurement-management/spare-part-requests/new">
                     <Plus className="size-4" aria-hidden />
                     Create
                   </Link>

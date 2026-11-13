@@ -25,7 +25,12 @@ import {
   useSubmitSparePartRequest,
 } from '../../../_shared/hooks/useSparePartRequest';
 import { formatMoneyExact } from '../../../_shared/lib/money';
-import { changedFrom } from '../../../_shared/lib/sparePartRequest';
+import {
+  SPARE_PART_REQUESTS_PATH,
+  changedFrom,
+  isPreApproval,
+} from '../../../_shared/lib/sparePartRequest';
+import { SPARE_PART_REQUESTS_KEY } from '../../../_shared/hooks/useSparePartRequest';
 import { formatInquiryQty } from '../../../_shared/lib/orderInquiryWorklist';
 import type {
   OrderInquiryHeaderDetail,
@@ -64,17 +69,25 @@ export function approverChanges(
   return out;
 }
 
+/** What the actions read off the request: the OI header on the OI page, the request's own
+ *  detail on its record page (`SparePartRequestRecord`). */
+export type SparePartActionsHeader = Pick<
+  OrderInquiryHeaderDetail,
+  'id' | 'state' | 'currency' | 'can_decide' | 'can_edit' | 'can_revise'
+> & { inquiry_no?: string | null };
+
 /**
- * SPARE-PART-ORDER-REQUEST: the request's moves, in the OI page's own header card (one main
- * button). The requester: Submit (Edit beside it) on a draft or rejected request, Revise on
- * a raised one purchasing has not started on. The current approver: Approve (a popup that
- * lists their changes) and Reject (a reason is required). Nobody else gets a button.
+ * SPARE-PART-ORDER-REQUEST: the request's moves, in the header card (one main button). The
+ * requester: Submit (Edit beside it) on a draft or rejected request, Edit alone while it is
+ * pending approval (saving restarts approval, G5), Revise on a raised one purchasing has not
+ * started on. The current approver: Approve (a popup that lists their changes) and Reject (a
+ * reason is required). Nobody else gets a button.
  */
 export function SparePartRequestActions({
   header,
   rows,
 }: {
-  header: OrderInquiryHeaderDetail;
+  header: SparePartActionsHeader;
   rows: OrderInquiryWorklistRow[];
 }) {
   const id = header.id;
@@ -90,8 +103,8 @@ export function SparePartRequestActions({
     surface: 'inline',
     watchFromMount: true,
     successMessage: 'Request deleted',
-    invalidateKeys: [['order-inquiry-headers']],
-    onCommitted: () => router.push('/project-sales/order-inquiries'),
+    invalidateKeys: [['order-inquiry-headers'], [SPARE_PART_REQUESTS_KEY]],
+    onCommitted: () => router.push(SPARE_PART_REQUESTS_PATH),
   });
   const approve = useApproveSparePartRequest(id);
   const reject = useRejectSparePartRequest(id);
@@ -225,6 +238,15 @@ export function SparePartRequestActions({
 
   if (header.can_edit) {
     if (deletion.countdown) return <div className="flex items-center gap-2">{deletion.countdown}</div>;
+    const editLink = (
+      <Button size="sm" variant="outline" asChild>
+        <Link href={`${SPARE_PART_REQUESTS_PATH}/${id}/edit`}>Edit</Link>
+      </Button>
+    );
+    // G5: while it waits for approval the requester may still edit it; nothing else.
+    if (header.state === 'pending_approval' || !isPreApproval(header.state)) {
+      return <div className="flex items-center gap-2">{editLink}</div>;
+    }
     return (
       <div className="flex items-center gap-2">
         <Button
@@ -235,9 +257,7 @@ export function SparePartRequestActions({
         >
           Delete draft
         </Button>
-        <Button size="sm" variant="outline" asChild>
-          <Link href={`/project-sales/order-inquiries/spare-part-requests/${id}/edit`}>Edit</Link>
-        </Button>
+        {editLink}
         <Button size="sm" onClick={() => submit.mutate(id, { onError: (e: Error) => toast.error(e.message) })} disabled={submit.isPending}>
           {submit.isPending ? <LoaderCircle className="size-4 animate-spin" /> : null}
           Submit

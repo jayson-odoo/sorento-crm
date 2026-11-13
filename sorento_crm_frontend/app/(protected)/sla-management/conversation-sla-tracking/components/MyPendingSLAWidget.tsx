@@ -90,7 +90,7 @@ const ENTITY_ROUTES: Record<string, { base: string; label: string }> = {
     base: '/procurement-management/new-product-applications',
     label: 'New product application',
   },
-  spare_part_request: { base: '/project-sales/order-inquiries', label: 'Spare part request' },
+  spare_part_request: { base: '/procurement-management/spare-part-requests', label: 'Spare part request' },
 };
 
 type AnyTask = MyPendingSLAItem | TeamPendingItem;

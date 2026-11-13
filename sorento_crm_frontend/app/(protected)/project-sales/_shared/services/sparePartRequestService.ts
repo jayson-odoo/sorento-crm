@@ -1,5 +1,6 @@
+import type { SortingState } from '@tanstack/react-table';
 import { apiFetch } from '@/lib/api';
-import { extractApiError } from '@/lib/api-client';
+import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 
 /**
  * SPARE-PART-ORDER-REQUEST (`PLAN-spare-part-order-request-12nov.md`). The request IS an
@@ -7,9 +8,12 @@ import { extractApiError } from '@/lib/api-client';
  * `orderInquiryService`, this file holds its own moves.
  *
  * ── BACKEND CONTRACT (app/api/v1/projects/spare_part_requests.py) ──────────
+ *  GET    /api/v1/project-sales/spare-part-requests                     ?page&limit&sort&dir&query&state[]
+ *         -> { data: SparePartRequestListItem[], pagination } (own, decidable, admin: G3)
  *  POST   /api/v1/project-sales/spare-part-requests                     body -> 201 detail
  *  GET    /api/v1/project-sales/spare-part-requests/{id}                -> detail
- *  PUT    /api/v1/project-sales/spare-part-requests/{id}                body -> detail
+ *  PUT    /api/v1/project-sales/spare-part-requests/{id}                body -> detail (while
+ *         pending approval it restarts approval at the first level, G5)
  *  POST   /api/v1/project-sales/spare-part-requests/{id}/submit         -> detail
  *  PATCH  /api/v1/project-sales/spare-part-requests/{id}/lines/{rowId}  {qty?, unit_price?}
  *  POST   /api/v1/project-sales/spare-part-requests/{id}/approve        {note?}
@@ -26,6 +30,8 @@ export interface SparePartLineInput {
   /** An existing line keeps its id (and its photos) when the form is saved again. */
   id?: string | null;
   product_id: string | null;
+  /** G1: what the requester calls this part; the server falls back to the product name. */
+  description?: string | null;
   stock_location: string | null;
   qty: string | null;
   unit_price: string | null;
@@ -79,6 +85,34 @@ export interface SparePartRequest {
   lines: SparePartLine[];
 }
 
+/** One row of the spare part requests list (G3). */
+export interface SparePartRequestListItem {
+  id: string;
+  inquiry_no: string | null;
+  state: string;
+  currency: string | null;
+  requested_by?: string | null;
+  requested_by_name: string | null;
+  needed_by: string | null;
+  line_count: number;
+  /** Null when the reader may not see the expected cost. */
+  total: string | null;
+  submitted_at: string | null;
+}
+
+export interface SparePartRequestListParams {
+  pageIndex: number;
+  pageSize: number;
+  sorting: SortingState;
+  searchQuery: string;
+  states: string[];
+}
+
+export interface SparePartRequestListEnvelope {
+  data: SparePartRequestListItem[];
+  pagination: { total: number; page: number; limit: number };
+}
+
 /** A 422 from the server names the field it is about (`details.field`). */
 export class SparePartRequestError extends Error {
   field?: string;
@@ -112,6 +146,16 @@ const json = (method: string, body?: unknown): RequestInit => ({
   headers: { 'Content-Type': 'application/json' },
   body: body === undefined ? undefined : JSON.stringify(body),
 });
+
+export async function listSparePartRequests(
+  params: SparePartRequestListParams,
+): Promise<SparePartRequestListEnvelope> {
+  const search = buildDataGridParams(params, { state: params.states });
+  const response = await apiFetch(`${BASE}?${search.toString()}`);
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to load spare part requests'));
+  return (await response.json()) as SparePartRequestListEnvelope;
+}
 
 export function getSparePartRequest(id: string): Promise<SparePartRequest> {
   return send(`${BASE}/${id}`, { method: 'GET' }, 'Failed to load the spare part request');

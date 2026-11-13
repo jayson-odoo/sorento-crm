@@ -44,6 +44,41 @@ export function sparePartStateLabel(state: string | null | undefined): string {
   return STATE_LABEL[state ?? ''] ?? 'Raised';
 }
 
+/** G3: the request's own pill reads Draft / Pending approval / Rejected before approval and
+ *  Approved after it, whatever purchasing has done with it since. */
+export function sparePartRequestStatusLabel(state: string | null | undefined): string {
+  if (state === 'cancelled') return 'Cancelled';
+  return isPreApproval(state) ? sparePartStateLabel(state) : 'Approved';
+}
+
+/** The list's status filter. "Approved" covers every state after approval. */
+export const SPARE_PART_STATUS_OPTIONS = [
+  { value: 'draft', label: 'Draft' },
+  { value: 'pending_approval', label: 'Pending approval' },
+  { value: 'rejected', label: 'Rejected' },
+  { value: 'raised', label: 'Approved' },
+];
+
+/** The states a status filter pick sends: "Approved" is raised and done. */
+export function sparePartFilterStates(picked: string[]): string[] {
+  return picked.flatMap((state) => (state === 'raised' ? ['raised', 'actioned'] : [state]));
+}
+
+/** Row photos (server rule `can_write_photos`): the requester while it is a draft or rejected,
+ *  the current approver while it is pending. The requester's edit while pending (G5) leaves
+ *  the photos to the approver. */
+export function canEditSparePartPhotos(header: {
+  state?: string | null;
+  can_edit?: boolean;
+  can_decide?: boolean;
+}): boolean {
+  if (header.can_decide) return true;
+  return Boolean(header.can_edit) && (header.state === 'draft' || header.state === 'rejected');
+}
+
+/** G3: the request's own pages. */
+export const SPARE_PART_REQUESTS_PATH = '/procurement-management/spare-part-requests';
+
 /** The states before purchasing sees the request. */
 export function isPreApproval(state: string | null | undefined): boolean {
   return state === 'draft' || state === 'pending_approval' || state === 'rejected';

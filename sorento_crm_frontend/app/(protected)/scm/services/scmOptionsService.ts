@@ -30,6 +30,10 @@ export interface Option {
   /** Free text the SearchableSelect's own filter reads, for options whose label alone
    *  does not carry everything a person types. */
   searchText?: string;
+  /** The record's own code / name, for a caller that fills another cell from the pick
+   *  (`SearchableSelectOption.code` / `.name`). */
+  code?: string;
+  name?: string;
 }
 
 export async function getWarehouseOptions(): Promise<Option[]> {
@@ -186,6 +190,8 @@ export async function searchProductOptions(
     value: valueKey === 'id' ? String(p.id) : p.product_code,
     label: codeWithName(p.product_code, p.product_name, sep),
     searchText: `${p.product_code} ${p.product_name}`,
+    code: p.product_code,
+    name: p.product_name,
   }));
 }
 
