@@ -255,6 +255,8 @@ class PoLinkService:
         self.actor = actor
         # One per press (the service is built per request): every SS write of it carries this.
         self.request_id = uuid.uuid4().hex
+        #: Audit events recorded since the last commit (see `_send`): what a rollback in
+        #: `_apply_safely` drops and puts back.
         self._events: List[Dict[str, Any]] = []
 
     # ------------------------------------------------------------------ reads
@@ -493,6 +495,15 @@ class PoLinkService:
         return answer
 
     def _send(self, path: str, body: Dict[str, Any], *, key: Optional[str] = None) -> Dict[str, Any]:
+        # Commit before every AutoCount write (crew db3 run on 1d0d2480b, 13 Nov): during the call
+        # the Shared Service pushes its read-back to the CRM PO ingest in ANOTHER transaction,
+        # which updates the same `purchase_order_lines` rows. Rows this request flushed and still
+        # holds (the unlink half of a Change, an earlier group of a Link) made that ingest wait on
+        # our own locks until the client timed out, and a link that had landed read "Could not
+        # reach AutoCount". What is committed here is AutoCount's read-back of writes already
+        # done and their audit events, so it must not roll back with a later failure anyway.
+        self.db.commit()
+        self._events = []
         try:
             return FoundryxAutocountClient(self.db).trace_writes(self.request_id, self.actor).write(
                 path, body, idempotency_key=key
@@ -835,12 +846,15 @@ class PoLinkService:
         body = {"companyCode": company_code, "poDocKey": keys[1], "poDtlKey": keys[2]}
         if po.issue_date:
             body["docDate"] = po.issue_date.isoformat()
-        po_replace_hint.remember(po_line.source_ref, qty=po_line.qty_ordered, from_so_ref=None)
+        # The qty this row held: the read-back may merge it into the PO's free row, and the
+        # "Unlinked (n)" card names what was unlinked, never the merged row (crew db3, 13 Nov).
+        qty = po_line.qty_ordered
+        po_replace_hint.remember(po_line.source_ref, qty=qty, from_so_ref=None)
         answer = self._send_intent("po-links/unlink", body, po_line)
         self._apply_safely(answer, po_line, None)
-        self._log_write("unlink", answer, po_line, so_line, so, po_line.qty_ordered)
+        self._log_write("unlink", answer, po_line, so_line, so, qty)
         return self._result(answer, so_line=so_line, so=so, po_line=po_line, po=po,
-                            qty=_num(po_line.qty_ordered), company_code=company_code)
+                            qty=_num(qty), company_code=company_code)
 
     def _so_line_by_ref(self, ref: str):
         return (
