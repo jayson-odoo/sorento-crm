@@ -209,22 +209,62 @@ def send_ask(db: Session, *, contact_respond_id: str, turn_id: Optional[str] = N
 
 
 def send_verified(
-    db: Session, client: Any, *, identifier: str, turn_id: Optional[str] = None, line: str = VERIFIED_LINE
+    db: Session,
+    client: Any,
+    *,
+    identifier: str,
+    turn_id: Optional[str] = None,
+    line: str = VERIFIED_LINE,
+    phone: Optional[str] = None,
 ) -> bool:
-    """The verified line (or `line`, e.g. `NO_ACCESS_LINE`) to the surviving contact, with its
-    outbox row. False when the send failed."""
-    payload = {"message": {"type": "text", "text": line}}
+    """The verified line (or `line`, e.g. `NO_ACCESS_LINE`) to the surviving contact, with an
+    outbox row per attempt. False when the send failed.
+
+    WA-MERGE-WELCOME: a 404 means `identifier` was merged away (nothing was delivered), so with
+    `phone` the contact holding it is looked up and the line goes there once; never a third try."""
     business_id = turn_id or identifier
+    target: Optional[str] = identifier
+    for attempt in (1, 2):
+        try:
+            response = client.send_message(target, line)
+        except Exception as e:  # noqa: BLE001 - the link stands; the next message resolves to the row
+            logger.warning("wa_phone_link: verified line failed (%s)", _err(e))
+            _outbox(
+                db,
+                identifier=target,
+                business_id=business_id,
+                status="failed",
+                request_payload={"message": {"type": "text", "text": line}},
+                error=e,
+            )
+            if attempt == 2 or not phone or not _is_not_found(e):
+                return False
+            target = _holder_of(client, phone, not_id=target)
+            if target is None:
+                return False
+            continue
+        _outbox(
+            db,
+            identifier=target,
+            business_id=business_id,
+            status="success",
+            request_payload={"message": {"type": "text", "text": line}},
+            response=response,
+        )
+        return True
+    return False
+
+
+def _holder_of(client: Any, phone: str, *, not_id: str) -> Optional[str]:
+    """The Respond.io contact holding `phone` now, unless it is `not_id` (the id that just 404'd) or
+    the lookup fails; a failed lookup ends the retry, it never raises past the send."""
     try:
-        response = client.send_message(identifier, line)
-    except Exception as e:  # noqa: BLE001 - the link stands; the next message resolves to the row
-        logger.warning("wa_phone_link: verified line failed (%s)", _err(e))
-        _outbox(db, identifier=identifier, business_id=business_id, status="failed", request_payload=payload, error=e)
-        return False
-    _outbox(
-        db, identifier=identifier, business_id=business_id, status="success", request_payload=payload, response=response
-    )
-    return True
+        found = parse_respond_contact_payload(client.get_contact_by_phone(f"+{normalize_msisdn(phone) or phone}"))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("wa_phone_link: phone lookup for the verified line failed (%s)", _err(e))
+        return None
+    holder = found.get("respond_io_id")
+    return str(holder) if holder and str(holder) != str(not_id) else None
 
 
 def _failed(reason: str, survivor: Optional[str] = None, **log_args: Any) -> LinkOutcome:
@@ -242,6 +282,26 @@ def _merge_survivor(response: Any, merged_ids: tuple[str, str]) -> Optional[str]
     for source in (response, response.get("data")):
         if isinstance(source, dict) and str(source.get("contactId") or "") in merged_ids:
             return str(source["contactId"])
+    return None
+
+
+def _is_not_found(exc: Exception) -> bool:
+    return isinstance(exc, httpx.HTTPStatusError) and getattr(exc.response, "status_code", None) == 404
+
+
+def _still_there(client: Any, named: str, merged_ids: tuple[str, str]) -> Optional[str]:
+    """WA-MERGE-WELCOME: the merged contact Respond.io still has. Respond.io keeps the OLDER contact,
+    and the merge response (or the lookup right after it) can name the one it merged away (prod
+    13 Nov: the verified line then answered 404). A 404 on `named` means the other one survived;
+    None when neither is found. Any other error propagates (a Respond.io failure, no half-link)."""
+    other = merged_ids[1] if named == merged_ids[0] else merged_ids[0]
+    for candidate in (named, other):
+        try:
+            client.get_contact_by_identifier(candidate)
+            return candidate
+        except Exception as e:  # noqa: BLE001 - only a 404 moves on; anything else is raised
+            if not _is_not_found(e):
+                raise
     return None
 
 
@@ -291,14 +351,19 @@ def link_phone(db: Session, client: Any, *, contact_respond_id: str, phone: str)
             # Respond.io keeps the OLDER contact whatever the order, so read the survivor.
             merge_response = client.merge_contacts([int(phone_contact_id), int(contact_respond_id)])
             merged_phone_contact = phone_contact_id
-            survivor = _merge_survivor(merge_response, (phone_contact_id, str(contact_respond_id)))
+            merged_ids = (phone_contact_id, str(contact_respond_id))
+            survivor = _merge_survivor(merge_response, merged_ids)
+            holds_phone = False  # a survivor the phone lookup found, and Respond.io still has, holds it
             if survivor is None:
                 again = parse_respond_contact_payload(client.get_contact_by_phone(f"+{num}"))
-                survivor = again.get("respond_io_id")
-            elif survivor != phone_contact_id:
+                found = again.get("respond_io_id")
+                survivor = _still_there(client, found, merged_ids) if found in merged_ids else found
+                holds_phone = survivor is not None and survivor == found
+            else:
+                survivor = _still_there(client, survivor, merged_ids)
+            if survivor is not None and survivor != phone_contact_id and not holds_phone:
                 # The card sender survived (it was older), and the phone left with the merged-away
-                # contact: the survivor must hold the verified phone. A survivor found by the phone
-                # lookup already does.
+                # contact: the survivor must hold the verified phone.
                 merged_phone_contact = survivor
                 client.update_contact(survivor, {"phone": f"+{num}"})
             if survivor is None:
