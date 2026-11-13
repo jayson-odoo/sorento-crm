@@ -67,7 +67,7 @@ def test_T1_create_saves_a_draft_oi_of_type_spare_part_request(world):
     assert inquiry.inquiry_type == m.INQUIRY_TYPE_SPARE_PART
     assert inquiry.state == m.INQUIRY_DRAFT
     assert inquiry.project_sales_order_id is None
-    assert inquiry.inquiry_no.startswith("OI-"), inquiry.inquiry_no
+    assert inquiry.inquiry_no.startswith("OR-"), inquiry.inquiry_no  # owner hand test 13 Nov: own series
     assert str(inquiry.requested_by) == world.requester
     assert inquiry.currency == "MYR"
     assert str(inquiry.needed_by) == "2026-12-15"

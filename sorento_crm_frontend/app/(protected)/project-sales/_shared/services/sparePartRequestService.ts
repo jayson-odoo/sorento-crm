@@ -153,27 +153,27 @@ export async function listSparePartRequests(
   const search = buildDataGridParams(params, { state: params.states });
   const response = await apiFetch(`${BASE}?${search.toString()}`);
   if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to load spare part requests'));
+    throw new Error(await extractApiError(response, 'Failed to load order requests'));
   return (await response.json()) as SparePartRequestListEnvelope;
 }
 
 export function getSparePartRequest(id: string): Promise<SparePartRequest> {
-  return send(`${BASE}/${id}`, { method: 'GET' }, 'Failed to load the spare part request');
+  return send(`${BASE}/${id}`, { method: 'GET' }, 'Failed to load the order request');
 }
 
 export function createSparePartRequest(body: SparePartRequestInput): Promise<SparePartRequest> {
-  return send(BASE, json('POST', body), 'Failed to save the spare part request');
+  return send(BASE, json('POST', body), 'Failed to save the order request');
 }
 
 export function updateSparePartRequest(
   id: string,
   body: SparePartRequestInput,
 ): Promise<SparePartRequest> {
-  return send(`${BASE}/${id}`, json('PUT', body), 'Failed to save the spare part request');
+  return send(`${BASE}/${id}`, json('PUT', body), 'Failed to save the order request');
 }
 
 export function submitSparePartRequest(id: string): Promise<SparePartRequest> {
-  return send(`${BASE}/${id}/submit`, json('POST'), 'Failed to submit the spare part request');
+  return send(`${BASE}/${id}/submit`, json('POST'), 'Failed to submit the order request');
 }
 
 export function editSparePartLine(

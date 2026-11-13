@@ -16,7 +16,7 @@ export const SPARE_PART_READ_PERMISSIONS = [SPARE_PART_CREATE_PERMISSION, SPARE_
 
 export const INQUIRY_TYPE_LABEL: Record<OrderInquiryType, string> = {
   sales_order: 'Sales order',
-  spare_part_request: 'Spare part request',
+  spare_part_request: 'Order request',
 };
 
 export const INQUIRY_TYPE_OPTIONS = (Object.keys(INQUIRY_TYPE_LABEL) as OrderInquiryType[]).map(

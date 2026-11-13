@@ -527,7 +527,7 @@ const STAFF_SIDEBAR: MenuConfig = [
           {
             // SPARE-PART-ORDER-REQUEST (hand-test round G3): the requests' own list, for approvers
             // and purchasing (as Purchase Requests); a salesperson's entry is under MY REQUESTS.
-            title: 'Spare Part Requests',
+            title: 'Order Requests',
             path: '/procurement-management/spare-part-requests',
             permission: 'procurement.spare_part_requests.view',
           },
@@ -1630,7 +1630,7 @@ export const MENU_SIDEBAR: MenuConfig = [
   ...MY_REQUEST_ITEMS,
   {
     // SPARE-PART-ORDER-REQUEST (crew ruling): the requester's own requests. Not a portal kind.
-    title: 'Spare Part Requests',
+    title: 'Order Requests',
     icon: Wrench,
     path: '/procurement-management/spare-part-requests',
     permission: 'procurement.spare_part_requests.create',
@@ -2436,7 +2436,7 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       },
       {
         // SPARE-PART-ORDER-REQUEST: as the sidebar entry above.
-        title: 'Spare Part Requests',
+        title: 'Order Requests',
         path: '/procurement-management/spare-part-requests',
         permission: 'procurement.spare_part_requests.view',
       },

@@ -64,7 +64,7 @@ def test_T1_post_creates_a_draft_and_the_detail_carries_every_contract_key(stage
     created = res.json()
     assert created["state"] == "draft"
     assert created["inquiry_type"] == "spare_part_request"
-    assert created["inquiry_no"].startswith("OI-")
+    assert created["inquiry_no"].startswith("OR-")  # owner hand test 13 Nov: own series
 
     res = w.as_user(w.requester).get(f"{SPR}/{created['id']}")
     assert res.status_code == 200, res.text

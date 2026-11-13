@@ -936,32 +936,38 @@ class OrderInquiry(Base, CompanyScopedMixin):
 #: flat `OI-000001` (six digits, no month) migration `523_oi_monthly_no_raises`
 #: renumbers - the old value survives on `legacy_inquiry_no`.
 INQUIRY_NO_PREFIX = "OI-"
+#: SPARE-PART-ORDER-REQUEST (owner hand test, 13 Nov): an Order Request has its OWN series,
+#: `OR-2611-0001`, per company per month, independent of the OI- one.
+ORDER_REQUEST_NO_PREFIX = "OR-"
 INQUIRY_NO_DIGITS = 4
 #: Every date this file numbers by is Asia/Kuala_Lumpur (R3): a header raised at
 #: 2026-09-30 17:30 UTC is already 1 Oct there, and must number under October.
 _MY_TZ = ZoneInfo("Asia/Kuala_Lumpur")
 
 
-def _inquiry_no_prefix(ref_date) -> str:
-    """`OI-2609-` for any `date`/`datetime` in September 2026."""
-    return f"{INQUIRY_NO_PREFIX}{ref_date:%y%m}-"
+def _inquiry_no_prefix(ref_date, inquiry_type: str = INQUIRY_TYPE_SALES_ORDER) -> str:
+    """`OI-2609-` for any `date`/`datetime` in September 2026; `OR-2609-` for an Order
+    Request (`inquiry_type` `spare_part_request`)."""
+    series = ORDER_REQUEST_NO_PREFIX if inquiry_type == INQUIRY_TYPE_SPARE_PART else INQUIRY_NO_PREFIX
+    return f"{series}{ref_date:%y%m}-"
 
 
-def next_inquiry_no(bind, company_id, ref_date) -> str:
+def next_inquiry_no(bind, company_id, ref_date, inquiry_type: str = INQUIRY_TYPE_SALES_ORDER) -> str:
     """The next inquiry number for one company, for one MONTH: the highest already
     issued in that month, plus one.
 
     HIGHEST plus one, never the count: a number that has been issued is in somebody's
     email, so a departed inquiry must not hand it to a different one. Scoped to the
     month's own prefix rather than the whole series, so October opens at `-0001` no
-    matter how many September numbers already exist (R3).
+    matter how many September numbers already exist (R3). The prefix also carries the
+    series (OI- or OR-), so each series counts only its own numbers.
 
     Per COMPANY, matching `uq_project_order_inquiry_no` and `provisional_ref` one table
     over. `bind` is whatever can execute a statement - the flush's own Connection when this
     runs from the stamp below, a Session when a caller asks directly - so the number is
     minted by ONE piece of code however it is reached.
     """
-    prefix = _inquiry_no_prefix(ref_date)
+    prefix = _inquiry_no_prefix(ref_date, inquiry_type)
     table = OrderInquiry.__table__
     latest = bind.execute(
         select(table.c.inquiry_no)
@@ -998,7 +1004,8 @@ def _stamp_inquiry_no(_mapper, connection, target) -> None:
     raised_at = getattr(target, "raised_at", None)
     ref_moment = raised_at if raised_at is not None else datetime.utcnow()
     ref_date = ref_moment.replace(tzinfo=timezone.utc).astimezone(_MY_TZ).date()
-    target.inquiry_no = next_inquiry_no(connection, target.company_id, ref_date)
+    inquiry_type = getattr(target, "inquiry_type", None) or INQUIRY_TYPE_SALES_ORDER
+    target.inquiry_no = next_inquiry_no(connection, target.company_id, ref_date, inquiry_type)
 
 
 #: The two things `OrderInquiryRaise.kind` can be (R5): the header's FIRST raise, and

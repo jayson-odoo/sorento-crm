@@ -583,6 +583,10 @@ function ApproverNumberCell({
  * Review R11: the visible sizes sum within the record page's card at 1280 (950 px), so Total
  * is never behind a sideways scroll. No Instruction column: every spare part line reads
  * "Replenish" (UAC P5), so it carried nothing a reader needs.
+ *
+ * Hand-test round 2 (owner 13 Nov, one line per row): the code and the description are two
+ * columns, each one truncated line. The grid is dense (`OrderInquiryLinesTab`), so the sizes
+ * below leave the approver's 72 px Qty / Unit price inputs their room inside 950 px.
  */
 function sparePartLineColumns({
   editable,
@@ -606,26 +610,36 @@ function sparePartLineColumns({
     }),
     {
       accessorKey: 'item_code',
-      header: ({ column }) => <DataGridColumnHeader title="Product" column={column} />,
-      size: 130,
-      meta: { headerTitle: 'Product', skeleton: <Skeleton className="h-4 w-32" /> },
+      header: ({ column }) => <DataGridColumnHeader title="Product code" column={column} />,
+      size: 96,
+      meta: { headerTitle: 'Product code', skeleton: <Skeleton className="h-4 w-20" /> },
       cell: ({ row }) => (
         <span className="block min-w-0 truncate">
-          {/* G1: the requester's own description under the code, else the product's name. */}
-          <ItemCodeCell
-            row={{
-              ...row.original,
-              product_name: row.original.line_description || row.original.product_name,
-            }}
-          />
+          <ItemCodeCell row={row.original} codeOnly />
         </span>
       ),
+    },
+    {
+      id: 'line_description',
+      // G1: the requester's own description, else the product's name.
+      accessorFn: (row) => row.line_description || row.product_name || '',
+      header: ({ column }) => <DataGridColumnHeader title="Description" column={column} />,
+      size: 110,
+      meta: { headerTitle: 'Description', skeleton: <Skeleton className="h-4 w-32" /> },
+      cell: ({ row }) => {
+        const description = row.original.line_description || row.original.product_name || '';
+        return (
+          <span className="block min-w-0 truncate" title={description}>
+            {description || '-'}
+          </span>
+        );
+      },
     },
     { ...locationColumn(), size: 90 },
     {
       accessorKey: 'qty',
       header: ({ column }) => <DataGridColumnHeader title="Qty" column={column} />,
-      size: 110,
+      size: 92,
       meta: { headerTitle: 'Qty', skeleton: <Skeleton className="h-4 w-10" /> },
       cell: ({ row }) => {
         const primary = lineOf(row.original).primary;
@@ -651,7 +665,7 @@ function sparePartLineColumns({
       accessorFn: (row) => Number(lineOf(row).primary.unit_price ?? 0),
       header: ({ column }) => <DataGridColumnHeader title="Unit price" column={column} />,
       // D7: the value with its "was RM 35.00" mark wrapped under it.
-      size: 120,
+      size: 100,
       meta: { headerTitle: 'Unit price', skeleton: <Skeleton className="h-4 w-16" /> },
       cell: ({ row }) => {
         const primary = lineOf(row.original).primary;
@@ -686,7 +700,7 @@ function sparePartLineColumns({
       id: 'line_total',
       accessorFn: (row) => Number(lineOf(row).primary.line_total ?? 0),
       header: ({ column }) => <DataGridColumnHeader title="Total" column={column} />,
-      size: 120,
+      size: 96,
       meta: { headerTitle: 'Total', skeleton: <Skeleton className="h-4 w-16" /> },
       cell: ({ row }) => {
         const total = lineOf(row.original).primary.line_total;
@@ -705,7 +719,7 @@ function sparePartLineColumns({
         return <span className="tabular-nums font-medium">{formatMoneyExact(sum, currency)}</span>;
       },
     },
-    { ...poColumn(), size: 100 },
+    { ...poColumn(), size: 88 },
     {
       id: 'state',
       accessorFn: (row) => lineOf(row).state,

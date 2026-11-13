@@ -38,7 +38,7 @@ const ENTITY_TYPE_LABELS: Record<string, string> = {
   complaint: 'Complaint',
   ticket: 'Ticket',
   new_product_application: 'New Product Application',
-  spare_part_request: 'Spare Part Request',
+  spare_part_request: 'Order Request',
 };
 
 export default function FormSLATrackingList() {

@@ -58,6 +58,18 @@ FORM_SLA_TYPES = (
 #: The quotation line media requests among FORM_SLA_TYPES.
 MEDIA_REQUEST_TYPES = ("product_drawing", "product_photo")
 
+#: A form type whose user-facing name is not its key read with spaces (owner rename, 13 Nov:
+#: a `spare_part_request` is an "order request" to every user).
+_FORM_TYPE_WORDS = {"spare_part_request": "order request"}
+
+
+def form_type_words(source_entity_type: Optional[str], default: str = "form") -> str:
+    """The lower-case words a notice uses for a form type: `purchase request`, `order request`."""
+    key = str(source_entity_type or "")
+    if not key:
+        return default
+    return _FORM_TYPE_WORDS.get(key) or key.replace("_", " ")
+
 
 def is_media_conversation(tracking) -> bool:
     """A drawing or photo request that rides on its requester's WhatsApp contact.
@@ -337,7 +349,7 @@ def build_sla_whatsapp_data(
 
     s_type = str(getattr(tracking, "source_entity_type", "") or "")
     s_id = str(getattr(tracking, "source_entity_id", "") or "")
-    number = _resolve_entity_number(db, s_type, s_id) or (s_type.replace("_", " ").title() or "an SLA task")
+    number = _resolve_entity_number(db, s_type, s_id) or (form_type_words(s_type, "").title() or "an SLA task")
     due_str = _fmt_due(getattr(tracking, "due_at", None))
     resolve_due_str = _fmt_due(getattr(tracking, "due_at_resolution", None))
     base_url = (getattr(_settings, "frontend_base_url", None) or "").strip().rstrip("/")
@@ -1599,7 +1611,7 @@ class FormSLAOrchestrator:
         # Relative path for in-app navigation; absolute URL for the email body.
         link = _form_detail_link(s_type, s_id)
         full_link = _full_form_link(s_type, s_id)
-        type_label = (s_type or "form").replace("_", " ")
+        type_label = form_type_words(s_type)
         # Human-readable document number, never the raw UUID.
         number = _resolve_entity_number(self.db, s_type, s_id) or type_label.capitalize()
         due_str = _fmt_due(tracker.due_at)

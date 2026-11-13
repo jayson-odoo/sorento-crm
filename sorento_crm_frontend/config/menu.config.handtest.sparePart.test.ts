@@ -20,7 +20,7 @@ function leaves(items: MenuConfig | undefined, title: string, out: MenuItem[] = 
 
 describe('F6 (G3): Spare Part Requests opens its own list', () => {
   it('the sidebar entry points at /procurement-management/spare-part-requests', () => {
-    const found = leaves(menus.MENU_SIDEBAR, 'Spare Part Requests');
+    const found = leaves(menus.MENU_SIDEBAR, 'Order Requests');
     expect(found.length).toBeGreaterThan(0);
     for (const item of found) {
       expect(item).toMatchObject({
@@ -35,7 +35,7 @@ describe('F6 (G3): Spare Part Requests opens its own list', () => {
 
   it('no menu still sends Spare Part Requests to the Order Inquiries list', () => {
     const all = Object.values(menus).filter(Array.isArray) as MenuConfig[];
-    const found = all.flatMap((menu) => leaves(menu, 'Spare Part Requests'));
+    const found = all.flatMap((menu) => leaves(menu, 'Order Requests'));
     expect(found.length).toBeGreaterThan(0);
     for (const item of found) {
       expect(item.path).toBe('/procurement-management/spare-part-requests');

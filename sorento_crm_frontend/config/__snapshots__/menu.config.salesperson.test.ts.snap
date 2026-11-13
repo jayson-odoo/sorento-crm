@@ -314,7 +314,7 @@ exports[`MENU_SIDEBAR for staff is unchanged > admin with every permission: filt
           },
           {
             "path": "/procurement-management/spare-part-requests",
-            "title": "Spare Part Requests",
+            "title": "Order Requests",
           },
           {
             "path": "/scm/purchase-orders",

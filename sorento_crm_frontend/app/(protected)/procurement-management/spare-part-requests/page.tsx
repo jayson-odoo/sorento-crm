@@ -6,7 +6,7 @@ import { PageHeader } from '@/components/common/PageHeader';
 import { SparePartRequestsList } from './components/SparePartRequestsList';
 
 export const metadata: Metadata = {
-  title: 'Spare Part Requests',
+  title: 'Order Requests',
 };
 
 /** SPARE-PART-ORDER-REQUEST (G3): who reads it as the request's API does (a spare part grant,
@@ -15,7 +15,7 @@ export default function SparePartRequestsPage() {
   return (
     <RequireAccess anyPermission={['projects.projects.view', ...SPARE_PART_READ_PERMISSIONS]}>
       <Container>
-        <PageHeader title="Spare Part Requests" />
+        <PageHeader title="Order Requests" />
       </Container>
       <Container>
         <SparePartRequestsList />

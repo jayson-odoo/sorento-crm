@@ -20,7 +20,7 @@ import {
 } from '@/lib/menu-access-filter';
 import { LANDING_KINDS } from '@/lib/portal-form-kinds';
 
-const TITLE = 'Spare Part Requests';
+const TITLE = 'Order Requests';
 const PATH = '/procurement-management/spare-part-requests';
 const CREATE = 'procurement.spare_part_requests.create';
 const VIEW = 'procurement.spare_part_requests.view';

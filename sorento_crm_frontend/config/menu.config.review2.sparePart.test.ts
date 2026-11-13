@@ -12,7 +12,7 @@ import * as menus from './menu.config';
 import type { MenuConfig, MenuItem } from './types';
 import { filterMenuByPermission } from '@/lib/menu-access-filter';
 
-const TITLE = 'Spare Part Requests';
+const TITLE = 'Order Requests';
 const VIEW = 'procurement.spare_part_requests.view';
 const PROJECTS_VIEW = 'projects.projects.view';
 

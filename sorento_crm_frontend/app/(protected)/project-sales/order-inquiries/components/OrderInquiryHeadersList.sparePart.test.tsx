@@ -113,10 +113,10 @@ describe('F1 / UAC P3: Type column and the S/O no of a spare part request', () =
     ).toBe(true);
   });
 
-  it('reads "Spare part request" and "Sales order" in the Type cell', () => {
+  it('reads "Order request" and "Sales order" in the Type cell', () => {
     headers = [SPARE, SALES];
     renderList();
-    expect(cellUnder(rowOf('OI-2611-0007'), 'Type')).toHaveTextContent(/^Spare part request$/);
+    expect(cellUnder(rowOf('OI-2611-0007'), 'Type')).toHaveTextContent(/^Order request$/);
     expect(cellUnder(rowOf('OI-2611-0001'), 'Type')).toHaveTextContent(/^Sales order$/);
   });
 

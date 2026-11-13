@@ -61,11 +61,11 @@ def _has_view(db: Session, user_id: str) -> bool:
 
 def _visible(db: Session, inquiry_id: str, user: dict) -> OrderInquiry:
     """The request, or the same 404 an unknown id gets when this user may not see it."""
-    inquiry_id = validate_uuid_path(inquiry_id, resource="Spare part request")
+    inquiry_id = validate_uuid_path(inquiry_id, resource="Order request")
     inquiry = spr.get(db, inquiry_id)
     uid = str(user.get("id"))
     if not spr.can_view(db, inquiry, uid, has_view=_has_view(db, uid)):
-        raise AppException(404, "This spare part request no longer exists.", code="spr_not_found")
+        raise AppException(404, "This order request no longer exists.", code="spr_not_found")
     return inquiry
 
 
@@ -73,7 +73,7 @@ def _to_decide(inquiry_id: str, db: Session) -> OrderInquiry:
     """A decision route answers 403 to anyone who is not the current approver (UAC A2, "also
     by direct API call"), so it reads the request without the visibility 404 and leaves the
     refusal to the service."""
-    return spr.get(db, validate_uuid_path(inquiry_id, resource="Spare part request"))
+    return spr.get(db, validate_uuid_path(inquiry_id, resource="Order request"))
 
 
 def _out(db: Session, inquiry: OrderInquiry, user: dict) -> dict:

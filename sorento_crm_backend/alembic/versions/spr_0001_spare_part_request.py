@@ -31,14 +31,14 @@ depends_on = None
 _PERMISSIONS = (
     (
         "procurement.spare_part_requests.create",
-        "Create Spare Part Requests",
-        "Raise, edit, submit and revise your own spare part requests, and open them on the Order "
-        "Inquiries page. Approval runs on the spare part request stages in Form SLA configuration.",
+        "Create Order Requests",
+        "Raise, edit, submit and revise your own order requests, and open them on the Order "
+        "Inquiries page. Approval runs on the order request stages in Form SLA configuration.",
     ),
     (
         "procurement.spare_part_requests.view",
-        "View Spare Part Requests",
-        "Open the Spare Part Requests list and the requests you can decide on as an approver of "
+        "View Order Requests",
+        "Open the Order Requests list and the requests you can decide on as an approver of "
         "their current stage in Form SLA configuration.",
     ),
 )

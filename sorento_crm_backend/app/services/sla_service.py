@@ -3407,6 +3407,7 @@ class ConversationSLATrackingService:
             _full_form_link,
             _fmt_due,
             FORM_SLA_TYPES,
+            form_type_words,
         )
         from app.config import settings
 
@@ -3414,7 +3415,7 @@ class ConversationSLATrackingService:
         s_id = str(getattr(tracking, "source_entity_id", "") or "")
         number = (
             _resolve_entity_number(self.db, s_type, s_id)
-            or (s_type.replace("_", " ").title() if s_type else "an SLA task")
+            or (form_type_words(s_type, "").title() if s_type else "an SLA task")
         )
         new_due_str = _fmt_due(getattr(tracking, "due_at_resolution", None))
         base_url = (getattr(settings, "frontend_base_url", None) or "").strip().rstrip("/")
