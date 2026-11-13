@@ -1208,9 +1208,28 @@ export function OrderInquiriesClient({
         : tickedProducts.size > 1
           ? 'Tick rows of one product.'
           : undefined;
+  // Link to PO... goes through AutoCount when it can (switch, grant, a row in AutoCount); where
+  // it cannot, ONE ticked row opens the CRM placement dialog with PO lines only.
+  const poViaAutocount = canLinkPo && poLinkEligible > 0;
+  const linkByHandWhyNot =
+    selectedRows.length === 0
+      ? 'Tick a row to link it to a PO.'
+      : selectedRows.length !== 1
+        ? 'Tick exactly one row to link it by hand.'
+        : undefined;
+  const linkToPoItem = {
+    key: 'po-link',
+    label: countLabel('Link to PO...', poViaAutocount ? poLinkEligible : selectedRows.length, selectedRows.length),
+    icon: Link2,
+    disabled: Boolean(poViaAutocount ? poLinkWhyNot : linkByHandWhyNot),
+    disabledReason: poViaAutocount ? poLinkWhyNot : linkByHandWhyNot,
+    onClick: () =>
+      poViaAutocount
+        ? setPoDialog({ kind: 'link', rowIds: selectedRows.map((row) => row.id) })
+        : setLinkingRowId(selectedRows[0]?.id ?? null),
+  };
   const poLinkItems = (
     [
-      ['po-link', 'link', 'Link to PO...', Link2],
       ['po-change', 'change', 'Change PO...', Wand2],
       ['po-unlink', 'unlink', 'Unlink from PO...', Unlink],
     ] as const
@@ -1243,11 +1262,6 @@ export function OrderInquiriesClient({
     const state = ackStateOf(row);
     return (state === 'acknowledged' || state === 'changed') && row.state !== 'cancelled';
   });
-  // The manual Link dialog is a ONE-row override (R8/S4 "Choose document"), so it is
-  // offered at exactly one tick: two ticked rows would leave the page choosing which of
-  // them it meant.
-  const linkTarget =
-    selectedRows.length === 1 ? (selectedRows[0] ?? null) : null;
   const linkingRow = linkingRowId
     ? (rows.find((row) => row.id === linkingRowId) ?? null)
     : null;
@@ -1898,16 +1912,6 @@ export function OrderInquiriesClient({
         ...(canBulkLink
           ? [
               {
-                key: 'choose-document',
-                label: 'Choose document (1)',
-                icon: Link2,
-                disabled: !linkTarget,
-                disabledReason: linkTarget
-                  ? undefined
-                  : 'Tick exactly one row to choose its document by hand.',
-                onClick: () => setLinkingRowId(linkTarget?.id ?? null),
-              },
-              {
                 key: 'link-selected',
                 // R18: acts on every ticked row, whatever its state - no eligible
                 // subset any more, so the count is never "of n".
@@ -1932,9 +1936,8 @@ export function OrderInquiriesClient({
               },
             ]
           : []),
-        ...(canLinkPo
-          ? poLinkItems
-          : []),
+        ...(canLinkPo || canBulkLink ? [linkToPoItem] : []),
+        ...(canLinkPo ? poLinkItems : []),
         ...(canAcknowledge
           ? [
               {
@@ -2451,6 +2454,7 @@ export function OrderInquiriesClient({
           linkedQty={linkingRow.linked_qty}
           deliveryDate={linkingRow.delivery_date}
           linkUpTo={linkUpTo}
+          poLinesOnly
           onDone={() => setLinkingRowId(null)}
         />
       ) : null}

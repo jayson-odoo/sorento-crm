@@ -273,24 +273,25 @@ describe('AC-12 the PO link items in the Actions menu', () => {
     expect(screen.getByRole('menuitem', { name: /^Unlink from PO\.\.\. \(\d+( of \d+)?\)$/ })).toBeInTheDocument();
   });
 
-  it('hides all three when the switch is off', async () => {
+  it('with the switch off: Link to PO... stays (CRM fallback), Change PO and Unlink from PO are gone', async () => {
     poLinkSwitchOn = false;
     await ready();
     tick('SO-P1');
     openActionsMenu();
     await screen.findByRole('menuitem', { name: /Auto link all/ });
-    expect(screen.queryByRole('menuitem', { name: /^Link to PO/ })).toBeNull();
+    expect(screen.getByRole('menuitem', { name: /^Link to PO/ })).toBeInTheDocument();
     expect(screen.queryByRole('menuitem', { name: /^Change PO/ })).toBeNull();
     expect(screen.queryByRole('menuitem', { name: /^Unlink from PO/ })).toBeNull();
   });
 
-  it('hides all three when the user lacks the grant', async () => {
+  it('without the grant: Link to PO... stays (CRM fallback), Change PO and Unlink from PO are gone', async () => {
     granted = new Set([ACTION, ACK]);
     await ready();
     tick('SO-P1');
     openActionsMenu();
     await screen.findByRole('menuitem', { name: /Auto link all/ });
-    expect(screen.queryByRole('menuitem', { name: /^Link to PO/ })).toBeNull();
+    expect(screen.getByRole('menuitem', { name: /^Link to PO/ })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: /^Change PO/ })).toBeNull();
   });
 });
 
@@ -366,15 +367,15 @@ describe('AC-12 the count says how many ticked rows are in AutoCount', () => {
     expect(screen.getByRole('menuitem', { name: 'Unlink from PO... (2 of 3)' })).toBeInTheDocument();
   });
 
-  it('is disabled with "Not in AutoCount yet" when no ticked row is in AutoCount', async () => {
+  it('falls back to the CRM placement (enabled, plain count) when the one ticked row is not in AutoCount', async () => {
     listOrderInquiryWorklist.mockResolvedValue(
       envelope([{ ...ROW_1, in_autocount: false }, ROW_2, ROW_3] as OrderInquiryWorklistRow[]),
     );
     await ready();
     tick('SO-P1');
     openActionsMenu();
-    const item = await screen.findByRole('menuitem', { name: 'Link to PO... (0 of 1)' });
-    expect(item).toHaveAttribute('aria-disabled', 'true');
+    const item = await screen.findByRole('menuitem', { name: 'Link to PO... (1)' });
+    expect(item).not.toHaveAttribute('aria-disabled', 'true');
   });
 });
 
