@@ -14,7 +14,8 @@
 - AC-9 _raise_on_duplicate_line keys on (product, combo) for product lines; same product + same combo -> 422 DUPLICATE_LINE; different combo / one ala carte -> accepted (create, update, portal revise).
 - AC-10 replace_lines and portal revise carry tags / picks by (product, set, combo): two lines of one product re-save without error and each keeps its own tags.
 - AC-11 Ala carte line renders the product's own list price, template and accessories (existing path; regression test).
-- AC-12 DB: unique (request_id, product_id, combo_id) NULLS NOT DISTINCT replaces uq_ptag_line_request_product; migration up/down/up; down refuses (or fails clearly) if duplicates by product exist.
+- AC-12 DB (crew decision 13 Nov): unique index over (request_id, product_id, COALESCE(combo_id, zero uuid)) built CONCURRENTLY replaces uq_ptag_line_request_product (dropped only after the index exists); uq_ptag_line_request_set unchanged (sets carry no combo). Migration up/down/up; down fails clearly if two lines of one product exist.
+- AC-12b Deleting a combo whose line would collide with an ala carte line of the same product on the same request merges the combo line into the ala carte line (quantities add) instead of a 500 (pending crew answer, rec (a)).
 - AC-13 Revision snapshot includes combo_id so a package change shows old -> new in History (Q5 pending).
 
 ## Upload a file (AI read)
