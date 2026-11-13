@@ -303,7 +303,19 @@ def test_ac8b_an_answered_set_event_exists_only_when_the_set_was_answered(sessio
             assert {c.uuid_of[m] for m in SOFT_MEMBERS} <= _stocked_ids(c), (entry, c.stock_calls)
 
 
-@pytest.mark.parametrize("who", ["dealer", "staff"])
+@pytest.mark.parametrize(
+    "who",
+    [
+        pytest.param(
+            "dealer",
+            marks=pytest.mark.xfail(
+                strict=True,
+                reason="lead sign-off 13 Nov: same on main; a dealer gets exact codes only (owner 3 Oct, engine._exact_codes_only), crew-ask on #2395",
+            ),
+        ),
+        "staff",
+    ],
+)
 def test_ac2c_a_code_plus_a_descriptor_word_never_answers_the_plain_set_as_if_the_word_was_not_said(session_factory, monkeypatch, stub_access, who):  # noqa: F811
     from tests.chatbot._turn_helpers import entity
 

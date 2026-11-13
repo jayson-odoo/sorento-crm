@@ -485,6 +485,7 @@ def code_candidates_events(
     shown_codes: list[str] | None = None,
     answered: set[str] | None = None,
     typed_words: dict[str, str] | None = None,
+    read_codes: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     """CHATBOT-CODE-MATCH R6: one `code_candidates` event per product code this turn missed.
 
@@ -501,9 +502,11 @@ def code_candidates_events(
 
     CHATBOT-SET-CODES AC-8: `typed_words` is the turn's product words (folded key to the word as
     typed). A registered set the resolver placed on one of them exactly (its code folded is
-    the word folded) and the reply did not offer is answered: one event per such word, its
-    one candidate the set code with its member codes in membership order (the set row's own
-    `display.members`, `entity_resolver._product_set_entities`).
+    the word folded) is answered when the reply read every member of it (`read_codes`, the
+    codes a tool that ran read, folded by `token_key`) and did not offer it: one event per such
+    word, its one candidate the set code with its member codes in membership order (the set
+    row's own `display.members`, `entity_resolver._product_set_entities`). Placement alone
+    writes nothing.
     """
     from app.services.chatbot.turn.state import token_key
 
@@ -569,12 +572,14 @@ def code_candidates_events(
         word = words.get(token_key(code))
         if word is None or code in offered or token_key(code) in seen:
             continue
-        seen.add(token_key(code))
         display = match.get("display")
         display = display if isinstance(display, dict) else {}
         members = [
             str(m["product_code"]) for m in display.get("members") or [] if isinstance(m, dict) and m.get("product_code")
         ]
+        if not members or not {token_key(m) for m in members} <= (read_codes or set()):
+            continue
+        seen.add(token_key(code))
         events.append(
             {
                 "typed": word,

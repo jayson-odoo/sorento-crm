@@ -9580,6 +9580,7 @@ def _run_stages_body(  # noqa: PLR0915
                 shown_codes=getattr(answer, "shown_codes", None),
                 answered=turn_compose.answered_codes(envelopes),
                 typed_words=_typed_product_words(verdict),
+                read_codes=_read_product_codes(envelopes),
             ):
                 turn_trace.add("code_candidates", event)
 
@@ -10183,6 +10184,18 @@ def _typed_product_words(verdict: Any) -> dict[str, str]:
         for value in (e.get("canonical_code"), e.get("raw")):
             if isinstance(value, str) and value.strip() and word:
                 out.setdefault(turn_state.token_key(value), word)
+    return out
+
+
+def _read_product_codes(envelopes: list[dict[str, Any]]) -> set[str]:
+    """The product codes a tool that ran read this turn (`product_codes` of an envelope with
+    `tool_ran`, less its `miss`), folded by `turn.state.token_key` (CHATBOT-SET-CODES AC-8b)."""
+    out: set[str] = set()
+    for env in envelopes or []:
+        if not isinstance(env, dict) or env.get("tool_ran") is not True:
+            continue
+        missed = {turn_state.token_key(c) for c in env.get("miss") or [] if isinstance(c, str)}
+        out |= {turn_state.token_key(c) for c in env.get("product_codes") or [] if isinstance(c, str)} - missed
     return out
 
 

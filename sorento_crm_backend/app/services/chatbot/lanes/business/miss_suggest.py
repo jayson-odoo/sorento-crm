@@ -276,8 +276,9 @@ def _token_candidates(res: Any, *, allowed_types: Any, uuid_keyed: bool) -> list
         if (allowed_types is None or "product" in allowed_types) and several_close_sets(
             alternatives, alternatives, jsc.get(res, "token")
         ):
-            # CHATBOT-SET-CODES AC-1: the offer is those sets alone, so no product is probed.
-            return []
+            # CHATBOT-SET-CODES AC-1: the offer is the parser's own pick, if any, then those
+            # sets alone (`answer._set_then_its_members`), so no other product is probed.
+            acc = [near_pick] if isinstance(near_pick, dict) else []
     seen: list = []
     keep: list = []
     for match in acc:

@@ -93,8 +93,9 @@ def _family_set_members(db: Session, family: str) -> list[str]:
     ]
 
 
-def _set_code_tokens(db: Session, tokens: list[str]) -> set[str]:
-    """The tokens that ARE the code of a registered set the contact may be told about, folded
+def _set_code_tokens(db: Session, tokens: list[str]) -> dict[str, str]:
+    """The tokens that ARE the code of a registered set the contact may be told about (token to
+    the set's code), folded
     the way the resolver's exact set tier folds them (`entity_resolver._probe_product_set`:
     case, dashes and spaces only), so "qwc604 p rl" is the set QWC604-P-RL and "qwc604/p/rl"
     is not."""
@@ -107,17 +108,36 @@ def _set_code_tokens(db: Session, tokens: list[str]) -> set[str]:
 
     folds = {_strip_all_ws(str(t or "").lower()): t for t in tokens if str(t or "").strip()}
     if not folds:
-        return set()
+        return {}
     rows = (
         db.query(ProductSet.set_code)
         .filter(_ws_insensitive_lower(ProductSet.set_code).in_(list(folds)), *visible_set_clauses(db))
         .all()
     )
-    return {folds[_strip_all_ws(str(code).lower())] for (code,) in rows if _strip_all_ws(str(code).lower()) in folds}
+    return {
+        folds[_strip_all_ws(str(code).lower())]: str(code)
+        for (code,) in rows
+        if _strip_all_ws(str(code).lower()) in folds
+    }
+
+
+def _beside(words: list[str], folded_token: str) -> list[str]:
+    """The words of a line other than the run of words that spells `folded_token` ("qwc604",
+    "p", "rl" spell QWC604PRL), so what is left is what was said beside the code."""
+    folds = [_fold(w) for w in words]
+    for start in range(len(words)):
+        spelt = ""
+        for end in range(start, len(words)):
+            spelt += folds[end]
+            if spelt == folded_token:
+                return words[:start] + words[end + 1 :]
+            if not folded_token.startswith(spelt):
+                break
+    return [w for w, f in zip(words, folds) if f not in folded_token]
 
 
 def _family_rows(
-    db: Session, code_word: str, *, loose: bool = False
+    db: Session, code_word: str, *, loose: bool = False, family: str | None = None
 ) -> list[tuple[str, dict[str, Any], str]]:
     """`(product_code, derived spec values, searchable text)` per variant of the family
     `code_word` names, one per code, in code order.
@@ -127,7 +147,10 @@ def _family_rows(
     code, so a short form ("wc287") reaches its family. It also drops the digit boundary when
     the typed word ends in a letter, so "SH-NEW" reaches the "SHNEW200" variant; a word ending
     in a digit keeps it (SRTWC286 never reaches SRTWC2861). `loose` also applies the chat searchable
-    filter (`chat_searchable_products`), as the resolver's probe does; the word path does not."""
+    filter (`chat_searchable_products`), as the resolver's probe does; the word path does not.
+
+    `family` (CHATBOT-SET-CODES AC-2c) is the catalogue family to read the links of, when the
+    caller knows it better than the word does (a registered set's own Family code)."""
     from app.models.product import Product, chat_searchable_products
     from app.models.product_spec import ProductSpecifications
     from app.services.product_family import family_code_for
@@ -141,7 +164,7 @@ def _family_rows(
     # one column, `product_family.family_code_for`), and the members of a registered set of that
     # family - beside the code pattern above. CHATBOT-SET-CODES Q2 (13 Nov 2026): the pattern is
     # the typed word only; a variant coded with another letter joins through these links alone.
-    family = family_code_for(code_word)
+    family = family or family_code_for(code_word)
     by_data = [Product.family_code == family] if family else []
     members = _family_set_members(db, family) if family else []
     if members:
@@ -181,8 +204,8 @@ def _family_rows(
     return out
 
 
-def _family(db: Session, code_word: str) -> list[Any]:
-    return [(code, text) for code, _values, text in _family_rows(db, code_word)]
+def _family(db: Session, code_word: str, family: str | None = None) -> list[Any]:
+    return [(code, text) for code, _values, text in _family_rows(db, code_word, family=family)]
 
 
 def _holds(values: dict[str, Any], key: str, wanted: Any) -> bool:
@@ -377,13 +400,29 @@ def narrow_code_tokens(
     consumed: set[str] = set()
     # CHATBOT-SET-CODES AC-2: a token that is a registered set's code ("qwc604 p rl") is that
     # set, answered by the resolver's exact set tier; its words are part of the code, never
-    # words that pick among the family's variants.
+    # words that pick among the family's variants. AC-2c: words said BESIDE the set code on
+    # its line ("QWC605-RL soft") still pick, among the set's own catalogue family.
     set_codes = _set_code_tokens(db, list(tokens))
     for i, token in enumerate(tokens):
-        if token in set_codes:
-            continue
         folded = folded_tokens[i]
         code_word = _code_word_for(str(token or ""), message)
+        if token in set_codes:
+            from app.services.product_family import family_code_for
+
+            beside = [
+                w
+                for words in lines
+                if folded in "".join(_fold(x) for x in words)
+                for raw in _beside(words, folded)
+                for w in _words(raw)
+                if not _CODE_WORD.match(w)
+            ]
+            family_code = family_code_for(set_codes[token])
+            picked = _pick(_family(db, code_word, family_code), beside) if beside and family_code and code_word else None
+            if picked is not None:
+                replaced[i] = picked[0]
+                consumed.update(w for t in picked[1] for w in t.split())
+            continue
         if not code_word:
             continue
         # The code's own line(s): the ones holding the code word and, when the token folds
