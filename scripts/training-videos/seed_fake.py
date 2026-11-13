@@ -81,10 +81,10 @@ CUSTOMERS = [
 ]
 # Dealer staff who hold portal access to Sam's accounts (Dealer access > People).
 DEALER_PEOPLE = [
-    ("012-000 1201", "Dealer Owner Lim Bina", "300-L001"),
-    ("012-000 1202", "Dealer Clerk Seri Maju", "300-S002"),
+    ("012-000 1201", "Alan Lim", "300-L001"),
+    ("012-000 1202", "Mei Chen", "300-S002"),
 ]
-CHATBOT_CONTACT = {"phone": "012-000 1301", "name": "Chatbot Test Dealer", "respond_io_id": "demo-respond-1301",
+CHATBOT_CONTACT = {"phone": "012-000 1301", "name": "Ravi Kumar", "respond_io_id": "demo-respond-1301",
                    "customer": "300-K003"}
 
 WAREHOUSES = [("MAIN", "Main Warehouse", "Jalan Demo 1, Klang"), ("SA", "Shah Alam Store", "Seksyen 15, Shah Alam")]
@@ -170,6 +170,7 @@ def contact(db, phone: str, name: str, ws, *, respond_io_id: str | None = None, 
         db.flush()
         say(f"contact {name} ({phone})")
     else:
+        row.name = name
         row.workspace_id = row.workspace_id or ws.id
         if respond_io_id and not row.respond_io_id:
             row.respond_io_id = respond_io_id
@@ -413,6 +414,41 @@ def publish_and_link_templates(db, products, admin):
     db.flush()
 
 
+# Delivery orders the complaint video picks from (DO number search fills the product lines).
+DELIVERY_ORDERS = [
+    # number, customer code, days ago, [(product code, qty)]
+    ("DO-DM-26101", "300-L001", 6, [("DM-BS-1001", 4), ("DM-WC-2002", 2)]),
+    ("DO-DM-26102", "300-L001", 20, [("DM-SH-3003", 3)]),
+    ("DO-DM-26103", "300-S002", 9, [("DM-TL-6060", 40)]),
+]
+
+
+def seed_delivery_orders(db, customers, products):
+    from datetime import date, timedelta
+
+    from app.models.inventory import Warehouse
+    from app.models.order import Order, OrderLine
+
+    main_wh = _need(db, Warehouse, warehouse_code="MAIN")
+    for number, code, ago, lines in DELIVERY_ORDERS:
+        if db.query(Order).filter(Order.order_number == number).first():
+            continue
+        cust = customers[code]
+        order = Order(order_number=number, customer_id=cust.id, debtor_name=cust.customer_name,
+                      order_date=date.today() - timedelta(days=ago), company_id=COMPANY_ID)
+        db.add(order)
+        db.flush()
+        total = Decimal("0")
+        for seq, (pcode, qty) in enumerate(lines, start=1):
+            product = products[pcode]
+            db.add(OrderLine(order_id=order.id, product_id=product.id, line_sequence=seq, quantity=Decimal(qty),
+                                 warehouse_id=main_wh.id))
+            total += product.list_price * qty
+        order.subtotal_amount = order.total_amount = total
+        db.flush()
+        say(f"delivery order {number} for {cust.customer_name}")
+
+
 def seed_complaint_master(db):
     from app.models.complaint_master_data import ComplaintResolution, ComplaintRootCause
     from app.models.lookup import LookupBinding, LookupOption, LookupSet
@@ -467,6 +503,7 @@ def seed_p1(db) -> dict:
     seed_tag_templates(db)
     publish_and_link_templates(db, products, admin)
     seed_complaint_master(db)
+    seed_delivery_orders(db, customers, products)
     db.commit()
     return {"admin": admin.id, "sam": sam.id, "agent": agent.id}
 
