@@ -524,6 +524,8 @@ const STAFF_SIDEBAR: MenuConfig = [
             title: 'Spare Part Requests',
             path: '/procurement-management/spare-part-requests',
             permission: 'procurement.spare_part_requests.create',
+            // An approver holds the view grant only; the list accepts either (review S5).
+            permissionsAny: ['procurement.spare_part_requests.create', 'projects.projects.view'],
           },
           {
             title: 'Purchase Orders',
@@ -2425,6 +2427,7 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         title: 'Spare Part Requests',
         path: '/procurement-management/spare-part-requests',
         permission: 'procurement.spare_part_requests.create',
+        permissionsAny: ['procurement.spare_part_requests.create', 'projects.projects.view'],
       },
       {
         // Where the re-uploaded book's reaction to a planned line is reviewed and

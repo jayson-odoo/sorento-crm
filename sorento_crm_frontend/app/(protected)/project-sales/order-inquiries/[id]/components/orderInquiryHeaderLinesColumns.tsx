@@ -563,7 +563,7 @@ function ApproverNumberCell({
       min={0}
       step="any"
       aria-label={label}
-      className="h-7 w-24 text-right tabular-nums"
+      className="h-7 w-[4.5rem] text-right tabular-nums"
       onClick={(event) => event.stopPropagation()}
       onBlur={() => {
         if (draft == null || Number.isNaN(draft) || draft < 0 || draft === initial) return;
@@ -579,6 +579,10 @@ function ApproverNumberCell({
  * documents, location, instruction, state, paperclip); no SO line, SO Qty, split or reserve
  * columns, since the request has no sales order. Unit price and Total in their place, and
  * while the request is pending approval a decider edits Qty and Unit price in place.
+ *
+ * Review R11: the visible sizes sum within the record page's card at 1280 (950 px), so Total
+ * is never behind a sideways scroll. No Instruction column: every spare part line reads
+ * "Replenish" (UAC P5), so it carried nothing a reader needs.
  */
 function sparePartLineColumns({
   editable,
@@ -603,7 +607,7 @@ function sparePartLineColumns({
     {
       accessorKey: 'item_code',
       header: ({ column }) => <DataGridColumnHeader title="Product" column={column} />,
-      size: 260,
+      size: 150,
       meta: { headerTitle: 'Product', skeleton: <Skeleton className="h-4 w-32" /> },
       cell: ({ row }) => (
         <span className="block min-w-0 truncate">
@@ -617,16 +621,17 @@ function sparePartLineColumns({
         </span>
       ),
     },
-    locationColumn(),
+    { ...locationColumn(), size: 70 },
     {
       accessorKey: 'qty',
       header: ({ column }) => <DataGridColumnHeader title="Qty" column={column} />,
-      size: 160,
+      size: 110,
       meta: { headerTitle: 'Qty', skeleton: <Skeleton className="h-4 w-10" /> },
       cell: ({ row }) => {
         const primary = lineOf(row.original).primary;
         return (
-          <span className="flex min-w-0 items-center">
+          // The "was" mark wraps under the value, as Unit price's does.
+          <span className="flex min-w-0 flex-col items-start">
             {editable && onEditLine ? (
               <ApproverNumberCell
                 value={primary.qty}
@@ -645,8 +650,8 @@ function sparePartLineColumns({
       id: 'unit_price',
       accessorFn: (row) => Number(lineOf(row).primary.unit_price ?? 0),
       header: ({ column }) => <DataGridColumnHeader title="Unit price" column={column} />,
-      // D7: wide enough for the value and its "was RM 35.00" mark (which also wraps under it).
-      size: 240,
+      // D7: the value with its "was RM 35.00" mark wrapped under it.
+      size: 120,
       meta: { headerTitle: 'Unit price', skeleton: <Skeleton className="h-4 w-16" /> },
       cell: ({ row }) => {
         const primary = lineOf(row.original).primary;
@@ -660,7 +665,10 @@ function sparePartLineColumns({
                 onCommit={(unit_price) => onEditLine(primary, { unit_price })}
               />
             ) : (
-              <span className="truncate tabular-nums">
+              <span
+                className="block max-w-full truncate tabular-nums"
+                title={formatMoneyExact(primary.unit_price, currency)}
+              >
                 {formatMoneyExact(primary.unit_price, currency)}
               </span>
             )}
@@ -678,7 +686,7 @@ function sparePartLineColumns({
       id: 'line_total',
       accessorFn: (row) => Number(lineOf(row).primary.line_total ?? 0),
       header: ({ column }) => <DataGridColumnHeader title="Total" column={column} />,
-      size: 150,
+      size: 120,
       meta: { headerTitle: 'Total', skeleton: <Skeleton className="h-4 w-16" /> },
       cell: ({ row }) => {
         const total = lineOf(row.original).primary.line_total;
@@ -697,19 +705,12 @@ function sparePartLineColumns({
         return <span className="tabular-nums font-medium">{formatMoneyExact(sum, currency)}</span>;
       },
     },
-    poColumn(),
-    {
-      accessorKey: 'verb',
-      header: ({ column }) => <DataGridColumnHeader title="Instruction" column={column} />,
-      size: 150,
-      meta: { headerTitle: 'Instruction', skeleton: <Skeleton className="h-4 w-24" /> },
-      cell: ({ row }) => <OrderInquiryVerbPill verb={lineOf(row.original).primary.verb} />,
-    },
+    { ...poColumn(), size: 100 },
     {
       id: 'state',
       accessorFn: (row) => lineOf(row).state,
       header: ({ column }) => <DataGridColumnHeader title="State" column={column} />,
-      size: 220,
+      size: 190,
       minSize: 190,
       meta: { headerTitle: 'State' },
       cell: ({ row }) => {

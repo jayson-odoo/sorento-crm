@@ -220,9 +220,11 @@ describe('D7: the unit price "was" mark is never clipped', () => {
     const cell = container.querySelector('td[data-title="Unit price"]') as HTMLElement;
     expect(cell).not.toBeNull();
     const expected = `was ${formatMoneyExact('35.0000', 'MYR')}`;
-    const mark = Array.from(cell.querySelectorAll('*')).find(
-      (el) => (el.textContent ?? '').trim() === expected,
-    ) as HTMLElement | undefined;
+    // The innermost element with that text is the mark itself (an approver's input adds no
+    // text, so its wrapper reads the same text too).
+    const mark = Array.from(cell.querySelectorAll('*'))
+      .filter((el) => (el.textContent ?? '').trim() === expected)
+      .pop() as HTMLElement | undefined;
     expect(mark, `an element reading "${expected}"`).toBeDefined();
     for (let el: HTMLElement | null = mark!; el && el !== cell; el = el.parentElement) {
       expect(el.className, 'no truncate around the was mark').not.toMatch(/\btruncate\b/);

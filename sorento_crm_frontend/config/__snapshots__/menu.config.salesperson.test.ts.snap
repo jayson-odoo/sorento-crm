@@ -1004,6 +1004,10 @@ exports[`MENU_SIDEBAR for staff is unchanged > mixed user (salesperson plus staf
             "path": "/project-sales/order-inquiries",
             "title": "Order Inquiries",
           },
+          {
+            "path": "/procurement-management/spare-part-requests",
+            "title": "Spare Part Requests",
+          },
         ],
         "title": "Supply Chain",
       },
@@ -1096,6 +1100,10 @@ exports[`MENU_SIDEBAR for staff is unchanged > role with projects.projects.view:
           {
             "path": "/project-sales/order-inquiries",
             "title": "Order Inquiries",
+          },
+          {
+            "path": "/procurement-management/spare-part-requests",
+            "title": "Spare Part Requests",
           },
         ],
         "title": "Supply Chain",
