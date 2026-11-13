@@ -349,6 +349,8 @@ describe('PriceTagRequestForm - line pricing (S1/S2, S12-1)', () => {
     mockCombos.mockResolvedValue({ host_guarded: false, combos: [COMBO_WITH_PART] } as ProductCombosLookup);
     await startWithALine(COVERED);
     chooseSelling();
+    // PRICETAG-ALA-CARTE AC-3: a new line starts ala carte, so the one package is chosen.
+    await selectOption('Ala carte', COMBO_WITH_PART.combo_id);
     // The fixed part fills in as its own sub-row (AC-S2-1) - a `td[colspan]`
     // this line would not otherwise have. Once a part is attached, the
     // combo's own product id joins the pricing resolve, so the line's total

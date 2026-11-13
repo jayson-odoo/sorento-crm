@@ -2,8 +2,8 @@
  * Parts under a price tag line (S2, D2).
  *
  * UAC: `documentation/plans/dealer-kit/price-tag-combos-acceptance-criteria.md`
- * AC-S2-1 (one combo fills in on pick), AC-S2-2 (Package select with two or
- * more), AC-S2-3 (open row select and clear), AC-S2-4 (staged removal and add
+ * AC-S2-1 (superseded by PRICETAG-ALA-CARTE AC-3: a one-combo line starts ala carte and the
+ * package is chosen), AC-S2-2 (Package select, now with one or more), AC-S2-3 (open row select and clear), AC-S2-4 (staged removal and add
  * by hand), AC-S2-8 (the payload) and AC-S2-11 (375px).
  *
  * The salesperson asks for the cabinet they know and the package's parts appear
@@ -184,6 +184,12 @@ async function pickTheCabinet() {
   await selectOption('Search a set or product...', `product:${CABINET.id}`);
 }
 
+/** PRICETAG-ALA-CARTE AC-3/AC-4: every new line starts ala carte, so a package is chosen through
+ *  the Package select (labelled by its "Ala carte" placeholder), even when it is the only one. */
+async function choosePackage(comboId: string) {
+  await selectOption('Ala carte', comboId);
+}
+
 function submittedLines() {
   return mockCreate.mock.calls[0][0].lines;
 }
@@ -201,7 +207,7 @@ async function pickPrinting() {
 }
 
 // ---------------------------------------------------------------------------
-// AC-S2-1 - one combo fills in on pick
+// AC-S2-1 - one combo is chosen through the Package select (PRICETAG-ALA-CARTE AC-1, AC-3)
 // ---------------------------------------------------------------------------
 
 describe('PriceTagRequestForm - parts under a line (S2)', () => {
@@ -214,10 +220,14 @@ describe('PriceTagRequestForm - parts under a line (S2)', () => {
     expect(mockCombos).toHaveBeenCalledTimes(1);
   });
 
-  it('fills the only package in as child rows: fixed parts, and ONE row per choice group', async () => {
+  it('the only package, once chosen, fills in as child rows: fixed parts, and ONE row per choice group', async () => {
     mockCombos.mockResolvedValue({ host_guarded: true, combos: [COMBO_3_IN_1] });
     await startWithALine();
     await pickTheCabinet();
+    // PRICETAG-ALA-CARTE AC-3: the line starts ala carte, no parts, until the package is chosen.
+    expect(await screen.findByLabelText('Ala carte')).toHaveValue('');
+    expect(screen.queryByText(MIRROR.code, NOT_AN_OPTION)).toBeNull();
+    await choosePackage(COMBO_3_IN_1.combo_id);
 
     // The fixed part is a product row named by its own code.
     expect(await screen.findByText(MIRROR.code, NOT_AN_OPTION)).toBeInTheDocument();
@@ -238,14 +248,16 @@ describe('PriceTagRequestForm - parts under a line (S2)', () => {
     // D18: the open-row explanation sentence is retired - the select with
     // its placeholder and the role label is the whole row now.
 
-    // No Package select: there is only one package to be in.
-    expect(screen.queryByLabelText('Package')).toBeNull();
+    // PRICETAG-ALA-CARTE AC-1: the Package select shows for one package too, on that package.
+    expect(screen.getByLabelText('Ala carte')).toHaveValue(COMBO_3_IN_1.combo_id);
   });
 
   it('posts the package and its parts, resolved and open, in display order (AC-S2-8)', async () => {
     mockCombos.mockResolvedValue({ host_guarded: true, combos: [COMBO_3_IN_1] });
     await startWithALine();
     await pickTheCabinet();
+    // PRICETAG-ALA-CARTE AC-3: the line starts ala carte; the package is chosen.
+    await choosePackage(COMBO_3_IN_1.combo_id);
     await screen.findByText(MIRROR.code, NOT_AN_OPTION);
 
     await pickPrinting();
@@ -284,7 +296,7 @@ describe('PriceTagRequestForm - parts under a line (S2)', () => {
     await startWithALine();
     await pickTheCabinet();
 
-    const packageSelect = await screen.findByLabelText('Package');
+    const packageSelect = await screen.findByLabelText('Ala carte');
     expect(within(packageSelect).getByText('3 in 1')).toBeInTheDocument();
     expect(within(packageSelect).getByText('4 in 1')).toBeInTheDocument();
     // Nothing chosen means no parts - the form must not guess which catalogue
@@ -300,21 +312,21 @@ describe('PriceTagRequestForm - parts under a line (S2)', () => {
     });
     await startWithALine();
     await pickTheCabinet();
-    await screen.findByLabelText('Package');
+    await screen.findByLabelText('Ala carte');
 
-    fireEvent.change(screen.getByLabelText('Package'), {
+    fireEvent.change(screen.getByLabelText('Ala carte'), {
       target: { value: COMBO_4_IN_1.combo_id },
     });
     expect(await screen.findByText(TOP.code)).toBeInTheDocument();
     expect(screen.queryByLabelText(/Not sure, any of/)).toBeNull();
 
-    fireEvent.change(screen.getByLabelText('Package'), {
+    fireEvent.change(screen.getByLabelText('Ala carte'), {
       target: { value: COMBO_3_IN_1.combo_id },
     });
     await waitFor(() => expect(screen.queryByText(TOP.code)).toBeNull());
     expect(screen.getByLabelText('Not sure, any of 2')).toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText('Package'), { target: { value: '' } });
+    fireEvent.change(screen.getByLabelText('Ala carte'), { target: { value: '' } });
     await waitFor(() => expect(screen.queryByText(MIRROR.code, NOT_AN_OPTION)).toBeNull());
     expect(screen.queryByLabelText(/Not sure, any of/)).toBeNull();
   });
@@ -327,6 +339,8 @@ describe('PriceTagRequestForm - parts under a line (S2)', () => {
     mockCombos.mockResolvedValue({ host_guarded: true, combos: [COMBO_3_IN_1] });
     await startWithALine();
     await pickTheCabinet();
+    // PRICETAG-ALA-CARTE AC-3: the line starts ala carte; the package is chosen.
+    await choosePackage(COMBO_3_IN_1.combo_id);
     const open = (await screen.findByLabelText('Not sure, any of 2')) as HTMLSelectElement;
     const options = Array.from(open.querySelectorAll('option')).filter((o) => o.value);
     expect(options).toHaveLength(2);
@@ -343,6 +357,8 @@ describe('PriceTagRequestForm - parts under a line (S2)', () => {
     mockCombos.mockResolvedValue({ host_guarded: true, combos: [COMBO_3_IN_1] });
     await startWithALine();
     await pickTheCabinet();
+    // PRICETAG-ALA-CARTE AC-3: the line starts ala carte; the package is chosen.
+    await choosePackage(COMBO_3_IN_1.combo_id);
     const open = await screen.findByLabelText('Not sure, any of 2');
 
     fireEvent.change(open, { target: { value: BASIN_BLACK.product_id } });
@@ -368,6 +384,8 @@ describe('PriceTagRequestForm - parts under a line (S2)', () => {
     mockCombos.mockResolvedValue({ host_guarded: true, combos: [COMBO_3_IN_1] });
     await startWithALine();
     await pickTheCabinet();
+    // PRICETAG-ALA-CARTE AC-3: the line starts ala carte; the package is chosen.
+    await choosePackage(COMBO_3_IN_1.combo_id);
     const open = await screen.findByLabelText('Not sure, any of 2');
 
     fireEvent.change(open, { target: { value: BASIN_WHITE.product_id } });
@@ -402,6 +420,8 @@ describe('PriceTagRequestForm - parts under a line (S2)', () => {
     mockCombos.mockResolvedValue({ host_guarded: true, combos: [COMBO_3_IN_1] });
     await startWithALine();
     await pickTheCabinet();
+    // PRICETAG-ALA-CARTE AC-3: the line starts ala carte; the package is chosen.
+    await choosePackage(COMBO_3_IN_1.combo_id);
     await screen.findByText(MIRROR.code, NOT_AN_OPTION);
 
     fireEvent.click(
@@ -459,12 +479,12 @@ describe('PriceTagRequestForm - parts under a line (S2)', () => {
     await startWithALine();
 
     await pickTheCabinet();
-    await screen.findByLabelText('Package');
+    await screen.findByLabelText('Ala carte');
 
     fireEvent.click(screen.getByRole('button', { name: 'Clear item' }));
     await selectOption('Search a set or product...', `product:${SINK.id}`);
     await waitFor(() => expect(mockCombos).toHaveBeenCalledWith(SINK.id));
-    expect(screen.queryByLabelText('Package')).toBeNull();
+    expect(screen.queryByLabelText('Ala carte')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Clear item' }));
     await pickTheCabinet();
@@ -475,9 +495,9 @@ describe('PriceTagRequestForm - parts under a line (S2)', () => {
       ).toHaveLength(2),
     );
     // And the line is usable again, not left holding the sink's emptiness.
-    expect(await screen.findByLabelText('Package')).toBeInTheDocument();
+    expect(await screen.findByLabelText('Ala carte')).toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText('Package'), {
+    fireEvent.change(screen.getByLabelText('Ala carte'), {
       target: { value: COMBO_3_IN_1.combo_id },
     });
     expect(await screen.findByText(MIRROR.code, NOT_AN_OPTION)).toBeInTheDocument();
@@ -495,7 +515,7 @@ describe('PriceTagRequestForm - parts under a line (S2)', () => {
     });
     await startWithALine();
     await pickTheCabinet();
-    const packageSelect = await screen.findByLabelText('Package');
+    const packageSelect = await screen.findByLabelText('Ala carte');
 
     const wrapper = packageSelect.closest('td');
     expect(wrapper).not.toBeNull();
@@ -542,7 +562,7 @@ describe('PriceTagRequestForm - "Add part" only with a combo (AC-S2-1..S2-3)', (
     });
     await startWithALine();
     await pickTheCabinet();
-    await screen.findByLabelText('Package');
+    await screen.findByLabelText('Ala carte');
 
     expect(screen.getByLabelText('Add part')).toBeInTheDocument();
   });
@@ -652,6 +672,8 @@ describe('PriceTagRequestForm - one candidate is not a choice (S12)', () => {
     mockCombos.mockResolvedValue({ host_guarded: true, combos: [COMBO_SINGLE_CANDIDATE] });
     await startWithALine();
     await pickTheCabinet();
+    // PRICETAG-ALA-CARTE AC-3: the line starts ala carte; the package is chosen.
+    await choosePackage(COMBO_SINGLE_CANDIDATE.combo_id);
 
     expect(await screen.findByText(KITCHEN_TAP.code)).toBeInTheDocument();
     expect(screen.getByText('Kitchen Tap')).toBeInTheDocument();
@@ -662,6 +684,8 @@ describe('PriceTagRequestForm - one candidate is not a choice (S12)', () => {
     mockCombos.mockResolvedValue({ host_guarded: true, combos: [COMBO_3_IN_1] });
     await startWithALine();
     await pickTheCabinet();
+    // PRICETAG-ALA-CARTE AC-3: the line starts ala carte; the package is chosen.
+    await choosePackage(COMBO_3_IN_1.combo_id);
 
     expect(await screen.findByLabelText('Not sure, any of 2')).toBeInTheDocument();
   });
@@ -672,6 +696,8 @@ describe('PriceTagRequestForm - no open-row copy (S13)', () => {
     mockCombos.mockResolvedValue({ host_guarded: true, combos: [COMBO_3_IN_1] });
     await startWithALine();
     await pickTheCabinet();
+    // PRICETAG-ALA-CARTE AC-3: the line starts ala carte; the package is chosen.
+    await choosePackage(COMBO_3_IN_1.combo_id);
     await screen.findByLabelText('Not sure, any of 2');
 
     expect(
@@ -685,6 +711,8 @@ describe('PriceTagRequestForm - restore a removed package part (S14)', () => {
     mockCombos.mockResolvedValue({ host_guarded: true, combos: [COMBO_ONE_FIXED] });
     await startWithALine();
     await pickTheCabinet();
+    // PRICETAG-ALA-CARTE AC-3: the line starts ala carte; the package is chosen.
+    await choosePackage(COMBO_ONE_FIXED.combo_id);
     await screen.findByText(MIRROR.code, NOT_AN_OPTION);
 
     fireEvent.click(
@@ -705,6 +733,8 @@ describe('PriceTagRequestForm - restore a removed package part (S14)', () => {
     mockCombos.mockResolvedValue({ host_guarded: true, combos: [COMBO_TWO_FIXED_ONE_GROUP] });
     await startWithALine();
     await pickTheCabinet();
+    // PRICETAG-ALA-CARTE AC-3: the line starts ala carte; the package is chosen.
+    await choosePackage(COMBO_TWO_FIXED_ONE_GROUP.combo_id);
     await screen.findByText(MIRROR.code, NOT_AN_OPTION);
     await screen.findByText(TOP.code);
     await screen.findByLabelText('Not sure, any of 2');

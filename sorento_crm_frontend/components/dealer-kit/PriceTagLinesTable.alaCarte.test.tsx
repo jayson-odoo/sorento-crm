@@ -168,7 +168,10 @@ describe('AC-4 choosing and clearing the Package in the table', () => {
   });
 });
 
-const rowFor = (code: string) => screen.findByRole('option', { name: new RegExp(code) });
+// Scoped to the Item picker's list, so a Package select option whose combo name holds the code
+// (C is "P-ALA-1 + P-ALA-PART") can never be the row found.
+const rowFor = async (code: string) =>
+  within(await screen.findByRole('listbox')).findByRole('option', { name: new RegExp(code) });
 
 describe('AC-7 the Item picker never greys or skips a product already on the request', () => {
   it('a product on the request is not disabled or "Already added", and a click adds another line of it', async () => {
