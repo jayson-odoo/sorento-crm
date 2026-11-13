@@ -142,6 +142,7 @@ class SampleRequest(Base, CompanyScopedMixin):
     cancel_reason = Column(Text, nullable=True)
 
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    last_activity_at = Column(DateTime(timezone=False), nullable=True, index=True)  # newest person activity (FORMS-LAST-ACTIVITY)
     updated_at = Column(
         DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
     )
@@ -245,5 +246,5 @@ def _stamp_request_no(_mapper, connection, target) -> None:
 SampleRequest.__audit_columns__ = [
     c.key
     for c in SampleRequest.__table__.columns
-    if c.key not in ("date_answered_by", "consignment_order_id")
+    if c.key not in ("date_answered_by", "consignment_order_id", "last_activity_at")
 ]

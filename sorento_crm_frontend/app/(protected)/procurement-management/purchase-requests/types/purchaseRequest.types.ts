@@ -80,6 +80,7 @@ export interface PurchaseRequest {
   approval_signature_ref?: string | null;
   approval_comments?: string | null;
   created_at?: string | null;
+  last_activity_at?: string | null;
   updated_at?: string | null;
   /** R3 void audit fields (populated when status === 'voided'). */
   voided_by?: string | null;

@@ -136,6 +136,7 @@ class PriceTagRequest(Base, CompanyScopedMixin):
     created_at = Column(
         DateTime(timezone=False), server_default=func.now(), nullable=False
     )
+    last_activity_at = Column(DateTime(timezone=False), nullable=True, index=True)  # newest person activity (FORMS-LAST-ACTIVITY)
     updated_at = Column(
         DateTime(timezone=False),
         server_default=func.now(),

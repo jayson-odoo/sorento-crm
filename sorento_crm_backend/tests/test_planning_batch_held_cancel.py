@@ -130,6 +130,13 @@ def _world(client, world, *, n_old, n_cancel, n_covered, n_open, autocount=False
 
 
 def _press(client, w, *, lines=(), cancel=(), reason=REASON):
+    # F2 12/13 Nov: a cancel is saved like any change before Confirm
+    from app.database import get_db
+    from ._cancel_decide import decide_cancelled_rows
+
+    db = client.app.dependency_overrides[get_db]()
+    decide_cancelled_rows(db, w["batch_id"])
+    db.commit()
     response = client.post(
         f"{BASE}/fulfilment-planning/confirm-all",
         json={

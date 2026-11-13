@@ -19,6 +19,7 @@ from typing import Any
 from app.services.chatbot import label_catalog
 from app.services.chatbot.turn import refer
 from app.services.chatbot.turn.pending import ESCALATION_OFFER_KINDS, Pending, ask
+from app.services.chatbot.turn.state import token_key
 from app.services.chatbot.turn.task import MAX_SLOTS, numbered
 
 #: Every escalation sentence the stock ask's composers print
@@ -74,12 +75,60 @@ def without_escalation(
     return refer.after(body), question
 
 
+def _code_of(row: dict[str, Any]) -> Any:
+    """A candidate row's code: a resolver roster row, or (`code`) a row of
+    `answer.did_you_mean_by_token`, a missed code beside found ones."""
+    return row.get("product") or row.get("value") or row.get("label") or row.get("code")
+
+
+def did_you_mean_text(
+    shown: str, labels: list[str], *, start: int | None = None, size_lines: list[str] | None = None
+) -> str:
+    """The did-you-mean sentence for one missed code. One code alone reads "Couldn't find
+    ELP3753. Did you mean ELP3754?"; several, or a list sharing a message with others
+    (`start`, where its numbers carry on), read one numbered code per line. PICKER-NO-CAP
+    (owner, 2 Oct 2026): every option the pick carries is printed. CHATBOT-CODE-MATCH R4:
+    each code's own size line (`size_lines`, from stored values only) sits under it."""
+    from app.services.chatbot.lanes.business.answer import with_size_lines
+
+    sizes = list(size_lines or []) + [""] * len(labels)
+    if start is None and len(labels) == 1:
+        return "\n".join(with_size_lines([f"Couldn't find {shown}. Did you mean {labels[0]}?"], sizes))
+    lines = with_size_lines(numbered(labels, start or 1), sizes)
+    return "\n".join([f"Couldn't find {shown}. Did you mean:", *lines])
+
+
+def did_you_mean_lists(
+    options: list[dict[str, Any]], groups: list[dict[str, Any]], owed: list[dict[str, Any]] | None = None
+) -> tuple[str, dict[str, Any]]:
+    """Several missed codes' did-you-mean lists in one message (`task.picks_question`'s
+    did-you-mean twin): the text, one list per group numbered as its options are, and the
+    pick (`task.stock_pick`, each group keeping its typed code and quantity, `did_you_mean`
+    kept). Asked first by `did_you_mean_each`, and again with the lists still open
+    (`apply`'s "yes" over it, `engine._stock_ask_reply` after one list is answered)."""
+    from app.services.chatbot.turn.task import stock_pick
+
+    stored = stock_pick(options, groups, owed)
+    text = "\n\n".join(
+        did_you_mean_text(
+            str(group["typed"]),
+            [str(o["label"]) for o in options if o.get("position") in group["positions"]],
+            start=group["positions"][0],
+            size_lines=[str(o.get("size_line") or "") for o in options if o.get("position") in group["positions"]],
+        )
+        for group in groups
+        if group.get("positions")
+    )
+    return text, {**stored, "payload": {**stored["payload"], "did_you_mean": True}}
+
+
 def did_you_mean(
     typed: str,
     candidates: list[dict[str, Any]],
     *,
     quantity: Any = None,
     asked_at_turn: int | None = None,
+    size_asked: str = "",
 ) -> tuple[str, Pending] | None:
     """The dealer's did-you-mean: the suggested code(s) as a pick carrying the typed
     quantity, and no escalation. One candidate reads "Couldn't find ELP3753. Did you
@@ -89,10 +138,11 @@ def did_you_mean(
     for row in candidates or []:
         if not isinstance(row, dict):
             continue
-        code = row.get("product") or row.get("value") or row.get("label")
+        code = _code_of(row)
         if not code or not row.get("uuid"):
             continue
-        if row.get("entity_type") not in (None, "product"):
+        # CHATBOT-CODE-MATCH R3: a close registered set is offered beside its members.
+        if row.get("entity_type") not in (None, "product", "product_set"):
             continue
         options.append(
             {
@@ -100,7 +150,10 @@ def did_you_mean(
                 "label": str(code),
                 "code": str(code),
                 "uuid": str(row["uuid"]),
-                "entity_type": "product",
+                "entity_type": row.get("entity_type") or "product",
+                # An offered set carries what its exact ask resolves to (`answer.set_members_of`).
+                **({"members": list(row["members"])} if row.get("members") else {}),
+                **({"size_line": str(row["size_line"])} if row.get("size_line") else {}),
             }
         )
     options = options[:MAX_SLOTS]
@@ -108,11 +161,9 @@ def did_you_mean(
         return None
     shown = (typed or "").strip().upper() or "that"
     labels = [o["label"] for o in options]
-    if len(labels) == 1:
-        text = f"Couldn't find {shown}. Did you mean {labels[0]}?"
-    else:
-        # PICKER-NO-CAP (owner, 2 Oct 2026): every option the pick carries is printed.
-        text = "\n".join([f"Couldn't find {shown}. Did you mean:", *numbered(labels)])
+    # CHATBOT-CODE-MATCH R4: a size nothing holds is what was not found ("with size 400 mm").
+    said = f"{shown} {size_asked}".strip() if size_asked else shown
+    text = did_you_mean_text(said, labels, size_lines=[str(o.get("size_line") or "") for o in options])
     pick = ask(
         "product_pick",
         options,
@@ -128,3 +179,59 @@ def did_you_mean(
         },
     )
     return text, pick
+
+
+def quantity_of(entities: Any, token: Any) -> int | None:
+    """The quantity the message stated for the product it typed as `token` (separators and
+    case folded), None when it stated none."""
+    key = token_key(token)
+    for e in entities or []:
+        if not isinstance(e, dict) or not key:
+            continue
+        qty = e.get("quantity")
+        if (
+            isinstance(qty, (int, float))
+            and not isinstance(qty, bool)
+            and key in (token_key(e.get("raw")), token_key(e.get("canonical_code")))
+        ):
+            return int(qty)
+    return None
+
+
+def did_you_mean_each(
+    groups: list[tuple[str, list[dict[str, Any]], Any]],
+    *,
+    answered: set[str] | frozenset[str] = frozenset(),
+    asked_at_turn: int | None = None,
+) -> tuple[str, Pending, list[str]] | None:
+    """CHATBOT-CODE-MATCH R7: every missed code of one message gets its own did-you-mean,
+    in one reply. `groups` is `(typed, candidates, quantity)` per missed code. A code this
+    reply already `answered` (folded by `token_key`), or one an earlier code offered, is not
+    offered again. One code with candidates left reads exactly as `did_you_mean`; several
+    read one numbered list each, numbers running on, stored as one pick whose `groups`
+    keep each code's quantity (`task.stock_pick`). Returns the text, the pick and the typed
+    codes it offered for; None when no candidate is left."""
+    seen = set(answered)
+    blocks: list[tuple[str, Any, Pending, str]] = []
+    for typed, candidates, quantity in groups:
+        fresh = [r for r in candidates or [] if isinstance(r, dict) and token_key(_code_of(r)) not in seen]
+        one = did_you_mean(typed, fresh, quantity=quantity, asked_at_turn=asked_at_turn)
+        if one is None:
+            continue
+        seen.update(token_key(o["code"]) for o in one[1].options)
+        blocks.append((typed, quantity, one[1], one[0]))
+    if not blocks:
+        return None
+    if len(blocks) == 1:
+        typed, _quantity, pick, text = blocks[0]
+        return text, pick, [typed]
+    options: list[dict[str, Any]] = []
+    pick_groups: list[dict[str, Any]] = []
+    for _typed, quantity, one, _text in blocks:
+        start = len(options) + 1
+        options.extend({**o, "position": start + i} for i, o in enumerate(one.options))
+        positions = list(range(start, len(options) + 1))
+        pick_groups.append({"typed": one.payload["typed"], "count": len(positions), "qty": quantity, "positions": positions})
+    text, stored = did_you_mean_lists(options, pick_groups)
+    pick = ask("product_pick", stored["options"], asked_at_turn=asked_at_turn, payload=stored["payload"])
+    return text, pick, [b[0] for b in blocks]

@@ -4314,12 +4314,12 @@ def _phone_unknown_decision(
             return "phone_handoff", "Phone link failed; handed to staff"
         survivor = outcome.survivor_respond_id or contact_respond_id
         if outcome.chatbot_allowed:
-            wa_phone_link.send_verified(db, client, identifier=survivor, turn_id=turn_id)
+            wa_phone_link.send_verified(db, client, identifier=survivor, turn_id=turn_id, phone=phone)
         else:
             # WA-PHONE-SHARE-LOOP: told once, on this turn; the contact now has a CRM row, so every
             # later message closes silently at the AI-allowed gate.
             wa_phone_link.send_verified(
-                db, client, identifier=survivor, turn_id=turn_id, line=wa_phone_link.NO_ACCESS_LINE
+                db, client, identifier=survivor, turn_id=turn_id, line=wa_phone_link.NO_ACCESS_LINE, phone=phone
             )
             comment(client, survivor, "phone verified, AI off for this contact")
         return "phone_linked", "Phone linked to the contact that holds its access"
@@ -9568,6 +9568,19 @@ def _run_stages_body(  # noqa: PLR0915
             )
             turn_trace.add("held_none_match", {"held": held_none_match["held"], "said": held_none_match["said"]})
 
+        if answer is not None and unplaced_tokens:
+            # CHATBOT-CODE-MATCH R6: every missed code, single or beside found ones, and the
+            # close codes it was offered from (the same `did_you_mean_by_token` read).
+            for event in trace_mod.code_candidates_events(
+                resolver_payload,
+                unplaced=unplaced_tokens,
+                suggestions=_unplaced_suggestions(resolver_payload, unplaced_tokens),
+                question=getattr(answer, "question", None),
+                shown_codes=getattr(answer, "shown_codes", None),
+                answered=turn_compose.answered_codes(envelopes),
+            ):
+                turn_trace.add("code_candidates", event)
+
     if answer is not None and lane_error_text is None:
         if _dealer_stock_ask(state_out, plan) or _dealer_incoming_ask(state_out, plan):
             # Owner ruling 26 Sep 2026 (hand test F1): whatever composed this stock
@@ -10036,8 +10049,14 @@ def _stock_ask_reply(
         # picked, rides on them and is asked once no list is left open.
         carried = [*owed, *turn_task.owed_of(tuple(state_out.focus.tasks or ()))]
         state_out.focus.tasks = tuple(t for t in state_out.focus.tasks or () if t.kind != "stock_qty")
-        text = turn_task.picks_question(queued["options"], queued["groups"])
-        pick = turn_task.stock_pick(queued["options"], queued["groups"], carried)
+        if queued.get("did_you_mean"):
+            # CHATBOT-CODE-MATCH R7: a did-you-mean list still open is asked as one again.
+            from app.services.chatbot import dealer_stock as dealer_mod
+
+            text, pick = dealer_mod.did_you_mean_lists(queued["options"], queued["groups"], carried)
+        else:
+            text = turn_task.picks_question(queued["options"], queued["groups"])
+            pick = turn_task.stock_pick(queued["options"], queued["groups"], carried)
     elif not pick and owed:
         # Reviewer B4: the pick is answered, so the codes owed a quantity beside it are
         # asked now, in one question with any the picked code owes itself.
@@ -10051,16 +10070,36 @@ def _stock_ask_reply(
     from app.services.chatbot.composers import stock as composers_stock
 
     parts = _stock_answer_lines(envelopes, full=composers.enabled())
+    # CHATBOT-CODE-MATCH R1/R7: a dealer's missed codes beside found ones get the pick a
+    # single-code miss gets (`dealer_stock.did_you_mean_each`), over the same candidates,
+    # never one this reply already answered.
+    offer = None
+    if not pick and not text and getattr(getattr(state_out, "profile", None), "stock_availability_only", False):
+        from app.services.chatbot import dealer_stock as dealer_mod
+
+        suggested = turn_compose.unplaced_suggestions(envelopes)
+        offer = dealer_mod.did_you_mean_each(
+            [
+                (m, (suggested.get(m) or {}).get("rows") or [], dealer_mod.quantity_of(verdict.get("entities"), m))
+                for m in misses
+            ],
+            answered=turn_compose.answered_codes(envelopes),
+            asked_at_turn=turn_no,
+        )
+    if offer is not None:
+        misses = [m for m in misses if m not in offer[2]]
     if misses:
         miss_line = composers_stock.miss_line(misses)
         if miss_line:
             parts.append(miss_line)
+    if offer is not None:
+        parts.append(offer[0])
     if text:
         parts.append(text)
     question = (
         turn_pending.ask("product_pick", pick["options"], asked_at_turn=turn_no, payload=pick["payload"])
         if pick
-        else None
+        else offer[1] if offer is not None else None
     )
     return dataclasses_replace(answer, text="\n\n".join(parts), question=question, sections=[])
 
@@ -10144,7 +10183,7 @@ def _unplaced_suggestions(
     from app.services.chatbot.lanes.business.answer import did_you_mean_by_token
 
     try:
-        return did_you_mean_by_token(resolver_payload.get("resolved"), resolver_payload.get("gate"))
+        return did_you_mean_by_token(resolver_payload.get("resolved"), resolver_payload.get("gate"), unplaced)
     except Exception:  # noqa: BLE001 - a did-you-mean is never worth a failed turn
         logger.warning("chatbot: the per-code did-you-mean did not read", exc_info=True)
         return {}

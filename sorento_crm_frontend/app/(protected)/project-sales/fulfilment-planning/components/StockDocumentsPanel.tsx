@@ -88,6 +88,7 @@ export function StockDocumentsPanel({
   autoCount = null,
   poolSubtotal,
   ownPoolNoShare = false,
+  companyScope,
 }: {
   productId: string;
   /** One bin. Omitted for a group read, where the set is the answer. */
@@ -123,8 +124,10 @@ export function StockDocumentsPanel({
    *  no dealer share is held back from it there (a retail line, R9). */
   poolSubtotal?: string | null;
   ownPoolNoShare?: boolean;
+  /** `grants`: the location may belong to another company the caller is granted. */
+  companyScope?: 'grants';
 }) {
-  const detail = useStockDetail(productId, warehouseId ?? null, lineIds, group);
+  const detail = useStockDetail(productId, warehouseId ?? null, lineIds, group, true, companyScope);
   const isGroup = Boolean(group);
   /**
    * R-K, S2: under a SITE POOL section the running column is the pool's share, not the raw
