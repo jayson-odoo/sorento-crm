@@ -317,9 +317,10 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // be approved as it stands; the note box opens under the buttons.
   const [previewState, setPreviewState] = useState<{
     missing: string[];
+    missingKeys: string[];
     drawn: boolean;
     failed: boolean;
-  }>({ missing: [], drawn: false, failed: false });
+  }>({ missing: [], missingKeys: [], drawn: false, failed: false });
   const [draftEscalateOpen, setDraftEscalateOpen] = useState(false);
   const [request, setRequest] = useState<PriceTagRequestDetail | null>(null);
   // The id a create call answered with, held in STATE rather than trusted to
@@ -1386,7 +1387,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           ...(l.product_id || l.product_set_id ? [] : [EMPTY_LINE]),
           ...(lineNeedsTemplate(l, priceMode) ? [MISSING_TAG_TEMPLATE] : []),
           ...lineProblemsOf(l, lineEditor.linePricing[l.key], priceMode),
-          ...(l.code && previewState.missing.includes(l.code) ? ['No tag template yet.'] : []),
+          // By line key: one product may sit on several lines, only some missing a template.
+          ...(previewState.missingKeys.includes(l.key) ? ['No tag template yet.'] : []),
           // Prices still loading say nothing either way: keep what the click found.
           ...(lineEditor.linePricing[l.key] ? [] : l.guard_error.split('\n').filter((m) => m.startsWith('No combo '))),
         ];
@@ -1419,7 +1421,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       else if (templateRows.includes(index)) found.push(MISSING_TAG_TEMPLATE);
       if (kind === 'approve' && !emptyRows.includes(index)) {
         found.push(...lineProblemsOf(l, lineEditor.linePricing[l.key], priceMode));
-        if (l.code && previewState.missing.includes(l.code)) found.push('No tag template yet.');
+        if (previewState.missingKeys.includes(l.key)) found.push('No tag template yet.');
       }
       return found;
     });
