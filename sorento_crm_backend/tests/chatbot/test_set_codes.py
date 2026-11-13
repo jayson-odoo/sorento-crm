@@ -264,3 +264,60 @@ def test_ac9_a_turn_that_offers_sets_traces_the_offered_codes_in_order(session_f
     assert len(entries) == 1, entries
     assert entries[0].get("outcome") == "offered", entries
     assert [str(r.get("code")) for r in entries[0].get("candidates") or []][: len(offered)] == offered, (entries, offered)
+
+
+# --------------------------------------------------------------------------- fix round: AC-2b / AC-2c / AC-8b / AC-3 dealer
+
+SOFT = "QWC605-RL-SOFT"
+SOFT_MEMBERS = [f"QWCX{SOFT[3:]}", CISTERN]  # QWCX605-RL-SOFT + the shared cistern
+PLAIN_PAN = "QWCX605-RL"
+SOFT_ASKS = ["qwc605 rl soft stock", "qwc605rl soft stock"]
+
+
+@pytest.mark.parametrize("who", ["dealer", "staff"])
+@pytest.mark.parametrize("ask", SOFT_ASKS, ids=["spaced", "folded"])
+def test_ac2b_a_space_typed_set_that_has_prefix_siblings_is_answered_as_that_set(session_factory, monkeypatch, stub_access, who, ask):  # noqa: F811
+    c = _exact_world(session_factory, monkeypatch, stub_access)
+    _who(c, who)
+    typed = ask[: -len(" stock")]  # the parser gives ONE product token: the typed code words
+    text = c.say(ask, stock(product(typed)))
+    assert "Couldn't find" not in text, text
+    assert _stocked_ids(c) == {c.uuid_of[m] for m in SOFT_MEMBERS}, (c.stock_calls, text)
+    assert c.uuid_of[PLAIN_PAN] not in _stocked_ids(c), "answered the plain set's pan"
+    assert not _word(PLAIN_PAN, text), text
+    if who == "staff":
+        assert f"Set {SOFT}" in text, text
+
+
+@pytest.mark.parametrize("who", ["dealer", "staff"])
+@pytest.mark.parametrize("ask", SOFT_ASKS, ids=["spaced", "folded"])
+def test_ac8b_an_answered_set_event_exists_only_when_the_set_was_answered(session_factory, monkeypatch, stub_access, who, ask):  # noqa: F811
+    c = _exact_world(session_factory, monkeypatch, stub_access)
+    _who(c, who)
+    typed = ask[: -len(" stock")]
+    text = c.say(ask, stock(product(typed)))
+    for entry in c.trace_entries("code_candidates"):
+        mentions_set = SOFT in [s for key, v in entry.items() if key not in ("typed", "kind") for s in _strings(v)]
+        if entry.get("outcome") == "answered" and mentions_set:
+            assert "Couldn't find" not in text, (entry, text)
+            assert {c.uuid_of[m] for m in SOFT_MEMBERS} <= _stocked_ids(c), (entry, c.stock_calls)
+
+
+@pytest.mark.parametrize("who", ["dealer", "staff"])
+def test_ac2c_a_code_plus_a_descriptor_word_never_answers_the_plain_set_as_if_the_word_was_not_said(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+    from tests.chatbot._turn_helpers import entity
+
+    c = _exact_world(session_factory, monkeypatch, stub_access)
+    _who(c, who)
+    text = c.say("QWC605-RL soft x 1", stock(product("QWC605-RL", 1), entity("soft", hint="category")))
+    stocked = _stocked_ids(c)
+    assert c.uuid_of["QWCX605-RL-SOFT"] in stocked, (c.stock_calls, text)
+    assert c.uuid_of[PLAIN_PAN] not in stocked, ("answered the plain set / pan", c.stock_calls, text)
+    assert not _word(PLAIN_PAN, text), text
+
+
+@pytest.mark.xfail(strict=True, reason="owner ruling 13 Nov: slice 2 (new PR) answers each part at the typed quantity")
+def test_ac3_dealer_exact_set_does_not_ask_how_many_units_for_each(session_factory, monkeypatch, stub_access):  # noqa: F811
+    c = _exact_world(session_factory, monkeypatch, stub_access)
+    text = c.say("QWC605RL x 1", stock(product("QWC605RL", 1)))
+    assert "How many units for each?" not in text, text
