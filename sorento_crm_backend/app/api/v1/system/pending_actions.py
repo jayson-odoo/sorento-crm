@@ -56,6 +56,7 @@ from app.models.dealer_kit import (
     TileTemplate,
 )
 from app.models.inventory import Warehouse
+from app.models.service_jobs import Technician
 from app.models.marketing import MarketingCampaign, PromotionGroup, PromotionProduct, PromotionType
 from app.models.onboarding import OnboardingRequest
 from app.models.order import Order, SalesOrder
@@ -466,6 +467,7 @@ _PARK_SCOPED_MODELS: dict = {
     # PRICETAG-TEMPLATE-PER-PRODUCT: parked on the product; the template ids ride in the payload.
     "product.unlink_tag_templates": Product,
     "team.delete": Team,
+    "technician.delete": Technician,
     "uom.delete": UnitOfMeasure,
     "warehouse.delete": Warehouse,
 }
@@ -889,6 +891,11 @@ def create_pending_action(
             db, body.action_key, body.entity_id, actor_id, body.entity_type, body.payload
         )
         _assert_undo_not_refused(db, body.action_key, body.entity_id, body.payload, actor_id)
+        if body.action_key == "technician.delete":
+            # Refused at the click, not ten seconds later: a technician on any job is archived.
+            from app.services import technician_service
+
+            technician_service.assert_not_in_use(db, body.entity_id)
 
         try:
             service = FormActionService(db)
