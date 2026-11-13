@@ -177,3 +177,24 @@ def test_an_unknown_company_scope_value_is_refused(api):
     res = api.c.get(URL, params=_params(api, company_scope="everything"))
 
     assert res.status_code == 422, res.text
+
+
+def test_a_group_read_is_never_widened(api):
+    """Security review: grants applies to one bin; a whole ownership group or the pools is
+    refused rather than read across companies."""
+    res = api.c.get(
+        URL,
+        params={"product_id": str(api.product.id), "group": "pools", "company_scope": "grants"},
+    )
+
+    assert res.status_code == 422, res.text
+    assert res.json()["code"] == "stock_detail_scope_group", res.json()
+
+
+def test_the_active_scope_is_restored_after_a_grants_read(api):
+    from app.models.base import get_company_scope
+
+    res = api.c.get(URL, params=_params(api, company_scope="grants"))
+
+    assert res.status_code == 200, res.text
+    assert get_company_scope(api.db) == frozenset({COMPANY_A})
