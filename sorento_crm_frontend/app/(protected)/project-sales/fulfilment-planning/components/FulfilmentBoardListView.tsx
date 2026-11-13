@@ -998,6 +998,10 @@ export function FulfilmentBoardListView({
           // (AC-C13) - the words carry it, and the grid still draws one where a cell has
           // the room.
           const text = describeSupply(parts, contribution.fulfilment_location);
+          // A pre-marked cancel states no supply at all: nobody has decided it yet.
+          if (!text && isBookCancelled(contribution)) {
+            return <span className="text-muted-foreground">Not decided</span>;
+          }
           return (
             <span className="flex min-w-0 items-center gap-1.5">
               <span className="block min-w-0 truncate" title={text}>
@@ -1342,17 +1346,19 @@ function isCancelSo(contribution: BoardContribution, drafted: BoardDecision | nu
 }
 
 /**
- * F2: a book-cancelled line CS has decided: a saved approval (the draft, no pre-mark), or a
- * decision that states no supply at all (an empty composition prints as nothing).
+ * F2: a book-cancelled line CS has actually decided: a draft approval that is not just the
+ * board-load pre-mark (the row tick, Save all suggested, a server-saved draft, Decide > Cancel).
  */
 function isCancelLineDecided(
   contribution: BoardContribution,
   drafted: BoardDecision | null,
 ): boolean {
-  if (!isBookCancelled(contribution)) return false;
-  if (drafted && !drafted.preMarked && drafted.verdict === 'approved') return true;
-  const parts = contributionDecision(contribution, drafted);
-  return parts !== null && describeSupply(parts, contribution.fulfilment_location) === '';
+  return (
+    isBookCancelled(contribution) &&
+    Boolean(drafted) &&
+    !drafted?.preMarked &&
+    drafted?.verdict === 'approved'
+  );
 }
 
 /** The Decided column's own equivalent of `suggestedSortText` above. */
@@ -1365,5 +1371,6 @@ function decidedSortText(contribution: BoardContribution, drafted: BoardDecision
     if (inquiry) return inquiry.inquiry_no ?? 'Unnumbered inquiry';
     return 'Not decided';
   }
-  return describeSupply(parts, contribution.fulfilment_location);
+  const text = describeSupply(parts, contribution.fulfilment_location);
+  return !text && isBookCancelled(contribution) ? 'Not decided' : text;
 }

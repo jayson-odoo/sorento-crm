@@ -90,7 +90,7 @@ describe('Transfer to Cancel SO in the Decide menu', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Cancel' }));
 
     const dialog = await screen.findByRole('dialog');
-    expect(dialog).toHaveTextContent(/Decide 1 lines?: Transfer to Cancel SO/);
+    expect(dialog).toHaveTextContent(/Decide 1 lines?: Cancel/);
     expect(within(dialog).queryByLabelText('donor-or-location')).not.toBeInTheDocument();
     const save = within(dialog).getByRole('button', { name: /^Save/ });
     expect(save).toBeDisabled();
@@ -140,7 +140,7 @@ describe('Transfer to Cancel SO in the Decide menu', () => {
     ]);
     await waitFor(() =>
       expect(toast.success).toHaveBeenCalledWith(
-        expect.stringMatching(/^1 saved as Transfer to Cancel SO · 2 skipped: /),
+        expect.stringMatching(/^1 saved as Cancel · 2 skipped: /),
       ),
     );
   });

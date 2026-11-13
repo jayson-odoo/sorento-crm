@@ -760,7 +760,8 @@ export function awaitsCancelSo(
  */
 export function canDecide(contribution: BoardContribution): boolean {
   return (
-    !contribution.unplannable && (!contribution.cancelled || awaitsCancelSo(contribution))
+    !contribution.unplannable &&
+    (!contribution.cancelled || awaitsCancelSo(contribution) || isBookCancelled(contribution))
   );
 }
 
