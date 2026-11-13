@@ -314,20 +314,23 @@ def _find_contact(db, phone: str):
 
 def _is_staff(db, phone: str, contact_id: str | None) -> bool:
     """Is this phone staff (UAC A9, A16)? A CRM user's contact number (by digits, with or without the leading 6), or,
-    for a contact already in the CRM, a user's or a sales agent's own contact. Never granted dealer access."""
+    for a contact already in the CRM, a user's or a sales agent's own contact. Never granted dealer access. A dealer's
+    own CRM user (roles all non-staff, `user_service.only_non_staff_roles`) does not make it staff."""
     from sqlalchemy import func
 
     from app.models.base import company_scope
     from app.models.sales_agent import SalesAgent
     from app.models.user import User
+    from app.services.user_service import only_non_staff_roles
 
     full = phone.lstrip("+")
     digits = func.regexp_replace(User.contact_number, r"\D", "", "g")
+    staff_user = ~only_non_staff_roles()
     with company_scope(db, None):
-        if db.query(User.id).filter(digits.in_({full, full[1:]})).first() is not None:
+        if db.query(User.id).filter(digits.in_({full, full[1:]}), staff_user).first() is not None:
             return True
         return contact_id is not None and (
-            db.query(User.id).filter(User.respond_contact_id == contact_id).first() is not None
+            db.query(User.id).filter(User.respond_contact_id == contact_id, staff_user).first() is not None
             or db.query(SalesAgent.id).filter(SalesAgent.contact_id == contact_id).first() is not None
         )
 

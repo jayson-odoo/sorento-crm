@@ -284,8 +284,35 @@ def test_ideation_turn_carries_a_confirm_permission():
 
     assert (
         AIAssistantChatService._WRITE_TOOL_PERMISSIONS["crm_ideation_turn"]
-        == "ideation.board.view"
+        == "ideation.ideas.manage"
     )
+
+
+def test_ideation_turn_confirm_denied_for_a_board_view_only_user(svc, conv, monkeypatch):
+    """WA-COMPLAINT-INTAKE round 6: salespeople hold board.view now; the assistant's ideation write
+    (in another contact's name) needs manage."""
+    import app.services.ai_assistant_service as m
+    import app.services.user_service as us
+
+    fake = _FakeMCP()
+    monkeypatch.setattr(m, "MCPRuntimeClient", lambda *a, **k: fake)
+    monkeypatch.setattr(
+        us.UserPermissionService, "check_user_has_permission",
+        lambda self, uid, slug: slug == "ideation.board.view",
+    )
+    pending = {
+        "tool_name": "crm_ideation_turn",
+        "args": {"respond_io_id": "900000008", "message_text": "an idea"},
+        "summary": "run ideation turn",
+    }
+    svc._serve_pending_confirmation(conv=conv, config=_CFG, pending=pending, request_started=0.0)
+    loaded = svc._load_pending_confirmation(conv.id)
+    _c, msg = svc._resolve_pending_confirmation(
+        conv=conv, user_id="95709c37-0fb4-5c00-8686-536c019e6fb7", config=_CFG,
+        pending=loaded, action="confirm", request_started=0.0,
+    )
+    assert fake.calls == []
+    assert msg.metadata_json["pending_confirmation"]["status"] == "denied"
 
 
 def test_ideation_turn_confirm_denied_when_user_lacks_the_permission(svc, conv, monkeypatch):

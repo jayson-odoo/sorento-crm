@@ -2116,6 +2116,8 @@ IDEA_NOT_CREATED = "The idea was not created because the Ideas workspace could n
 IDEA_OWN_ONLY = "You can only edit your own ideas."
 IDEA_ALREADY_CAPTURED = "This idea was already captured as idea {number}."
 IDEA_REFUSED = "The Ideas workspace refused this idea."
+#: SS #235: ss answers 422 (`unknown_type`, or any other 422) when it will not take the item itself.
+IDEA_TYPE_REFUSED = IDEA_REFUSED + " It does not accept that type."
 #: The most characters of the user's own message sent as the create's raw transcript (I7).
 RAW_TRANSCRIPT_CHARS = 4000
 #: Characters a person cannot see, besides the format characters (Cf): variation selectors, the combining
@@ -2314,8 +2316,8 @@ def _idea_create_execute(db, user: dict, args: dict) -> dict:
 
     from app.services.error_handler import AppException
     from app.services.ideation_capture_service import (
-        IdeationServiceError, _CREATE_PATH, _idea_link, _missing_list, _post_json, _valid_uuid, attach_chat_photos,
-        build_create_payload,
+        IdeationServiceError, _CREATE_PATH, _idea_link, _missing_list, _post_json, _ss_code, _valid_uuid,
+        attach_chat_photos, build_create_payload,
     )
     from app.services.ideation_turn_service import _resolve_ideation_config
 
@@ -2348,9 +2350,11 @@ def _idea_create_execute(db, user: dict, args: dict) -> dict:
     except IdeationServiceError as exc:
         code = exc.status_code
         if isinstance(code, int) and 400 <= code < 500 and code not in (408, 429):
-            # A permanent refusal (scope, key, payload): its own line, with no detail from ss.
-            logger.warning("agent: the idea create was refused by ss (%s)", code, exc_info=True)
-            raise AppException(status_code=422, message=IDEA_REFUSED, code="IDEATION_REFUSED")
+            # A permanent refusal (scope, key, payload): its own line, with no detail from ss. A 422 is ss
+            # refusing the item itself (SS #235 `unknown_type`): said so, never retried.
+            logger.warning("agent: the idea create was refused by ss (%s %s)", code, _ss_code(exc), exc_info=True)
+            message = IDEA_TYPE_REFUSED if code == 422 else IDEA_REFUSED
+            raise AppException(status_code=422, message=message, code="IDEATION_REFUSED")
         logger.warning("agent: the idea create failed", exc_info=True)
         raise AppException(status_code=502, message=IDEA_NOT_CREATED, code="IDEATION_UNREACHABLE")
     except HTTPException:

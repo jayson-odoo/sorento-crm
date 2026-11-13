@@ -100,26 +100,26 @@ def _word_for(contact_id: Any) -> Any:
 def is_staff_user(db: Session, contact_id: str) -> bool:
     """True when an ACTIVE, not trashed CRM user linked to the contact (INTERNAL
     `respond_contacts.id`) holds at least one not trashed role outside
-    `user_service.NON_STAFF_ROLE_SLUGS` (portal_user, guest): the people lookups' own staff
-    definition (`user_service._holds_staff_role`), whatever the role. This, not `classify`,
+    `user_service.NON_STAFF_ROLE_SLUGS` (portal_user, guest): the ONE staff rule
+    (`user_service.holds_staff_role`), whatever the role. This, not `classify`,
     decides chatbot document access (V1-DOC-SCOPE, owner ruling 16 Oct 2026): deactivating or
     trashing the user revokes it, and a dealer's portal login, a user with no live role, an
     integration (act-as) user or a `sales_agents.contact_id` link (master data) grants nothing."""
-    from app.models.user import User, UserRole, UserRoleAssignment
-    from app.services.user_service import NON_STAFF_ROLE_SLUGS
+    from app.models.user import User
+    from app.services.user_service import holds_staff_role
 
-    users, roles, assigned = User.__table__, UserRole.__table__, UserRoleAssignment.__table__
-    held = sa.exists().where(
-        users.c.respond_contact_id == str(contact_id),
-        users.c.status == "ACTIVE",
-        users.c.is_trashed.is_(False),
-        users.c.is_integration.is_(False),
-        assigned.c.user_id == users.c.id,
-        assigned.c.role_id == roles.c.id,
-        roles.c.slug.notin_(NON_STAFF_ROLE_SLUGS),
-        roles.c.is_trashed.is_(False),
+    staff = (
+        db.query(User.id)
+        .filter(
+            User.respond_contact_id == str(contact_id),
+            User.status == "ACTIVE",
+            User.is_trashed.is_(False),
+            User.is_integration.is_(False),
+            holds_staff_role(),
+        )
+        .first()
     )
-    return bool(db.execute(sa.select(held)).scalar())
+    return staff is not None
 
 
 def is_salesperson_user(db: Session, contact_id: str) -> bool:

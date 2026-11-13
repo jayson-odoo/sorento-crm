@@ -741,3 +741,47 @@ def test_B_the_list_without_type_is_unchanged(gw):
     gw.fake.route("GET", "/embed/ideas", json_body=[])
     gw.client.get(f"{BASE}/ideas", params={"filter": "archived", "colour": "red"})
     assert gw.fake.calls[0]["query"] == {"filter": "archived"}
+
+
+# --------------------------------------------------------------------------- #
+# SS #235: an ss 422 (`unknown_type`) on create is a plain reply, never retried #
+# --------------------------------------------------------------------------- #
+UNKNOWN_TYPE = {"error": {"code": "unknown_type", "message": "Unknown idea type: issue."}}
+TYPE_REFUSED_EN = "I couldn't file this as that type. Please send it again."
+
+
+@pytest.mark.parametrize("code", ["unknown_type", "something_else"])
+def test_SS235_the_bot_lane_answers_an_ss_422_plainly_and_does_not_retry(env, code):  # noqa: F811
+    from app.services.ideation_turn_service import IdeationServiceError
+
+    env.ready()
+    env.create_result = IdeationServiceError(
+        "create idea request failed", status_code=422, response_detail={"error": {"code": code, "message": "x"}}
+    )
+    out = env.turn(_issue(env, language="en"))
+    assert out["reply_text"] == TYPE_REFUSED_EN
+    assert len(env.create_calls) == 1
+
+
+@pytest.mark.parametrize("language", ["ms", "zh"])
+def test_SS235_the_type_refused_reply_exists_in_malay_and_chinese(language):
+    from app.services.chatbot_reply_copy import CHATBOT_REPLY_COPY
+
+    text_ = CHATBOT_REPLY_COPY[f"ideation_capture_type_refused.{language}"][1]
+    assert text_.strip() and text_ != TYPE_REFUSED_EN
+
+
+def test_SS235_the_staff_create_relays_an_ss_422_with_its_message(gw):
+    gw.fake.route("POST", "/embed/ideas", status=422, json_body=UNKNOWN_TYPE)
+    resp = gw.client.post(f"{BASE}/ideas", json={"problem": "p", "type": "issue"})
+    assert resp.status_code == 422, resp.text
+    assert "Unknown idea type: issue." in resp.text
+    assert len([c for c in gw.fake.calls if c["method"] == "POST"]) == 1
+
+
+def test_SS235_the_staff_edit_relays_an_ss_422_with_its_message(gw):
+    gw.fake.route("PATCH", f"/embed/ideas/{IDEA}", status=422, json_body=UNKNOWN_TYPE)
+    resp = gw.client.patch(f"{BASE}/ideas/{IDEA}", json={"type": "issue"})
+    assert resp.status_code == 422, resp.text
+    assert "Unknown idea type: issue." in resp.text
+    assert len([c for c in gw.fake.calls if c["method"] == "PATCH"]) == 1

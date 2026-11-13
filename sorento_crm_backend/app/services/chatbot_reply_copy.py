@@ -392,6 +392,19 @@ IDEATION_CAPTURE_TEST_TURN = {
     "ms": "Giliran ujian: tiada apa-apa dihantar.",
     "zh": "测试对话：没有发送任何内容。",
 }
+#: Round 6 (review 5): the dealer's own CRM user could not be set up (its phone already on another
+#: user, the role missing). Said plainly; the cause is logged.
+IDEATION_CAPTURE_ACCOUNT_FAILED = {
+    "en": "I couldn't set up your account to file this. Please ask your salesperson.",
+    "ms": "Saya tidak dapat menyediakan akaun anda untuk menghantar ini. Sila tanya jurujual anda.",
+    "zh": "我无法为您设置账户来提交这个内容。请联系您的销售人员。",
+}
+#: SS #235: ss refused the item (an unknown type, any 422 on create). Plain words, no retry.
+IDEATION_CAPTURE_TYPE_REFUSED = {
+    "en": "I couldn't file this as that type. Please send it again.",
+    "ms": "Saya tidak dapat menghantar ini sebagai jenis itu. Sila hantar sekali lagi.",
+    "zh": "我无法以该类型提交这个内容。请再发送一次。",
+}
 IDEATION_CAPTURE_ERROR = {
     "en": "Sorry, I couldn't save that idea just now. Please try again in a moment.",
     "ms": "Maaf, saya tidak dapat menyimpan idea itu sekarang. Sila cuba lagi sebentar nanti.",
@@ -497,6 +510,8 @@ FALLBACK_REPLY_COPY: dict[str, tuple[dict[str, str], tuple[str, ...]]] = {
     "ideation_capture_complete_issue": (IDEATION_CAPTURE_COMPLETE_ISSUE, ("idea_number", "title")),
     "ideation_capture_complete_issue_photos": (IDEATION_CAPTURE_COMPLETE_ISSUE_PHOTOS, ("count",)),
     "ideation_capture_test_turn": (IDEATION_CAPTURE_TEST_TURN, ()),
+    "ideation_capture_account_failed": (IDEATION_CAPTURE_ACCOUNT_FAILED, ()),
+    "ideation_capture_type_refused": (IDEATION_CAPTURE_TYPE_REFUSED, ()),
     "ideation_capture_error": (IDEATION_CAPTURE_ERROR, ()),
     "ideation_capture_config_error": (IDEATION_CAPTURE_CONFIG_ERROR, ()),
 }

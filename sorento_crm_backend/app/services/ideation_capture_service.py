@@ -139,15 +139,20 @@ def _missing_required(fields: dict[str, str]) -> list[str]:
     return [key for key in _REQUIRED_FIELDS if not (fields.get(key) or "").strip()]
 
 
+def _ss_code(exc: IdeationServiceError) -> Any:
+    """The `error.code` of an ss error body (`{"error": {"code", "message"}}`), else None."""
+    detail = exc.response_detail if isinstance(exc.response_detail, dict) else {}
+    err = detail.get("error")
+    return err.get("code") if isinstance(err, dict) else None
+
+
 def _ss_failure(exc: IdeationServiceError, step: str, respond_io_id: Any) -> str:
     """Log an ss failure and return its reply kind. A 4xx other than 408/429 will not heal on
     a retry (a scope, key or payload fault), so it is `config_error` at ERROR; everything else
     stays `error` at WARNING."""
     status = exc.status_code
     if isinstance(status, int) and 400 <= status < 500 and status not in (408, 429):
-        detail = exc.response_detail if isinstance(exc.response_detail, dict) else {}
-        err = detail.get("error")
-        code = err.get("code") if isinstance(err, dict) else None
+        code = _ss_code(exc)
         logger.error(
             "ideation %s rejected by ss (permanent) status=%s code=%s respond_io_id=%s",
             step, status, code, respond_io_id, exc_info=True,
@@ -215,6 +220,15 @@ def _access_user(db: Session, respond_io_id: str) -> User | None:
     return user
 
 
+def _signs_in(db: Session, user: User | None) -> bool:
+    """Can this user open a CRM link? Not a dealer's own user, whose roles are all non-staff (D-7)."""
+    from app.services.user_service import only_non_staff_roles
+
+    if user is None:
+        return False
+    return db.query(User.id).filter(User.id == user.id, only_non_staff_roles()).first() is None
+
+
 def _linked_user(db: Session, contact_id: str) -> User | None:
     return db.query(User).filter(User.respond_contact_id == str(contact_id)).first()
 
@@ -244,7 +258,9 @@ def ensure_dealer_user(db: Session, contact: Any) -> User | None:
     role `portal_user` only, name and phone from the contact, no password. An existing linked user is
     returned, never a second (D-5, D-6); None for an ineligible contact. The audit names the WhatsApp
     assistant acting for the contact (`actor_type` contact, `auth_method` agent, as the agent's dealer
-    writes). A lost race on the one-user-per-contact index returns the winner's user."""
+    writes). `create_user` commits the session. A lost race on the one-user-per-contact index returns
+    the winner's user (`create_user` rolled the session back); any other refusal (the phone already on
+    another user) is logged with its cause and returns None."""
     from sqlalchemy.exc import IntegrityError
 
     from app.audit_context import AuditActor, actor_scope
@@ -265,19 +281,45 @@ def ensure_dealer_user(db: Session, contact: Any) -> User | None:
     actor = AuditActor(
         actor_type="contact", auth_method="agent", contact_id=str(contact.id), tool_name="whatsapp_assistant"
     )
-    savepoint = db.begin_nested()
     try:
         with actor_scope(actor, db=db):
             return UserService(db).create_user(
                 UserCreate(name=contact.name, respond_contact_id=str(contact.id), role_ids=[role.id])
             )
-    except (AppException, IntegrityError):
-        # Another message of the same contact created it first (or the create was refused): back to
-        # the savepoint, then whoever holds the contact now.
-        if savepoint.is_active:
-            savepoint.rollback()
-        logger.info("ideation: dealer user not created for contact %s", contact.id, exc_info=True)
-        return _linked_user(db, contact.id)
+    except (AppException, IntegrityError) as exc:
+        winner = _linked_user(db, contact.id)
+        if winner is None:
+            logger.warning(
+                "ideation: dealer user not created for contact %s: %s %s",
+                contact.id, getattr(exc, "code", type(exc).__name__), getattr(exc, "message", exc),
+            )
+        return winner
+
+
+#: How recent the contact's own inbound message must be for its turn to create a dealer user.
+_OWN_MESSAGE_WINDOW = timedelta(minutes=10)
+
+
+def _is_own_latest_message(db: Session, respond_io_id: str, message_text: str) -> bool:
+    """Is `message_text` this contact's own latest inbound WhatsApp message (a live chatbot turn of the
+    contact in the last 10 minutes, its text the respond.io envelope `message.message.message.text`)?
+    A dealer user is created only then (round 6, should-fix 1): a call naming a contact, with a text
+    that contact never sent, creates nothing."""
+    from app.models.chatbot_turn import ChatbotTurn
+
+    latest = (
+        db.query(ChatbotTurn.envelope["message"]["message"]["message"]["text"].astext)
+        .filter(
+            ChatbotTurn.contact_respond_id == respond_io_id,
+            ChatbotTurn.is_test.is_(False),
+            ChatbotTurn.ingress != "console",
+            ChatbotTurn.created_at >= datetime.now(timezone.utc) - _OWN_MESSAGE_WINDOW,
+        )
+        .order_by(ChatbotTurn.created_at.desc())
+        .limit(1)
+        .scalar()
+    )
+    return latest is not None and latest.strip() == (message_text or "").strip()
 
 
 def _missing_list(sent: dict[str, Any], photos: int = 0) -> list[str]:
@@ -512,25 +554,19 @@ def handle_capture_turn(
     user = _access_user(db, respond_io_id)
     # An eligible dealer with no CRM user yet gets one, but only once this turn really files (D-4).
     dealer = _unlinked_dealer(db, respond_io_id) if user is None else None
-    if user is None and dealer is None:
-        return finish("no_access", "no_access", {}, language)
     if dealer is not None and is_test:
         return finish("test_turn", "test_turn", {}, language, persist=False)
-
-    def filer() -> User | None:
-        """Who files: the linked user, else the dealer's own user, created now (the turn files)."""
-        if user is not None:
-            return user
-        if ensure_dealer_user(db, dealer) is None:
-            return None
-        return _access_user(db, respond_io_id)
+    if dealer is not None and not _is_own_latest_message(db, respond_io_id, text_in):
+        dealer = None
+    if user is None and dealer is None:
+        return finish("no_access", "no_access", {}, language)
 
     if isinstance(choice, int):
         idea = held["similar"][choice - 1]
         facts = {
             "idea_number": idea.get("idea_number"),
             "title": idea.get("title"),
-            "link": _idea_link(idea.get("idea_id")),
+            "link": _idea_link(idea.get("idea_id")) if _signs_in(db, user) else None,
         }
         return finish("similar_picked", "similar_picked", facts, language)
 
@@ -542,9 +578,6 @@ def handle_capture_turn(
         source_text = held["message_text"]
         intake_ref = _valid_uuid(held.get("intake_ref")) or str(uuid.uuid4())
         submission_type = normalise_type(held.get("type"))
-        user = filer()
-        if user is None:
-            return finish("no_access", "no_access", {}, language)
     else:
         assert extraction is not None
         if extraction.failed:
@@ -578,28 +611,28 @@ def handle_capture_turn(
                 # statement, never a second identical question.
                 return finish("ask_idea_gave_up", "ask_idea_gave_up", {}, language)
             return finish("ask_idea", "ask_idea", {"type": submission_type}, language)
-        user = filer()
-        if user is None:
-            return finish("no_access", "no_access", {}, language)
         # Minted once the create is decided; a list offer keeps it so NEW (even retried after
         # an ss failure) lands on the same idea.
         intake_ref = str(uuid.uuid4())
 
-        try:
-            found = call_similar_own(
-                config.base_url,
-                config.api_key,
-                {
-                    "product_id": config.product_id,
-                    "text": text_in,
-                    "submitter_crm_user_id": user.id,
-                    "submitter_phone": contact.phone_number,
-                    "is_test": bool(is_test),
-                },
-            )
-        except IdeationServiceError as exc:
-            kind = _ss_failure(exc, "similar-own", respond_io_id)
-            return finish(kind, kind, {}, language, persist=False)
+        # A dealer with no user yet owns no items in ss: nothing to look up.
+        found: dict[str, Any] = {"matches": []}
+        if user is not None:
+            try:
+                found = call_similar_own(
+                    config.base_url,
+                    config.api_key,
+                    {
+                        "product_id": config.product_id,
+                        "text": text_in,
+                        "submitter_crm_user_id": user.id,
+                        "submitter_phone": contact.phone_number,
+                        "is_test": bool(is_test),
+                    },
+                )
+            except IdeationServiceError as exc:
+                kind = _ss_failure(exc, "similar-own", respond_io_id)
+                return finish(kind, kind, {}, language, persist=False)
 
         raw = [m for m in (found.get("matches") or []) if isinstance(m, dict)]
         shown = [
@@ -612,10 +645,11 @@ def handle_capture_turn(
             if (clean := _valid_uuid(m.get("idea_id")))
         ][:_MAX_SIMILAR]
         if shown:
+            links = _signs_in(db, user)
             facts = {
-                "similar": [{**s, "link": _idea_link(s["idea_id"])} for s in shown],
+                "similar": [{**s, "link": _idea_link(s["idea_id"]) if links else None} for s in shown],
                 # ss returns no total: a full page of 3 may be hiding more.
-                "see_all": _crm_link("ideas?view=mine") if len(raw) >= _MAX_SIMILAR else None,
+                "see_all": _crm_link("ideas?view=mine") if links and len(raw) >= _MAX_SIMILAR else None,
             }
             pointer: dict[str, Any] = {
                 "status": "similar_offered",
@@ -632,6 +666,14 @@ def handle_capture_turn(
             if extraction.language in FALLBACK_LANGUAGES:
                 pointer["language"] = extraction.language
             return finish("similar_offered", "similar_offered", facts, language, pointer=pointer)
+
+    if user is None:
+        # The dealer's own user, created only now that this turn really files (D-4).
+        if ensure_dealer_user(db, dealer) is not None:
+            user = _access_user(db, respond_io_id)
+        if user is None:
+            logger.warning("ideation: dealer %s cannot file (no user or no submit permission)", respond_io_id)
+            return finish("account_failed", "account_failed", {}, language, pointer=held, persist=False)
 
     payload = build_create_payload(
         config,
@@ -650,11 +692,21 @@ def handle_capture_turn(
     try:
         result = call_create_idea(config.base_url, config.api_key, payload)
     except IdeationServiceError as exc:
-        kind = _ss_failure(exc, "capture create", respond_io_id)
+        if exc.status_code == 422:
+            # SS #235: ss refuses the item itself (`unknown_type`, or any other 422). Plain words, no
+            # retry; never the "set up wrong" reply.
+            logger.warning(
+                "ideation capture create refused by ss: status=422 code=%s respond_io_id=%s",
+                _ss_code(exc), respond_io_id,
+            )
+            kind = "type_refused"
+        else:
+            kind = _ss_failure(exc, "capture create", respond_io_id)
         return finish(kind, kind, {}, language, pointer=held, persist=False)
 
-    # The CRM link is built here from the id; ss's public `link` is never relayed.
-    link = _idea_link(result.get("idea_id"))
+    # The CRM link is built here from the id; ss's public `link` is never relayed. A dealer's own
+    # user cannot sign in to the CRM, so its reply carries none.
+    link = _idea_link(result.get("idea_id")) if _signs_in(db, user) else None
     # A test item gets no photos (I-5).
     photos = 0 if is_test else attach_chat_photos(db, user_id=user.id, idea_id=result.get("idea_id"))
     facts = {

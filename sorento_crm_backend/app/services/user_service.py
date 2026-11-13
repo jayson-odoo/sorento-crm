@@ -178,16 +178,18 @@ def member_serves_brand(member_brand_codes, brand_code: Optional[str]) -> bool:
 NON_STAFF_ROLE_SLUGS = frozenset({"portal_user", "guest"})
 
 
-def _holds_staff_role():
+def holds_staff_role():
+    """The ONE staff rule: the user holds a live (not trashed) role outside `NON_STAFF_ROLE_SLUGS`.
+    A dealer's own CRM user (`portal_user` only) and a trashed staff role make no one staff."""
     return User.role_assignments.any(
-        UserRoleAssignment.role.has(UserRole.slug.notin_(NON_STAFF_ROLE_SLUGS))
+        UserRoleAssignment.role.has(UserRole.slug.notin_(NON_STAFF_ROLE_SLUGS) & UserRole.is_trashed.is_(False))
     )
 
 
 def only_non_staff_roles():
-    """The user holds at least one role and every one is non-staff (`NON_STAFF_ROLE_SLUGS`): a
-    dealer's own CRM user (WA-COMPLAINT-INTAKE D-7, D-8). A user with no role at all is not one."""
-    return User.role_assignments.any() & ~_holds_staff_role()
+    """The user holds at least one role and none counts as staff (`holds_staff_role`): a dealer's own
+    CRM user (WA-COMPLAINT-INTAKE D-7, D-8). A user with no role at all is not one."""
+    return User.role_assignments.any() & ~holds_staff_role()
 
 class UserService:
     """Service for user operations."""
@@ -371,7 +373,7 @@ class UserService:
         """Holds a role other than the portal / guest ones, and is not an integration account."""
         return (
             self.db.query(User.id)
-            .filter(User.id == str(user_id), User.is_integration == False, _holds_staff_role())  # noqa: E712
+            .filter(User.id == str(user_id), User.is_integration == False, holds_staff_role())  # noqa: E712
             .first()
             is not None
         )
@@ -395,7 +397,7 @@ class UserService:
         q = self.db.query(User).filter(
             User.is_trashed == False,  # noqa: E712
             User.is_integration == False,  # noqa: E712
-            _holds_staff_role(),
+            holds_staff_role(),
         )
         if not include_inactive:
             q = q.filter(User.status == UserStatus.ACTIVE.value)

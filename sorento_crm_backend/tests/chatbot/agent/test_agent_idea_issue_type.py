@@ -246,3 +246,17 @@ def test_I3_a_note_with_nothing_missing_has_no_empty_not_given(db, ss, monkeypat
     assert [s["status"] for s in outcome.steps] == ["done"], outcome.steps
     assert "Not given" not in outcome.reply_text
     assert "IDEA-0300" in outcome.reply_text
+
+
+def test_SS235_an_ss_422_on_create_is_a_plain_refusal_sent_once(db, ss):  # noqa: F811
+    from tests.chatbot.agent.test_agent_writes_ideas import failure_texts
+
+    w = make_world(db)
+    ss.route("POST", CREATE_PATH, status=422,
+             json_body={"error": {"code": "unknown_type", "message": "ZZTDETAIL unknown type"}})
+    _, row = store(db, w, [(CREATE, {**ISSUE, "type": "issue"})], live=True)
+    outcome = confirm(db, w, row)
+    text = " | ".join(failure_texts(outcome))
+    assert "does not accept that type" in text, text
+    assert "ZZTDETAIL" not in text
+    assert len(posts(ss, CREATE_PATH)) == 1
