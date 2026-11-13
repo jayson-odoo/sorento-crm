@@ -285,7 +285,9 @@ def test_ac22_a_letters_only_miss_alone_writes_one_offered_entry_with_the_all_pa
     assert len(entries) == 1, entries
     assert str(entries[0].get("typed", "")).upper() == LT_TYPED, entries
     rows = _assert_offered_entry(entries[0], [LT_CODE])
-    assert rows[0]["all_parts"] is True, rows
+    # Lead sign-off: the flag is the ranking's own `holds_every_typed_part`. A letters-only token is ONE part
+    # ("QMRKXVB"), which QMR7731-KX-VB does not hold whole, so the key is present and False here.
+    assert rows[0]["all_parts"] is False, rows
 
 
 def test_ac22_a_multi_code_ask_writes_one_entry_per_missed_code_and_none_for_the_found_one(session_factory, monkeypatch, stub_access):  # noqa: F811
