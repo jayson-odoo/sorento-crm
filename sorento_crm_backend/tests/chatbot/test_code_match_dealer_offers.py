@@ -672,17 +672,7 @@ def _alt_world(
     return c
 
 
-@pytest.mark.parametrize("who", ["dealer", "staff"])
-def test_ac20j_a_discontinued_close_code_is_replaced_by_its_active_alternative(session_factory, monkeypatch, stub_access, who):  # noqa: F811
-    c = _alt_world(session_factory, monkeypatch, stub_access, [OLD, FAR_ALT], discontinued=[OLD], links=[(OLD, FAR_ALT)])
-    if who == "staff":
-        c.as_staff()
-    text = c.say("TWKT8047 stock", stock(product("TWKT8047")))
-    assert _word(FAR_ALT, text), text
-    assert not _word(OLD, text) and OLD not in str(c.stored_question), (text, c.stored_question)
-    if who == "dealer":
-        assert text == f"Couldn't find TWKT8047. Did you mean {FAR_ALT}?", text
-        assert _option_codes(c) == [FAR_ALT], c.stored_question
+# AC-20j (replacement substitution) was rejected by the owner (Q4, 13 Nov): strict, no substitution.
 
 
 @pytest.mark.parametrize("state", ["no_link", "inactive_alternative", "discontinued_alternative"])
@@ -736,3 +726,47 @@ def test_ac20l_a_replacement_in_another_company_is_never_offered(session_factory
     text = c.say("TWKT8047 stock", stock(product("TWKT8047")))
     assert not _word(FAR_ALT, text) and not _word(OLD, text), text
     assert "Did you mean" not in text, text
+
+
+# --------------------------------------------------------------------------- owner Q4 (13 Nov): strict, only live codes are offered
+
+
+@pytest.mark.parametrize("who", ["dealer", "staff"])
+def test_ac20m_a_typo_near_two_discontinued_codes_offers_only_the_live_close_code(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+    """The SRTBF31514 replay shape: SBF31514 and SBF31514-NEW are active but discontinued, SBF31511 is live, and all
+    three are within the trigram floor of the typo (0.50, 0.40, 0.50)."""
+    old, old_new, live = "SBF31514", "SBF31514-NEW", "SBF31511"
+    c = _alt_world(session_factory, monkeypatch, stub_access, [old, old_new, live], discontinued=[old, old_new], links=[])
+    if who == "staff":
+        c.as_staff()
+    text = c.say("SBF31541 stock", stock(product("SBF31541")))
+    assert _word(live, text), text
+    for code in (old, old_new):
+        assert not _word(code, text), (code, text)
+        assert code not in str(c.stored_question), (code, c.stored_question)
+    if who == "dealer":
+        assert text == f"Couldn't find SBF31541. Did you mean {live}?", text
+        assert _option_codes(c) == [live], c.stored_question
+
+
+@pytest.mark.parametrize("who", ["dealer", "staff"])
+def test_ac20m_the_b52_shape_offers_the_live_variant_never_the_discontinued_code(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+    old, live, typed = "SRTKS8047", "SRTKS8047-NEW", "SRTKT8047"
+    c = _alt_world(session_factory, monkeypatch, stub_access, [old, live], discontinued=[old], links=[])
+    db = session_factory()
+    try:
+        # The live variant must be a real close code (the replay showed it reaching the offer): at or above the
+        # resolver's did-you-mean floor (ENTITY_MISS_SUGGEST_FLOOR, 0.30).
+        sim = db.execute(
+            sql_text("SELECT similarity(lower(:t), regexp_replace(lower(:c), '[^a-z0-9]', '', 'g'))"), {"t": typed, "c": live}
+        ).scalar()
+    finally:
+        db.close()
+    assert sim >= 0.30, sim
+    if who == "staff":
+        c.as_staff()
+    text = c.say(f"{typed} stock", stock(product(typed)))
+    assert _word(live, text), text
+    assert not _word(old, text) and old not in str(c.stored_question), (text, c.stored_question)
+    if who == "dealer":
+        assert text == f"Couldn't find {typed}. Did you mean {live}?", text
