@@ -331,6 +331,14 @@ export function OrderInquiryDetail({ id }: { id: string }) {
         : !poViaAutocount && selectedLines.length !== 1
           ? 'Tick one line to link it by hand.'
           : undefined;
+  // Change PO needs a PO tied in AutoCount on every ticked line (the shared rule).
+  const changeWhyNot =
+    poWhyNot ??
+    (!poViaAutocount
+      ? 'Not in AutoCount yet'
+      : selectedLines.every((l) => l.in_autocount_link)
+        ? undefined
+        : 'Each ticked line needs a PO linked');
   const autocountLinked = selectedLinked.filter((l) => canLinkPo && l.in_autocount_link);
   const crmOnlyLinked = selectedLinked.filter((l) => !(canLinkPo && l.in_autocount_link));
   // Only AutoCount-tied lines are ticked and AutoCount cannot unlink now: the item is greyed.
@@ -860,9 +868,10 @@ export function OrderInquiryDetail({ id }: { id: string }) {
                       </DropdownMenuItem>
                       {canLinkPo ? (
                         <DropdownMenuItem
-                          disabled={Boolean(poWhyNot) || !poViaAutocount}
+                          disabled={Boolean(changeWhyNot)}
+                          title={changeWhyNot}
                           onSelect={
-                            poWhyNot || !poViaAutocount
+                            changeWhyNot
                               ? undefined
                               : (e) => {
                                   e.preventDefault();
