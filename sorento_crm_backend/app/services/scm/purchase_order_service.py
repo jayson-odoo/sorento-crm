@@ -21,7 +21,8 @@ from datetime import date, datetime
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Optional, Sequence
 
-from sqlalchemy import func, or_, text
+from sqlalchemy import any_, func, or_, text
+from sqlalchemy.dialects.postgresql import array
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.inventory import Warehouse
@@ -39,6 +40,7 @@ from app.services.scm import order_link_service, priority, supply_claim
 from app.services.scm.so_party import fill_party, so_parties, with_party
 from app.services.scm.history_sources import PO_HISTORY_SOURCE, SPO_HISTORY_SOURCE
 from app.services.scm.spo_conversion_service import SOURCE_SYSTEM as CRM_SPO_SOURCE
+from app.utils.list_search import search_values_filter
 
 # Mirror of ``scm.on_order_v``'s status filter (M4-D5/D6): a PO counts as incoming
 # supply only in these statuses AND while it still has an unreceived OPEN line.
@@ -757,8 +759,19 @@ class PurchaseOrderService:
             joinedload(PurchaseOrder.supplier),
         )
 
+    @staticmethod
+    def _search_match(values: list[str]):
+        """A purchase order matching any of `values` on its number or supplier name: one
+        `ILIKE ANY` per column, so the statement does not grow with the number of values."""
+        likes = array([f"%{v}%" for v in values])
+        return or_(
+            PurchaseOrder.po_number.ilike(any_(likes)),
+            PurchaseOrder.supplier.has(Supplier.supplier_name.ilike(any_(likes))),
+        )
+
     def list(self, page: int, limit: int, sort: Optional[str], direction: str,
-             query: Optional[str], status: Optional[Sequence[str] | str], supplier: Optional[str],
+             query: Optional[Sequence[str] | str], status: Optional[Sequence[str] | str],
+             supplier: Optional[str],
              *, product_code: Optional[str] = None,
              outstanding: Optional[bool] = None,
              allocated: Optional[bool] = None,
@@ -846,12 +859,10 @@ class PurchaseOrderService:
             )
         if supplier:
             q = q.filter(PurchaseOrder.supplier.has(Supplier.supplier_code == supplier))
-        if query:
-            like = f"%{query}%"
-            q = q.filter(
-                (PurchaseOrder.po_number.ilike(like))
-                | (PurchaseOrder.supplier.has(Supplier.supplier_name.ilike(like)))
-            )
+        # The route has already cleaned the values (`search_values`); a lone string is one value.
+        terms = [query.strip()] if isinstance(query, str) else query
+        if terms and any(terms):
+            q = q.filter(search_values_filter(list(terms), self._search_match))
         sort_cols = {
             "po_number": PurchaseOrder.po_number,
             "status": PurchaseOrder.status,

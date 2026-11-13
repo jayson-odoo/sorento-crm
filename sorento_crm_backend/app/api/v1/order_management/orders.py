@@ -27,6 +27,7 @@ from app.services.uuid_list_param import parse_uuid_list
 from app.services.document_relations import RELATED_SORT_PATTERN
 from app.config import settings as app_settings  # noqa: F401  tests patch orders.app_settings
 from app.utils.heavy_work import heavy
+from app.utils.list_search import search_values
 from app.api.v1._external_api_key import request_has_valid_external_api_key
 
 
@@ -298,7 +299,9 @@ def get_orders(
     request: Request,
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=1000),
-    query: Optional[str] = Query(None),
+    query: Optional[list[str]] = Query(
+        None, description="Search values, one repeated param each; an order matching any is kept."
+    ),
     entities: Optional[list[str]] = Query(
         None,
         description=(
@@ -481,6 +484,8 @@ def get_orders(
             detail=f"allowed: {', '.join(sorted(ORDER_GROUP_BY_AXES))}",
             code="invalid_group_by",
         )
+    # Outside the try below, which turns anything but an HTTPException into a 500.
+    search = search_values(query, "Search")
 
     try:
         _resolved_customer_ids = parse_uuid_list(customer_ids, param_name="customer_ids")
@@ -570,7 +575,7 @@ def get_orders(
         result = service.list_orders(
             page=page,
             limit=limit,
-            query=query,
+            query=search,
             entities=_normalize_entities(entities),
             order_ids=parse_uuid_list(order_ids, param_name="order_ids"),
             customer_ids=_resolved_customer_ids,

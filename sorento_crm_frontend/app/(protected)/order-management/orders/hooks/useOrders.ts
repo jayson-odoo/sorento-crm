@@ -19,14 +19,22 @@ import type { ListQueryFilterGroup } from '@/lib/list-query/listQueryService';
 import { decodeAdvancedFilter } from '@/lib/listNavQuery';
 import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
+import { searchQueryValue } from '@/lib/searchChips';
 
 /** Everything the orders list filters by. */
-export type OrdersListParams = DataGridApiFetchParams & {
+export type OrdersListParams = Omit<DataGridApiFetchParams, 'searchQuery'> & {
+  /** One search value, or several (search chips): a delivery order matching any is listed. */
+  searchQuery?: string | string[];
   customer_id?: string;
   order_status_id?: string;
   has_order_lines?: 'all' | 'yes' | 'no';
   advancedFilter?: ListQueryFilterGroup | null;
 };
+
+/** The search values, blanks dropped, however they were held. */
+function asSearchValues(q: string | string[] | undefined): string[] {
+  return (Array.isArray(q) ? q : [q ?? '']).filter((v) => v.trim() !== '');
+}
 
 /**
  * The list's React Query key. The detail page's pager builds the SAME key from
@@ -39,7 +47,9 @@ export function ordersListQueryKey(params: OrdersListParams): QueryKey {
     params.pageIndex,
     params.pageSize,
     params.sorting,
-    params.searchQuery,
+    // One value keys as a string however it was held: chips `['DO1']` and typed `DO1` are
+    // one request, one cache entry.
+    searchQueryValue(asSearchValues(params.searchQuery)),
     params.customer_id,
     params.order_status_id,
     params.has_order_lines,
@@ -61,7 +71,8 @@ export function fetchOrdersPage(
       limit: params.pageSize,
       sort: sortField || 'created_at',
       dir: sortDirection,
-      quick_search: params.searchQuery || undefined,
+      // A list of values on `orders` (search chips); one value still goes as a string.
+      quick_search: searchQueryValue(asSearchValues(params.searchQuery)),
       order_status_id:
         params.order_status_id && params.order_status_id !== 'all'
           ? params.order_status_id
@@ -86,7 +97,8 @@ export function ordersListParamsFromUrl(params: ListPagerParams): OrdersListPara
     pageIndex: params.pageIndex,
     pageSize: params.pageSize,
     sorting: params.sorting,
-    searchQuery: params.searchQuery,
+    // Every `query` on the URL: the list searches with chips.
+    searchQuery: params.searchQueries ?? params.searchQuery,
     order_status_id: params.filters.order_status_id,
     has_order_lines: lines === 'yes' || lines === 'no' ? lines : 'all',
     advancedFilter:

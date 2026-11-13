@@ -10,9 +10,9 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.models.marketing import Promotion, PromotionProduct
 from app.services.marketing_service import attachment_state_clause, validated_attachment_states
-from app.services.order_service import resolve_order_status_ids
+from app.services.order_service import OrderService, resolve_order_status_ids
 from app.utils.multi_value import multi_values
-from app.models.order import Customer, Order, OrderLine
+from app.models.order import Order, OrderLine
 from app.models.product import Product
 from app.models.procurement import Supplier
 from app.models.workflow_forms import WorkflowFormDefinition, WorkflowSubmission
@@ -24,6 +24,7 @@ from app.services.product_service import malaysia_day_range_filters
 from app.services.query.filter_compiler import compile_optional_filter
 from app.services.sla_service import MALAYSIA_TZ
 from app.services.workflow_submission_dynamic_list_query import merge_submission_field_maps
+from app.utils.list_search import search_values_filter
 
 
 def _json_safe(val: Any) -> Any:
@@ -192,14 +193,13 @@ class ListQueryExportService:
             q = q.filter(exists().where(OrderLine.order_id == Order.id))
         elif hol == "no":
             q = q.filter(not_(exists().where(OrderLine.order_id == Order.id)))
-        if req.quick_search:
+        # The route has already cleaned the values (`search_values`); a lone string is one
+        # value. The list's own match, so the export holds the rows the list shows.
+        qs = req.quick_search
+        terms = [qs.strip()] if isinstance(qs, str) else qs
+        if terms and any(terms):
             q = q.filter(
-                or_(
-                    Order.order_number.ilike(f"%{req.quick_search}%"),
-                    Order.customer.has(Customer.customer_name.ilike(f"%{req.quick_search}%")),
-                    Order.customer.has(Customer.customer_code.ilike(f"%{req.quick_search}%")),
-                    Order.debtor_name.ilike(f"%{req.quick_search}%"),
-                )
+                search_values_filter(list(terms), OrderService(self.db).quick_search_match)
             )
         if clause is not None:
             q = q.filter(clause)

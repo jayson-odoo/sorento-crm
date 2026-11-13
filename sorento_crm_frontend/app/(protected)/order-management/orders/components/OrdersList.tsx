@@ -56,7 +56,10 @@ import type { ListQueryFilterGroup } from '@/lib/list-query/listQueryService';
 import { useImportJobDrawer } from '@/components/upload-activity';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
-import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { isSearchInFlight } from '@/hooks/useDebouncedSearch';
+import { useListChipSearch, useSearchInAddressBar } from '@/hooks/useListChipSearch';
+import { searchQueryValue } from '@/lib/searchChips';
+import { cn } from '@/lib/utils';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { useAutocountPullAction } from '@/app/(protected)/system-management/import-jobs/autocount-pull/hooks/useAutocountPull';
 import { PullScopeDialog } from '@/app/(protected)/system-management/import-jobs/autocount-pull/components/PullScopeDialog';
@@ -67,13 +70,20 @@ export default function OrdersList() {
   const { notifyImportQueued } = useImportJobDrawer();
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
+  // Search chips (SEARCH-CHIPS): each chip and the typed text is one value; a delivery order
+  // matching any of them is listed.
   const {
-    value: searchInput,
-    setValue: setSearchInput,
-    debouncedValue: searchQuery,
+    searchInput,
+    setSearchInput,
+    chips: searchChips,
+    setChips: setSearchChips,
+    searchTerms,
+    searchTermsKey,
     isSettling: searchSettling,
-    reset: resetSearch,
-  } = useDebouncedSearch();
+    restore: restoreSearch,
+    writtenSearch,
+    isOwnWrite,
+  } = useListChipSearch();
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [trackingUploadOpen, setTrackingUploadOpen] = useState(false);
   const [orderLinesImportOpen, setOrderLinesImportOpen] = useState(false);
@@ -94,9 +104,11 @@ export default function OrdersList() {
   // Back hands the list its own query string back, and the pager keeps
   // rewriting it, so the list reads it (S3-01). One hook, every list.
   useListStateFromUrl((state) => {
+    if (isOwnWrite()) return;
     setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
     setSorting(state.sorting);
-    resetSearch(state.searchQuery);
+    // Every `query` comes back as a chip, so the restored list is the one that was left.
+    restoreSearch(state.searchQueries);
     setStatusFilter(state.filters.order_status_id ?? '');
     const lines = state.filters.has_order_lines;
     setLinesFilter(lines === 'yes' || lines === 'no' ? lines : 'all');
@@ -105,13 +117,13 @@ export default function OrdersList() {
 
   // Page one when a filter CHANGES, never on mount - the mount run used to stamp
   // page 1 over the page `useListStateFromUrl` had just restored from the URL.
-  useResetPageOnFilterChange(setPagination, [searchQuery]);
+  useResetPageOnFilterChange(setPagination, [searchTermsKey]);
 
   const { data, isLoading, isPlaceholderData, isError, error, refetch, isFetching } = useOrders({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
-    searchQuery,
+    searchQuery: searchTerms,
     order_status_id: statusFilter || undefined,
     has_order_lines: linesFilter,
     advancedFilter: advancedFilter ?? undefined,
@@ -158,23 +170,37 @@ export default function OrdersList() {
     onStarted: () => setRowSelection({}),
   });
 
-  const rowHref = (row: Order) => {
-    const search = buildDetailSearch(
-      {
-        pageIndex: pagination.pageIndex,
-        pageSize: pagination.pageSize,
-        sorting,
-        searchQuery,
-      },
-      {
-        order_status_id: statusFilter || undefined,
-        has_order_lines: linesFilter !== 'all' ? linesFilter : undefined,
-        advFilter: encodeAdvancedFilter(advancedFilter),
-      },
-    );
-    const qs = search ? `?${search}` : '';
-    return `/order-management/orders/${row.id}${qs}`;
-  };
+  const detailSearch = useMemo(
+    () =>
+      buildDetailSearch(
+        {
+          pageIndex: pagination.pageIndex,
+          pageSize: pagination.pageSize,
+          sorting,
+          searchQuery: searchTerms,
+        },
+        {
+          order_status_id: statusFilter || undefined,
+          has_order_lines: linesFilter !== 'all' ? linesFilter : undefined,
+          advFilter: encodeAdvancedFilter(advancedFilter),
+        },
+      ),
+    [
+      pagination.pageIndex,
+      pagination.pageSize,
+      sorting,
+      searchTerms,
+      statusFilter,
+      linesFilter,
+      advancedFilter,
+    ],
+  );
+  // Once the search has changed, the list keeps its whole state in the address bar (Q5b), so
+  // a refresh keeps the chips.
+  useSearchInAddressBar({ detailSearch, searchTermsKey, enabled: true, writtenSearch });
+
+  const rowHref = (row: Order) =>
+    `/order-management/orders/${row.id}${detailSearch ? `?${detailSearch}` : ''}`;
 
   const columns = useMemo<ColumnDef<Order>[]>(
     () => [
@@ -361,9 +387,11 @@ export default function OrdersList() {
               <ListSearchInput
                 value={searchInput}
                 onChange={setSearchInput}
-                isSettling={isSearchInFlight(searchSettling, isFetching, searchQuery)}
+                chips={searchChips}
+                onChipsChange={setSearchChips}
+                isSettling={isSearchInFlight(searchSettling, isFetching, searchTermsKey)}
                 placeholder="Search delivery orders..."
-                className="w-56 max-w-full"
+                className={cn('w-full', searchChips.length ? 'md:w-[420px]' : 'md:w-64')}
               />
             }
             filters={{
@@ -376,7 +404,7 @@ export default function OrdersList() {
               },
               getPayload: () => ({
                 filter: advancedFilter ?? undefined,
-                quick_search: searchQuery || undefined,
+                quick_search: searchQueryValue(searchTerms),
                 order_status_id: statusFilter || undefined,
                 has_order_lines: linesFilter === 'all' ? undefined : linesFilter,
               }),
@@ -387,7 +415,7 @@ export default function OrdersList() {
               filename: 'delivery_orders_export.xlsx',
               getPayload: () => ({
                 filter: advancedFilter ?? undefined,
-                quick_search: searchQuery || undefined,
+                quick_search: searchQueryValue(searchTerms),
                 order_status_id: statusFilter || undefined,
                 has_order_lines: linesFilter === 'all' ? undefined : linesFilter,
               }),

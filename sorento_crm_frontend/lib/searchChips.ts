@@ -44,3 +44,13 @@ export function addSearchChips(
   }
   return { chips, capped };
 }
+
+/**
+ * Search values as one list param: none is `undefined`, one a string, several the list. One
+ * value keys and travels as a string however it was held, so chips `['SO1']` and typed `SO1`
+ * are one request and one cache entry.
+ */
+export function searchQueryValue(values: string[]): string | string[] | undefined {
+  if (values.length > 1) return values;
+  return values[0] || undefined;
+}

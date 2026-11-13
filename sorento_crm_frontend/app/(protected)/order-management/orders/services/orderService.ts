@@ -1,27 +1,27 @@
 import { apiFetch } from '@/lib/api';
+import { buildDataGridParams } from '@/lib/api-client';
 import type { Order, OrderFormData, OrderDetail, OrderLine, OrderLineFormData } from '../types/order.types';
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
 
 
 export async function getOrders(
-  params: DataGridApiFetchParams & {
+  params: Omit<DataGridApiFetchParams, 'searchQuery'> & {
+    /** One search value, or several (search chips, one `query` each; an order matching any). */
+    searchQuery?: string | string[];
     customer_id?: string;
     order_status_id?: string;
     has_order_lines?: 'all' | 'yes' | 'no';
   },
 ): Promise<DataGridApiResponse<Order>> {
   const { pageIndex, pageSize, sorting, searchQuery, customer_id, order_status_id, has_order_lines } = params;
-  const sortField = sorting?.[0]?.id || '';
-  const sortDirection = sorting?.[0]?.desc ? 'desc' : 'asc';
-  const queryParams = new URLSearchParams({
-    page: String(pageIndex + 1),
-    limit: String(pageSize),
-    ...(sortField ? { sort: sortField, dir: sortDirection } : {}),
-    ...(searchQuery ? { query: searchQuery } : {}),
-    ...(customer_id ? { customer_id } : {}),
-    ...(order_status_id ? { order_status_id } : {}),
-    ...(has_order_lines && has_order_lines !== 'all' ? { has_order_lines } : {}),
-  });
+  const queryParams = buildDataGridParams(
+    { pageIndex, pageSize, sorting, searchQuery },
+    {
+      customer_id,
+      order_status_id,
+      has_order_lines: has_order_lines && has_order_lines !== 'all' ? has_order_lines : undefined,
+    },
+  );
   const response = await apiFetch(`/api/v1/order-management/orders?${queryParams.toString()}`);
   if (!response.ok) throw new Error('Failed to fetch delivery orders');
   return response.json();

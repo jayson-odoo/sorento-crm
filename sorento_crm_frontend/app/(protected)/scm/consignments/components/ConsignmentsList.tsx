@@ -31,10 +31,12 @@ import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
+import { isSearchInFlight } from '@/hooks/useDebouncedSearch';
 import {
-  isSearchInFlight,
-  useDebouncedSearch,
-} from '@/hooks/useDebouncedSearch';
+  useListChipSearch,
+  useSearchInAddressBar,
+} from '@/hooks/useListChipSearch';
+import { cn } from '@/lib/utils';
 import { useListingViewPreferences } from '@/lib/listing-column-preferences/useListingViewPreferences';
 import { useSalesOrders } from '../../hooks/useSalesOrders';
 import { fmtDate, fmtInt } from '../../lib/format';
@@ -86,13 +88,20 @@ export function ConsignmentsList() {
     pageIndex: 0,
     pageSize: 25,
   });
+  // Search chips (SEARCH-CHIPS): each chip and the typed text is one value; a consignment
+  // matching any of them is listed.
   const {
-    value: searchInput,
-    setValue: setSearchInput,
-    debouncedValue: searchQuery,
+    searchInput,
+    setSearchInput,
+    chips: searchChips,
+    setChips: setSearchChips,
+    searchTerms,
+    searchTermsKey,
     isSettling: searchSettling,
-    reset: resetSearchQuery,
-  } = useDebouncedSearch();
+    restore: restoreSearch,
+    writtenSearch,
+    isOwnWrite,
+  } = useListChipSearch();
   const {
     sorting,
     setSorting,
@@ -104,17 +113,19 @@ export function ConsignmentsList() {
   });
 
   useListStateFromUrl((state) => {
+    if (isOwnWrite()) return;
     setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
-    resetSearchQuery(state.searchQuery);
+    // Every `query` comes back as a chip, so the restored list is the one that was left.
+    restoreSearch(state.searchQueries);
   });
-  useResetPageOnFilterChange(setPagination, [searchQuery]);
+  useResetPageOnFilterChange(setPagination, [searchTermsKey]);
 
   const { data, isLoading, isPlaceholderData, isFetching, refetch, error } =
     useSalesOrders({
       pageIndex: pagination.pageIndex,
       pageSize: pagination.pageSize,
       sorting,
-      searchQuery,
+      searchQuery: searchTerms,
       // The full shape `consignmentsPagerQuery.listQueryKey` rebuilds from the URL, so the
       // detail pager reads the page this list fetched.
       status: null,
@@ -139,12 +150,15 @@ export function ConsignmentsList() {
           pageIndex: pagination.pageIndex,
           pageSize: pagination.pageSize,
           sorting,
-          searchQuery,
+          searchQuery: searchTerms,
         },
         {},
       ),
-    [pagination.pageIndex, pagination.pageSize, sorting, searchQuery],
+    [pagination.pageIndex, pagination.pageSize, sorting, searchTerms],
   );
+  // Once the search has changed, the list keeps its whole state in the address bar (Q5b), so
+  // a refresh keeps the chips.
+  useSearchInAddressBar({ detailSearch, searchTermsKey, enabled: true, writtenSearch });
   const detailHref = (order: SalesOrder) =>
     `/scm/consignments/${order.id}${detailSearch ? `?${detailSearch}` : ''}`;
 
@@ -340,7 +354,7 @@ export function ConsignmentsList() {
         onRetry={() => void refetch()}
         isPlaceholderData={isPlaceholderData}
         emptyMessage={
-          searchQuery
+          searchTerms.length
             ? 'No consignment matches this search.'
             : 'No consignments yet.'
         }
@@ -359,13 +373,18 @@ export function ConsignmentsList() {
                 <ListSearchInput
                   value={searchInput}
                   onChange={setSearchInput}
+                  chips={searchChips}
+                  onChipsChange={setSearchChips}
                   isSettling={isSearchInFlight(
                     searchSettling,
                     isFetching,
-                    searchQuery,
+                    searchTermsKey,
                   )}
                   placeholder="Search number, customer or product..."
-                  className="w-64"
+                  className={cn(
+                    'w-full',
+                    searchChips.length ? 'md:w-[420px]' : 'md:w-64',
+                  )}
                 />
               }
               // Kept as the Actions menu even when only Refresh is left (no reset permission).

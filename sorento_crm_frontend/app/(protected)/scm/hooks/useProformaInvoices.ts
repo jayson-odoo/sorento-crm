@@ -31,12 +31,16 @@ const KEY = ['scm', 'proforma-invoices'] as const;
 export function proformaInvoicesListQueryKey(
   options: ListProformaInvoicesOptions,
 ): QueryKey {
+  // One search value keys as a string, however it was held: chips `['PI1']` and typed `PI1`
+  // are the same request, so they share one cache entry.
+  const q = options.query ?? '';
+  const query = Array.isArray(q) ? (q.length > 1 ? q : (q[0] ?? '')) : q;
   return [
     ...KEY,
     'list',
     options.supplierId ?? null,
     options.placement ?? 'all',
-    options.query ?? '',
+    query,
     options.limit ?? 25,
     options.offset ?? 0,
   ];
@@ -49,7 +53,8 @@ export function proformaInvoicesListParamsFromUrl(
   return {
     supplierId: params.filters.supplier_id || null,
     placement: params.filters.placement || null,
-    query: params.searchQuery || null,
+    // Every `query` on the URL: the list searches with chips.
+    query: params.searchQueries ?? (params.searchQuery || null),
     limit: params.pageSize,
     offset: params.pageIndex * params.pageSize,
   };
@@ -69,8 +74,9 @@ export function useProformaInvoices(
     limit?: number;
     offset?: number;
     placement?: string | null;
-    /** The list toolbar's search box: PI number, supplier, container or BL. */
-    query?: string | null;
+    /** The list toolbar's search box: PI number, supplier, container or BL; several
+     * values are its chips. */
+    query?: string | string[] | null;
   } = {},
 ) {
   const options: ListProformaInvoicesOptions = { supplierId, ...opts };

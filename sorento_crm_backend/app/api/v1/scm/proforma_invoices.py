@@ -35,6 +35,7 @@ from app.services.scm import proforma_invoice_packing_service, proforma_invoice_
 from app.services.scm.description_translation import normalized_description
 from app.services.scm.upload_intake import read_upload
 from app.utils.http import content_disposition
+from app.utils.list_search import search_values
 
 router = APIRouter()
 
@@ -318,8 +319,10 @@ def list_proforma_invoices(
         None,
         description="not_converted / converted / split - where the goods have got to (AC-F6).",
     ),
-    query: Optional[str] = Query(
-        None, description="PI number, supplier, container or BL - the list screen's search box."
+    query: Optional[list[str]] = Query(
+        None,
+        description="PI number, supplier, container or BL - the list screen's search box. "
+                    "One repeated param per value; an invoice matching any is kept.",
     ),
     limit: int = Query(25, ge=1, le=100),
     offset: int = Query(0, ge=0, description="Skip this many, so a second page is reachable"),
@@ -331,7 +334,7 @@ def list_proforma_invoices(
         db,
         supplier_id=supplier_id,
         placement=placement,
-        query=query,
+        query=search_values(query, "Search"),
         limit=limit,
         offset=offset,
     )

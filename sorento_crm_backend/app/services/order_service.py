@@ -7,7 +7,8 @@ from io import BytesIO
 from datetime import datetime
 
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import or_, and_, func, exists, false, select
+from sqlalchemy import any_, or_, and_, func, exists, false, select
+from sqlalchemy.dialects.postgresql import array
 from sqlalchemy.sql import Select
 from decimal import Decimal
 from app.utils.chunking import chunked
@@ -27,6 +28,7 @@ from app.services.import_log_service import ImportLogService
 from app.services.contact_brand_scope import product_in_scope_clauses
 from app.services.calendar_service import CalendarService
 from app.services.identifier_resolver import resolve_identifier
+from app.utils.list_search import search_values_filter
 from app.utils.multi_value import multi_values
 from app.services.company_scope import (
     DEFAULT_COMPANY_ID,
@@ -877,11 +879,64 @@ class OrderService:
     def __init__(self, db: Session):
         self.db = db
     
+    def quick_search_match(self, values: list[str]):
+        """An order matching any of `values` over the Delivery orders search: number, debtor,
+        customer, transporter or a line's product code. One `ILIKE ANY` per column, so the
+        statement does not grow with the number of values. The export twin
+        (`ListQueryExportService._export_orders`) reads the same match, so it returns the
+        rows the list shows."""
+        likes = array([f"%{v}%" for v in values])
+        # Split into UNION of matching id sets. The original OR-with-EXISTS-on-customers
+        # forces a Seq Scan on orders even with pg_trgm indexes; pulling the cross-table
+        # match into its own subquery lets each branch use its trigram index independently.
+        direct_ids = self.db.query(Order.id).filter(
+            or_(
+                Order.order_number.ilike(any_(likes)),
+                Order.debtor_name.ilike(any_(likes)),
+                Order.debtor_code.ilike(any_(likes)),
+                # Legacy free-text transporter column kept for back-compat
+                # rows that pre-date the transporters FK.
+                Order.transporter.ilike(any_(likes)),
+            )
+        )
+        customer_ids = (
+            self.db.query(Order.id)
+            .join(Customer, Order.customer_id == Customer.id)
+            .filter(
+                or_(
+                    Customer.customer_name.ilike(any_(likes)),
+                    Customer.customer_code.ilike(any_(likes)),
+                )
+            )
+        )
+        # Canonical transporter join: matches Transporter.code / name so the
+        # DO grid free-text search resolves transporter searches the same
+        # way the Filters panel does (transporter_id FK).
+        transporter_ids = (
+            self.db.query(Order.id)
+            .join(Transporter, Order.transporter_id == Transporter.id)
+            .filter(
+                or_(
+                    Transporter.code.ilike(any_(likes)),
+                    Transporter.name.ilike(any_(likes)),
+                )
+            )
+        )
+        # Product-code match: the DO grid free-text search box should also
+        # find orders by a line's product code (product name/description
+        # stays reserved for the advanced product_query filter below).
+        line_product_ids = self.db.query(Order.id).filter(
+            Order.lines.any(OrderLine.product.has(Product.product_code.ilike(any_(likes))))
+        )
+        return Order.id.in_(
+            direct_ids.union(customer_ids).union(transporter_ids).union(line_product_ids)
+        )
+
     def list_orders(
         self,
         page: int = 1,
         limit: int = 50,
-        query: Optional[str] = None,
+        query: Optional[list[str] | str] = None,
         customer_query: Optional[str] = None,
         product_query: Optional[str] = None,
         transporter_query: Optional[str] = None,
@@ -1087,53 +1142,10 @@ class OrderService:
             date_range_filters.append(Order.actual_delivery_date <= actual_delivery_date_to)
 
         query_filter = None
-        if query and (query := (query or "").strip()):
-            term = f"%{query}%"
-            # Split into UNION of matching id sets. The original OR-with-EXISTS-on-customers
-            # forces a Seq Scan on orders even with pg_trgm indexes; pulling the cross-table
-            # match into its own subquery lets each branch use its trigram index independently.
-            direct_ids = self.db.query(Order.id).filter(
-                or_(
-                    Order.order_number.ilike(term),
-                    Order.debtor_name.ilike(term),
-                    Order.debtor_code.ilike(term),
-                    # Legacy free-text transporter column kept for back-compat
-                    # rows that pre-date the transporters FK.
-                    Order.transporter.ilike(term),
-                )
-            )
-            customer_ids = (
-                self.db.query(Order.id)
-                .join(Customer, Order.customer_id == Customer.id)
-                .filter(
-                    or_(
-                        Customer.customer_name.ilike(term),
-                        Customer.customer_code.ilike(term),
-                    )
-                )
-            )
-            # Canonical transporter join: matches Transporter.code / name so the
-            # DO grid free-text search resolves transporter searches the same
-            # way the Filters panel does (transporter_id FK).
-            transporter_ids = (
-                self.db.query(Order.id)
-                .join(Transporter, Order.transporter_id == Transporter.id)
-                .filter(
-                    or_(
-                        Transporter.code.ilike(term),
-                        Transporter.name.ilike(term),
-                    )
-                )
-            )
-            # Product-code match: the DO grid free-text search box should also
-            # find orders by a line's product code (product name/description
-            # stays reserved for the advanced product_query filter below).
-            line_product_ids = self.db.query(Order.id).filter(
-                Order.lines.any(OrderLine.product.has(Product.product_code.ilike(term)))
-            )
-            query_filter = Order.id.in_(
-                direct_ids.union(customer_ids).union(transporter_ids).union(line_product_ids)
-            )
+        # The route has already cleaned the values (`search_values`); a lone string is one value.
+        terms = [query.strip()] if isinstance(query, str) else query
+        if terms and any(terms):
+            query_filter = search_values_filter(list(terms), self.quick_search_match)
         if customer_query and (customer_query := (customer_query or "").strip()):
             customer_clause, _ = resolve_via_embedding_then_ilike(
                 self.db,

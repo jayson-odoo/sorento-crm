@@ -1492,7 +1492,8 @@ export interface OrderInquiryHeaderDetail extends OrderInquiryHeader {
 
 export interface OrderInquiryHeaderListParams {
   state?: OrderInquiryHeaderStatus | 'all';
-  query?: string;
+  /** One search value, or several (search chips, one `query` each; a header matching any). */
+  query?: string | string[];
   raised_by?: string;
   /** One agent name, or several (free text, each sent whole). */
   agent?: string | string[];

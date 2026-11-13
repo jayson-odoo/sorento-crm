@@ -77,7 +77,8 @@ export function salesOrdersListParamsFromUrl(
   };
 }
 
-/** The Sales Orders list searches with chips: every `query` on the URL, as an array. */
+/** The Sales Orders and Consignments lists search with chips: every `query` on the URL, as an
+ * array. */
 function salesOrdersChipParamsFromUrl(params: ListPagerParams): UseSalesOrdersParams {
   return {
     ...salesOrdersListParamsFromUrl(params),
@@ -120,9 +121,9 @@ function fetchSalesOrdersPage(
 /** The same pager hooks for the Consignment list; its own key, so the two lists never share a page. */
 export const consignmentsPagerQuery = {
   listQueryKey: (params: ListPagerParams): QueryKey =>
-    salesOrdersListQueryKey({ ...salesOrdersListParamsFromUrl(params), docType: 'consignment' }),
+    salesOrdersListQueryKey({ ...salesOrdersChipParamsFromUrl(params), docType: 'consignment' }),
   fetchPage: (params: ListPagerParams): Promise<ListPagerPage> =>
-    fetchSalesOrdersPage(salesOrdersListParamsFromUrl(params), 'consignment'),
+    fetchSalesOrdersPage(salesOrdersChipParamsFromUrl(params), 'consignment'),
 };
 
 /**

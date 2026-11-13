@@ -19,8 +19,8 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, List, Literal, Optional, get_args
 
-from sqlalchemy import Date, String, and_, case, cast, func, or_
-from sqlalchemy.dialects.postgresql import aggregate_order_by
+from sqlalchemy import Date, String, and_, any_, case, cast, func, or_
+from sqlalchemy.dialects.postgresql import aggregate_order_by, array
 from sqlalchemy.orm import Session, aliased
 
 from app.models.order import Customer, SalesOrder, SalesOrderLine
@@ -54,6 +54,7 @@ from app.schemas.project_order_inquiry import (
 )
 from app.services.error_handler import AppException
 from app.services.oi_row_visibility import live_row_clause
+from app.utils.list_search import search_values_filter
 from app.utils.multi_value import multi_text, multi_values
 from app.services.order_inquiry_reserve_service import reserve_status_predicates
 from app.services.scm import spo_supply
@@ -292,12 +293,41 @@ class OrderInquiryHeaderService:
             .subquery()
         )
 
+    def _search_match(self, values: list[str]):
+        """A header matching any of `values` over the list search's fields: one `ILIKE ANY`
+        per column, so the statement does not grow with the number of values. Each value is
+        a LITERAL (`_escape_like`); backslash is Postgres's default LIKE escape, the same
+        `_LIKE_ESCAPE` the single-value search named explicitly."""
+        likes = array([f"%{_escape_like(v)}%" for v in values])
+        row_match = (
+            self.db.query(OrderInquiryRow.id)
+            .filter(
+                OrderInquiryRow.order_inquiry_id == OrderInquiry.id,
+                live_row_clause(),
+                or_(
+                    OrderInquiryRow.item_code.ilike(any_(likes)),
+                    OrderInquiryRow.stock_location.ilike(any_(likes)),
+                ),
+            )
+            .correlate(OrderInquiry)
+            .exists()
+        )
+        return or_(
+            OrderInquiry.inquiry_no.ilike(any_(likes)),
+            OrderInquiry.legacy_inquiry_no.ilike(any_(likes)),
+            _SO_NUMBER.ilike(any_(likes)),
+            Customer.customer_name.ilike(any_(likes)),
+            _PROJECT_TITLE.ilike(any_(likes)),
+            _AGENT_NAME.ilike(any_(likes)),
+            row_match,
+        )
+
     def _base(
         self,
         *,
         agg,
         reserve: Optional[str] = None,
-        query: Optional[str] = None,
+        query: Optional[list[str] | str] = None,
         raised_by: Optional[str | List[str]] = None,
         agent: Optional[str | List[str]] = None,
         project: Optional[str | List[str]] = None,
@@ -405,32 +435,10 @@ class OrderInquiryHeaderService:
             # rule `order_inquiry_worklist_service.py`'s own `project` filter already
             # applies.
             base = base.filter(_PROJECT_TITLE.in_(titles))
-        if query:
-            like = f"%{_escape_like(str(query))}%"
-            row_match = (
-                self.db.query(OrderInquiryRow.id)
-                .filter(
-                    OrderInquiryRow.order_inquiry_id == OrderInquiry.id,
-                    live_row_clause(),
-                    or_(
-                        OrderInquiryRow.item_code.ilike(like, escape=_LIKE_ESCAPE),
-                        OrderInquiryRow.stock_location.ilike(like, escape=_LIKE_ESCAPE),
-                    ),
-                )
-                .correlate(OrderInquiry)
-                .exists()
-            )
-            base = base.filter(
-                or_(
-                    OrderInquiry.inquiry_no.ilike(like, escape=_LIKE_ESCAPE),
-                    OrderInquiry.legacy_inquiry_no.ilike(like, escape=_LIKE_ESCAPE),
-                    _SO_NUMBER.ilike(like, escape=_LIKE_ESCAPE),
-                    Customer.customer_name.ilike(like, escape=_LIKE_ESCAPE),
-                    _PROJECT_TITLE.ilike(like, escape=_LIKE_ESCAPE),
-                    _AGENT_NAME.ilike(like, escape=_LIKE_ESCAPE),
-                    row_match,
-                )
-            )
+        # The route has already cleaned the values (`search_values`); a lone string is one value.
+        terms = [query.strip()] if isinstance(query, str) else query
+        if terms and any(terms):
+            base = base.filter(search_values_filter(list(terms), self._search_match))
         return base
 
     # ------------------------------------------------------------------ serialization
@@ -467,7 +475,7 @@ class OrderInquiryHeaderService:
         self,
         *,
         state: HeaderState = "outstanding",
-        query: Optional[str] = None,
+        query: Optional[list[str] | str] = None,
         raised_by: Optional[str | List[str]] = None,
         agent: Optional[str | List[str]] = None,
         project: Optional[str | List[str]] = None,

@@ -25,9 +25,11 @@ from datetime import date as _date, datetime
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Optional
 
-from sqlalchemy import func, text
+from sqlalchemy import any_, func, text
+from sqlalchemy.dialects.postgresql import array
 from sqlalchemy.orm import Session, joinedload
 
+from app.utils.list_search import search_values_filter
 from app.utils.multi_value import multi_values
 from app.models.company import Company
 from app.models.procurement import InboundShipment, InboundShipmentLine, Supplier
@@ -3085,7 +3087,7 @@ def list_for_supplier(
     *,
     supplier_id: Optional[list[str] | str] = None,
     placement: Optional[list[str] | str] = None,
-    query: Optional[str] = None,
+    query: Optional[list[str] | str] = None,
     limit: int = 25,
     offset: int = 0,
 ) -> dict:
@@ -3122,32 +3124,37 @@ def list_for_supplier(
     if supplier_ids_picked:
         q = q.filter(ProformaInvoice.supplier_id.in_([str(v) for v in supplier_ids_picked]))
 
-    needle = (query or "").strip()
-    if needle:
-        # The five things somebody has in their hand when they come looking for an invoice:
-        # our number, the supplier's own reference, whose it is, which box it went in and
-        # which bill of lading covers it.
-        # The supplier is matched through a scoped subquery rather than a join, so the
-        # company filter the ORM puts on `Supplier` still applies and the page count below
-        # stays one query.
-        like = f"%{needle}%"
-        supplier_ids = (
-            db.query(Supplier.id)
-            .filter(
-                func.lower(Supplier.supplier_name).like(func.lower(like))
-                | func.lower(Supplier.supplier_code).like(func.lower(like))
+    # The route has already cleaned the values (`search_values`); a lone string is one value.
+    terms = [query.strip()] if isinstance(query, str) else query
+    if terms and any(terms):
+        def match(values: list[str]):
+            # The five things somebody has in their hand when they come looking for an
+            # invoice: our number, the supplier's own reference, whose it is, which box it
+            # went in and which bill of lading covers it. One `ILIKE ANY` per column, so the
+            # statement does not grow with the number of values.
+            # The supplier is matched through a scoped subquery rather than a join, so the
+            # company filter the ORM puts on `Supplier` still applies and the page count
+            # below stays one query.
+            likes = array([f"%{v}%" for v in values])
+            supplier_ids = (
+                db.query(Supplier.id)
+                .filter(
+                    Supplier.supplier_name.ilike(any_(likes))
+                    | Supplier.supplier_code.ilike(any_(likes))
+                )
+                .subquery()
             )
-            .subquery()
-        )
-        q = q.filter(
-            func.lower(ProformaInvoice.pi_number).like(func.lower(like))
-            # Ours and theirs both: Ms Tee has the supplier's own number in the email in
-            # front of her far more often than she has ours (AC-A5).
-            | func.lower(ProformaInvoice.supplier_ref).like(func.lower(like))
-            | func.lower(ProformaInvoice.container_ref).like(func.lower(like))
-            | func.lower(ProformaInvoice.bl_ref).like(func.lower(like))
-            | ProformaInvoice.supplier_id.in_(db.query(supplier_ids.c.id))
-        )
+            return (
+                ProformaInvoice.pi_number.ilike(any_(likes))
+                # Ours and theirs both: Ms Tee has the supplier's own number in the email in
+                # front of her far more often than she has ours (AC-A5).
+                | ProformaInvoice.supplier_ref.ilike(any_(likes))
+                | ProformaInvoice.container_ref.ilike(any_(likes))
+                | ProformaInvoice.bl_ref.ilike(any_(likes))
+                | ProformaInvoice.supplier_id.in_(db.query(supplier_ids.c.id))
+            )
+
+        q = q.filter(search_values_filter(list(terms), match))
 
     if placements_picked:
         # Filtered in Python rather than in SQL, deliberately: "split" is the comparison of

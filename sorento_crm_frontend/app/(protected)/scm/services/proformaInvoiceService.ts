@@ -555,8 +555,9 @@ export interface ListProformaInvoicesOptions {
   /** Narrow to what has, or has not, reached a packing list (AC-F6). */
   /** One placement, or several comma-joined (OR-ed). */
   placement?: string | null;
-  /** The list toolbar's search box: PI number, supplier, container or BL. */
-  query?: string | null;
+  /** The list toolbar's search box: PI number, supplier, container or BL. Several values
+   * (search chips) go as one `query` param each; an invoice matching any is listed. */
+  query?: string | string[] | null;
   limit?: number;
   offset?: number;
 }
@@ -567,7 +568,8 @@ export async function listProformaInvoices(
   const params = new URLSearchParams();
   if (opts.supplierId) params.set('supplier_id', opts.supplierId);
   if (opts.placement) params.set('placement', opts.placement);
-  if (opts.query?.trim()) params.set('query', opts.query.trim());
+  const values = Array.isArray(opts.query) ? opts.query : [opts.query ?? ''];
+  for (const value of values) if (value.trim()) params.append('query', value.trim());
   params.set('limit', String(opts.limit ?? 25));
   params.set('offset', String(opts.offset ?? 0));
   const res = await apiFetch(`/api/v1/scm/proforma-invoices?${params.toString()}`);
