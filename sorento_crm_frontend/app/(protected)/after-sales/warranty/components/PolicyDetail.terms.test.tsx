@@ -71,7 +71,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   isAdmin = true;
   Object.keys(runs).forEach((k) => delete runs[k]);
-  window.history.replaceState(null, '', '/after-sales/warranty/policies/pol-15');
+  window.history.replaceState(null, '', '/after-sales/warranty/policies/pol-15?tab=terms');
   usePolicyTerms.mockReturnValue({ data: TERMS, isLoading: false, isError: false });
 });
 

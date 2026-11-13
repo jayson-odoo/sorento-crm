@@ -57,7 +57,7 @@ vi.mock('../hooks/useWarrantyConfig', () => ({
 
 import PolicyDetail from './PolicyDetail';
 
-beforeEach(() => { isAdmin = true; window.history.replaceState(null, '', '/after-sales/warranty/policies/pol-15'); });
+beforeEach(() => { isAdmin = true; window.history.replaceState(null, '', '/after-sales/warranty/policies/pol-15?tab=terms'); });
 
 describe('PolicyDetail review round', () => {
   it('the Terms tab Create button is outline, not the filled primary', () => {

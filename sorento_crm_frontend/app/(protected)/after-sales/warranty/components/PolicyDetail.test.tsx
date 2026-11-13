@@ -77,7 +77,7 @@ const renderPage = () => render(<QueryClientProvider client={new QueryClient()}>
 
 beforeEach(() => {
   vi.clearAllMocks();
-  window.history.replaceState({}, '', '/after-sales/warranty/policies/pol-15');
+  window.history.replaceState({}, '', '/after-sales/warranty/policies/pol-15?tab=terms');
   usePolicy.mockReturnValue({ data: POLICY, isLoading: false, isError: false });
   usePolicyTerms.mockReturnValue({ data: TERMS, isLoading: false, isError: false });
 });
@@ -98,9 +98,24 @@ describe('PolicyDetail', () => {
     expect(screen.queryByRole('button', { name: 'Supersede' })).toBeNull();
   });
 
-  it('has the three line tabs in order and lands on Terms', () => {
+  it('has the three line tabs in order', () => {
     renderPage();
     expect(screen.getAllByRole('tab').map((t) => (t.textContent || '').replace(/\d+$/, '').trim())).toEqual(['Details', 'Terms', 'History']);
+  });
+
+  it('opens on Details by default, Terms and History only when chosen', async () => {
+    window.history.replaceState({}, '', '/after-sales/warranty/policies/pol-15');
+    renderPage();
+    expect(screen.getByRole('tab', { name: 'Details' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: /Terms/ })).toHaveAttribute('aria-selected', 'false');
+    expect(screen.getByText('Version 15. Warranty policy.')).toBeInTheDocument();
+    expect(screen.queryByText('Ceramic Body')).toBeNull();
+    await userEvent.click(screen.getByRole('tab', { name: /Terms/ }));
+    expect(screen.getByText('Ceramic Body')).toBeInTheDocument();
+  });
+
+  it('?tab=terms in the URL opens Terms', () => {
+    renderPage();
     expect(screen.getByRole('tab', { name: /Terms/ })).toHaveAttribute('aria-selected', 'true');
   });
 
