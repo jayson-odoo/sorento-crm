@@ -1,0 +1,68 @@
+"""OI-WHOLE-SO-CANCEL crew pass a710622e, red: after a draft is saved for a book-cancelled line
+(PUT the board draft route, approved verdict), a fresh read must still carry it.
+
+(A1) the board read: `contribution.draft` on each cancelled line of the SO (the board attaches
+     drafts to a cancelled row only when `cancel_open_oi_rows` is truthy, and a pending-change
+     cancelled row has 0, so the saved draft vanishes and a re-save answers 409);
+(A2) the SO detail read: `supply_saved == []` on those lines (an approval with an empty
+     composition).
+
+Fixtures from tests/test_oi_whole_so_cancel_board.py. Postgres only, own seeded chain.
+"""
+from __future__ import annotations
+
+from urllib.parse import quote
+
+import pytest
+from sqlalchemy import text
+
+from .test_oi_whole_so_cancel_board import BASE, _board, _world, env  # noqa: F401
+
+SCM = "/api/v1/scm/sales-orders"
+
+
+def _save_every_cancelled_line(env, w):
+    contributions = [c for c in _board(env, w)["contributions"] if c.get("cancelled")]
+    assert contributions, "precondition: the board lists the pending cancelled lines"
+    for contribution in contributions:
+        assert contribution["pending_change_batch_id"], contribution
+        assert not contribution.get("cancel_open_oi_rows"), contribution
+        res = env.client.put(
+            f"{BASE}/fulfilment-planning/lines/{quote(contribution['key'], safe='')}/draft",
+            json={"decision": {"verdict": "approved"}},
+        )
+        assert res.status_code == 200, res.text
+    env.db.expire_all()
+    return contributions
+
+
+@pytest.mark.parametrize("how", ("delete", "push"))
+def test_a1_the_board_read_after_the_save_carries_the_draft_on_each_cancelled_line(env, how):
+    w = _world(env, how)
+    saved = _save_every_cancelled_line(env, w)
+
+    after = {c["key"]: c for c in _board(env, w)["contributions"] if c.get("cancelled")}
+
+    assert set(after) == {c["key"] for c in saved}
+    for key, contribution in after.items():
+        assert contribution.get("draft"), f"saved draft missing on {key}: {contribution}"
+        assert contribution["draft"]["decision"]["verdict"] == "approved", contribution["draft"]
+
+
+@pytest.mark.parametrize("how", ("delete", "push"))
+def test_a2_the_so_detail_after_the_save_gives_those_lines_supply_saved_empty(env, how):
+    w = _world(env, how)
+    saved = _save_every_cancelled_line(env, w)
+    so_id = str(
+        env.db.execute(
+            text("SELECT id FROM sales_orders WHERE so_number = :n"), {"n": w["so_number"]}
+        ).scalar()
+    )
+
+    res = env.client.get(f"{SCM}/{so_id}")
+
+    assert res.status_code == 200, res.text
+    by_id = {ln["id"]: ln for ln in res.json()["lines"]}
+    for contribution in saved:
+        line = by_id[contribution["line_id"]]
+        assert line["supply_saved"] == [], (line["id"], line.get("supply_saved"))

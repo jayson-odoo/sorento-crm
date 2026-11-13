@@ -310,6 +310,47 @@ describe('SalesOrderDetail: the Decided column of a book-cancelled line (F2)', (
     expect(decidedCell()).toHaveTextContent('-');
   });
 
+  describe('with the old revision 1 Buy still in supply_decided', () => {
+    const OLD_BUY = [{ kind: 'buy', qty: '2', source_location: null, rung: null }];
+
+    it('unsaved (supply_saved null): Decided does not read "Buy 2", it shows the empty marker', () => {
+      useSalesOrder.mockReturnValue({
+        data: lineOf({ supply_decided: OLD_BUY, decision_revision: 1, supply_saved: null }),
+        isLoading: false,
+        isError: false,
+      });
+      renderDetail();
+      openTab('Lines');
+
+      const cell = decidedCell();
+      expect(cell).not.toHaveTextContent('Buy 2');
+      expect(cell).not.toHaveTextContent('Cancel line');
+      expect(cell).toHaveTextContent('-');
+    });
+
+    it('saved (supply_saved []): Decided reads "Cancel line" with the Saved badge', () => {
+      useSalesOrder.mockReturnValue({
+        data: lineOf({
+          supply_decided: OLD_BUY,
+          decision_revision: 1,
+          supply_saved: [],
+          saved_by: 'Leena',
+          saved_at: '2026-11-12T02:30:00Z',
+          saved_stale: false,
+        }),
+        isLoading: false,
+        isError: false,
+      });
+      renderDetail();
+      openTab('Lines');
+
+      const cell = decidedCell();
+      expect(cell).toHaveTextContent('Cancel line');
+      expect(cell).not.toHaveTextContent('Buy 2');
+      expect(within(cell).getByTestId('saved-decision-badge-l-cancel')).toHaveTextContent('Saved');
+    });
+  });
+
   it('guard: a normal saved Buy still prints its composition', () => {
     useSalesOrder.mockReturnValue({
       data: lineOf({
