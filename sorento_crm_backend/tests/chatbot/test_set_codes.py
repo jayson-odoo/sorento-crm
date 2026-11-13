@@ -520,3 +520,36 @@ def test_f2_lock_an_exact_set_code_still_answers_that_set(session_factory, monke
     _who(c, who)
     c.say("QWC7405-RL-P-PJ stock", stock(product("QWC7405-RL-P-PJ")))
     assert _stocked_ids(c) == {c.uuid_of[m] for m in A_SETS["QWC7405-RL-P-PJ"]}, c.stock_calls
+
+
+# --------------------------------------------------------------------------- review regressions R1 / R2
+
+
+def test_r1_an_alternative_the_customer_also_asked_for_is_answered_as_its_own_item(session_factory, monkeypatch, stub_access):  # noqa: F811
+    alt = "QWCX604-P-RL-NEW"
+    c = _world(session_factory, monkeypatch, stub_access, {P_RL: P_RL_MEMBERS}, extra=[alt])
+    _staff_with_alternatives(c, {"QWCX604-P-RL": alt})
+    text = c.say(
+        "QWC604-P-RL x 1\nQWCX604-P-RL-NEW x 2",
+        stock(product(P_RL, 1), product(alt, 2)),
+    )
+    lines = text.splitlines()
+    for refusal in ("No stock found for", "No stock and no incoming"):
+        assert not any(refusal in line and alt in line for line in lines), (refusal, text)
+    own = [i for i, line in enumerate(lines) if f"*Product Code:* {alt}" in line]
+    assert own, ("the asked-for alternative is not answered as its own item", text)
+    assert any("*Total:* 12" in line for line in lines[own[0] : own[0] + 3]), ("its own stock is not shown", text)
+    assert any("*Alternative:*" in line and alt in line for line in lines), ("the set block lost the member's Alternative line", text)
+    assert f"*Set {P_RL}*" in text, text
+
+
+@pytest.mark.parametrize("who", ["dealer", "staff"])
+def test_r2_two_prefix_sets_beside_a_product_are_offered_not_dropped_and_not_answered(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+    c = _world(session_factory, monkeypatch, stub_access, A_SETS, extra=["QWC7405-RL-SC"])
+    _who(c, who)
+    text = c.say("QWC7405-RL stock", stock(product("QWC7405-RL")))
+    offered = _option_codes(c) if c.stored_question else []
+    listed = set(offered) | {code for code in A_SETS if _word(code, text)}
+    assert set(A_SETS) <= listed, ("a set was dropped from the offer", offered, text)
+    members = {c.uuid_of[m] for ms in A_SETS.values() for m in ms}
+    assert not _stocked_ids(c) & members, ("a set's members were read as an answer", c.stock_calls, text)
