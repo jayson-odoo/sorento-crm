@@ -315,8 +315,8 @@ def held_role(db, contact_id: str, companies: list[str], allowed: set[str]) -> t
     """(level, company code it was read from) for the contact, as the Dealer access screen reads it: Business owner
     where it holds a company's owner tag, else Employee where it is linked to one of that company's accounts. Only
     the companies the user is granted (`allowed`) are read (security review S1). A requested company it holds
-    decides; otherwise Employee when that is its level in every allowed company; (None, None) otherwise (never
-    guessed)."""
+    decides for itself, any other requested company takes Employee only when that is the contact's level everywhere;
+    every requested company must come out the same, else (None, None) and the role is asked (never guessed)."""
     from app.models.base import company_scope
     from app.models.company import Company
     from app.models.order import Customer
@@ -331,15 +331,16 @@ def held_role(db, contact_id: str, companies: list[str], allowed: set[str]) -> t
             .filter(Customer.id.in_(links))
         } if links else set()
     held = {code: "owner" if code in owned else "employee" for code in (linked | owned) & set(codes)}
-    for code in companies:
-        if code in held:
-            return held[code], code
     # Another company's level carries only as Employee: Business owner is that company's own tag, so carrying it
-    # would be a promotion nobody asked for (review B1). Owner elsewhere, or both levels: asked.
-    levels = set(held.values())
-    if levels != {"employee"}:
+    # would be a promotion nobody asked for (review B1). Owner elsewhere, or both levels: no carry.
+    carry = "employee" if held and set(held.values()) == {"employee"} else None
+    # Each requested company on its own: its own level, else the carried Employee. One level for all of them, or
+    # asked (a Sorento owner given Sorento and Mocha is asked, never made Mocha owner: review round 2).
+    per = [held.get(code) or carry for code in companies] or [carry]
+    if None in per or len(set(per)) != 1:
         return None, None
-    return "employee", sorted(held)[0]
+    source = next((code for code in companies if code in held), None) or sorted(held)[0]
+    return per[0], source
 
 
 def _find_contact(db, phone: str):
@@ -458,6 +459,18 @@ def plan(db, user: dict, args: dict) -> dict:
                 code for cid, code in db.query(Company.id, Company.code).filter(Company.code.in_(sheet.COMPANY_ORDER))
                 if not isinstance(scope, frozenset) or str(cid) in {str(x) for x in scope}
             }
+            if own_agents is not None:
+                from app.models.base import company_scope
+                from app.models.order import Customer
+
+                # Own scope: only the companies where the contact has one of the user's own accounts, as the Dealer
+                # access screen shows them (security review nit).
+                own = writes._all_links(db, str(contact.id)) - writes._not_own_links(db, uid, str(contact.id))
+                with company_scope(db, None):
+                    allowed &= {
+                        code for (code,) in db.query(Company.code).join(Customer, Customer.company_id == Company.id)
+                        .filter(Customer.id.in_(own))
+                    } if own else set()
             role, kept_from = held_role(db, str(contact.id), companies, allowed)
         if role is None:
             needs.append("role")

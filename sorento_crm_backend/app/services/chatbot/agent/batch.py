@@ -627,7 +627,9 @@ def question_reply(asked: list[dict], skipped: list[dict], waiting: list[dict] |
     parts = [" ".join(question(list(needs), labels) for needs, labels in groups.items())]
     if skipped or waiting:
         # The tables only: their closing line ("Nothing can change yet ...") would contradict the question (S3).
-        parts.append(preview_block([], skipped, waiting).rsplit("\n\n", 1)[0])
+        block = preview_block([], skipped, waiting)
+        # Only the "Nothing can change yet" closing goes; a pick's instruction stays (review round 2, S-a).
+        parts.append(block if waiting else block.rsplit("\n\n", 1)[0])
     return "\n\n".join(parts)
 
 

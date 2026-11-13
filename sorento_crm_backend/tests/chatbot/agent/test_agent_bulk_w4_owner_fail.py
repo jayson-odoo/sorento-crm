@@ -312,6 +312,7 @@ def test_an_own_scope_user_never_learns_a_strangers_name_or_level_from_the_compa
                                     text_="Please grant them access to the chatbot")
         assert c.name not in result.reply_text, result.reply_text
         assert result.pending_action is None
+        assert "Name the company as SRT (Sorento) or MCH (Mocha)." in result.reply_text, result.reply_text
         replies.append(result.reply_text.replace(c.phone_number, "<phone>").replace(local(c.phone_number), "<phone>"))
     assert replies[0] == replies[1], replies
 
@@ -438,3 +439,59 @@ def test_a_name_read_from_a_picture_cannot_become_a_link_in_the_question(db):
     row = {**_unsaid(c, 1), "name": "ZZT [click](http://zzt.invalid)"}
     result, _ = screenshot_turn(db, w, [_batch([row]), answer_("Done.")])
     assert "[click]" not in result.reply_text and "](" not in result.reply_text, result.reply_text
+
+
+# ------------------------------------------------------------------ code review round 2
+
+
+def test_both_companies_asked_never_promote_an_owner_of_one_to_owner_of_the_other(db):
+    """Review B1 (two companies): a Sorento Business owner given Sorento AND Mocha with no role is asked."""
+    w = make_world(db)
+    c = dealer(db, w, name="ZZT Two Co Owner", customers=[w.cust_a])
+    _tag_owner(db, c, "SRT")
+    row = _unsaid(c, 1, companies=("SRT", "MCH"))
+    result, _ = screenshot_turn(db, w, [_batch([row]), answer_("Done.")],
+                                text_="Please grant them sorento and mocha access to the chatbot")
+    assert result.pending_action is None, result.reply_text
+    assert result.reply_text.strip() == f"Owner or employee for {c.name}?", result.reply_text
+
+
+def test_an_employee_of_one_company_given_both_stays_employee(db):
+    w = make_world(db)
+    c = dealer(db, w, name="ZZT Two Co Employee", customers=[w.cust_a])
+    row = _unsaid(c, 1, companies=("SRT", "MCH"))
+    result, _ = screenshot_turn(db, w, [_batch([row]), answer_("Done.")],
+                                text_="Please grant them sorento and mocha access to the chatbot")
+    assert result.pending_action is not None, result.reply_text
+    assert "Employee (Sorento, Mocha)" in result.reply_text, result.reply_text
+
+
+def test_the_question_beside_a_row_waiting_for_a_pick_keeps_the_pick_instruction(db):
+    """Review S-a: only the 'Nothing can change yet' line goes; a pick's instruction stays."""
+    from app.services.chatbot.agent.batch import CHOICE_TAIL
+
+    w = make_world(db)
+    twin = w.twin1.customer_name
+    ask = dealer(db, w, name="ZZT Ask Beside")
+    pick = dealer(db, w, name="ZZT Pick Beside")
+    rows = [
+        _unsaid(ask, 1, companies=("SRT",)),
+        {**_unsaid(pick, 2, companies=("SRT",)), "role": "employee", "customer_names": [twin]},
+    ]
+    result, _ = screenshot_turn(db, w, [_batch(rows), answer_("Done.")], text_=f"sorento access, employee at {twin}")
+    assert result.reply_text.startswith(f"Owner or employee for {ask.name}?"), result.reply_text
+    assert "Needs your choice" in result.reply_text, result.reply_text
+    assert CHOICE_TAIL in result.reply_text, result.reply_text
+
+
+def test_an_own_scope_user_reads_a_level_only_where_the_contact_has_their_own_account(db):
+    """Security nit: linked to the user's own Mocha account only, holding the Sorento owner tag; a Sorento row with the
+    user's own Sorento account never reads the Sorento level the Dealer access screen would not show them."""
+    from tests.chatbot.agent.test_dealer_access_agent import own_world
+
+    o = own_world(db)
+    c = dealer(db, o.w, name="ZZT Own Mocha Link", customers=[o.w.cust_b])
+    _tag_owner(db, c, "SRT")
+    row = {**_unsaid(c, 1, companies=("SRT",)), "customer_codes": [o.w.cust_a.customer_code]}
+    result, _ = screenshot_turn(db, o.w, [_batch([row]), answer_("Done.")], text_="grant them sorento access")
+    assert "Business owner" not in result.reply_text, result.reply_text
