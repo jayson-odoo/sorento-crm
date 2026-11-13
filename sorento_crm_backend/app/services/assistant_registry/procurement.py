@@ -35,7 +35,7 @@ OCN_VIEW_OWN = "procurement.order_change_notices.view_own"
 
 
 def _ocn_own(me):
-    """The list's own rule (`order_change_notice_service.own_clause`): raised, or named sales / C.S. in charge."""
+    """The list's own rule (`order_change_notice_service.own_clause`): raised, C.S. in charge, or linked to the Requested by contact."""
     from app.services.order_change_notice_service import own_clause
 
     return own_clause(me.user_id)
@@ -199,7 +199,7 @@ register(
                                     note="Advance, Exchange, Cancellation or Delay."),
             "risk": FieldDef("Risk", expr=_ocn_risk, note="The type's risk: Low, High or Highest."),
             "project": FieldDef("Project", expr=_ocn_list_column("project_title")),
-            "sales_in_charge": FieldDef("Sales in charge", expr=_ocn_list_column("sales_in_charge_name")),
+            "requested_by": FieldDef("Requested by"),
             "status": FieldDef("Status", expr=_ocn_status_words,
                                note="Draft, Submitted, Appealed, Approved, Rejected, Done or Voided."),
             "description": FieldDef("Description"),

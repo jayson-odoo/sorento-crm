@@ -87,9 +87,9 @@ MODULE_REQUEST_KINDS = {
     "new_product_application": (NPA_VIEW, NPA_VIEW_OWN),
     "sales_opportunity": (OPPORTUNITIES_VIEW, OPPORTUNITIES_VIEW_OWN),
     "price_tag_request": (PRICE_TAG_VIEW, PRICE_TAG_VIEW_OWN),
-    # Not a MY REQUESTS form: the order change notice joins for `request_access` alone (the
-    # project's Related tab, PROJECT-RELATED-RECORDS section 6). Its own rows are
-    # `order_change_notice_service.own_clause`.
+    # The order change notice joins for `request_access` (the project's Related tab,
+    # PROJECT-RELATED-RECORDS section 6); its CRM MY REQUESTS item opens its own list (OCN UAC I4).
+    # Its own rows are `order_change_notice_service.own_clause`.
     "order_change_notice": (OCN_VIEW, OCN_VIEW_OWN),
 }
 

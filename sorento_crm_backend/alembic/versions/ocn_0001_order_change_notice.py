@@ -72,8 +72,9 @@ PERMISSIONS = (
     ("procurement.order_change_notices.view", "View Order Change Notices",
      "See every order change notice of your companies."),
     ("procurement.order_change_notices.view_own", "View Own Order Change Notices",
-     "See only the order change notices you raised or are named on as sales or customer service "
-     "in charge. Ignored when View Order Change Notices is also held."),
+     "See only the order change notices you raised, are the customer service in charge of, or "
+     "are the user linked to the Requested by contact of. Ignored when View Order Change "
+     "Notices is also held."),
     ("procurement.order_change_notices.create", "Create Order Change Notices",
      "Raise, edit and submit your own order change notices."),
     ("procurement.order_change_notices.edit", "Edit Order Change Notices",
@@ -122,7 +123,10 @@ def _ocn_columns(p: str) -> tuple:
         ("customer_name", "VARCHAR(255)"),
         ("customer_po_no", "VARCHAR(128)"),
         ("so_no_text", "VARCHAR(128)"),
-        ("sales_in_charge_user_id", "VARCHAR(100) REFERENCES users(id) ON DELETE SET NULL"),
+        # "Requested by" (UAC I7), the purchase request's pair: the contact FK (TEXT, like
+        # respond_contacts.id) and the display label stamped from the contact's name.
+        ("requested_by_contact_id", "TEXT REFERENCES respond_contacts(id) ON DELETE SET NULL"),
+        ("requested_by", "TEXT"),
         ("cs_in_charge_user_id", "VARCHAR(100) REFERENCES users(id) ON DELETE SET NULL"),
         ("description", "TEXT"),
         ("cs_comment", "TEXT"),

@@ -33,7 +33,9 @@ class OrderChangeNoticeWrite(BaseModel):
     customer_po_no: Optional[str] = Field(None, max_length=128)
     so_no_text: Optional[str] = Field(None, max_length=128)
     project_id: Optional[str] = None
-    sales_in_charge_user_id: Optional[str] = None
+    #: "Requested by" (UAC I7): an eligible requestor contact; left out on create it defaults to
+    #: the raiser's linked contact, an explicit null clears it.
+    requested_by_contact_id: Optional[str] = None
     cs_in_charge_user_id: Optional[str] = None
     description: Optional[str] = Field(None, max_length=4000)
     ocn_date: Optional[date] = None

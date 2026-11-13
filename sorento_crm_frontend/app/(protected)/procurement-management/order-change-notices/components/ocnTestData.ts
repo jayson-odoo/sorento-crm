@@ -15,6 +15,7 @@ const CUSTOMER_ID = '9e2d7b14-1c55-4a8f-b6a3-7d4e0f1c8b03';
 const PRODUCT_1 = '3a9c5e21-7b64-4d18-9f02-5e8a1c7d4b04';
 const PRODUCT_2 = '7d1e4a93-2c80-4b57-a1f6-9b3c6e0d5a05';
 const SALES_USER = '2f6b9d38-5e41-4c97-8a20-4d7c1b0e6f06';
+const REQUESTOR_CONTACT = '5c2e8a71-3d94-4b06-9f18-7a0d6e4b2c13';
 const CS_USER = '8c3a5f60-9d12-4e74-b3c8-0a5e2d1f7b07';
 
 export const CHANGE_TYPES = [
@@ -65,8 +66,8 @@ export function ocnRow(over: Record<string, unknown> = {}) {
     risk_level: 'High',
     project_id: PROJECT_ID,
     project_title: 'Project Alpha Tower',
-    sales_in_charge_user_id: SALES_USER,
-    sales_in_charge_name: 'Sales Person A',
+    requested_by_contact_id: REQUESTOR_CONTACT,
+    requested_by: 'Requestor A',
     status: 'submitted',
     approval_status: null,
     revision_no: 0,

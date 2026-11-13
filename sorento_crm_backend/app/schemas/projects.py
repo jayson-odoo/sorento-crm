@@ -1938,7 +1938,7 @@ class ProjectOrderChangeNoticeResponse(BaseModel):
     customer_po_no: Optional[str] = None
     change_type_name: Optional[str] = None
     risk_level: Optional[str] = None
-    sales_in_charge_name: Optional[str] = None
+    requested_by: Optional[str] = None
     revision_no: int = 0
 
 

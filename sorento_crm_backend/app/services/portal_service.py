@@ -109,6 +109,10 @@ GRANTABLE_PORTAL_FORM_TYPES = SUPPORTED_TYPES + (
     "sales_opportunity",
     "sample_request",
     "new_product_application",
+    # OCN-ORDER-CHANGE-NOTICE round 20 (UAC I1/I2): opt-in like sample_request, so a tag, an
+    # active market segment or the contact's own switch turns it on. Its portal pages are slice 2
+    # (UAC I5); until then the FE landing does not offer it (I6).
+    "order_change_notice",
     CUSTOMER_ASKS_FORM_TYPE,
     CONVERSATION_FORM_TYPE,
 )

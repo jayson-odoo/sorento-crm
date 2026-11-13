@@ -45,7 +45,8 @@ describe('Order Change Notices for a salesperson', () => {
     const menu = applyMenuAccess(
       MENU_SIDEBAR,
       access({
-        salesperson: { portalKinds: [] },
+        // Round 20 (UAC I4): the item comes from the shared MY REQUESTS list, so it needs the kind.
+        salesperson: { portalKinds: ['order_change_notice'] },
         permissionSet: new Set([
           'procurement.order_change_notices.view_own',
           'procurement.order_change_notices.create',
@@ -56,7 +57,7 @@ describe('Order Change Notices for a salesperson', () => {
     const ocn = items.find((i) => i.path === OCN_PATH);
     expect(ocn).toBeTruthy();
     expect(ocn?.heading).toBe('MY REQUESTS');
-    expect(ocn?.title).toBe('Order Change Notices');
+    expect(ocn?.title).toBe('Order Change Notice');
     expect(items.some((i) => i.title === 'Project Sales Admin')).toBe(false);
   });
 

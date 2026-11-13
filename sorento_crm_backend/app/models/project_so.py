@@ -738,9 +738,12 @@ class OrderChangeNotice(Base, CompanyScopedMixin):
     customer_name = Column(String(255), nullable=True)
     customer_po_no = Column(String(128), nullable=True)
     so_no_text = Column(String(128), nullable=True)
-    sales_in_charge_user_id = Column(
-        String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    #: "Requested by" (UAC I7), the purchase request's pair: the requestor contact and the
+    #: label stamped from its name by requestor_options_service.apply_requestor_contact.
+    requested_by_contact_id = Column(
+        Text, ForeignKey("respond_contacts.id", ondelete="SET NULL"), nullable=True
     )
+    requested_by = Column(Text, nullable=True)
     cs_in_charge_user_id = Column(
         String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )

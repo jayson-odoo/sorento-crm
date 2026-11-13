@@ -362,7 +362,7 @@ describe('G4 the Details tab reads like the form', () => {
   it('prints the fields in the form order with their values', async () => {
     mount(ocnDetail(), []);
     await ready();
-    const order = ['Date', 'Customer', 'Customer PO no.', 'SO no.', 'Project', 'C.S. in charge', 'Sales in charge', 'Type of change'];
+    const order = ['Date', 'Customer', 'Customer PO no.', 'SO no.', 'Project', 'C.S. in charge', 'Requested by', 'Type of change'];
     const nodes = order.map((t) => screen.getAllByText(new RegExp(`^${t.replace(/\./g, '\\.')}$`))[0]);
     for (let i = 0; i < nodes.length - 1; i += 1) {
       expect(
@@ -375,7 +375,7 @@ describe('G4 the Details tab reads like the form', () => {
     expect(screen.getAllByText('XT04/3871 (R1)').length).toBeGreaterThan(0);
     expect(screen.getByText('Project Alpha Tower')).toBeTruthy();
     expect(screen.getByText('CS Person A')).toBeTruthy();
-    expect(screen.getAllByText('Sales Person A').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Requestor A').length).toBeGreaterThan(0);
     expect(screen.getByText('Exchange')).toBeTruthy();
     expect(screen.getAllByText('High').length).toBeGreaterThan(0);
   });

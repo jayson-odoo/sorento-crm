@@ -2,7 +2,7 @@
 
 Column ids (the FE list's column ids, which the list sends as `sort`): ocn_number, ocn_date,
 customer_name, customer_po_no, change_type_name, risk_level, project_title,
-sales_in_charge_name, status. Pattern: tests/test_portal_p4_npa_sort_keys.py.
+requested_by, status. Pattern: tests/test_portal_p4_npa_sort_keys.py.
 
 Rows are created i = 0, 1, 2 with created_at ASCENDING in i, and each column's value sorts
 DESCENDING in i, so an ignored key (the created_at fallback) cannot pass: asc == desc when the
@@ -20,7 +20,7 @@ from ._forms_chain_support import SORENTO, user, world  # noqa: F401
 from ._ocn_support import OCN, change_type, ocn, project, rows_of, uid  # noqa: F401
 
 STRICT = ("ocn_number", "ocn_date", "customer_name", "customer_po_no", "change_type_name",
-          "project_title", "sales_in_charge_name")
+          "project_title", "requested_by")
 
 
 def _seed(o, column):
@@ -55,8 +55,8 @@ def _seed(o, column):
         elif column == "project_title":
             # Titles share no word (the project clash check blocks lookalikes); they sort descending in i.
             cols["project_id"] = project(o.db, o.raiser, ("Quillmoss Court", "Juniper Wharf", "Bexley Gardens")[i]).id
-        elif column == "sales_in_charge_name":
-            cols["sales_in_charge_user_id"] = user(o.db, f"Sales {letters[i]}")
+        elif column == "requested_by":
+            cols["requested_by"] = f"Requestor {letters[i]}"
         elif column == "risk_level":
             cols["change_type_id"] = change_type(o.db, f"ZZT Risk {i}", ("High", "Low", "Highest")[i]).id
         elif column == "status":

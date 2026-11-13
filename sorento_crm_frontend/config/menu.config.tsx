@@ -75,6 +75,7 @@ const MY_REQUEST_ICONS: Partial<Record<(typeof LANDING_KINDS)[number], LucideIco
   sponsorship_form: Gift,
   sample_request: Package,
   new_product_application: FileText,
+  order_change_notice: FileText,
   price_tag_request: Receipt,
   sales_opportunity: TrendingUp,
 };
@@ -1629,15 +1630,6 @@ export const MENU_SIDEBAR: MenuConfig = [
   },
   { heading: 'MY REQUESTS', audience: 'salesperson' },
   ...MY_REQUEST_ITEMS,
-  // Not a portal kind yet (slice 2): a salesperson opens the staff pages, which narrow to the
-  // notices they raised or are named on (`.view_own`) and let them raise one (`.create`).
-  {
-    title: 'Order Change Notices',
-    icon: FileText,
-    path: '/procurement-management/order-change-notices',
-    permission: 'procurement.order_change_notices.view_own',
-    audience: 'salesperson',
-  },
 ];
 
 export const MENU_SIDEBAR_CUSTOM: MenuConfig = [

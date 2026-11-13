@@ -300,7 +300,7 @@ PERMISSION_REGISTRY.extend([
 # `ocn_0001_order_change_notice`.
 PERMISSION_REGISTRY.extend([
     {"slug": "procurement.order_change_notices.view", "name": "View Order Change Notices", "description": "See every order change notice of your companies."},
-    {"slug": "procurement.order_change_notices.view_own", "name": "View Own Order Change Notices", "description": "See only the order change notices you raised or are named on as sales or customer service in charge. Ignored when View Order Change Notices is also held."},
+    {"slug": "procurement.order_change_notices.view_own", "name": "View Own Order Change Notices", "description": "See only the order change notices you raised, are the customer service in charge of, or are the user linked to the Requested by contact of. Ignored when View Order Change Notices is also held."},
     {"slug": "procurement.order_change_notices.create", "name": "Create Order Change Notices", "description": "Raise, edit and submit your own order change notices."},
     {"slug": "procurement.order_change_notices.edit", "name": "Edit Order Change Notices", "description": "Send an order change notice for approval or back to its raiser, edit, void or revise it. Includes seeing every notice."},
     {"slug": "procurement.order_change_notices.delete", "name": "Delete Order Change Notices", "description": "Delete an order change notice."},

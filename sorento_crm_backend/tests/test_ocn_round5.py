@@ -197,7 +197,7 @@ def test_r5_the_refusals_name_each_case(build):
 def test_r5_a_view_own_raiser_edits_and_deletes_their_own_comment(ocn):
     from app.services.form_comment_service import FormCommentService
 
-    d = create(ocn, user_id=ocn.own, sales_in_charge_user_id=None, cs_in_charge_user_id=None)
+    d = create(ocn, user_id=ocn.own, cs_in_charge_user_id=None)
     ok(move(ocn, d["id"], "submit", ocn.own))
     posted = ocn.as_(ocn.own).post(f"{COMMENTS}/{d['id']}", data={"body": "Checked with site"})
     assert posted.status_code == 201, posted.text
@@ -211,7 +211,7 @@ def test_r5_the_view_own_raiser_gets_the_threads_mail(ocn):
     from app.models.notification import Notification
     from app.models.user import User
 
-    d = create(ocn, user_id=ocn.own, sales_in_charge_user_id=None, cs_in_charge_user_id=None)
+    d = create(ocn, user_id=ocn.own, cs_in_charge_user_id=None)
     ok(move(ocn, d["id"], "submit", ocn.own))
     posted = ocn.as_(ocn.sales_admin).post(f"{COMMENTS}/{d['id']}", data={"body": "Need the revised PO"})
     assert posted.status_code == 201, posted.text

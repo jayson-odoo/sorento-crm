@@ -10,7 +10,7 @@
  *    words, plus the status pill (the record's status word, "Draft" on a new one);
  *  - every header field has a visible label (trailing " *" / "(optional)" allowed, prefix match) and
  *    the control is reachable with getByLabelText(<label>): Customer Name, Customer PO No., SO No.,
- *    Registered project, C.S. Incharge, Sales Incharge; Type of change is a choice of the four
+ *    Registered project, C.S. Incharge, Requested by (round 20); Type of change is a choice of the four
  *    types (click the type's name), the risk and the guide text of the picked type are read-only text;
  *  - Customer Name = AsyncCombobox + lookupCustomersForRequest (free text kept as customer_name);
  *  - the line table: columnheaders No., Item Code, Qty before, Qty after, Date before, Date after,
@@ -24,7 +24,7 @@
  *    updateOrderChangeNotice(id, body), submitOrderChangeNotice(id, revisionNo),
  *    getOrderChangeNotice(id), listChangeTypes(), searchOrderChangeNoticeProducts(q) -> hits
  *    {id, product_code, product_name, brand_name}; body keys as the backend payload (change_type_id,
- *    customer_id, customer_name, customer_po_no, so_no_text, project_id, sales_in_charge_user_id,
+ *    customer_id, customer_name, customer_po_no, so_no_text, project_id, requested_by_contact_id,
  *    cs_in_charge_user_id, description, lines[{product_id, qty_before, qty_after, date_before,
  *    date_after, delivered_qty, remark}]), dates as YYYY-MM-DD.
  */
@@ -205,14 +205,13 @@ describe('G3 the sample request document shell', () => {
     renderForm();
     await waitForForm();
     const order = [
-      /^Sales Person/,
       /^Date\b/,
       /^Customer Name/,
       /^Customer PO No/,
       /^SO No/,
       /^Registered project/,
       /^C\.S\. Incharge/,
-      /^Sales Incharge/,
+      /^Requested by/,
       /^Type of change/,
     ];
     const nodes = order.map(labelNode);
@@ -459,15 +458,15 @@ describe('G3 Save as draft and Submit', () => {
     expect(svc.create.mock.calls[0][0]).toMatchObject({ so_no_text: 'SO-ZZT-0001', description: 'Site not ready.' });
   });
 
-  it('a person picked as Sales Incharge is sent by id', async () => {
+  it('a person picked as C.S. Incharge is sent by id', async () => {
     renderForm();
     await waitForForm();
     await fillValid();
-    fireEvent.click(screen.getByLabelText(/^Sales Incharge/));
-    fireEvent.click(await screen.findByRole('option', { name: /Sales Person A/ }));
+    fireEvent.click(screen.getByLabelText(/^C\.S\. Incharge/));
+    fireEvent.click(await screen.findByRole('option', { name: /CS Person A/ }));
     fireEvent.click(screen.getByRole('button', { name: /^save as draft$/i }));
     await waitFor(() => expect(svc.create).toHaveBeenCalled());
-    expect(svc.create.mock.calls[0][0]).toMatchObject({ sales_in_charge_user_id: 'u-sales' });
+    expect(svc.create.mock.calls[0][0]).toMatchObject({ cs_in_charge_user_id: 'u-cs' });
   });
 
   it('a server refusal is shown and the form stays', async () => {

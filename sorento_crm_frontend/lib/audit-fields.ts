@@ -46,7 +46,7 @@ export const AUDIT_FIELD_LABELS: Record<string, Record<string, string>> = {
     customer_name: 'Customer',
     customer_po_no: 'Customer PO no.',
     so_no_text: 'SO no.',
-    sales_in_charge_user_id: 'Sales in charge',
+    requested_by: 'Requested by',
     cs_in_charge_user_id: 'C.S. in charge',
     description: 'Description',
     reason: 'Reason',

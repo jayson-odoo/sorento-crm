@@ -33,6 +33,7 @@ import { formatDateInMalaysia } from '@/lib/helpers';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { cn } from '@/lib/utils';
 import { getUserLookup } from '@/services/userSelectService';
+import { RequestorContactSelect } from '@/app/(protected)/master-data-management/shared/components/RequestorContactSelect';
 import type { CustomerLookupItem } from '@/app/(protected)/procurement-management/purchase-requests/types/purchaseRequest.types';
 import { searchProjectsForLink } from '@/app/(protected)/complaint-management/complaints/services/complaintService';
 import {
@@ -65,7 +66,7 @@ interface FormState {
   so_no_text: string;
   project_id: string;
   project_label: string;
-  sales_in_charge_user_id: string;
+  requested_by_contact_id: string;
   cs_in_charge_user_id: string;
   description: string;
   lines: OcnDraftLine[];
@@ -79,7 +80,7 @@ const EMPTY: FormState = {
   so_no_text: '',
   project_id: '',
   project_label: '',
-  sales_in_charge_user_id: '',
+  requested_by_contact_id: '',
   cs_in_charge_user_id: '',
   description: '',
   lines: [],
@@ -96,7 +97,7 @@ function stateFromDetail(d: OcnDetail): FormState {
     so_no_text: d.so_no_text ?? '',
     project_id: d.project_id ?? '',
     project_label: d.project_title ?? '',
-    sales_in_charge_user_id: d.sales_in_charge_user_id ?? '',
+    requested_by_contact_id: d.requested_by_contact_id ?? '',
     cs_in_charge_user_id: d.cs_in_charge_user_id ?? '',
     description: d.description ?? '',
     lines: (d.lines ?? []).map((l) => ({
@@ -115,16 +116,20 @@ function stateFromDetail(d: OcnDetail): FormState {
 
 const blankToNull = (v: string) => (v.trim() ? v.trim() : null);
 
-/** The backend body. A line with no product yet is not sent (a draft may hold an empty row). */
-function payloadFromState(s: FormState): OcnWrite {
+/** The backend body. A line with no product yet is not sent (a draft may hold an empty row).
+ *  A new notice with no requestor picked leaves the key out, so the server defaults it to the
+ *  raiser's linked contact (UAC I8); on an edit an empty one clears it. */
+function payloadFromState(s: FormState, isNew = false): OcnWrite {
   return {
+    ...(isNew && !s.requested_by_contact_id
+      ? {}
+      : { requested_by_contact_id: s.requested_by_contact_id || null }),
     change_type_id: s.change_type_id || null,
     customer_id: s.customer_id || null,
     customer_name: blankToNull(s.customer_name),
     customer_po_no: blankToNull(s.customer_po_no),
     so_no_text: blankToNull(s.so_no_text),
     project_id: s.project_id || null,
-    sales_in_charge_user_id: s.sales_in_charge_user_id || null,
     cs_in_charge_user_id: s.cs_in_charge_user_id || null,
     description: blankToNull(s.description),
     lines: s.lines
@@ -219,6 +224,11 @@ export default function OrderChangeNoticeForm({ ocnId, projectId }: OrderChangeN
   // A new notice keeps the id its create answered: a refused Submit, then Submit again, edits
   // the same draft instead of numbering a second one (review M4).
   const [createdId, setCreatedId] = useState<string | null>(null);
+  // The requestor as last saved (id + name), so the picker shows it by name before any page loads.
+  const [savedRequestor, setSavedRequestor] = useState<{ id: string | null; name: string | null }>({
+    id: null,
+    name: null,
+  });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [serverMessage, setServerMessage] = useState<string | null>(null);
 
@@ -233,6 +243,10 @@ export default function OrderChangeNoticeForm({ ocnId, projectId }: OrderChangeN
       // An amendment-born notice's change rows are its lines: no blank row to fill in.
       const blank = loaded.lines.length || carriesChangeRows(existing.data) ? [] : [blankOcnLine()];
       setState(loaded.lines.length ? loaded : { ...loaded, lines: blank });
+      setSavedRequestor({
+        id: existing.data.requested_by_contact_id ?? null,
+        name: existing.data.requested_by ?? null,
+      });
       setHydrated(true);
     }
   }, [ocnId, existing.data, hydrated]);
@@ -260,12 +274,15 @@ export default function OrderChangeNoticeForm({ ocnId, projectId }: OrderChangeN
    *  forms do), so the revised PO can go on with the first save. */
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const save = async () => {
-    const body = payloadFromState(state);
+    const body = payloadFromState(state, !savedId);
     if (savedId) {
       return update.mutateAsync({ id: savedId, body, revisionNo: record?.revision_no ?? null });
     }
     const created = await create.mutateAsync(body);
     setCreatedId(created.id);
+    // Keep the server's default requestor, so a second save of this draft does not clear it.
+    patch({ requested_by_contact_id: created.requested_by_contact_id ?? '' });
+    setSavedRequestor({ id: created.requested_by_contact_id ?? null, name: created.requested_by ?? null });
     for (const file of pendingFiles) {
       try {
         await uploadOrderChangeNoticeAttachment(created.id, file);
@@ -348,9 +365,6 @@ export default function OrderChangeNoticeForm({ ocnId, projectId }: OrderChangeN
           </h2>
 
           <div className="grid grid-cols-1 gap-x-10 gap-y-5 sm:grid-cols-2">
-            <DocField label="Sales Person">
-              <ReadValue>{record?.created_by_name ?? 'You'}</ReadValue>
-            </DocField>
             <DocField label="Date">
               {/* Spaced so the day reads as its own word next to its label. */}
               <ReadValue> {formatDateInMalaysia(record?.ocn_date ?? new Date()) || '-'} </ReadValue>
@@ -436,14 +450,13 @@ export default function OrderChangeNoticeForm({ ocnId, projectId }: OrderChangeN
                 placeholder="Choose a person"
               />
             </DocField>
-            <DocField label="Sales Incharge" htmlFor="ocn-sales">
-              <SearchableSelect
-                id="ocn-sales"
-                value={state.sales_in_charge_user_id}
-                onChange={(v) => patch({ sales_in_charge_user_id: v })}
-                options={userOptions}
-                clearable
-                placeholder="Choose a person"
+            <DocField label="Requested by">
+              <RequestorContactSelect
+                value={state.requested_by_contact_id}
+                onChange={(v) => patch({ requested_by_contact_id: v ?? '' })}
+                savedContactId={savedRequestor.id}
+                savedContactName={savedRequestor.name}
+                placeholder="Select requestor"
               />
             </DocField>
 

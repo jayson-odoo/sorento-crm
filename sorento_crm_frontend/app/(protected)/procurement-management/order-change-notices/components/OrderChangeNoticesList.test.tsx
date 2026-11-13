@@ -12,7 +12,7 @@
  *  - list params handed to the service: { pageIndex, pageSize, sorting, searchQuery, status,
  *    changeTypeId, riskLevel }, the three filters as a comma string or an array (a set either way);
  *  - column ids = the backend sort keys: ocn_number, ocn_date, customer_name, customer_po_no,
- *    change_type_name, risk_level, project_title, sales_in_charge_name, status;
+ *    change_type_name, risk_level, project_title, requested_by, status;
  *  - URL keys: status, change_type_id, risk_level.
  */
 import React from 'react';
@@ -152,7 +152,7 @@ afterEach(() => cleanup());
 
 describe('G2 columns', () => {
   const TITLES = [
-    'OCN no.', 'Date', 'Customer', 'Customer PO no.', 'Type', 'Risk', 'Project', 'Sales in charge', 'Status',
+    'OCN no.', 'Date', 'Customer', 'Customer PO no.', 'Type', 'Risk', 'Project', 'Requested by', 'Status',
   ];
 
   it('shows the nine columns, in the card order', async () => {
@@ -185,14 +185,14 @@ describe('G2 columns', () => {
     expect(document.body.textContent).not.toMatch(/2026-1[01]-\d\d/);
   });
 
-  it('shows each value in its own cell: type, risk, project, sales in charge, customer PO', async () => {
+  it('shows each value in its own cell: type, risk, project, requested by, customer PO', async () => {
     mount();
     await screen.findByText('OCN26-0302');
     expect(screen.getByText('Exchange')).toBeTruthy();
     expect(screen.getByText('High')).toBeTruthy();
     expect(screen.getByText('Highest')).toBeTruthy();
     expect(screen.getAllByText('Project Alpha Tower').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Sales Person A').length).toBe(3);
+    expect(screen.getAllByText('Requestor A').length).toBe(3);
     expect(screen.getAllByText('XT04/3871 (R1)').length).toBeGreaterThan(0);
   });
 
@@ -237,7 +237,7 @@ describe('G2 sorting runs on the server', () => {
     ['Type', 'change_type_name'],
     ['Risk', 'risk_level'],
     ['Project', 'project_title'],
-    ['Sales in charge', 'sales_in_charge_name'],
+    ['Requested by', 'requested_by'],
     ['Status', 'status'],
   ])('the %s header sorts by %s', async (title, key) => {
     mount();

@@ -22,6 +22,16 @@ from app.services.requestor_options_service import (
 router = APIRouter()
 
 
+def _own_linked_contact(db: Session, current_user: dict) -> Optional[str]:
+    from app.models.user import User
+
+    user_id = (current_user or {}).get("id")
+    if not user_id:
+        return None
+    value = db.query(User.respond_contact_id).filter(User.id == str(user_id)).scalar()
+    return str(value) if value else None
+
+
 @router.get("/requestor-select")
 def get_requestor_select(
     q: Optional[str] = Query(None),
@@ -40,6 +50,12 @@ def get_requestor_select(
     try:
         raw_ids = [v.strip() for v in include_ids.split(",") if v.strip()] if include_ids else None
         ids = filter_form_referenced_ids(db, raw_ids) if raw_ids else None
+        # The caller's OWN linked contact (users.respond_contact_id) stays too: it is the default
+        # "Requested by" of a notice they raise (OCN UAC I8), and naming their own contact exposes
+        # nothing from the directory.
+        own = _own_linked_contact(db, current_user)
+        if raw_ids and own and own in raw_ids and own not in (ids or []):
+            ids = [*(ids or []), own]
         items, has_more = list_requestor_options(
             db, q=q, limit=DEFAULT_LIMIT, include_ids=ids
         )

@@ -180,8 +180,8 @@ function DetailsCard({ r }: { r: OcnDetail }) {
           <DocField label="C.S. in charge">
             <ReadValue>{r.cs_in_charge_name}</ReadValue>
           </DocField>
-          <DocField label="Sales in charge">
-            <ReadValue>{r.sales_in_charge_name}</ReadValue>
+          <DocField label="Requested by">
+            <ReadValue>{r.requested_by}</ReadValue>
           </DocField>
           <DocField label="Type of change" className="sm:col-span-2">
             <div className="py-2 text-sm">

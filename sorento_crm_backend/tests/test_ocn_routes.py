@@ -191,10 +191,16 @@ def test_d2_view_reads_every_ocn(ocn):
 
 
 def test_d2_view_own_lists_raised_and_named_ocns_only(ocn):
-    raised = create(ocn, user_id=ocn.own, sales_in_charge_user_id=None, cs_in_charge_user_id=None)
-    as_sales = create(ocn, user_id=ocn.raiser, sales_in_charge_user_id=ocn.own, cs_in_charge_user_id=None)
-    as_cs = create(ocn, user_id=ocn.raiser, sales_in_charge_user_id=None, cs_in_charge_user_id=ocn.own)
-    other = create(ocn, user_id=ocn.raiser, sales_in_charge_user_id=ocn.sales_admin, cs_in_charge_user_id=ocn.cs)
+    raised = create(ocn, user_id=ocn.own, cs_in_charge_user_id=None)
+    # Round 20 (UAC I9): named as sales is now the user linked to the Requested by contact.
+    from .test_ocn_round20 import _eligible, _link
+
+    own_contact = _eligible(ocn.db, "ZZT Requestor Own")
+    _link(ocn.db, ocn.own, own_contact)
+    other_contact = _eligible(ocn.db, "ZZT Requestor Other")
+    as_sales = create(ocn, user_id=ocn.raiser, requested_by_contact_id=own_contact, cs_in_charge_user_id=None)
+    as_cs = create(ocn, user_id=ocn.raiser, cs_in_charge_user_id=ocn.own)
+    other = create(ocn, user_id=ocn.raiser, requested_by_contact_id=other_contact, cs_in_charge_user_id=ocn.cs)
     seen = set(_ids(ocn.as_(ocn.own).get(OCN)))
     assert {raised["id"], as_sales["id"], as_cs["id"]} <= seen
     assert other["id"] not in seen

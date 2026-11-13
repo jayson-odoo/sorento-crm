@@ -48,8 +48,8 @@ def test_r11_module_row_in_scope_reads_the_notice_by_its_own_rule_and_refuses_un
     from app.services import own_scope
     from app.services.own_scope import Me
 
-    mine = create(ocn, user_id=ocn.own, sales_in_charge_user_id=None, cs_in_charge_user_id=None)
-    theirs = create(ocn, user_id=ocn.raiser, sales_in_charge_user_id=None, cs_in_charge_user_id=None)
+    mine = create(ocn, user_id=ocn.own, cs_in_charge_user_id=None)
+    theirs = create(ocn, user_id=ocn.raiser, cs_in_charge_user_id=None)
     me = Me(user_id=ocn.own, contact_id=None, agent_ids=())
     assert own_scope.module_row_in_scope(ocn.db, "order_change_notice", mine["id"], me) is True
     assert own_scope.module_row_in_scope(ocn.db, "order_change_notice", theirs["id"], me) is False

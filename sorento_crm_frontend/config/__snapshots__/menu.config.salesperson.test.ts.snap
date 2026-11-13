@@ -1027,6 +1027,18 @@ exports[`MENU_SIDEBAR for staff is unchanged > mixed user (salesperson plus staf
     ],
     "title": "Inventory",
   },
+  {
+    "heading": "OPERATIONS",
+  },
+  {
+    "children": [
+      {
+        "path": "/procurement-management/order-change-notices",
+        "title": "Order Change Notices",
+      },
+    ],
+    "title": "Project Sales Admin",
+  },
 ]
 `;
 

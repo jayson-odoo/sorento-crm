@@ -250,9 +250,16 @@ def _project_description(it, labels: dict[str, str]) -> Optional[str]:
 #: and new (`_user_display_names`, the one the actor column reads), never the id.
 _USER_ID_FIELDS: dict[str, tuple[str, ...]] = {
     "order_change_notice": (
-        "approver_id", "requested_approval_by_user_id", "sales_in_charge_user_id",
+        "approver_id", "requested_approval_by_user_id",
         "cs_in_charge_user_id", "rejected_by_id", "voided_by", "created_by",
     ),
+}
+
+#: Audited id columns whose display label is audited beside them, so the trail drops the id and
+#: reads the label: an order change notice's Requested by contact (UAC I10) shows as
+#: "Requested by: A -> B" through its `requested_by` text, never the contact id.
+_LABELLED_ID_FIELDS: dict[str, tuple[str, ...]] = {
+    "order_change_notice": ("requested_by_contact_id",),
 }
 
 
@@ -273,7 +280,7 @@ def _name_user_fields(entity_type: Optional[str], values: Optional[dict], names:
     fields = _USER_ID_FIELDS.get(entity_type or "", ())
     if not values or not fields:
         return values
-    out = dict(values)
+    out = {k: v for k, v in values.items() if k not in _LABELLED_ID_FIELDS.get(entity_type or "", ())}
     for key in fields:
         value = out.get(key)
         if value and _is_uuid(str(value)):

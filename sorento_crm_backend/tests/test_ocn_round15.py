@@ -35,9 +35,14 @@ def _name(o, user_id):
 
 
 def test_r15_a_salespersons_list_holds_their_own_notices_only(ocn):
-    mine = create(ocn, user_id=ocn.own, sales_in_charge_user_id=None, cs_in_charge_user_id=None)
-    named = create(ocn, user_id=ocn.raiser, sales_in_charge_user_id=ocn.own, cs_in_charge_user_id=None)
-    theirs = create(ocn, user_id=ocn.raiser, sales_in_charge_user_id=None, cs_in_charge_user_id=None)
+    mine = create(ocn, user_id=ocn.own, cs_in_charge_user_id=None)
+    # Round 20 (UAC I9): "named" is now the user linked to the notice's Requested by contact.
+    from .test_ocn_round20 import _eligible, _link
+
+    contact_id = _eligible(ocn.db, "ZZT Requestor Own")
+    _link(ocn.db, ocn.own, contact_id)
+    named = create(ocn, user_id=ocn.raiser, requested_by_contact_id=contact_id, cs_in_charge_user_id=None)
+    theirs = create(ocn, user_id=ocn.raiser, cs_in_charge_user_id=None)
     foreign = _other_company_ocn(ocn)
     res = ocn.as_(ocn.own).get(OCN, params={"limit": 100})
     assert res.status_code == 200, res.text
@@ -49,7 +54,7 @@ def test_r15_a_salespersons_list_holds_their_own_notices_only(ocn):
 
 def test_r15_a_salesperson_creates_and_submits_their_own_notice(ocn):
     """The list's Create and the form's Submit work for them on the staff routes."""
-    d = create(ocn, user_id=ocn.own, sales_in_charge_user_id=None, cs_in_charge_user_id=None)
+    d = create(ocn, user_id=ocn.own, cs_in_charge_user_id=None)
     ok(move(ocn, d["id"], "submit", ocn.own))
 
 
@@ -81,12 +86,13 @@ def test_r15_history_reads_the_approver_and_the_requester_by_name(ocn, sla):
         assert str(user_id) not in blob
 
 
-def test_r15_history_reads_sales_and_cs_in_charge_by_name(ocn):
+def test_r15_history_reads_cs_in_charge_by_name(ocn):
+    """Round 20 retired Sales in charge (its History is test_ocn_round20 I10); C.S. stays."""
     d = create(ocn)
-    res = ocn.as_(ocn.raiser).put(f"{OCN}/{d['id']}", json={"sales_in_charge_user_id": ocn.own})
+    res = ocn.as_(ocn.raiser).put(f"{OCN}/{d['id']}", json={"cs_in_charge_user_id": ocn.own})
     assert res.status_code == 200, res.text
     rows = _history(ocn, d["id"], ocn.sales_admin)
-    moved = [r for r in rows if r["action"] == "UPDATE" and "sales_in_charge_user_id" in (r["new_values"] or {})]
+    moved = [r for r in rows if r["action"] == "UPDATE" and "cs_in_charge_user_id" in (r["new_values"] or {})]
     assert moved, rows
-    assert moved[0]["new_values"]["sales_in_charge_user_id"] == _name(ocn, ocn.own)
-    assert moved[0]["old_values"]["sales_in_charge_user_id"] == _name(ocn, ocn.sales_admin)
+    assert moved[0]["new_values"]["cs_in_charge_user_id"] == _name(ocn, ocn.own)
+    assert moved[0]["old_values"]["cs_in_charge_user_id"] == _name(ocn, ocn.cs)

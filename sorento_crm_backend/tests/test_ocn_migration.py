@@ -171,7 +171,7 @@ def test_the_ocn_gains_its_lifecycle_columns(db):
     cols = _columns(db, _p(db), "order_change_notices")
     assert {
         "status", "approval_status", "change_type_id", "customer_id", "customer_name",
-        "customer_po_no", "so_no_text", "cs_in_charge_user_id", "sales_in_charge_user_id",
+        "customer_po_no", "so_no_text", "cs_in_charge_user_id", "requested_by_contact_id", "requested_by",
         "description", "cs_comment", "approved_by", "approval_comments", "rejected_by_id",
         "requested_approval_by_user_id", "submitted_at", "voided_by", "voided_at", "void_reason",
         "revision_no", "source", "ocn_date", "approver_id", "approved_at",

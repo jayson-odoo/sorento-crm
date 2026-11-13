@@ -98,7 +98,7 @@ def list_requestor_options(
 
 def filter_form_referenced_ids(db: Session, ids: Optional[Iterable[str]]) -> list[str]:
     """Keep only ids already referenced by a PR / SF / stock-inquiry row as its
-    submitter or its saved requestor.
+    submitter or its saved requestor, or by an order change notice as its requestor.
 
     `include_ids` on the internal picker exists so an edit form never silently
     blanks a requestor who sits outside a flagged segment. Passing it straight
@@ -128,6 +128,18 @@ def filter_form_referenced_ids(db: Session, ids: Optional[Iterable[str]]) -> lis
         {"ids": wanted},
     ).fetchall()
     allowed = {str(r[0]) for r in rows if r[0]}
+    # An order change notice's saved requestor (OCN round 20, UAC I7). Through the ORM, not the
+    # raw SQL above: the table lives in the `projects` schema.
+    from app.models.project_so import OrderChangeNotice
+
+    allowed.update(
+        str(cid)
+        for (cid,) in db.query(OrderChangeNotice.requested_by_contact_id)
+        .filter(OrderChangeNotice.requested_by_contact_id.in_(wanted))
+        .distinct()
+        .all()
+        if cid
+    )
     return [i for i in wanted if i in allowed]
 
 

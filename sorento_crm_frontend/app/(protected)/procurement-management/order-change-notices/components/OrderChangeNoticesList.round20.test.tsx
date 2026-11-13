@@ -86,6 +86,8 @@ describe('round 20: Requested by column (I7)', () => {
   it('sorts on the server with the sort key requested_by', async () => {
     mount();
     const header = await screen.findByRole('columnheader', { name: /^Requested by$/ });
+    // The sort button is disabled while the first page loads: wait for a row first.
+    await screen.findByText('Requestor A');
     fireEvent.click(header.querySelector('button') ?? header);
     await waitFor(() => {
       const last = svc.list.mock.calls.at(-1)?.[0] as { sorting?: Array<{ id: string }> };

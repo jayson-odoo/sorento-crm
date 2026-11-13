@@ -52,8 +52,9 @@ export interface OcnRow {
   risk_level?: string | null;
   project_id?: string | null;
   project_title?: string | null;
-  sales_in_charge_user_id?: string | null;
-  sales_in_charge_name?: string | null;
+  /** "Requested by" (UAC I7): the requestor contact and its name. */
+  requested_by_contact_id?: string | null;
+  requested_by?: string | null;
   cs_in_charge_user_id?: string | null;
   cs_in_charge_name?: string | null;
   created_at?: string | null;
@@ -121,7 +122,7 @@ export interface OcnWrite {
   customer_po_no?: string | null;
   so_no_text?: string | null;
   project_id?: string | null;
-  sales_in_charge_user_id?: string | null;
+  requested_by_contact_id?: string | null;
   cs_in_charge_user_id?: string | null;
   description?: string | null;
   ocn_date?: string | null;

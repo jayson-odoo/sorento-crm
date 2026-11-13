@@ -26,7 +26,7 @@ from datetime import date, datetime
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from sqlalchemy import and_, case, exists, func, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
 from app.models.project_so import OrderChangeNotice, OrderChangeNoticeLine, OrderChangeType
 from app.services import approval_chain_rules as rules
@@ -247,13 +247,26 @@ def get_for(db: Session, ocn_id: Any, *, for_update: bool = False) -> OrderChang
 
 
 def is_mine(row: OrderChangeNotice, actor: Actor) -> bool:
-    """Raised it, or named on it as sales or customer service in charge."""
+    """Raised it, is its customer service in charge, or is the user linked to its Requested by
+    contact (UAC I9; the same rule as `own_clause`)."""
     uid = actor.user_id
-    return bool(uid) and uid in {
-        str(row.created_by or ""),
-        str(row.sales_in_charge_user_id or ""),
-        str(row.cs_in_charge_user_id or ""),
-    }
+    if not uid:
+        return False
+    if uid in {str(row.created_by or ""), str(row.cs_in_charge_user_id or "")}:
+        return True
+    return bool(row.requested_by_contact_id) and _linked_contact_id(object_session(row), uid) == str(
+        row.requested_by_contact_id
+    )
+
+
+def _linked_contact_id(db: Optional[Session], user_id: Optional[str]) -> Optional[str]:
+    """The contact a CRM user is linked to (`users.respond_contact_id`), if any."""
+    from app.models.user import User
+
+    if db is None or not user_id:
+        return None
+    value = db.query(User.respond_contact_id).filter(User.id == str(user_id)).scalar()
+    return str(value) if value else None
 
 
 def can_view(actor: Actor) -> bool:
@@ -287,13 +300,18 @@ def reader_for(db: Session, ocn_id: Any, user_id: Optional[str]) -> OrderChangeN
 
 
 def own_clause(user_id: Optional[str]):
-    """A `.view_own` reader's notices: the ones they raised or are named on (sales or customer
-    service in charge). One predicate for the list and the project's Related tab."""
+    """A `.view_own` reader's notices: the ones they raised, are customer service in charge of,
+    or whose Requested by contact is the one they are linked to (UAC I9). One predicate for the
+    list and the project's Related tab."""
+    from app.models.user import User
+
     uid = str(user_id or "")
     return or_(
         OrderChangeNotice.created_by == uid,
-        OrderChangeNotice.sales_in_charge_user_id == uid,
         OrderChangeNotice.cs_in_charge_user_id == uid,
+        OrderChangeNotice.requested_by_contact_id.in_(
+            select(User.respond_contact_id).where(User.id == uid, User.respond_contact_id.isnot(None))
+        ),
     )
 
 
@@ -343,10 +361,9 @@ def _check_refs(db: Session, data: Dict[str, Any], *, current_project_id: Option
         assert_linkable_project(
             db, data["project_id"], current_project_id, code="order_change_notice_project_not_approved"
         )
-    for field, word in (("sales_in_charge_user_id", "sales"), ("cs_in_charge_user_id", "customer service")):
-        value = data.get(field)
-        if value is not None and db.query(User.id).filter(User.id == str(value)).first() is None:
-            raise _invalid(field, f"Choose the {word} in charge from the list.")
+    value = data.get("cs_in_charge_user_id")
+    if value is not None and db.query(User.id).filter(User.id == str(value)).first() is None:
+        raise _invalid("cs_in_charge_user_id", "Choose the customer service in charge from the list.")
     lines = data.get("lines") or []
     wanted = {str(line.get("product_id")) for line in lines if _is_uuid(line.get("product_id"))}
     # One query for every line (the company filter applies), not one per line.
@@ -356,6 +373,28 @@ def _check_refs(db: Session, data: Dict[str, Any], *, current_project_id: Option
             raise _invalid("lines", f"Line {index}: choose a product from the catalogue.")
         if str(line["product_id"]) not in known:
             raise _invalid("lines", f"Line {index}: that product is not in the catalogue.")
+
+
+def _apply_requestor(db: Session, row: OrderChangeNotice, data: Dict[str, Any], creator_id: Optional[str]) -> None:
+    """"Requested by" (UAC I7/I8), saved only through the purchase request's shared
+    `apply_requestor_contact` (eligibility, the label from the contact's current name). The
+    notice has no submitter contact, so the creating user's linked contact stands in for it:
+    it is always eligible, and it is the default on create when the body leaves the key out.
+    An explicit empty value clears both the contact and its label."""
+    from app.services.requestor_options_service import apply_requestor_contact
+
+    linked = _linked_contact_id(db, creator_id)
+    if "requested_by_contact_id" in data:
+        value = data["requested_by_contact_id"]
+    elif row.id is None:
+        value = linked
+    else:
+        return
+    if value in (None, "") or not str(value).strip():
+        row.requested_by_contact_id = None
+        row.requested_by = None
+        return
+    apply_requestor_contact(db, row, "requested_by_contact_id", "requested_by", value, extra_eligible_ids=[linked])
 
 
 def _apply(db: Session, row: OrderChangeNotice, data: Dict[str, Any]) -> None:
@@ -369,8 +408,9 @@ def _apply(db: Session, row: OrderChangeNotice, data: Dict[str, Any]) -> None:
             data.pop(key, None)
     _check_refs(db, data, current_project_id=row.project_id)
     with db.no_autoflush:
-        for key in ("change_type_id", "customer_id", "project_id", "sales_in_charge_user_id",
-                    "cs_in_charge_user_id"):
+        # Checked (and the contact read) before any other assignment, so a 422 changes nothing.
+        _apply_requestor(db, row, data, row.created_by)
+        for key in ("change_type_id", "customer_id", "project_id", "cs_in_charge_user_id"):
             if key in data:
                 setattr(row, key, str(data[key]) if data[key] else None)
         if "ocn_date" in data:
@@ -976,8 +1016,8 @@ def serialize_summary(
         "risk_level": kind.risk_level if kind else None,
         "project_id": str(row.project_id) if row.project_id else None,
         "project_title": titles.get(str(row.project_id)) if row.project_id else None,
-        "sales_in_charge_user_id": row.sales_in_charge_user_id,
-        "sales_in_charge_name": names.get(str(row.sales_in_charge_user_id or "")) or None,
+        "requested_by_contact_id": row.requested_by_contact_id,
+        "requested_by": row.requested_by,
         "cs_in_charge_user_id": row.cs_in_charge_user_id,
         "cs_in_charge_name": names.get(str(row.cs_in_charge_user_id or "")) or None,
         "created_at": _iso(row.created_at),
@@ -1023,7 +1063,7 @@ def serialize_detail(db: Session, row: OrderChangeNotice) -> Dict[str, Any]:
     from app.models.product import Product
 
     people = (
-        row.sales_in_charge_user_id, row.cs_in_charge_user_id, row.created_by, row.approver_id,
+        row.cs_in_charge_user_id, row.created_by, row.approver_id,
         row.rejected_by_id, row.requested_approval_by_user_id, row.voided_by,
     )
     names = _user_names(db, people)
@@ -1089,7 +1129,6 @@ def _type_column(column):
 
 def _sorts() -> Dict[str, Any]:
     from app.models.projects import Project
-    from app.models.user import User
 
     return {
         "ocn_number": OrderChangeNotice.ocn_number,
@@ -1105,9 +1144,7 @@ def _sorts() -> Dict[str, Any]:
             )
         ),
         "project_title": select(Project.title).where(Project.id == OrderChangeNotice.project_id).scalar_subquery(),
-        "sales_in_charge_name": select(func.coalesce(User.name, User.email))
-        .where(User.id == OrderChangeNotice.sales_in_charge_user_id)
-        .scalar_subquery(),
+        "requested_by": func.lower(OrderChangeNotice.requested_by),
         # By lifecycle, not by label.
         "status": case(
             *[(OrderChangeNotice.status == k, v) for k, v in STATUS_ORDER.items()], else_=None
@@ -1185,7 +1222,7 @@ def list_for(
     ordered = column.asc() if direction == "asc" else column.desc()
     tie = OrderChangeNotice.ocn_number.asc() if direction == "asc" else OrderChangeNotice.ocn_number.desc()
     rows = query.order_by(ordered.nulls_last(), tie).offset((page - 1) * limit).limit(limit).all()
-    names = _user_names(db, [r.sales_in_charge_user_id for r in rows] + [r.cs_in_charge_user_id for r in rows])
+    names = _user_names(db, [r.cs_in_charge_user_id for r in rows])
     titles = _project_titles(db, [r.project_id for r in rows])
     return {
         "data": [serialize_summary(r, names, titles) for r in rows],
@@ -1206,7 +1243,7 @@ def list_for_project(
         .order_by(OrderChangeNotice.created_at.desc().nulls_last(), OrderChangeNotice.ocn_number.desc())
         .all()
     )
-    names = _user_names(db, [r.sales_in_charge_user_id for r in rows])
+    names = _user_names(db, [r.cs_in_charge_user_id for r in rows])
     titles = _project_titles(db, [project_id])
     return [serialize_summary(r, names, titles) for r in rows]
 

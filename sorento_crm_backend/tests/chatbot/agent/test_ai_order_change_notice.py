@@ -11,7 +11,6 @@ from datetime import date
 
 import app.main  # noqa: F401  register every model and the app's listeners
 from app.models.project_so import OrderChangeNotice, OrderChangeType
-from app.models.user import User
 from tests.chatbot.agent.test_ai_query_core import (  # noqa: F401  (fixtures by import)
     SORENTO,
     _listeners,
@@ -61,21 +60,19 @@ def _numbers(out):
 def test_r13_the_list_columns_read_in_words(db):
     t = tag()
     raiser = mk_user(db)
-    sales = mk_user(db)
-    db.get(User, sales).name = "ZZT Sales Person A"
     kind = mk_type(db)
     mk_notice(db, f"{t}-1", created_by=raiser, change_type_id=kind.id, status="processed_by_cs",
-              sales_in_charge_user_id=sales)
+              requested_by="ZZT Requestor A")
     viewer = mk_user(db, VIEW)
     out = core(db, viewer, {
         "entity": "order_change_notice",
-        "fields": ["ocn_date", "customer_name", "customer_po_no", "change_type", "risk", "sales_in_charge", "status"],
+        "fields": ["ocn_date", "customer_name", "customer_po_no", "change_type", "risk", "requested_by", "status"],
         "filters": [{"field": "ocn_number", "op": "eq", "value": f"{t}-1"}],
     })
     [row] = out["rows"]
     assert row["change_type"] == "ZZT Exchange"
     assert row["risk"] == "High"
-    assert row["sales_in_charge"] == "ZZT Sales Person A"
+    assert row["requested_by"] == "ZZT Requestor A"
     assert row["status"] == "Done"
     assert row["customer_po_no"] == "XT04/3871 (R1)"
     by_word = core(db, viewer, {

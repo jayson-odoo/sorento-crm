@@ -188,9 +188,13 @@ def test_r4_process_is_in_the_registry():
 
 
 def test_r4_being_named_without_a_grant_reads_nothing(ocn):
+    from .test_ocn_round20 import _eligible, _link
+
     named = user(ocn.db, "OCN named, no grant")
     ocn.db.commit()
-    d = create(ocn, sales_in_charge_user_id=named)
+    contact_id = _eligible(ocn.db, "ZZT Requestor Named")
+    _link(ocn.db, named, contact_id)
+    d = create(ocn, requested_by_contact_id=contact_id)
     assert get(ocn, d["id"], named).status_code == 403
 
 
@@ -219,7 +223,7 @@ def _tab_reads(o, ocn_id, user_id):
 
 
 def test_r4_a_view_own_raiser_reads_and_posts_on_every_tab(ocn, sla):
-    d = create(ocn, user_id=ocn.own, sales_in_charge_user_id=None, cs_in_charge_user_id=None)
+    d = create(ocn, user_id=ocn.own, cs_in_charge_user_id=None)
     ok(move(ocn, d["id"], "submit", ocn.own))
     assert _tab_reads(ocn, d["id"], ocn.own) == {"conversation": 200, "post": 201, "sla": 200, "history": 200}
 
@@ -234,7 +238,7 @@ def test_r4_an_approve_only_user_reads_every_tab(ocn, sla):
 
 
 def test_r4_a_view_own_user_cannot_read_another_raisers_tabs(ocn, sla):
-    d = submitted(ocn, sales_in_charge_user_id=None, cs_in_charge_user_id=None)
+    d = submitted(ocn, cs_in_charge_user_id=None)
     reads = _tab_reads(ocn, d["id"], ocn.own)
     assert reads["conversation"] == 404 and reads["sla"] == 404
     assert reads["history"] == 404

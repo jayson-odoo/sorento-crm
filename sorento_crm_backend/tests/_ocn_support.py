@@ -165,7 +165,6 @@ def payload(o, *, http: bool = True, **over) -> dict:
         "customer_po_no": "XT04/3871 (R1)",
         "so_no_text": "SO-ZZT-0001",
         "project_id": None,
-        "sales_in_charge_user_id": o.sales_admin,
         "cs_in_charge_user_id": o.cs,
         "description": "Site not ready, delay the first drop by a month.",
         "ocn_date": d("2026-11-12"),

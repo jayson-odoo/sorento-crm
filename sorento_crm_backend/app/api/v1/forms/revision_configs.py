@@ -60,6 +60,8 @@ REVISABLE_PORTAL_FORM_TYPES = tuple(
         # always revisable by the salesperson, so the row would configure nothing.
         # Its stored row (ptag_0006) is left in place and hidden below.
         "price_tag_request",
+        # OCN-ORDER-CHANGE-NOTICE: office-only revision fence, hidden below (_HIDDEN_CONFIG_TYPES).
+        "order_change_notice",
     )
 )
 

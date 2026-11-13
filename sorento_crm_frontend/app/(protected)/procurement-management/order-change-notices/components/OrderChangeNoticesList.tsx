@@ -183,12 +183,12 @@ export default function OrderChangeNoticesList() {
         meta: { headerTitle: 'Project', skeleton: <Skeleton className="h-4 w-32" /> },
       },
       {
-        id: 'sales_in_charge_name',
-        accessorKey: 'sales_in_charge_name',
-        header: ({ column }) => <DataGridColumnHeader title="Sales in charge" column={column} />,
+        id: 'requested_by',
+        accessorKey: 'requested_by',
+        header: ({ column }) => <DataGridColumnHeader title="Requested by" column={column} />,
         size: 160,
-        cell: ({ row }) => <TextCell value={row.original.sales_in_charge_name} />,
-        meta: { headerTitle: 'Sales in charge', skeleton: <Skeleton className="h-4 w-24" /> },
+        cell: ({ row }) => <TextCell value={row.original.requested_by} />,
+        meta: { headerTitle: 'Requested by', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         id: 'status',
