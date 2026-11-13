@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import logging
 import re
+import string
 from decimal import Decimal, InvalidOperation
 from functools import cmp_to_key
 from typing import Any, Literal
@@ -5168,7 +5169,8 @@ def corrects_or_completes(typed: Any, code: Any) -> bool:
     dropped, or two neighbouring letters swapped, each one edit) of at most half the part's
     length, and at least one (INLT, INELT, INXXT for INLET; SWTWC for SRTWC; GDL for GLD). A
     letters-only part is said in words (lead ruling, AC-33; crew ruling, round 6), not a
-    correction, when a whole space-separated typed word of letters only is longer than it,
+    correction, when a whole space-separated typed word (its punctuation stripped, "gold," or
+    "(gold)") of letters only is longer than it,
     holds its letters in order, and does not start with them ("gold" for GLD, "grey" for GRY).
     A run inside the typed code token (a digit run, SRTWTC for SRTWC) never says a part in
     words, and a word that is the part with letters added after it (INLETT for INLET) is a
@@ -5188,7 +5190,8 @@ def corrects_or_completes(typed: Any, code: Any) -> bool:
             left.remove(part)
         else:
             missing.append(part)
-    words = {w.casefold() for w in jsc.nullish_str(typed).split() if w.isalpha()}
+    stripped = (w.strip(string.punctuation) for w in jsc.nullish_str(typed).split())
+    words = {w.casefold() for w in stripped if w.isalpha()}
 
     def said_in(part: str, word: str) -> bool:
         if not (part.isalpha() and word in words and len(word) > len(part)) or word.startswith(part):
