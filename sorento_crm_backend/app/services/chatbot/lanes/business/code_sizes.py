@@ -246,6 +246,8 @@ def _unheld_size_is_a_miss(db: Any, parser: dict[str, Any], resolved: dict[str, 
         typed = _typed_of(parser, token) or (str(exact[0]["canonical_code"]) if exact else None)
         if typed is None or len(exact) != 1:
             continue
+        if not _is_size_ask(db, keys, [str(exact[0]["uuid"])]):
+            continue  # not a size key of the code's class (a named spec): narrowed as today
         values = (_product_facts(db, [str(exact[0]["uuid"])]).get(str(exact[0]["uuid"])) or ({}, ""))[0]
         if any(_number(jsc.get(jsc.get(values, k), "value")) == value for k in keys):
             continue  # the code holds the size it was asked with: answered as today
@@ -290,6 +292,8 @@ def _unheld_size_is_a_miss(db: Any, parser: dict[str, Any], resolved: dict[str, 
         if typed is None:
             continue
         seed = [a for a in res.get("alternatives") or [] if isinstance(a, dict)]
+        if not _is_size_ask(db, keys, [str(a.get("uuid")) for a in seed if a.get("uuid")]):
+            continue
         # The family of the typed code and of each close code it already has (a fragment's
         # own family word may not reach the catalogue family its close code sits in).
         words = [typed, *(str(a.get("canonical_code") or "") for a in seed)]
@@ -297,6 +301,16 @@ def _unheld_size_is_a_miss(db: Any, parser: dict[str, Any], resolved: dict[str, 
         if family:
             res.update({"alternatives": family, SIZE_ASKED: said})
             resolved["spec_none"] = []
+
+
+def _is_size_ask(db: Any, keys: list[str], product_ids: list[str]) -> bool:
+    """Is the asked spec a SIZE of these products: one of their class's size keys
+    (`bare_size.size_key_rows`, R6-1)? A named spec outside them (a width the class does not
+    size by) is narrowed as before, never made a size miss."""
+    from app.services.chatbot.head.bare_size import size_key_rows
+
+    classes = {cls for _values, cls in _product_facts(db, product_ids).values() if cls}
+    return bool({r.spec_key for r in size_key_rows(_size_rows(db), classes)} & set(keys))
 
 
 def _size_family(db: Any, words: list[str], seed: list[dict[str, Any]]) -> list[dict[str, Any]]:
