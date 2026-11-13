@@ -3309,6 +3309,8 @@ def candidates_by_kind(
             built["set_code"] = row["set_code"]
             if row.get("set_codes"):
                 built["set_codes"] = list(row["set_codes"])
+            if row.get("set_quantities"):
+                built["set_quantities"] = dict(row["set_quantities"])
         # Finding 3 (owner, hand-pass 1): the gate carries the resolver's own human
         # label as `display_name` - for customers only, by `gate._display_name`'s rule,
         # because a customer's `canonical_code` is an ACCOUNT code the customer never
@@ -3650,11 +3652,20 @@ def _spec_quantities(
         # read anything - so by the time a fetch is built the quantity is always per
         # entity, whichever field the parser happened to fill.
         return out
+    from app.services.chatbot.turn.task import set_part_quantity
+
     quantities: dict[str, int] = {}
     for e in entities:
         uuid = e.get("uuid") if isinstance(e, dict) else None
         if not isinstance(uuid, str) or not uuid:
             continue
+        if e.get("set_code"):
+            # CHATBOT-SET-CODES B: a part of a set typed with a quantity is asked at that
+            # quantity times its own quantity in the set.
+            part = set_part_quantity(e, lambda code: by_code.get(_token_key(code)))
+            if part is not None:
+                quantities[uuid] = part
+                continue
         for name in ("code", "canonical_code", "raw"):
             code = e.get(name)
             if not isinstance(code, str) or not code.strip():
@@ -5802,6 +5813,7 @@ def _spec_row(entity: dict[str, Any]) -> dict[str, Any]:
         # a did-you-mean) keeps the set's code, as the gate's own member rows do.
         **({"set_code": entity["set_code"]} if entity.get("set_code") else {}),
         **({"set_codes": list(entity["set_codes"])} if entity.get("set_codes") else {}),
+        **({"set_quantities": dict(entity["set_quantities"])} if entity.get("set_quantities") else {}),
     }
 
 

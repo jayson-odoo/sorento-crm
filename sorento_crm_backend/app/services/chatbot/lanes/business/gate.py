@@ -454,12 +454,17 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
                     codes = [*(held.get("set_codes") or [])] if held else []
                     if jsc.get(m, "canonical_code") not in codes:
                         codes.append(jsc.get(m, "canonical_code"))
+                    # CHATBOT-SET-CODES B: how many of this part each of those sets holds
+                    # (`display.members[].quantity`), so a quantity typed for the set reaches it.
+                    per_set = {**(held.get("set_quantities") or {})} if held else {}
+                    per_set.setdefault(jsc.get(m, "canonical_code"), jsc.get(member, "quantity") or 1)
                     by_uuid[member_uuid] = {
                         "uuid": member_uuid,
                         "entity_type": "product",
                         "code": jsc.get(member, "product_code"),
                         "set_code": codes[0],
                         "set_codes": codes,
+                        "set_quantities": per_set,
                     }
             continue
         if jsc.truthy(m) and jsc.truthy(jsc.get(m, "uuid")):

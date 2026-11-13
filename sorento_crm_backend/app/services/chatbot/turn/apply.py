@@ -3066,11 +3066,22 @@ def _spend_stock_pick(
     for spec in specs:
         stamped = {}
         for e in spec.entities:
-            if not isinstance(e, dict) or not e.get("uuid") or not _row_codes(e) & labels:
+            if not isinstance(e, dict) or not e.get("uuid"):
                 continue
             if e.get("set_code"):
-                # CHATBOT-CODE-MATCH R3: a picked set answers as its exact ask does, whose
-                # member rows carry no quantity of their own.
+                # CHATBOT-CODE-MATCH R3: a picked set answers as its exact ask does. CHATBOT-SET-CODES
+                # B: that ask carries the set's quantity onto each part (`task.set_part_quantity`).
+                def for_set(code: Any) -> Any:
+                    key = str(code or "").strip().casefold()
+                    if key not in labels:
+                        return None
+                    return next((v for v in (by_code.get(key), list_qty.get(key)) if v is not None), quantity)
+
+                part = task_mod.set_part_quantity(e, for_set)
+                if part is not None:
+                    stamped[str(e["uuid"])] = part
+                continue
+            if not _row_codes(e) & labels:
                 continue
             own = next((by_code[c] for c in _row_codes(e) if c in by_code), None)
             if own is None:

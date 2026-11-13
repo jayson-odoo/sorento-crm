@@ -1042,6 +1042,27 @@ def after_reply(
 NEXT_PICKS = "next_picks"
 #: The pick's own quantity per code, one per list (`after_reply`), for `_spend_stock_pick`.
 QTY_BY_CODE = "qty_by_code"
+def set_part_quantity(row: dict[str, Any], typed_for_set: Any) -> int | None:
+    """CHATBOT-SET-CODES B (owner ruling 13 Nov): the quantity a part of a set is asked at, when
+    a quantity was typed (or carried by a pick) for a set it belongs to: that quantity times the
+    part's own quantity in the set (`set_quantities`, the membership table's, 1 when not
+    recorded). `typed_for_set(set_code)` is the caller's quantity for that set code, or None.
+    None when no set of the row has one. The one rule the typed ask
+    (`turn_runtime._spec_quantities`) and the pick (`turn/apply._spend_stock_pick`) share."""
+    per_set = row.get("set_quantities")
+    per_set = per_set if isinstance(per_set, dict) else {}
+    for code in row.get("set_codes") or [row.get("set_code")]:
+        if not code:
+            continue
+        typed = _number(typed_for_set(code))
+        if typed is None:
+            continue
+        per = per_set.get(code)
+        per = per if isinstance(per, (int, float)) and not isinstance(per, bool) and per > 0 else 1
+        return round(typed * per)
+    return None
+
+
 #: Codes still owed a quantity while a pick is open (`{"key", "label"}` each): asked by
 #: `engine._stock_ask_reply` once no list is left open, never beside a pick.
 OWED = "owed"
