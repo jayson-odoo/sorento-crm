@@ -55,8 +55,10 @@ async function read<T>(res: Response, fallback: string): Promise<T> {
 /** The Customer Name picker: the purchase request's lookup, through the notice's own route, so a
  *  salesperson who may raise a notice (`.view_own` + `.create`) can search it (round 17). */
 export async function lookupOrderChangeNoticeCustomers(query: string): Promise<CustomerLookupItem[]> {
+  // The server lists no one for fewer than 2 characters (security round 4, L7): do not ask.
+  if (query.trim().length < 2) return [];
   const sp = new URLSearchParams();
-  if (query.trim()) sp.set('q', query.trim());
+  sp.set('q', query.trim());
   const res = await apiFetch(`${BASE}/lookups/customers?${sp.toString()}`);
   return read<CustomerLookupItem[]>(res, 'Failed to load customers');
 }

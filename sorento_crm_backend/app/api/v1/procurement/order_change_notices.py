@@ -122,8 +122,10 @@ def search_products(q: str = Query(""), user: dict = Depends(get_current_user), 
 # ai: not-for-assistant a picker's search box, not a list screen; customers are their own entity
 @router.get("/lookups/customers")
 def lookup_customers(
-    q: str = Query(""),
-    limit: int = Query(20, ge=1, le=MAX_PAGE_LIMIT),
+    q: str = Query("", max_length=100),
+    # Capped like the portal debtor lookup (security round 4, L7): a picker, never a way to page
+    # the whole customer list.
+    limit: int = Query(20, ge=1, le=50),
     user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -137,6 +139,9 @@ def lookup_customers(
     actor = _actor(db, user)
     if not (actor.can_create or actor.can_edit):
         raise AppException(status_code=403, message=f"Permission required: {svc.CREATE}", code="FORBIDDEN")
+    # A search of fewer than 2 characters lists no one (an empty list, not an error).
+    if len((q or "").strip()) < 2:
+        return []
     return lookup(db, q, limit)
 
 
