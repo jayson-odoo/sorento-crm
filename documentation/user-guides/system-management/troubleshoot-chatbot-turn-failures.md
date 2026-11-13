@@ -160,6 +160,14 @@ genuinely needs re-answering, a person has to press **Retry turn** on the failed
     asking again),
   * or this environment simply has no automation front door configured to retry into (this is
     normal on a development machine; it is not a bug).
+* **When the CRM sent the reply** (Settings > Chatbot, **Bot replies sent by** is a CRM option),
+  Retry does not ask the bot again. It sends the same reply again, only the parts the customer has
+  not received yet, so nobody gets a part twice. If a part timed out, the CRM first checks the
+  conversation: a part that did arrive is counted as sent. When that check itself fails, the turn
+  shows **Not confirmed**: look at the conversation, then press Retry.
+* Retry on a reply the CRM sent is refused, with the reason, when staff have taken over the
+  conversation, when the message is more than 24 hours old, or when the contact belongs to another
+  respond.io workspace. Answer the customer in the conversation instead.
 * Retry needs a slightly wider permission than viewing the trace, so if you can see the trace but
   not the Retry button, that is expected for your role - ask an admin to retry it instead.
 
@@ -167,8 +175,8 @@ genuinely needs re-answering, a person has to press **Retry turn** on the failed
 
 On the **Chat History** list itself, open **Filters** and turn on **Failed turns only**. The list
 then narrows to contacts who had at least one failed turn in the selected date range, and the
-**Contact** column shows a badge naming the stage the *last* failure stopped at (e.g. "failed at
-understood") plus a count if there was more than one.
+**Contact** column shows a badge with the same words the turn itself shows for the *last* failure
+(e.g. "Failed at Understood", or "Not confirmed") plus a count if there was more than one.
 
 Inside a thread, the drawer header has its own **Failed turns only** toggle (with a count badge)
 that jumps you straight to the messages whose turn failed, without scrolling the whole

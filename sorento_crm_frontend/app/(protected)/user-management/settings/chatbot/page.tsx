@@ -37,6 +37,7 @@ import type {
   ChatbotClosedListsMode,
   ChatbotDirectIngressMode,
   ChatbotMemorySettings,
+  ChatbotReplySenderMode,
   ChatbotSettings,
 } from './services/chatbotSettingsService';
 import MemorySettingsCard from './components/MemorySettingsCard';
@@ -72,6 +73,13 @@ const DIRECT_INGRESS_OPTIONS: { value: ChatbotDirectIngressMode; label: string }
   { value: 'off', label: 'Off' },
   { value: 'contacts', label: 'Listed contacts' },
   { value: 'all', label: 'All contacts' },
+];
+
+// N8N-RETIRE-A: who sends the bot's replies.
+const REPLY_SENDER_OPTIONS: { value: ChatbotReplySenderMode; label: string }[] = [
+  { value: 'n8n', label: 'n8n' },
+  { value: 'contacts', label: 'CRM for listed contacts' },
+  { value: 'all', label: 'CRM for all' },
 ];
 
 // CHAT-RELEASE-1021: the two release switches (owner, 21 Oct 2026).
@@ -284,6 +292,37 @@ export default function ChatbotSettingsPage() {
                 placeholder="One respond.io contact id per line"
                 onChange={(event) =>
                   set('chatbot_direct_ingress_contacts', event.target.value || null)
+                }
+              />
+            </div>
+          ) : null}
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+            <Label htmlFor="chatbot-reply-sender" className="font-normal">
+              Bot replies sent by
+            </Label>
+            <div className="w-full sm:w-56">
+              <SearchableSelect
+                id="chatbot-reply-sender"
+                value={draft.chatbot_reply_sender_mode}
+                options={REPLY_SENDER_OPTIONS}
+                onChange={(next) =>
+                  set('chatbot_reply_sender_mode', (next || 'n8n') as ChatbotReplySenderMode)
+                }
+              />
+            </div>
+          </div>
+          {draft.chatbot_reply_sender_mode === 'contacts' ? (
+            <div className="space-y-2">
+              <Label htmlFor="chatbot-reply-sender-contacts" className="font-normal">
+                Reply sender contacts
+              </Label>
+              <Textarea
+                id="chatbot-reply-sender-contacts"
+                rows={3}
+                value={draft.chatbot_reply_sender_contacts ?? ''}
+                placeholder="One respond.io contact id per line"
+                onChange={(event) =>
+                  set('chatbot_reply_sender_contacts', event.target.value || null)
                 }
               />
             </div>
