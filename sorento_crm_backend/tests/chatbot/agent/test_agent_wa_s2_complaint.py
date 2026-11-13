@@ -1082,7 +1082,7 @@ def test_r1_list_arguments_are_capped(db, store):
     do = _order(db, contact["pk"])
 
     out, step = _propose(db, _ctx(db, contact), CP_CREATE, _claim(do, delivery_order_numbers=[do] * 21))
-    assert step is None and "too many" in out.message
+    assert step is None and "has more than 20 values" in out.message
 
     out, step = _propose(db, _ctx(db, contact), CP_CREATE, _claim(do, product_codes=["X" * 101]))
     assert step is None and "too long" in out.message
