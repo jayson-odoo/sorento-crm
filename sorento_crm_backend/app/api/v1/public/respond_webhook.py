@@ -149,6 +149,30 @@ def _allowed_media_url(url: Optional[str]) -> Optional[str]:
 # ---------------------------------------------------------------------------
 
 
+def _sent_turn_id(traffic: str, message_id: Any, contact_id: Any = None, db: Any = None) -> Optional[str]:
+    """The turn the CRM sender recorded for this outgoing message id, if any (N8N-RETIRE-A).
+    Redis down or no key: no link, never a failed ingest."""
+    if traffic != "outgoing":
+        return None
+    try:
+        from app.services import queue_service
+
+        raw = queue_service.redis_conn.get(f"chatbot:sent-msg:{message_id}")
+    except Exception:  # noqa: BLE001
+        return None
+    if not raw:
+        return None
+    turn_id = raw.decode() if isinstance(raw, bytes) else str(raw)
+    # Only a turn of this event's own contact: a stray or stale key never links another's.
+    try:
+        from app.models.chatbot_turn import ChatbotTurn
+
+        owner = db.query(ChatbotTurn.contact_respond_id).filter(ChatbotTurn.id == turn_id).scalar()
+    except Exception:  # noqa: BLE001
+        return None
+    return turn_id if owner is not None and str(owner) == str(contact_id) else None
+
+
 def map_webhook_message(payload: dict, db: Session) -> Optional[ChatMessageRow]:
     """The ``ChatMessageRow`` for a Respond.io message event, or None when the body
     carries no message (an unrelated event, or a shape with no message id)."""
@@ -213,6 +237,7 @@ def map_webhook_message(payload: dict, db: Session) -> Optional[ChatMessageRow]:
     channel_block = payload.get("channel") if isinstance(payload.get("channel"), dict) else {}
 
     return ChatMessageRow(
+        chatbot_turn_id=_sent_turn_id(traffic, message_id, contact_id, db),
         channel=_normalise_channel(channel_block.get("source") or channel_block.get("type")),
         contact_id=contact_id,
         phone_number=phone[:32],

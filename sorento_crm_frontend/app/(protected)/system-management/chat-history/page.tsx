@@ -40,7 +40,7 @@ import { buildGroupHeader } from './groupHeader';
 import { getChatMessages } from './services/chatHistoryService';
 import { useExportChatHistory } from './hooks/useChatHistory';
 import { useFailedChatbotContacts } from './hooks/useChatbotTurns';
-import { stageLabel } from './turnPresentation';
+import { failedStageWords } from './turnPresentation';
 import { ChatThreadDrawer } from './components/ChatThreadDrawer';
 import { useTraceDrawer } from './components/TraceDrawer';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
@@ -198,7 +198,7 @@ export default function ChatHistoryPage() {
                 // AC-255: the row says what stopped last, so the list itself answers
                 // "which of these is worth opening" without opening any of them.
                 <Badge variant="destructive" appearance="light" size="sm" className="mt-0.5">
-                  failed at {stageLabel(failed.last_failed_stage ?? 'received').toLowerCase()}
+                  {failedStageWords(failed.last_failed_stage)}
                   {failed.count > 1 ? ` (${failed.count})` : ''}
                 </Badge>
               )}
