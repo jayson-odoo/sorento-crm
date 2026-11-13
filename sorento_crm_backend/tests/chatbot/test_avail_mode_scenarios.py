@@ -447,11 +447,13 @@ def test_S41_a_picked_code_owing_a_quantity_does_not_drop_the_other_list(console
     assert c.say("3", reply(demand_qty=3)) == f"SRTWC286-SH-150 x 3: {TICK} Got stock."
 
 
-def test_S42_a_near_miss_inside_a_mix_is_listed_without_a_did_you_mean(console):
-    """Reviewer S4: the did-you-mean is for a message that names one code (S11)."""
+def test_S42_a_near_miss_inside_a_mix_gets_its_own_did_you_mean(console):
+    """CHATBOT-CODE-MATCH AC-15 (lane rule R7, owner 4 Oct "treat each product code
+    individually"): a near miss beside a found code gets the did-you-mean it gets asked
+    alone. Supersedes reviewer S4's "listed without a did-you-mean"."""
     c = console(SRT5674=Stock(on_hand=100), ELP3754=Stock(on_hand=20))
     out = c.say("SRT5674 x 5, ELP3753 x 1", stock(product("SRT5674", 5), product("ELP3753", 1)))
-    assert out == f"SRT5674 x 5: {TICK} Got stock.\n\nCouldn't find: ELP3753."
+    assert out == f"SRT5674 x 5: {TICK} Got stock.\n\nCouldn't find ELP3753. Did you mean ELP3754?"
 
 
 # ================================================================== tester-local pass on 7fa5d654
@@ -805,11 +807,14 @@ def test_S55b_substring_of_a_family_with_a_quantity_picks_then_answers(console):
     assert c.say("2", _pick(2)) == f"SRTWC286-SH-150 x 5: {TICK} Got stock."
 
 
-def test_S55c_substring_of_exactly_one_code_is_that_code(console):
-    """Like S08's prefix of one code: nothing to pick, so it is answered as that code."""
+def test_S55c_substring_of_exactly_one_code_is_offered(console):
+    """CHATBOT-CODE-MATCH AC-27b (card R0, lead sign-off 12 Nov): a code only INSIDE one catalogue
+    code is offered, never answered; "yes" answers it at the carried quantity. S55's own owner
+    turn (the wc286 family picker) and S08 (a prefix of one code, answered) are unchanged."""
     c = console(SRT5674=Stock(on_hand=100))
-    assert c.say("rt5674 x 3", stock(product("rt5674", 3))) == f"SRT5674 x 3: {TICK} Got stock."
-    assert c.say("rt5674 got stock?", stock(product("rt5674"))) == "How many units of SRT5674?"
+    assert c.say("rt5674 x 3", stock(product("rt5674", 3))) == "Couldn't find RT5674. Did you mean SRT5674?"
+    assert c.say("yes", reply(is_affirmative=True, open_question_answer=answer("yes"))) == f"SRT5674 x 3: {TICK} Got stock."
+    assert c.say("rt5674 got stock?", stock(product("rt5674"))).startswith("Couldn't find RT5674. Did you mean SRT5674?")
 
 
 def test_S55d_an_exact_code_still_never_brings_its_family(console):
