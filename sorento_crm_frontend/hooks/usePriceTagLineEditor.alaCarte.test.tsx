@@ -1,11 +1,11 @@
 /**
- * PRICETAG-ALA-CARTE (pricetag-ala-carte-acceptance-criteria.md), the line editor hook: a product
- * line's package is its combo_id, null = ala carte. AC-3 (hand pick defaults), AC-4 (clearing the
- * Package), AC-5 (no auto-pick on a line that was not just picked by hand), AC-6 (the duplicate guard
- * keys on product + package), AC-7 (a re-picked product takes the next unused package), AC-8
- * (multi-add per item) and AC-9 (a zero-part combo is still a package).
+ * PRICETAG-ALA-CARTE (pricetag-ala-carte-acceptance-criteria.md, owner's final answers 13 Nov), the
+ * line editor hook: a product line's package is its combo_id, null = ala carte. AC-3 (every new line
+ * starts ala carte, single-combo auto-pick gone), AC-4 (choosePackage), AC-5 (saved lines keep their
+ * package exactly), AC-6 (no duplicate guard for products, sets keep it), AC-7 (multi-add never skips
+ * a product already on the request) and AC-8 (a zero-part combo is still a package).
  *
- * Written test-FIRST against the UAC; fake codes and prices only.
+ * Written test-FIRST against the UAC; fake codes only.
  */
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { useState } from 'react';
@@ -107,18 +107,47 @@ const settle = () =>
 
 const DUP = (code: string) => `${code} is already on this request.`;
 
-describe('AC-3 hand pick defaults (unchanged)', () => {
-  it('a product with exactly one combo starts on that combo with its parts', async () => {
-    const { result } = setup([blank('l1')]);
+
+const SET_PICK: SearchableSelectOption = { value: 'product_set:s-ala-1', label: 'S-ALA-1', code: 'S-ALA-1', name: 'S-ALA-1' };
+
+/** A line as it arrives from the server: built by lineToDraft, combos not asked yet. */
+function saved(id: string, productId: ProductId, comboId: string | null): DraftLine {
+  const combo = PRODUCTS[productId].combos.find((c) => c.combo_id === comboId);
+  const draft = lineToDraft({
+    id,
+    line_type: 'product',
+    product_id: productId,
+    product_set_id: null,
+    name: PRODUCTS[productId].code,
+    code: PRODUCTS[productId].code,
+    quantity: 1,
+    combo_id: comboId,
+    parts: (combo?.parts ?? []).map((p, i) => ({
+      id: `${id}-part-${i}`,
+      product_id: p.product_id,
+      code: p.code,
+      name: p.name,
+      role: null,
+      candidates: [],
+    })),
+  } as never);
+  return { ...emptyDraftLine(), ...draft } as DraftLine;
+}
+
+describe('AC-3 every newly added product line starts ala carte', () => {
+  it('a hand pick of a product with exactly one combo stays ala carte after the lookup (no auto-pick)', async () => {
+    const { result, lookups } = setup([blank('l1')]);
     act(() => result.current.editor.handleItemSelect('l1', pick('p-ala-1')));
     await waitFor(() => expect(lineOf(result.current.lines, 'l1').combos_loaded).toBe(true));
     await settle();
+    expect(lookups.lookupProductCombos).toHaveBeenCalledWith('p-ala-1');
     const l1 = lineOf(result.current.lines, 'l1');
-    expect(l1.combo_id).toBe(C.combo_id);
-    expect(l1.parts.map((p) => p.product_id)).toEqual(['p-ala-part']);
+    expect(l1.combos.map((c) => c.combo_id)).toEqual([C.combo_id]);
+    expect(l1.combo_id).toBeNull();
+    expect(l1.parts).toEqual([]);
   });
 
-  it('a product with two combos starts ala carte (combo_id null, no parts)', async () => {
+  it('a hand pick of a product with two combos starts ala carte', async () => {
     const { result } = setup([blank('l1')]);
     act(() => result.current.editor.handleItemSelect('l1', pick('p-ala-2')));
     await waitFor(() => expect(lineOf(result.current.lines, 'l1').combos_loaded).toBe(true));
@@ -126,155 +155,110 @@ describe('AC-3 hand pick defaults (unchanged)', () => {
     expect(lineOf(result.current.lines, 'l1').combo_id).toBeNull();
     expect(lineOf(result.current.lines, 'l1').parts).toEqual([]);
   });
+
+  it('a product whose only combo has zero parts also starts ala carte', async () => {
+    const { result } = setup([blank('l1')]);
+    act(() => result.current.editor.handleItemSelect('l1', pick('p-ala-3')));
+    await waitFor(() => expect(lineOf(result.current.lines, 'l1').combos_loaded).toBe(true));
+    await settle();
+    expect(lineOf(result.current.lines, 'l1').combo_id).toBeNull();
+  });
+
+  it('multi-add: each added line of a one-combo product starts ala carte', async () => {
+    const { result } = setup([blank('l1')]);
+    act(() => addPickedItems(result.current.editor, result.current.lines, 'l1', [pick('p-ala-1'), pick('p-ala-3')]));
+    await waitFor(() => expect(result.current.lines.every((l) => l.combos_loaded)).toBe(true));
+    await settle();
+    expect(result.current.lines.map((l) => l.product_id)).toEqual(['p-ala-1', 'p-ala-3']);
+    expect(result.current.lines.map((l) => l.combo_id)).toEqual([null, null]);
+    expect(result.current.lines.map((l) => l.parts.length)).toEqual([0, 0]);
+  });
 });
 
-describe('AC-4 clearing the Package', () => {
-  it('clearing sets combo_id null and parts []; choosing a combo puts it and its parts back', () => {
-    const { result } = setup([onRequest('l1', 'p-ala-1', C.combo_id)]);
-    act(() => result.current.editor.choosePackage('l1', ''));
-    expect(lineOf(result.current.lines, 'l1').combo_id).toBeNull();
-    expect(lineOf(result.current.lines, 'l1').parts).toEqual([]);
+describe('AC-4 choosePackage', () => {
+  it('choosing a combo sets it and its parts; clearing sets combo_id null and parts []', async () => {
+    const { result } = setup([onRequest('l1', 'p-ala-1', null)]);
     act(() => result.current.editor.choosePackage('l1', C.combo_id));
     expect(lineOf(result.current.lines, 'l1').combo_id).toBe(C.combo_id);
     expect(lineOf(result.current.lines, 'l1').parts.map((p) => p.product_id)).toEqual(['p-ala-part']);
+    act(() => result.current.editor.choosePackage('l1', ''));
+    expect(lineOf(result.current.lines, 'l1').combo_id).toBeNull();
+    expect(lineOf(result.current.lines, 'l1').parts).toEqual([]);
   });
 });
 
-describe('AC-5 no auto-pick on a line that was not just picked by hand', () => {
-  it('a reopened line of a one-combo product saved ala carte stays ala carte after the lookup', async () => {
-    const reopened = {
-      ...emptyDraftLine(),
-      key: 'l1',
-      line_type: 'product',
-      product_id: 'p-ala-1',
-      code: 'P-ALA-1',
-      name: 'P-ALA-1',
-      combo_id: null,
-      combos_loaded: false,
-    } as DraftLine;
-    const { result, lookups } = setup([reopened]);
-    await waitFor(() => expect(lineOf(result.current.lines, 'l1').combos_loaded).toBe(true));
+describe('AC-5 saved lines keep their package exactly', () => {
+  it('a reopened ala carte line of a one-combo product stays ala carte after the lookup', async () => {
+    const { result, lookups } = setup([saved('srv-1', 'p-ala-1', null)]);
+    await waitFor(() => expect(lineOf(result.current.lines, 'srv-1').combos_loaded).toBe(true));
     await settle();
     expect(lookups.lookupProductCombos).toHaveBeenCalledWith('p-ala-1');
-    expect(lineOf(result.current.lines, 'l1').combos).toHaveLength(1);
-    expect(lineOf(result.current.lines, 'l1').combo_id).toBeNull();
-    expect(lineOf(result.current.lines, 'l1').parts).toEqual([]);
+    expect(lineOf(result.current.lines, 'srv-1').combo_id).toBeNull();
+    expect(lineOf(result.current.lines, 'srv-1').parts).toEqual([]);
   });
 
-  it('a line built by lineToDraft (duplicate / revise) with combo_id null stays null after the lookup', async () => {
-    const draft = lineToDraft({
-      id: 'l1',
-      line_type: 'product',
-      product_id: 'p-ala-1',
-      product_set_id: null,
-      name: 'P-ALA-1',
-      code: 'P-ALA-1',
-      quantity: 1,
-      combo_id: null,
-      parts: [],
-    } as never);
-    const { result } = setup([{ ...emptyDraftLine(), ...draft } as DraftLine]);
-    await waitFor(() => expect(lineOf(result.current.lines, 'l1').combos_loaded).toBe(true));
+  it('a reopened line on C keeps C and its saved parts after the lookup', async () => {
+    const { result } = setup([saved('srv-1', 'p-ala-1', C.combo_id)]);
+    await waitFor(() => expect(lineOf(result.current.lines, 'srv-1').combos_loaded).toBe(true));
     await settle();
-    expect(lineOf(result.current.lines, 'l1').combo_id).toBeNull();
-    expect(lineOf(result.current.lines, 'l1').parts).toEqual([]);
+    expect(lineOf(result.current.lines, 'srv-1').combo_id).toBe(C.combo_id);
+    expect(lineOf(result.current.lines, 'srv-1').parts.map((p) => p.product_id)).toEqual(['p-ala-part']);
+  });
+
+  it('a reopened pair of the same product (C and ala carte) keeps both packages, no guard_error', async () => {
+    const { result } = setup([saved('srv-1', 'p-ala-1', C.combo_id), saved('srv-2', 'p-ala-1', null)]);
+    await waitFor(() => expect(result.current.lines.every((l) => l.combos_loaded)).toBe(true));
+    await settle();
+    expect(result.current.lines.map((l) => l.combo_id)).toEqual([C.combo_id, null]);
+    expect(result.current.lines.map((l) => l.guard_error)).toEqual([null, null]);
   });
 });
 
-describe('AC-6 the duplicate guard keys on product + package', () => {
-  it('same product, one on C and one ala carte: no guard_error', async () => {
-    const { result } = setup([onRequest('l1', 'p-ala-1', C.combo_id), onRequest('l2', 'p-ala-1', null)]);
-    await settle();
-    expect(lineOf(result.current.lines, 'l1').guard_error).toBeNull();
-    expect(lineOf(result.current.lines, 'l2').guard_error).toBeNull();
-  });
-
-  it('changing the later line to the package the earlier one holds flags it; clearing it again removes the flag', async () => {
-    const { result } = setup([onRequest('l1', 'p-ala-1', C.combo_id), onRequest('l2', 'p-ala-1', null)]);
-    act(() => result.current.editor.choosePackage('l2', C.combo_id));
-    expect(lineOf(result.current.lines, 'l2').guard_error).toBe(DUP('P-ALA-1'));
-    expect(lineOf(result.current.lines, 'l1').guard_error).toBeNull();
-
-    act(() => result.current.editor.choosePackage('l2', ''));
-    expect(lineOf(result.current.lines, 'l2').combo_id).toBeNull();
-    expect(lineOf(result.current.lines, 'l2').guard_error).toBeNull();
-  });
-
-  it('two combos: lines on A and B are fine; moving the B line to A flags it, back to B clears it', () => {
-    const { result } = setup([onRequest('l1', 'p-ala-2', A.combo_id), onRequest('l2', 'p-ala-2', B.combo_id)]);
-    expect(lineOf(result.current.lines, 'l2').guard_error).toBeNull();
-    act(() => result.current.editor.choosePackage('l2', A.combo_id));
-    expect(lineOf(result.current.lines, 'l2').guard_error).toBe(DUP('P-ALA-2'));
-    act(() => result.current.editor.choosePackage('l2', B.combo_id));
-    expect(lineOf(result.current.lines, 'l2').guard_error).toBeNull();
-  });
-});
-
-describe('AC-7 a product already on the request takes the next unused package', () => {
-  it('one combo, existing line on C: the new pick goes ala carte with no error, and the lookup does not put C on it', async () => {
+describe('AC-6 no duplicate guard for products', () => {
+  it('picking a product already on the request (on C) adds it, ala carte, with no error', async () => {
     const { result } = setup([onRequest('l1', 'p-ala-1', C.combo_id), blank('l2')]);
     act(() => result.current.editor.handleItemSelect('l2', pick('p-ala-1')));
     await waitFor(() => expect(lineOf(result.current.lines, 'l2').product_id).toBe('p-ala-1'));
-    expect(lineOf(result.current.lines, 'l2').guard_error).toBeNull();
     await waitFor(() => expect(lineOf(result.current.lines, 'l2').combos_loaded).toBe(true));
     await settle();
-    const l2 = lineOf(result.current.lines, 'l2');
-    expect(l2.combo_id).toBeNull();
-    expect(l2.parts).toEqual([]);
-    expect(l2.guard_error).toBeNull();
+    expect(lineOf(result.current.lines, 'l2').guard_error).toBeNull();
+    expect(lineOf(result.current.lines, 'l2').combo_id).toBeNull();
     expect(lineOf(result.current.lines, 'l1').combo_id).toBe(C.combo_id);
   });
 
-  it('one combo, existing line ala carte: the new pick starts on C (the default)', async () => {
-    const { result } = setup([onRequest('l1', 'p-ala-1', null), blank('l2')]);
-    act(() => result.current.editor.handleItemSelect('l2', pick('p-ala-1')));
-    await waitFor(() => expect(lineOf(result.current.lines, 'l2').product_id).toBe('p-ala-1'));
-    await waitFor(() => expect(lineOf(result.current.lines, 'l2').combo_id).toBe(C.combo_id));
-    expect(lineOf(result.current.lines, 'l2').parts.map((p) => p.product_id)).toEqual(['p-ala-part']);
-    expect(lineOf(result.current.lines, 'l2').guard_error).toBeNull();
-  });
-
-  it('one combo, C and ala carte both used: the third pick is refused with "<code> is already on this request."', async () => {
-    const { result } = setup([
-      onRequest('l1', 'p-ala-1', C.combo_id),
-      onRequest('l2', 'p-ala-1', null),
-      blank('l3'),
-    ]);
-    act(() => result.current.editor.handleItemSelect('l3', pick('p-ala-1')));
-    await waitFor(() => expect(lineOf(result.current.lines, 'l3').guard_error).toBe(DUP('P-ALA-1')));
-    await settle();
-    const pairs = result.current.lines
-      .filter((l) => l.product_id === 'p-ala-1')
-      .map((l) => l.combo_id ?? 'ala-carte');
-    expect(new Set(pairs).size).toBe(pairs.length);
-  });
-
-  it('two combos (A, B), existing line ala carte: the new pick starts on A with its parts', async () => {
-    const { result } = setup([onRequest('l1', 'p-ala-2', null), blank('l2')]);
-    act(() => result.current.editor.handleItemSelect('l2', pick('p-ala-2')));
-    await waitFor(() => expect(lineOf(result.current.lines, 'l2').product_id).toBe('p-ala-2'));
-    await waitFor(() => expect(lineOf(result.current.lines, 'l2').combo_id).toBe(A.combo_id));
-    expect(lineOf(result.current.lines, 'l2').parts.map((p) => p.product_id)).toEqual(['p-ala-part']);
-    expect(lineOf(result.current.lines, 'l2').guard_error).toBeNull();
-  });
-
-  it('two combos, ala carte and A used: the next pick takes B', async () => {
-    const { result } = setup([onRequest('l1', 'p-ala-2', null), onRequest('l2', 'p-ala-2', A.combo_id), blank('l3')]);
-    act(() => result.current.editor.handleItemSelect('l3', pick('p-ala-2')));
-    await waitFor(() => expect(lineOf(result.current.lines, 'l3').combo_id).toBe(B.combo_id));
-    expect(lineOf(result.current.lines, 'l3').guard_error).toBeNull();
-  });
-
-  it('a product with no combo already on the request is still refused (its only package is used)', async () => {
+  it('ala carte twice is allowed: a product with no combo picked onto a second line has no error', async () => {
     const { result } = setup([onRequest('l1', 'p-ala-4', null), blank('l2')]);
     act(() => result.current.editor.handleItemSelect('l2', pick('p-ala-4')));
-    await waitFor(() => expect(lineOf(result.current.lines, 'l2').guard_error).toBe(DUP('P-ALA-4')));
-    expect(result.current.lines.filter((l) => l.product_id === 'p-ala-4')).toHaveLength(1);
+    await waitFor(() => expect(lineOf(result.current.lines, 'l2').product_id).toBe('p-ala-4'));
+    expect(lineOf(result.current.lines, 'l2').guard_error).toBeNull();
+  });
+
+  it('a third line of the same product is added too', async () => {
+    const { result } = setup([onRequest('l1', 'p-ala-1', C.combo_id), onRequest('l2', 'p-ala-1', null), blank('l3')]);
+    act(() => result.current.editor.handleItemSelect('l3', pick('p-ala-1')));
+    await waitFor(() => expect(lineOf(result.current.lines, 'l3').product_id).toBe('p-ala-1'));
+    expect(lineOf(result.current.lines, 'l3').guard_error).toBeNull();
+    expect(result.current.lines.filter((l) => l.product_id === 'p-ala-1')).toHaveLength(3);
+  });
+
+  it('moving a line onto the package another line of the product holds raises no guard_error', () => {
+    const { result } = setup([onRequest('l1', 'p-ala-2', A.combo_id), onRequest('l2', 'p-ala-2', B.combo_id)]);
+    act(() => result.current.editor.choosePackage('l2', A.combo_id));
+    expect(lineOf(result.current.lines, 'l2').combo_id).toBe(A.combo_id);
+    expect(lineOf(result.current.lines, 'l2').guard_error).toBeNull();
+  });
+
+  it('sets keep the guard: a set already on the request is refused with "<code> is already on this request."', () => {
+    const setLine = { ...emptyDraftLine(), key: 'l1', line_type: 'product_set', product_set_id: 's-ala-1', code: 'S-ALA-1', combos_loaded: true } as DraftLine;
+    const { result } = setup([setLine, blank('l2')]);
+    act(() => result.current.editor.handleItemSelect('l2', SET_PICK));
+    expect(lineOf(result.current.lines, 'l2').guard_error).toBe(DUP('S-ALA-1'));
+    expect(lineOf(result.current.lines, 'l2').product_set_id).toBeNull();
   });
 });
 
-describe('AC-8 multi-add goes through the same per-item pick', () => {
-  it('a product on the request with an unused package is not skipped: Add on a blank row gives it an ala carte line', async () => {
+describe('AC-7 multi-add never skips a product already on the request', () => {
+  it('Add on a blank row of a product already on the request gives it its own ala carte line', async () => {
     const { result } = setup([onRequest('l1', 'p-ala-1', C.combo_id), blank('l2')]);
     act(() => addPickedItems(result.current.editor, result.current.lines, 'l2', [pick('p-ala-1')]));
     await waitFor(() => expect(result.current.lines.filter((l) => l.product_id === 'p-ala-1')).toHaveLength(2));
@@ -283,40 +267,38 @@ describe('AC-8 multi-add goes through the same per-item pick', () => {
     expect(lineOf(result.current.lines, 'l2').guard_error).toBeNull();
   });
 
-  it('addPickedItems hands an option with an unused package to handleItemSelect instead of dropping it', () => {
+  it('addPickedItems hands a product already on another line to handleItemSelect instead of dropping it', () => {
     const addLine = vi.fn((k?: string) => 'n' + k);
     const handleItemSelect = vi.fn();
-    const lines = [onRequest('l1', 'p-ala-1', C.combo_id), blank('l2')];
-    addPickedItems({ addLine, handleItemSelect } as unknown as PickEditor, lines, 'l2', [pick('p-ala-1')]);
-    expect(handleItemSelect).toHaveBeenCalledWith('l2', expect.objectContaining({ value: 'product:p-ala-1' }));
+    const lines = [onRequest('l1', 'p-ala-4', null), blank('l2')];
+    addPickedItems({ addLine, handleItemSelect } as unknown as PickEditor, lines, 'l2', [pick('p-ala-4'), pick('p-ala-1')]);
+    expect(handleItemSelect.mock.calls.map(([k, o]) => [k, (o as SearchableSelectOption).value])).toEqual([
+      ['l2', 'product:p-ala-4'],
+      ['nl2', 'product:p-ala-1'],
+    ]);
+  });
+
+  it('a set already on another line is still skipped (sets unchanged)', () => {
+    const addLine = vi.fn((k?: string) => 'n' + k);
+    const handleItemSelect = vi.fn();
+    const setLine = { ...emptyDraftLine(), key: 'l1', line_type: 'product_set', product_set_id: 's-ala-1', code: 'S-ALA-1' } as DraftLine;
+    addPickedItems({ addLine, handleItemSelect } as unknown as PickEditor, [setLine, blank('l2')], 'l2', [SET_PICK]);
+    expect(handleItemSelect).not.toHaveBeenCalled();
   });
 });
 
-describe('AC-9 a combo with zero parts is still a package', () => {
-  it('a hand pick of a product whose only combo has no parts sets combo_id', async () => {
-    const { result } = setup([blank('l1')]);
-    act(() => result.current.editor.handleItemSelect('l1', pick('p-ala-3')));
-    await waitFor(() => expect(lineOf(result.current.lines, 'l1').combos_loaded).toBe(true));
-    await settle();
+describe('AC-8 a combo with zero parts is still a package', () => {
+  it('choosing Z (no parts) sets combo_id Z, parts []', () => {
+    const { result } = setup([onRequest('l1', 'p-ala-3', null)]);
+    act(() => result.current.editor.choosePackage('l1', Z.combo_id));
     expect(lineOf(result.current.lines, 'l1').combo_id).toBe(Z.combo_id);
     expect(lineOf(result.current.lines, 'l1').parts).toEqual([]);
   });
 
-  it('a line on Z (no parts) and an ala carte line of the same product are distinct: no guard_error', async () => {
-    const { result } = setup([onRequest('l1', 'p-ala-3', Z.combo_id), onRequest('l2', 'p-ala-3', null)]);
+  it('a saved line on Z with no parts keeps Z after the lookup', async () => {
+    const { result } = setup([saved('srv-1', 'p-ala-3', Z.combo_id)]);
+    await waitFor(() => expect(lineOf(result.current.lines, 'srv-1').combos_loaded).toBe(true));
     await settle();
-    expect(lineOf(result.current.lines, 'l2').guard_error).toBeNull();
-    act(() => result.current.editor.choosePackage('l2', Z.combo_id));
-    expect(lineOf(result.current.lines, 'l2').guard_error).toBe(DUP('P-ALA-3'));
-    act(() => result.current.editor.choosePackage('l2', ''));
-    expect(lineOf(result.current.lines, 'l2').guard_error).toBeNull();
-  });
-
-  it('with an ala carte line on the request, a new pick takes Z (set, though empty)', async () => {
-    const { result } = setup([onRequest('l1', 'p-ala-3', null), blank('l2')]);
-    act(() => result.current.editor.handleItemSelect('l2', pick('p-ala-3')));
-    await waitFor(() => expect(lineOf(result.current.lines, 'l2').product_id).toBe('p-ala-3'));
-    await waitFor(() => expect(lineOf(result.current.lines, 'l2').combo_id).toBe(Z.combo_id));
-    expect(lineOf(result.current.lines, 'l2').guard_error).toBeNull();
+    expect(lineOf(result.current.lines, 'srv-1').combo_id).toBe(Z.combo_id);
   });
 });
