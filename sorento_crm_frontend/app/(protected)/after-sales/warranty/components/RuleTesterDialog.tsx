@@ -63,6 +63,7 @@ export function RuleTesterDialog({ open, onOpenChange }: Props) {
               selectedOption={product ?? undefined}
               placeholder="Search product code or description"
               aria-label="Product"
+              truncateTriggerLabel
             />
           </div>
           {result &&

@@ -4,11 +4,11 @@ import type { WarrantyLine } from '../types/serviceJob.types';
 import WarrantyPill from './WarrantyPill';
 
 const HEADS: { title: string; className: string }[] = [
-  { title: 'Product', className: 'w-56' },
-  { title: 'Part', className: 'w-40' },
-  { title: 'Answer', className: 'w-36' },
-  { title: 'Until', className: 'w-28' },
-  { title: 'Reason', className: 'w-80' },
+  { title: 'Product', className: 'w-48' },
+  { title: 'Part', className: 'w-36' },
+  { title: 'Answer', className: 'w-32' },
+  { title: 'Until', className: 'w-24' },
+  { title: 'Reason', className: '' },
 ];
 
 function Cell({ value }: { value: string | null | undefined }) {
@@ -41,7 +41,7 @@ export default function ServiceJobWarrantyCard({ warranty }: { warranty: Warrant
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[40rem] table-fixed text-sm">
+            <table className="w-full min-w-[36rem] table-fixed text-sm">
               <thead>
                 <tr className="border-b text-left text-muted-foreground">
                   {HEADS.map((h) => (

@@ -84,7 +84,7 @@ export default function PolicyDetail({ policyId }: { policyId: string }) {
     successMessage: 'Term deleted.',
     invalidateKeys: [['warranty-terms'], ['warranty-policies'], ['warranty-policy'], ['warranty-kinds']],
   });
-  const [tab, setTab] = useUrlTab({ tabs: TABS, defaultTab: 'terms' });
+  const [tab, setTab] = useUrlTab({ tabs: TABS, defaultTab: 'details' });
 
   if (isLoading || !policy) {
     return isLoading ? (

@@ -163,7 +163,7 @@ export async function searchCatalogueProducts(query: string): Promise<CatalogueP
     sorting: [{ id: 'product_code', desc: false }],
     searchQuery: query,
   });
-  const response = await apiFetch(`/api/v1/products?${qs.toString()}`);
+  const response = await apiFetch(`/api/v1/master-data/products?${qs.toString()}`);
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to search products'));
   const body = await response.json();
   return (body.data ?? []).map((p: CatalogueProduct) => ({

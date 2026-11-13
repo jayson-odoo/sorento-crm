@@ -205,7 +205,7 @@ export default function ServiceJobsList() {
         id: 'warranty_summary',
         accessorFn: (r) => r.warranty_summary,
         header: ({ column }) => <DataGridColumnHeader title="Warranty" column={column} />,
-        size: 130,
+        size: 110,
         cell: ({ row }) =>
           row.original.warranty_summary ? (
             <WarrantyPill code={row.original.warranty_summary} summary />

@@ -143,6 +143,7 @@ export default function ServiceJobProductDialog({ open, onOpenChange, jobId, lin
                   selectedOption={product ?? undefined}
                   placeholder="Search product code or description"
                   aria-label="Product"
+                truncateTriggerLabel
                 />
               )}
             </div>
