@@ -61,3 +61,19 @@ describe('R11: the spare part Lines grid fits its card at 1280', () => {
     expect(total, `column sizes ${sizes.join(', ')} (sum ${total})`).toBeLessThanOrEqual(CARD_WIDTH_AT_1280);
   });
 });
+
+/**
+ * R13 (browser pass on 300a42e1): at 1280 the Location header read "Locatio". A header with
+ * its sort control needs about 90 px (8 characters at ~8 px, the sort icon, cell padding).
+ */
+describe('R13: the spare part Location header is not clipped', () => {
+  it.each([
+    ['the approver, pending', { inquiryType: 'spare_part_request', headerState: 'pending_approval', canDecide: true, onEditLine: vi.fn() }],
+    ['a reader, raised', { inquiryType: 'spare_part_request', headerState: 'raised', canDecide: false }],
+  ])('%s: Location is at least 90 px wide', (_who, options) => {
+    const { sizes } = widthOf(options);
+    const location = sizes.find((s) => /^location[^=]*=/.test(s));
+    expect(location, `column sizes ${sizes.join(', ')}`).toBeDefined();
+    expect(Number(location!.split('=')[1])).toBeGreaterThanOrEqual(90);
+  });
+});
