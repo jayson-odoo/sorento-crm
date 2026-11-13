@@ -9698,6 +9698,17 @@ class ProjectOrderInquiryService:
                 ),
                 code="order_inquiry_not_acknowledgeable",
             )
+        # AC-V2-3 (owner rule 12 Nov 2026): purchasing cannot take on a row whose SO line
+        # has a change waiting for CS; CS's Confirm clears it first.
+        from app.services.oi_waiting_for_cs import WAITING_FOR_CS_MESSAGE, waiting_row_ids
+
+        waiting = waiting_row_ids(self.db, [row.id for row in rows])
+        if waiting:
+            raise AppException(
+                status_code=409,
+                message=WAITING_FOR_CS_MESSAGE,
+                code="order_inquiry_waiting_for_cs",
+            )
         now = datetime.utcnow()
         transitioned = 0
         confirmed_ids: List[str] = []
@@ -10645,6 +10656,11 @@ class ProjectOrderInquiryService:
                     row.ack_override_by = None
                     row.ack_override_at = None
         done = compute_done(rows, linked, counts, cancelled)
+        # AC-V2-3: the system never acknowledges a row waiting for CS; CS's Confirm clears
+        # it, and the next evaluation then settles it.
+        from app.services.oi_waiting_for_cs import waiting_row_ids
+
+        waiting = waiting_row_ids(self.db, list(rows))
 
         now = datetime.utcnow()
         for row in rows.values():
@@ -10654,6 +10670,8 @@ class ProjectOrderInquiryService:
             if row.ack_override is not None:
                 continue
             if done[row.id]:
+                if row.id in waiting:
+                    continue
                 if row.ack_state != ACK_ACKNOWLEDGED:
                     row.ack_state = ACK_ACKNOWLEDGED
                     row.acknowledged_by = None

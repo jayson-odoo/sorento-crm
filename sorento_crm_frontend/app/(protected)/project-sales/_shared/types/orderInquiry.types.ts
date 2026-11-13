@@ -617,6 +617,16 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
    */
   line_cancelled?: boolean;
   /**
+   * OI-WHOLE-SO-CANCEL v2: the row's SO line has a change CS has not confirmed yet
+   * (AC-V2-2), the sales order itself is cancelled or deleted (AC-V2-5), and the line's
+   * quantity as CS last confirmed it when the line has since changed (AC-V2-4b).
+   */
+  waiting_for_cs?: boolean;
+  so_cancelled?: boolean;
+  /** What the waiting change is, off the line's pending planning change; null when nothing waits. */
+  waiting_change?: WaitingChange[] | null;
+  previous_so_line_qty?: string | null;
+  /**
    * OI-LINE-SPLIT (UAC D3): the splits of this row's SO line, for the Lines tab's
    * read-only expand; empty when the line is not split.
    */
@@ -786,7 +796,7 @@ export interface OrderInquiryWorklistParams {
    * `to_confirm` is the page's own default (R3): awaiting AND changed in one word,
    * because both mean the same thing to purchasing - nobody has said yes to this yet.
    */
-  ack?: OrderInquiryAckState | 'to_confirm';
+  ack?: OrderInquiryAckState | 'to_confirm' | 'waiting_for_cs' | 'so_cancelled' | 'line_cancelled';
   /** The row's Location column, equality (S1, R-K). Warehouse code, never a UUID. */
   /** One location, or several (free text, each sent whole). */
   location?: string | string[];
@@ -947,6 +957,10 @@ export interface OrderInquiryAckCounts {
    * itself until it arrives.
    */
   to_confirm?: number;
+  /** F1b: the Status column's other words. */
+  waiting_for_cs?: number;
+  so_cancelled?: number;
+  line_cancelled?: number;
 }
 
 /**
@@ -1471,6 +1485,12 @@ export interface OrderInquiryBulkRejectResult {
 
 export type OrderInquiryHeaderStatus = 'outstanding' | 'completed';
 
+export interface WaitingChange {
+  kind: 'so_cancelled' | 'line_removed' | 'date' | 'qty' | 'product' | 'location';
+  was: string | null;
+  now: string | null;
+}
+
 /** One row of the Documents view (AC-HL-02). */
 export interface OrderInquiryHeader {
   id: string;
@@ -1539,7 +1559,7 @@ export interface OrderInquiryHeaderDetail extends OrderInquiryHeader {
 }
 
 export interface OrderInquiryHeaderListParams {
-  state?: OrderInquiryHeaderStatus | 'all';
+  state?: 'outstanding' | 'completed' | 'all';
   query?: string;
   raised_by?: string;
   /** One agent name, or several (free text, each sent whole). */

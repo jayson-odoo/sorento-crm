@@ -27,8 +27,11 @@ import {
 } from '@/components/common/SearchableMultiSelect';
 import { useTableDeepLinkHighlight } from '@/hooks/useTableDeepLinkHighlight';
 import { useSoLineAttachmentLookup } from '../../../_shared/hooks/useSoLineAttachments';
-import { STATE_LABEL } from '../../../_shared/components/OrderInquiryVerbPill';
 import { reserveStatusFrom } from '../../../_shared/lib/orderInquiryHeaderStatus';
+import {
+  LINE_STATUS_OPTIONS,
+  lineStatusValues,
+} from '../../../_shared/components/OrderInquiryLineStatusPill';
 import { DEFAULT_HIDDEN_COLUMNS } from '../../components/orderInquiryWorklistColumns';
 import {
   StagedReserveEntry,
@@ -58,23 +61,10 @@ function lineMatches(row: OrderInquiryWorklistRow, needle: string): boolean {
   return haystack.includes(needle.toLowerCase());
 }
 
-// AC-RS-88 (`PLAN-oi-request-cs-reserve.md` 6e.2): the two reserve-state values ride
-// beside the plain `STATE_LABEL` ones in the SAME filter, never a second control, under
-// their own namespaced values so they collide with nothing a real `state` holds.
-// `cancelled` is not offered (6e.4, AC-RS-88b): this grid never shows a cancelled line.
-const RESERVE_REQUESTED_FILTER_VALUE = 'reserve:requested';
-const RESERVE_RESERVED_FILTER_VALUE = 'reserve:reserved';
-const RESERVE_DECLINED_FILTER_VALUE = 'reserve:declined';
-
-const STATE_FILTER_OPTIONS: SearchableMultiSelectOption[] = [
-  { value: 'raised', label: STATE_LABEL.raised },
-  { value: 'partly_linked', label: STATE_LABEL.partly_linked },
-  { value: 'placed', label: STATE_LABEL.placed },
-  { value: 'actioned', label: STATE_LABEL.actioned },
-  { value: RESERVE_REQUESTED_FILTER_VALUE, label: 'Request to reserve' },
-  { value: RESERVE_RESERVED_FILTER_VALUE, label: 'Reserved' },
-  { value: RESERVE_DECLINED_FILTER_VALUE, label: 'Not reserved' },
-];
+// F1 (OI-WHOLE-SO-CANCEL v2): the State filter offers exactly the words the State column prints
+// (`LINE_STATUS_OPTIONS`, the line status pill's own list) and a line matches a word when the
+// column reads it (`lineStatusValue`). The reserve words keep their older URL values.
+const STATE_FILTER_OPTIONS: SearchableMultiSelectOption[] = LINE_STATUS_OPTIONS;
 
 // OI-UX-FILTER-SNAPSHOT (owner, 3 Nov 19:15): the lines view lives in the URL, so prev/next
 // OI (`useListPager` carries every `view_*` key) and a reload keep it. State is comma-joined,
@@ -102,21 +92,11 @@ function sortingToUrl(sorting: SortingState): string | null {
   return first ? `${first.id}:${first.desc ? 'desc' : 'asc'}` : null;
 }
 
-function matchesStateFilter(row: OrderInquiryWorklistRow, selected: string[]): boolean {
-  if (selected.length === 0) return true;
-  return selected.some((value) => {
-    if (value === RESERVE_REQUESTED_FILTER_VALUE) return row.reserve_state === 'requested';
-    if (value === RESERVE_RESERVED_FILTER_VALUE) return row.reserve_state === 'reserved';
-    if (value === RESERVE_DECLINED_FILTER_VALUE) return row.reserve_state === 'declined';
-    return row.state === value;
-  });
-}
-
-/** A line matches the State filter when any of its live rows does (G5: the line folds
- * every live row, so filtering on one row's state would hide the line's others). */
+/** A line matches the State filter when the State column reads one of the chosen words. */
 function lineMatchesStateFilter(line: OrderInquiryLine, selected: string[]): boolean {
   if (selected.length === 0) return true;
-  return line.liveRows.some((row) => matchesStateFilter(row, selected));
+  const values = lineStatusValues(line);
+  return selected.some((value) => values.includes(value));
 }
 
 /** Detail's selection is keyed by ROW id (every mutation takes row ids); the grid ticks
@@ -236,7 +216,7 @@ export function OrderInquiryLinesTab({
     if (fromView) return fromView;
     const reserve = searchParams.get('reserve');
     return reserveStatusFrom(reserve) && reserve !== 'reserved' && reserve !== 'notice_parked'
-      ? [RESERVE_REQUESTED_FILTER_VALUE]
+      ? ['reserve:requested']
       : [];
   });
   // The raw ids are kept and intersected with the requests at filter time: the requests
@@ -469,7 +449,9 @@ export function OrderInquiryLinesTab({
       }}
       emptyMessage={
         allLineRows.length === 0
-          ? 'Nothing was raised on this order inquiry.'
+          ? lines.length > 0 && lines.every((row) => row.state === 'cancelled')
+            ? 'Every line on this order inquiry is cancelled.'
+            : 'Nothing was raised on this order inquiry.'
           : (stateFilter.length > 0 || requestFilter.length > 0) && rows.length === 0
             ? 'No line matches the filter.'
             : 'No product matches that search.'

@@ -173,6 +173,13 @@ _EXPORT = require_permission(VIEW)
 #: The sort set the list accepts, declared here as a `Literal` because FastAPI cannot
 #: build one from a runtime set. It MUST equal `SORTABLE_FIELDS` in the service, and a
 #: test asserts the two agree.
+#: The Confirmed filter's words: the stored ack states, to_confirm, and the Status column's other
+#: words (F1b).
+AckFilter = Literal[
+    "awaiting", "acknowledged", "changed", "rejected", "to_confirm",
+    "waiting_for_cs", "so_cancelled", "line_cancelled",
+]
+
 WorklistSort = Literal[
     "inquiry_no",
     "so_date",
@@ -198,6 +205,8 @@ WorklistSort = Literal[
     "spo_number",
     "agent_code",
     "verb",
+    # OI-WHOLE-SO-CANCEL v2 (H2): the Status column.
+    "status",
 ]
 
 WORKLIST_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -399,7 +408,7 @@ def list_order_inquiry_worklist(
             "links point."
         ),
     ),
-    ack: Optional[Literal["awaiting", "acknowledged", "changed", "rejected", "to_confirm"]] = Query(
+    ack: Optional[AckFilter] = Query(
         None,
         description=(
             "WHERE THE HANDSHAKE STANDS (AC-H4). `awaiting` is what purchasing has not "
@@ -580,7 +589,7 @@ def order_inquiry_worklist_summary(
             "the two beside it could not be pressed a second time."
         ),
     ),
-    ack: Optional[Literal["awaiting", "acknowledged", "changed", "rejected", "to_confirm"]] = Query(
+    ack: Optional[AckFilter] = Query(
         None,
         description=(
             "WHERE THE HANDSHAKE STANDS (AC-H4). `awaiting` is what purchasing has not "
@@ -649,7 +658,7 @@ def export_order_inquiry_worklist(
     raised_by: Optional[list[str]] = Query(None),
     linked: Optional[Literal["po", "spo", "none"]] = Query(None),
     kind: Optional[Literal["spo", "po", "buy"]] = Query(None),
-    ack: Optional[Literal["awaiting", "acknowledged", "changed", "rejected", "to_confirm"]] = Query(None),
+    ack: Optional[AckFilter] = Query(None),
     location: Optional[list[str]] = Query(None),
     agent: Optional[list[str]] = Query(None),
     so_month: Optional[str] = Query(None),
@@ -904,7 +913,7 @@ def order_inquiry_worklist_matrix(
     raised_by: Optional[list[str]] = Query(None),
     linked: Optional[Literal["po", "spo", "none"]] = Query(None),
     kind: Optional[Literal["spo", "po", "buy"]] = Query(None),
-    ack: Optional[Literal["awaiting", "acknowledged", "changed", "rejected", "to_confirm"]] = Query(None),
+    ack: Optional[AckFilter] = Query(None),
     location: Optional[list[str]] = Query(None),
     agent: Optional[list[str]] = Query(None),
     so_month: Optional[str] = Query(None),

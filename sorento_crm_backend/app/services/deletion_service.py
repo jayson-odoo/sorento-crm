@@ -171,9 +171,15 @@ class DeletionService:
     """Same constructor as ``MasterIngestService`` / ``DocumentIngestService``."""
 
     def __init__(
-        self, db: Session, integration_id: Optional[str] = None, *, company_id: str
+        self,
+        db: Session,
+        integration_id: Optional[str] = None,
+        *,
+        company_id: str,
+        actor_user_id: Optional[str] = None,
     ):
         self.db = db
+        self.actor_user_id = actor_user_id
         self.integration_id = integration_id
         # Required, for the reason the ingest states: a default would be the
         # incumbent company, and a deletion meant for the other one would remove
@@ -606,14 +612,12 @@ class DeletionService:
             .filter(getattr(spec.line_model, spec.line_fk) == str(entity_id))
             .all()
         )
-        # PLAN-oi-cancelled-line-used-confirm.md (3.2b): captured only on the
-        # TRANSITION - a repeated deletion of the same header walks lines that
-        # are already `cancelled`, and re-flagging them would ask purchasing
-        # to reconfirm a row it already settled.
-        newly_cancelled_so_line_ids: list[str] = []
+        # OI-WHOLE-SO-CANCEL v2: a delete flags no OI row at sync; they wait for CS's Confirm.
+        # OI-WHOLE-SO-CANCEL: the open lines as they stood, for the planning-change hook below.
+        before_lines = (
+            self._so_before_lines(row, lines) if spec.entity_type == "sales_orders" else []
+        )
         for line in lines:
-            if spec.entity_type == "sales_orders" and line.line_status != CANCELLED:
-                newly_cancelled_so_line_ids.append(line.id)
             line.line_status = CANCELLED
         self.db.flush()
         if spec.entity_type == "purchase_orders":
@@ -622,9 +626,45 @@ class DeletionService:
             )
 
             auto_confirm_rows_on_po_lines(self.db, [line.id for line in lines])
-        if newly_cancelled_so_line_ids:
-            from app.services.project_order_inquiry_service import (
-                flag_rows_for_cancelled_lines,
-            )
+        if before_lines:
+            self._raise_so_cancel_batch(row, before_lines)
 
-            flag_rows_for_cancelled_lines(self.db, newly_cancelled_so_line_ids)
+    def _so_before_lines(self, header: Any, lines: list[Any]) -> list[Any]:
+        """The header's not-yet-cancelled lines, shaped exactly as the ingest's
+        `_capture_planning_diff_before` shapes them."""
+        from app.services.document_ingest_service import planning_diff_line
+
+        return [
+            planning_diff_line(self.db, header.so_number, line)
+            for line in lines
+            if line.line_status != CANCELLED
+        ]
+
+    def _raise_so_cancel_batch(self, header: Any, before_lines: list[Any]) -> None:
+        """OI-WHOLE-SO-CANCEL: put the cancelled lines on the planning-change board, like the
+        ingest's `_run_planning_change_hook` with an empty after side. Best effort in a
+        savepoint: a failed hook never fails the deletion record."""
+        from app.services import planning_change_service
+        from app.services.scm.outstanding_diff import diff_lines
+
+        try:
+            with self.db.begin_nested():
+                diff = diff_lines(
+                    before_lines, [], scope_documents={header.so_number}
+                )
+                applied_line_ids = {
+                    id(change): change.before.row_ref
+                    for change in diff.changes
+                    if change.before and change.before.row_ref
+                }
+                planning_change_service.build_batch(
+                    self.db,
+                    diff,
+                    applied_line_ids=applied_line_ids,
+                    order_ids={header.so_number: str(header.id)},
+                    actor=self.actor_user_id,
+                    import_job_id=None,
+                    file_name=None,
+                )
+        except Exception:  # noqa: BLE001 - best-effort, the deletion already succeeded
+            logger.warning("deletion.planning_change_hook_failed", exc_info=True)
