@@ -259,6 +259,16 @@ describe('MOCHA-STOCK-GRID: a location outside every ownership group is read by 
     expect(cellStockTableSpy.mock.calls.at(-1)?.[0]).toMatchObject({ companyScope: 'grants' });
   });
 
+  it('AutoCount is read across granted companies too, once the location is resolved', async () => {
+    render(<OrderInquiryStockGrid productId={PRODUCT_ID} location="MOCHA-WH" />);
+
+    await waitFor(() => expect(lastEnabledStockDetailCall()?.[1]).toBe('wh-mocha-wh'));
+    const enabled = useStockStatusMock.mock.calls.filter((call) => call[1] !== false);
+    expect(enabled.length).toBeGreaterThan(0);
+    // Never an unscoped AutoCount read for a location that may be another company's.
+    expect(enabled.every((call) => call[2] === 'grants')).toBe(true);
+  });
+
   it('a group read is sent as today, without the grants scope', async () => {
     render(<OrderInquiryStockGrid productId={PRODUCT_ID} location="BRW-BB" />);
 
