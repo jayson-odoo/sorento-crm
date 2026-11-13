@@ -163,7 +163,20 @@ for (let i = 0; i < steps.length; i++) {
     await page.evaluate((t) => window.__tvSetCaption(t), s.en);
   }
   const started = Date.now();
-  if (s.run) await s.run(h);
+  if (s.run) {
+    try {
+      await s.run(h);
+    } catch (e) {
+      // Leave evidence of the failing step: a still of the screen and its accessibility tree.
+      await page.screenshot({ path: path.join(OUT, `${id}.fail.png`) }).catch(() => {});
+      const tree = await page.locator('body').ariaSnapshot().catch(() => '');
+      fs.writeFileSync(path.join(OUT, `${id}.fail.aria.txt`), tree);
+      console.error(`step ${i} failed: ${s.en}`);
+      await ctx.close();
+      await browser.close();
+      throw e;
+    }
+  }
   const need = durs[i] * 1000 + (s.title ? 900 : 600);
   const spent = Date.now() - started;
   if (spent < need) await sleep(need - spent);

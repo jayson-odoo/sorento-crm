@@ -449,6 +449,56 @@ def seed_delivery_orders(db, customers, products):
         say(f"delivery order {number} for {cust.customer_name}")
 
 
+# Rows a video creates, removed on every seed so a re-recording starts from the same screen.
+VIDEO_PHONES = ["012-000 1401", "012-000 1402"]
+
+
+def reset_video_rows(db):
+    from app.models.access import RespondContact, RespondContactCustomer
+
+    for phone in VIDEO_PHONES:
+        row = db.query(RespondContact).filter(RespondContact.phone_number == msisdn(phone)).first()
+        if row is not None:
+            db.query(RespondContactCustomer).filter_by(contact_id=row.id).delete()
+            say(f"unlinked video contact {row.name}")
+    db.flush()
+
+
+def seed_dealer_access_setup(db):
+    """What Dealer access > Add people needs and production already holds: the Business owner
+    tag (migration dap_0001, wiped by the test-DB reset), the template's stock locations and
+    chatbot agents (contact_access_sheet_service.TEMPLATE)."""
+    from app.models.access import AccessAgent, ContactAccessType, ContactTag
+    from app.models.inventory import Warehouse
+    from app.services.contact_access_sheet_service import TEMPLATE
+
+    types = {"end_user": "End user", "dealer": "Dealer", "cabana_dealer": "Cabana dealer", "mocha_dealer": "Mocha dealer"}
+    for i, (code, name) in enumerate(types.items()):
+        if db.get(ContactAccessType, code) is None:
+            db.add(ContactAccessType(code=code, name=name, is_active=True, sort_order=i, keywords=[]))
+
+    if not db.query(ContactTag).filter(func.lower(ContactTag.name) == "sorento business owner").first():
+        db.add(ContactTag(name="Sorento Business Owner", is_active=True, sort_order=0,
+                          settings={"access_types": ["dealer", "cabana_dealer"]}))
+    from app.models.access import MarketSegment
+
+    if not db.query(MarketSegment).filter(MarketSegment.code == TEMPLATE["segment"]).first():
+        db.add(MarketSegment(code=TEMPLATE["segment"], name="Retail", is_active=True, sort_order=0,
+                             is_requestor_selectable=False, portal_form_types=[]))
+    names = {"BRW": "Showroom Store", "MWH": "Central Warehouse"}
+    for code in TEMPLATE["locations"]["SRT"]:
+        if not db.query(Warehouse).filter(Warehouse.warehouse_code == code).first():
+            db.add(Warehouse(warehouse_code=code, warehouse_name=names.get(code, code), is_active=True,
+                             company_id=COMPANY_ID, location="Klang"))
+    for code in TEMPLATE["agents"]:
+        if not db.query(AccessAgent).filter(AccessAgent.code == code).first():
+            db.add(AccessAgent(code=code, name=code.replace("_", " ").title(), is_active=True,
+                               assign_to_new_internal_contacts=False, in_parser_prompt=False,
+                               synced_to_excel=False))
+    db.flush()
+    say("dealer access setup: owner tag, stock locations, chatbot agents")
+
+
 def seed_complaint_master(db):
     from app.models.complaint_master_data import ComplaintResolution, ComplaintRootCause
     from app.models.lookup import LookupBinding, LookupOption, LookupSet
@@ -504,6 +554,8 @@ def seed_p1(db) -> dict:
     publish_and_link_templates(db, products, admin)
     seed_complaint_master(db)
     seed_delivery_orders(db, customers, products)
+    seed_dealer_access_setup(db)
+    reset_video_rows(db)
     db.commit()
     return {"admin": admin.id, "sam": sam.id, "agent": agent.id}
 

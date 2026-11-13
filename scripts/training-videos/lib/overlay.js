@@ -17,6 +17,7 @@
     font:500 19px/1.35 system-ui,-apple-system,"Segoe UI",sans-serif;text-align:center;
     z-index:2147483645;pointer-events:none;opacity:0;transition:opacity .25s}
   #tv-caption.on{opacity:1}
+  #tv-caption.top{bottom:auto;top:18px}
   .tv-focus{outline:3px solid #f59e0b !important;outline-offset:3px !important;border-radius:6px}
   nextjs-portal{display:none !important}
   #tv-title{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
@@ -52,6 +53,9 @@
     'mousemove',
     (e) => {
       window.__tvPos = { x: e.clientX, y: e.clientY };
+      // Keep the caption off whatever the hand is pointing at near the bottom edge.
+      const cap = document.getElementById('tv-caption');
+      if (cap) cap.classList.toggle('top', e.clientY > window.innerHeight - 140);
       const c = document.getElementById('tv-cursor');
       if (c) {
         c.style.left = e.clientX + 'px';
