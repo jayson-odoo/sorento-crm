@@ -3,8 +3,10 @@
 Plan: `PLAN-standard-history-w5-pricetags-13nov.md`. Parent: `PLAN-standard-history-10nov.md`
 (waves 1 and 2 merged as #2299 / #2355; their UAC is `standard-history-10nov-acceptance-criteria.md`).
 
-DRAFT: written from the behaviour card's recommendations (PR #2390 crew-ask, 13 Nov). Each
-criterion tied to a card question names it; it is final only once crew relays the answers.
+Behaviour card (PR #2390 crew-ask, 13 Nov) answered by crew the same day from prior owner
+rulings: Q1 (a) every tracked event, Q2 (a) contact's name via the one shared `audit_actor`,
+Q3 (a) same access as opening the request, Q4 (a) request page only, Q5 (a) portal tab and
+`_diff_lines` untouched (no overlap with #2386). Criteria name the question they answer.
 
 ## Backend
 
