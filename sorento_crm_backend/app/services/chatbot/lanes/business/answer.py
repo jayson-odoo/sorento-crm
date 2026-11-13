@@ -5163,14 +5163,15 @@ def holds_every_typed_part(typed: Any, code: Any) -> bool:
 def corrects_or_completes(typed: Any, code: Any) -> bool:
     """CHATBOT-CLOSE-CODES B1 (crew ruling (a), 13 Nov 2026): does `code` correct or complete
     what the customer `typed`, rather than restate it? Read part by part (`typed_code_parts`):
-    every code part typed as is is accounted for. A part left over that a typed part spells but
-    for one letter changed, added or dropped (`product_spec_search._one_edit`: INLT for INLET,
-    SWTWC for SRTWC) is a correction. A part left over that nothing typed accounts for, with no
+    every code part typed as is is accounted for. A part left over that a typed part nearly
+    spells is a correction: within `turn_runtime.osa_distance` (a letter changed, added or
+    dropped, or two neighbouring letters swapped, each one edit) of at most half the part's
+    length, and at least one (INLT, INELT, INXXT for INLET; SWTWC for SRTWC). A part left over that nothing typed accounts for, with no
     typed word left either, is a completion (SRTWC287-S for SRTWC287-S-150). A part reached
     only from typed words left over that spell no part ("gun metal" for GM) is the same code
     said in words, and a code equal but for case, dashes and spaces is the code: neither is a
     correction. Reads no word list and no company's letters."""
-    from app.services.product_spec_search import _one_edit
+    from app.services.chatbot.turn_runtime import osa_distance
 
     if token_key(jsc.nullish_str(typed)) == token_key(jsc.nullish_str(code)):
         return False
@@ -5183,7 +5184,7 @@ def corrects_or_completes(typed: Any, code: Any) -> bool:
             missing.append(part)
     if not missing:
         return False
-    if any(_one_edit(t, part) for part in missing for t in left):
+    if any(osa_distance(t, part) <= max(1, len(part) // 2) for part in missing for t in left):
         return True
     return not any(t.isalpha() for t in left)
 

@@ -540,7 +540,8 @@ def pick_near_code_first(parser: dict[str, Any], resolved: dict[str, Any]) -> No
             row = entity.get(NEAR_PICK_KEY) if isinstance(entity, dict) else None
             pick = token_key(str((row or {}).get("canonical_code") or "")) if isinstance(row, dict) else ""
             hits = resolved["intersection"]
-            if pick and any(isinstance(m, dict) and token_key(str(m.get("canonical_code") or "")) == pick for m in hits):
+            # The pick alone, only when it is the raw's single match (several stay the which-one).
+            if pick and [token_key(str(m.get("canonical_code") or "")) for m in hits if isinstance(m, dict)] == [pick]:
                 token = _token_of(entity)
                 resolved.update({
                     "match_mode": "or", "intersection": [], "by_entity_type": {},
@@ -565,11 +566,11 @@ def pick_near_code_first(parser: dict[str, Any], resolved: dict[str, Any]) -> No
         for res in resolutions:
             if isinstance(res, dict) and res.get("token") == token:
                 held = [m for m in res.get("matches") or [] if isinstance(m, dict)]
-                if any(token_key(str(m.get("canonical_code") or "")) == pick for m in held):
-                    kept = [m for m in held if token_key(str(m.get("canonical_code") or "")) != pick]
-                    res.update({"matches": kept, "resolved": len(kept) == 1, "ambiguous": len(kept) > 1})
+                if [token_key(str(m.get("canonical_code") or "")) for m in held] == [pick]:
+                    # The raw's single match is the pick: a miss offered it (several stay matches).
+                    res.update({"matches": [], "resolved": False, "ambiguous": False})
                     unresolved = resolved.setdefault("unresolved_tokens", [])
-                    if not kept and token not in unresolved:
+                    if token not in unresolved:
                         unresolved.append(token)
                 others = [
                     a for a in res.get("alternatives") or []

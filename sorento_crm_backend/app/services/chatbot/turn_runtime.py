@@ -885,7 +885,7 @@ _PRODUCT_DETAIL_VALUE_CAP = 15
 _BRAND_WORD_RE = re.compile(r"[0-9a-z]+")
 
 
-def _osa_distance(a: str, b: str) -> int:
+def osa_distance(a: str, b: str) -> int:
     """Edit distance counting a swap of two neighbouring letters as one edit
     ("sorneto" is one edit from "sorento")."""
     rows = [list(range(len(b) + 1))]
@@ -958,7 +958,7 @@ def brand_rows_for_word(brands: list[dict[str, Any]], word: Any) -> list[dict[st
             name = "".join(jsc.nullish_str(row.get("brand_name")).casefold().split())
             if len(name) < 4:
                 continue
-            distance = _osa_distance(w, name)
+            distance = osa_distance(w, name)
             if distance > limit:
                 continue
             if best is None or distance < best:
@@ -2359,9 +2359,6 @@ def typed_by_token(entities: list[Any]) -> dict[str, str]:
             named[key] = raw or canonical
     return named
 
-
-#: The old private name, kept only for `tests/chatbot/test_canonical_code_resolution.py`; the same function.
-_typed_by_token = typed_by_token
 
 
 def named_unplaced(entities: list[Any], resolved: Any) -> dict[str, str]:

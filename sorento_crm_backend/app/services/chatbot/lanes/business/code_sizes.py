@@ -199,9 +199,6 @@ def _named_codes(parser: dict[str, Any]) -> set[str]:
     return out - {""}
 
 
-#: CHATBOT-CLOSE-CODES (lead ruling, 13 Nov 2026): the asks whose lone prefix hit is offered (AC-6):
-#: stock and incoming. Every other ask answers a lone prefix hit as today.
-_CLOSE_CODE_ASKS = frozenset({"inventory", "incoming"})
 
 
 def _sizes(parser: dict[str, Any]) -> list[dict[str, Any]]:
@@ -397,6 +394,7 @@ def annotate(db: Any, parser: dict[str, Any], resolved: dict[str, Any]) -> None:
     close codes; and each close code's size line when any of them holds a stored size or the
     miss is a size miss. The registry is read only for a miss. Best effort: a failed read
     changes nothing."""
+    from app.services.chatbot.head.grounding import CLOSE_CODE_ASKS
     from app.services.chatbot.lanes.business.answer import typed_code_parts
 
     if not isinstance(resolved, dict):
@@ -405,7 +403,7 @@ def annotate(db: Any, parser: dict[str, Any], resolved: dict[str, Any]) -> None:
     sized = not (_sizes(parser) and len(_product_codes(parser)) > 1)
     try:
         _single_substring_is_an_offer(
-            db, resolved, _named_codes(parser), prefix_offer=jsc.get(parser, "domain_hint") in _CLOSE_CODE_ASKS
+            db, resolved, _named_codes(parser), prefix_offer=jsc.get(parser, "domain_hint") in CLOSE_CODE_ASKS
         )
         if sized:
             _unheld_size_is_a_miss(db, parser, resolved)
