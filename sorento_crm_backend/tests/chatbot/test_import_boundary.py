@@ -130,6 +130,17 @@ ALLOWED = {
     # `agent.writes._contact_plan`/`_contact_execute` into a core service and drop this entry. Its tests live
     # under tests/chatbot/agent/ (MAIN-RED-11NOV).
     "app/services/dealer_access_screen.py",
+    # N8N-RETIRE-A (#2356): no-send replay of past n8n sender runs through `crm_sender` with a fake client and
+    # sockets blocked. A developer tool, not core, not on any request path.
+    "scripts/crm_sender_replay.py",
+    # N8N-RETIRE-A (#2356): tests of the module's `crm_sender` (sends, retries, resume) with a fake respond.io client.
+    "tests/test_crm_sender.py",
+    # N8N-RETIRE-A (#2356): row-by-row parity tests of `crm_sender` against the live n8n sender's behaviour.
+    "tests/test_crm_sender_parity.py",
+    # N8N-RETIRE-A (#2356): tests of the no-send replay tool above; it patches `crm_sender` seams directly.
+    "tests/test_crm_sender_replay.py",
+    # N8N-RETIRE-A (#2356): tests of the "Bot replies sent by" switch routing a turn to `crm_sender` or n8n.
+    "tests/test_crm_sender_wiring.py",
 }
 ALLOWED_PREFIXES = (
     "app/services/chatbot/",
