@@ -794,3 +794,42 @@ describe('STANDARD-HISTORY: the History tab (AC-SH-B8, v2)', () => {
     expect(screen.queryByRole('combobox', { name: 'Product' })).not.toBeInTheDocument();
   });
 });
+
+describe('Gear menu: Link selected is gone, Auto link with ticks stays (owner round, 13 Nov)', () => {
+  async function openGearWithTick() {
+    const lineRow = (over: Partial<OrderInquiryWorklistRow>) =>
+      ({
+        ...LINKED_LINE,
+        item_code: 'ZZT-TICK',
+        core_line_id: 'cl-t',
+        line_no: 1,
+        verb: 'ORDER',
+        links: [],
+        ...over,
+      }) as OrderInquiryWorklistRow;
+    vi.mocked(getOrderInquiryHeaderLines).mockResolvedValueOnce([
+      lineRow({ id: 'row-a', state: 'raised', ack_state: 'changed' }),
+      lineRow({ id: 'row-b', state: 'raised', ack_state: 'awaiting' }),
+    ]);
+    renderDetail('oi-1');
+    await screen.findByRole('button', { name: 'Confirm' });
+    fireEvent.click(await screen.findByLabelText('Select ZZT-TICK'));
+    await screen.findByRole('button', { name: 'Confirm (1)' });
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Order inquiry options' }), { button: 0 });
+  }
+
+  it('has no Link selected item', async () => {
+    await openGearWithTick();
+    await screen.findByRole('menuitem', { name: /auto link/i });
+    expect(screen.queryByRole('menuitem', { name: /^link selected/i })).toBeNull();
+  });
+
+  it('Auto link with ticked lines still sends exactly those row ids', async () => {
+    await openGearWithTick();
+    fireEvent.click(await screen.findByRole('menuitem', { name: /auto link/i }));
+    await waitFor(() => expect(autoPlaceSpy).toHaveBeenCalledTimes(1));
+    const sent = autoPlaceSpy.mock.calls[0][0] as { row_ids?: string[]; filter?: unknown };
+    expect(sent.filter).toBeUndefined();
+    expect([...(sent.row_ids ?? [])].sort()).toEqual(['row-a', 'row-b']);
+  });
+});

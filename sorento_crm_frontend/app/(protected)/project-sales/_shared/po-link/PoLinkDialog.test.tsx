@@ -118,7 +118,7 @@ function result(over: Partial<PoLinkResult>): PoLinkResult {
   };
 }
 
-function renderDialog(lines = [soLine({})], mode: 'link' | 'change' = 'link') {
+function renderDialog(lines = [soLine({})], mode: 'link' | 'change' | 'unlink' = 'link') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const onClose = vi.fn();
   render(
@@ -447,5 +447,31 @@ describe('A skipped line in a batch (plain reason, Try again)', () => {
     expect(card).toHaveTextContent('it needs less than that now');
     expect(document.body).not.toHaveTextContent('QTY_ABOVE_OUTSTANDING');
     expect(within(card).getByRole('button', { name: /try again/i })).toBeInTheDocument();
+  });
+});
+
+describe('No "Line" column in the popup (owner round, 13 Nov)', () => {
+  const covered = soLine({
+    status: 'pinned', short_qty: 0, assigned_qty: 120,
+    now: {
+      so_status: 'open', open_qty: 120,
+      po_links: [{ po_line_id: 'po-7', po_number: '202610-S0007', po_line_no: 1, qty: 120, open_qty: 120, location_code: 'MWH-BB' }],
+    },
+  });
+
+  it.each(['link', 'change', 'unlink'] as const)('%s mode has no Line column header and still shows the SO number', (mode) => {
+    const { dialog } = renderDialog([mode === 'link' ? soLine({}) : covered], mode);
+    const headers = within(dialog).getAllByRole('columnheader').map((cell) => (cell.textContent ?? '').trim());
+    expect(headers).not.toContain('Line');
+    expect(headers).toContain('Sales order');
+    expect(dialog).toHaveTextContent('SO425045');
+  });
+
+  it('the result card still says "line N"', async () => {
+    linkPoLines.mockResolvedValue({ results: [result({ so_line_no: 16 })] });
+    const { dialog } = renderDialog();
+    fireEvent.change(dialog.querySelector('#po-link-po-sol-1') as HTMLSelectElement, { target: { value: 'po-3' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Link 1 line' }));
+    expect(await screen.findByTestId('po-link-result')).toHaveTextContent('SO425045 line 16');
   });
 });
