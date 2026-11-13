@@ -13,9 +13,10 @@
 
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Download, Loader2, Plus, XCircle } from 'lucide-react';
+import { ArrowLeft, Download, Loader2, Plus, X, XCircle } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { Badge } from '@/components/ui/badge';
+import { TruncatedTextCell } from '@/components/common/TruncatedTextCell';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
@@ -247,9 +248,6 @@ export default function SampleRequestForm({
 
   const readOnly = Boolean(request && !isDraft);
   const canCancel = request?.status === 'submitted';
-  const projectTitle = state.project_id
-    ? state.project_label.split(' - ').slice(1).join(' - ') || state.project_label
-    : state.project_title;
 
   return (
     <div className={shell}>
@@ -340,37 +338,64 @@ export default function SampleRequestForm({
                 />
               </FormField>
 
-              <FormField label="Project Title" htmlFor="sr-project-title">
-                <Input
-                  id="sr-project-title"
-                  disabled={readOnly || Boolean(state.project_id)}
-                  value={projectTitle}
-                  onChange={(e) => set('project_title', e.target.value)}
-                />
-              </FormField>
+              {/* A registered project is its own one line ("code - title") in the picker below; the
+                  typed title is for a project not registered yet, as on the CRM form (owner 12 Nov
+                  ~15:45: the two forms read the same). */}
+              {!state.project_id && (
+                <FormField label="Project Title" htmlFor="sr-project-title">
+                  <Input
+                    id="sr-project-title"
+                    disabled={readOnly}
+                    value={state.project_title}
+                    onChange={(e) => set('project_title', e.target.value)}
+                  />
+                </FormField>
+              )}
               <FormField
                 label="Registered project (optional)"
                 htmlFor="sr-project"
                 error={errors.project_id}
               >
-                <AsyncCombobox<ProjectLookupItem>
-                  id="sr-project"
-                  disabled={readOnly}
-                  value={state.project_id}
-                  displayValue={state.project_label}
-                  allowFreeText={false}
-                  onChange={(v, item) =>
-                    patch({
-                      project_id: v,
-                      project_label: item ? `${projectCodeLabel(item)} - ${projectDisplayName(item)}` : '',
-                    })
-                  }
-                  fetchOptions={(q) => client.lookupProjects(q)}
-                  optionValue={(o) => o.id}
-                  optionLabel={(o) => `${projectCodeLabel(o)} - ${projectDisplayName(o)}`}
-                  optionMeta={(o) => o.company_name ?? ''}
-                  placeholder="Search your registered projects"
-                />
+                {state.project_id ? (
+                  // One clamped line, the whole label on hover and behind the eye, as on the CRM
+                  // form (crew pass round 3); Clear brings the picker back.
+                  <div className="flex min-h-9 items-center gap-1 rounded-md border px-3 py-1 text-sm">
+                    <span className="min-w-0 flex-1">
+                      <TruncatedTextCell text={state.project_label} dialogTitle="Project" />
+                    </span>
+                    {!readOnly && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="size-7 shrink-0"
+                        aria-label="Clear project"
+                        onClick={() => patch({ project_id: '', project_label: '' })}
+                      >
+                        <X className="size-4" />
+                      </Button>
+                    )}
+                  </div>
+                ) : (
+                  <AsyncCombobox<ProjectLookupItem>
+                    id="sr-project"
+                    disabled={readOnly}
+                    value={state.project_id}
+                    displayValue={state.project_label}
+                    allowFreeText={false}
+                    onChange={(v, item) =>
+                      patch({
+                        project_id: v,
+                        project_label: item ? `${projectCodeLabel(item)} - ${projectDisplayName(item)}` : '',
+                      })
+                    }
+                    fetchOptions={(q) => client.lookupProjects(q)}
+                    optionValue={(o) => o.id}
+                    optionLabel={(o) => `${projectCodeLabel(o)} - ${projectDisplayName(o)}`}
+                    optionMeta={(o) => o.company_name ?? ''}
+                    placeholder="Search your registered projects"
+                  />
+                )}
               </FormField>
 
               <FormField label="For" htmlFor="sr-scope">

@@ -63,18 +63,26 @@ def test_b1_limited_rep_cannot_record_another_owners_quotation(world):
 
 
 def test_b1_limited_rep_cannot_record_another_owners_quotation_by_update(world):
-    """A plain draft on another owner's project is allowed (the company-wide portal rule); recording
-    that project's quotation on it later is not (re-review K6)."""
+    """A plain draft on another owner's project is allowed on the public portal (the company-wide
+    portal rule); recording that project's quotation on it later is not (re-review K6). Through My
+    Requests the draft itself is refused since SAMPLE-REQUEST-V2 slice 2 (security review B1: own
+    projects only, as on the staff route)."""
     w = world
     owner = s.make_user(w.sc.db, perms=["projects.projects.view"], name="ZZT foreign owner")
     rep = w.person("Limited", perms=LIMITED)
     project, doc = _quoted_project(w, owner.id)
-    created = rep.me.call(
+    refused = rep.me.call(
+        "POST", "/submissions/sample_request", json=w.sr_body(project_id=project.id, project_title=None)
+    )
+    assert refused.status_code == 422, refused.text
+    assert refused.json()["code"] == "SAMPLE_REQUEST_PROJECT_NOT_ALLOWED"
+
+    created = rep.portal.call(
         "POST", "/submissions/sample_request", json=w.sr_body(project_id=project.id, project_title=None)
     )
     assert created.status_code == 201, created.text
 
-    res = rep.me.call(
+    res = rep.portal.call(
         "PUT",
         f"/submissions/sample_request/{created.json()['id']}",
         json={"quotation_document_id": doc.id},

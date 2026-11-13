@@ -42,12 +42,14 @@ ENTITY = "sample_request"
 DRAFT = "draft"
 SUBMITTED = "submitted"
 PROCESSING = "processing"
+#: Retired by the owner's 11 Nov ruling (migration srv2_0002 moved its rows to Processing). Kept
+#: as a name only so an old row or a History entry that still says it reads correctly.
 CUSTOMER_CONFIRMED = "customer_confirmed"
 DELIVERED = "delivered"
 CANCELLED = "cancelled"
 
 #: What the coordinator queue shows until a filter says otherwise (AC-SR-51).
-DEFAULT_OPEN = (SUBMITTED, PROCESSING, CUSTOMER_CONFIRMED)
+DEFAULT_OPEN = (SUBMITTED, PROCESSING)
 
 #: PS-SAMPLE-TRACKING rule 1: the two stages, by status KEY. Draft, Cancelled and any key an
 #: admin adds sit outside both. The graph itself is unchanged (owner Q2 a, 2 Nov).
@@ -341,10 +343,17 @@ def assert_portal_customer_allowed(db: Session, *, contact_id: str, customer_id:
         )
 
 
-def validate_submit(db: Session, req: SampleRequest) -> None:
+def validate_submit(db: Session, req: SampleRequest, *, staff_rules: Optional[bool] = None) -> None:
     """The refusals of AC-SR-02/03/06/21/22, in the contract's order."""
     require_project = require_project_flag(db)
 
+    # SAMPLE-REQUEST-V2 rules 1-2: a staff request is for an AutoCount debtor and ships to a party.
+    # The portal's form (external contacts, and a limited salesperson until slice 2) keeps text.
+    # Slice 2: a salesperson's own request through My Requests is held to the staff rules too
+    # (`staff_rules=True`); an external contact on the public portal is not.
+    staff = staff_rules if staff_rules is not None else (req.source or "staff") == "staff"
+    if staff and not req.customer_id:
+        raise _incomplete("customer_id", "Pick the customer.")
     if not (req.customer_id or _clean(req.customer_name)):
         raise _incomplete("customer_id", "Pick the customer, or type the customer name.")
     if require_project:
@@ -356,8 +365,12 @@ def validate_submit(db: Session, req: SampleRequest) -> None:
         raise _incomplete("delivery_date", "Enter the Request Delivery Date.")
     if not req.delivery_mode:
         raise _incomplete("delivery_mode", "Choose a delivery mode.")
+    if staff and not req.ship_to_party_id:
+        raise _incomplete("ship_to_party_id", "Pick who the samples go to.")
     if not _clean(req.ship_to_name):
         raise _incomplete("ship_to_name", "Enter the ship-to name.")
+    if staff and not _clean(req.ship_to_address):
+        raise _incomplete("ship_to_address", "Enter the shipping address.")
     if not req.lines and not req.board_mounting:
         raise _incomplete("lines", "Add at least one item.")
     if req.board_mounting and not _clean(req.board_label):
@@ -417,8 +430,17 @@ def _check_on_quotation(
 # ------------------------------------------------------------------ writes
 
 
-def _apply(db: Session, req: SampleRequest, data: Dict[str, Any]) -> None:
-    """Copy a (partial) payload onto the header and replace the lines when given."""
+def _apply(
+    db: Session,
+    req: SampleRequest,
+    data: Dict[str, Any],
+    *,
+    actor_user_id: Optional[str] = None,
+    slugs: Optional[Iterable[str]] = None,
+    ship_to: bool = False,
+) -> None:
+    """Copy a (partial) payload onto the header and replace the lines when given. ``actor_user_id``
+    and ``slugs`` (the caller's permission slugs) gate the ship-to party's project writes."""
     data = dict(data)
     lines = data.pop("lines", None)
 
@@ -440,6 +462,7 @@ def _apply(db: Session, req: SampleRequest, data: Dict[str, Any]) -> None:
         if field in data:
             setattr(req, field, data[field] or None)
     _check_source(db, req)
+    _apply_ship_to(db, req, data, actor_user_id=actor_user_id, slugs=slugs, ship_to=ship_to)
     if req.quotation_document_id and (
         lines is not None or "quotation_document_id" in data or "quotation_issue_id" in data
     ):
@@ -473,6 +496,180 @@ def _apply(db: Session, req: SampleRequest, data: Dict[str, Any]) -> None:
     db.flush()
 
 
+def _ship_to_invalid(code: str, field: str, message: str) -> AppException:
+    return AppException(status_code=422, message=message, code=code, details={"field": field})
+
+
+def _contact_phones_text(contacts: List[Any], display_phone: Any) -> Optional[str]:
+    """Every chosen contact's phone, in the order of their names (owner hand test 12 Nov ~15:45:
+    "I added 2 contacts but why got 1 phone only"). When each has one, the phones read in the
+    order of the names; when some have none, each phone carries its contact's name, so no phone
+    reads as someone else's. The form builds the same text (`lib/sample-request-form.ts`
+    `contactPhonesText`)."""
+    with_phone = [
+        (c.name, (display_phone(c.phone) or c.phone or "").strip()) for c in contacts if c.phone
+    ]
+    with_phone = [(name, phone) for name, phone in with_phone if phone]
+    if not with_phone:
+        return None
+    if len(with_phone) == len(contacts):
+        text = " & ".join(phone for _name, phone in with_phone)
+    else:
+        text = " & ".join(f"{name} {phone}" for name, phone in with_phone)
+    # The column holds 255 (srv2_0003); a longer list keeps its start (review S3).
+    return text if len(text) <= 255 else text[:252] + "..."
+
+
+
+def _apply_ship_to(
+    db: Session,
+    req: SampleRequest,
+    data: Dict[str, Any],
+    *,
+    actor_user_id: Optional[str] = None,
+    slugs: Optional[Iterable[str]] = None,
+    ship_to: bool = False,
+) -> None:
+    """Ship to is a party (SAMPLE-REQUEST-V2 card rules 2 and 4), the proposal "To" rule
+    (`project_quotation_document_service.apply_recipient_pick`) applied to a sample request.
+
+    Keyed on presence like every draft save. A new ``ship_to_party_id`` reloads the printed block
+    from that party: its name, its address or else the project's site address, and clears the old
+    contact. A party not on the project yet is linked in ``ship_to_role`` first (no project: nothing
+    is linked). ``ship_to_contact_ids`` are that party's people: "A & B", the first one's phone, and
+    they join the project's stakeholders. A text field present in ``data`` was typed and wins.
+
+    Security review B1/S1: linking a party and adding stakeholders are project edits, so they need
+    the project page's own gate (`assert_can_write_project`); a caller without it may still pick a
+    party already on the project, and its people print without joining the stakeholders. The
+    contact's phone is copied only for a caller holding `projects.parties.view`, the grant that
+    `GET /parties/{id}/contacts` asks before it shows a phone.
+    """
+    granted = set(slugs or ())
+    from app.models.projects import ProjectParty, ProjectPartyContact
+    from app.services import project_party_contact_service as party_contacts
+
+    # Staff, and (slice 2) a salesperson's own request through My Requests (`ship_to=True`, set only
+    # by that mount, with the signed-in CRM user as the actor). An external contact on the public
+    # portal keeps typed text and can never link parties to projects.
+    if (req.source or "staff") != "staff" and not ship_to:
+        return
+    party_present = "ship_to_party_id" in data
+    contact_ids = list(
+        dict.fromkeys(str(c) for c in (data.get("ship_to_contact_ids") or []) if c)
+    )
+    if not party_present and data.get("ship_to_contact_ids") is None:
+        return
+    party_id = data.get("ship_to_party_id") if party_present else req.ship_to_party_id
+    changing = party_present and str(party_id or "") != str(req.ship_to_party_id or "")
+    if not party_id:
+        if changing:
+            req.ship_to_party_id = None
+        if contact_ids:
+            raise _ship_to_invalid(
+                "SAMPLE_REQUEST_CONTACT_NOT_OF_PARTY",
+                "ship_to_contact_ids",
+                "Pick the ship-to party first, then its contact.",
+            )
+        return
+
+    project = db.get(Project, req.project_id) if req.project_id else None
+    # The ORM query is company-scoped (ProjectParty is CompanyScopedMixin); a project pins it to
+    # the project's own company on top of that.
+    party = (
+        db.query(ProjectParty)
+        .filter(ProjectParty.id == str(party_id))
+        .first()
+        if _is_uuid(party_id)
+        else None
+    )
+    owner_company = (project.company_id if project is not None else None) or req.company_id
+    if party is None or (owner_company and str(party.company_id) != str(owner_company)):
+        raise _ship_to_invalid(
+            "SAMPLE_REQUEST_SHIP_TO_INVALID", "ship_to_party_id", "That party was not found."
+        )
+    def can_edit_project() -> bool:
+        from app.services.project_service import assert_can_write_project
+
+        # The project page's routes ask the edit grant at the route as well (security round 2).
+        if not actor_user_id or "projects.projects.edit" not in granted:
+            return False
+        try:
+            assert_can_write_project(db, project, actor_user_id, granted)
+        except AppException:
+            return False
+        return True
+
+    if project is not None and party.id not in party_contacts._party_ids_on(db, project):
+        if not can_edit_project():
+            raise AppException(
+                status_code=403,
+                message=f"{party.name} is not on this project, and only someone who can edit the "
+                "project can add it. Pick one of the project's parties.",
+                code="SAMPLE_REQUEST_SHIP_TO_NOT_EDITABLE",
+                details={"field": "ship_to_party_id"},
+            )
+        role = data.get("ship_to_role")
+        if not role:
+            raise _ship_to_invalid(
+                "SAMPLE_REQUEST_SHIP_TO_ROLE_REQUIRED",
+                "ship_to_role",
+                f"{party.name} is not on this project yet. Pick the role it plays.",
+            )
+        party_contacts.add_party_link(db, project, role, party.id)
+
+    contacts: List[Any] = []
+    if contact_ids:
+        rows = {}
+        if all(_is_uuid(c) for c in contact_ids):
+            rows = {
+                row.id: row
+                for row in db.query(ProjectPartyContact).filter(
+                    ProjectPartyContact.id.in_(contact_ids),
+                    ProjectPartyContact.company_id == party.company_id,
+                    ProjectPartyContact.party_id == party.id,
+                    ProjectPartyContact.is_active.is_(True),
+                )
+            }
+        if len(rows) != len(contact_ids):
+            raise _ship_to_invalid(
+                "SAMPLE_REQUEST_CONTACT_NOT_OF_PARTY",
+                "ship_to_contact_ids",
+                f"Pick the contact from the people at {party.name}.",
+            )
+        contacts = [rows[c] for c in contact_ids]
+        if project is not None and can_edit_project():
+            party_contacts.add_registered_contacts(db, project, contact_ids)
+
+    loaded: Dict[str, Any] = {}
+    if changing:
+        site = None
+        if project is not None and not party.address:
+            from app.models.projects import ProjectSalesProfile
+
+            profile = db.get(ProjectSalesProfile, project.id)
+            site = _clean(getattr(profile, "address", None))
+        loaded.update(
+            ship_to_party_id=party.id,
+            ship_to_name=party.name,
+            ship_to_address=_clean(party.address) or site,
+            site_contact_name=None,
+            site_contact_phone=None,
+        )
+    if contacts:
+        loaded.update(
+            site_contact_name=" & ".join(c.name for c in contacts),
+            site_contact_phone=(
+                _contact_phones_text(contacts, party_contacts.display_phone)
+                if "projects.parties.view" in granted
+                else None
+            ),
+        )
+    for field, value in loaded.items():
+        if field == "ship_to_party_id" or field not in data:
+            setattr(req, field, value)
+
+
 def create_draft(
     db: Session,
     *,
@@ -481,6 +678,9 @@ def create_draft(
     source: str,
     contact_id: Optional[str] = None,
     space_id: Optional[str] = None,
+    slugs: Optional[Iterable[str]] = None,
+    ship_to: bool = False,
+    actor_user_id: Optional[str] = None,
 ) -> SampleRequest:
     req = SampleRequest(
         source=source,
@@ -494,13 +694,24 @@ def create_draft(
         goods_from="either",
         board_mounting=False,
     )
-    _apply(db, req, data)
+    _apply(
+        db, req, data, actor_user_id=actor_user_id or salesperson_id, slugs=slugs, ship_to=ship_to
+    )
     db.add(req)
     db.flush()
     return req
 
 
-def update_draft(db: Session, req: SampleRequest, *, actor: Actor, data: Dict[str, Any]) -> None:
+def update_draft(
+    db: Session,
+    req: SampleRequest,
+    *,
+    actor: Actor,
+    data: Dict[str, Any],
+    slugs: Optional[Iterable[str]] = None,
+    ship_to: bool = False,
+    actor_user_id: Optional[str] = None,
+) -> None:
     if not is_owner(req, actor):
         raise _forbidden("Only the person who raised this request can edit it.")
     if status_key(db, req) != DRAFT:
@@ -509,7 +720,14 @@ def update_draft(db: Session, req: SampleRequest, *, actor: Actor, data: Dict[st
             message="A submitted request cannot be edited. Cancel it and raise a new one.",
             code="SAMPLE_REQUEST_NOT_EDITABLE",
         )
-    _apply(db, req, data)
+    _apply(
+        db,
+        req,
+        data,
+        actor_user_id=actor_user_id or actor.user_id,
+        slugs=slugs,
+        ship_to=ship_to,
+    )
 
 
 def assert_deletable(db: Session, request_id: str, user_id: Optional[str]) -> SampleRequest:
@@ -580,13 +798,15 @@ def _label(db: Session, key: str) -> str:
     return _statuses(db)[key].label
 
 
-def submit(db: Session, req: SampleRequest, *, actor: Actor) -> None:
+def submit(
+    db: Session, req: SampleRequest, *, actor: Actor, staff_rules: Optional[bool] = None
+) -> None:
     if not is_owner(req, actor):
         raise _forbidden("Only the person who raised this request can submit it.")
     frm = status_key(db, req)
     if frm != DRAFT or not _edge_exists(db, frm, SUBMITTED):
         raise illegal_move(frm, SUBMITTED)
-    validate_submit(db, req)
+    validate_submit(db, req, staff_rules=staff_rules)
     _set_status(db, req, SUBMITTED)
     req.submitted_at = datetime.utcnow()
     db.flush()
@@ -687,25 +907,21 @@ def move(
     if not allowed:
         raise _forbidden("You cannot make this move.")
 
+    # Owner ruling 11 Nov: Delivered comes only from linking the AutoCount consignment, and
+    # Customer confirmed is gone. Refused before the graph is asked, whatever an admin edited.
+    if to == DELIVERED:
+        raise AppException(
+            status_code=409,
+            message="A sample request is delivered by linking its AutoCount consignment, not by hand.",
+            code="SAMPLE_REQUEST_DELIVERED_BY_CONSIGNMENT",
+        )
+    if to == CUSTOMER_CONFIRMED:
+        raise illegal_move(frm, to)
     # Draft -> Submitted is `submit`, which carries the validation.
     if to == SUBMITTED or not _edge_exists(db, frm, to):
         raise illegal_move(frm, to)
 
-    if to == DELIVERED and req.consignment_order_id:
-        raise AppException(
-            status_code=409,
-            message="This request is delivered by its linked consignment, not by hand.",
-            code="SAMPLE_REQUEST_DELIVERED_BY_CONSIGNMENT",
-        )
-
     reason = _clean(reason)
-    if to in (CUSTOMER_CONFIRMED, DELIVERED) and on is None:
-        raise AppException(
-            status_code=422,
-            message="Enter the date.",
-            code="SAMPLE_REQUEST_DATE_REQUIRED",
-            details={"field": "date"},
-        )
     if to == CANCELLED and frm == PROCESSING and not reason:
         raise AppException(
             status_code=422,
@@ -725,12 +941,7 @@ def move(
         )
 
     _set_status(db, req, to)
-    if to == CUSTOMER_CONFIRMED:
-        req.confirmed_at = on
-    elif to == DELIVERED:
-        req.delivered_at = on
-        req.return_due = _add_loan(on, req.loan_value, req.loan_unit)
-    elif to == CANCELLED:
+    if to == CANCELLED:
         req.cancelled_at = datetime.utcnow()
         req.cancel_reason = reason
     db.flush()
@@ -740,7 +951,7 @@ def move(
 # ------------------------------------------------------------------ Stage 2: the consignment
 
 #: Where the sample team may link (or change) the consignment: after Start processing.
-CONSIGNMENT_OPEN = (PROCESSING, CUSTOMER_CONFIRMED, DELIVERED)
+CONSIGNMENT_OPEN = (PROCESSING, DELIVERED)
 CONSIGNMENT_CANCELLED = "cancelled"
 
 
@@ -815,7 +1026,7 @@ def _undeliver(db: Session, req: SampleRequest, *, actor_id: Optional[str], why:
     """Back to the last Stage 1 step it reached (owner Q4 a)."""
     if status_key(db, req) != DELIVERED:
         return
-    back = CUSTOMER_CONFIRMED if req.confirmed_at else PROCESSING
+    back = PROCESSING
     _set_status(db, req, back)
     req.delivered_at = None
     req.return_due = None
@@ -915,10 +1126,37 @@ def _resync(db: Session, req: SampleRequest, cg) -> None:
     if status_key(db, req) not in CONSIGNMENT_OPEN:
         return
     delivery = consignment_delivery(db, cg)
-    if delivery is None:
-        _undeliver(db, req, actor_id=None, why=f"{cg.so_number} voided")
+    if cg.status == CONSIGNMENT_CANCELLED:
+        _void(db, req, cg)
+    elif delivery is None:
+        # Live but with no date to deliver on: not a void, so the link stays.
+        _undeliver(db, req, actor_id=None, why=f"{cg.so_number} has no delivery date")
     else:
         _deliver_by(db, req, delivery[0], actor_id=None, no=cg.so_number)
+
+
+def _void(db: Session, req: SampleRequest, cg) -> None:
+    """Owner ruling 11 Nov: a voided consignment STAYS voided. The request lets go of it (so a
+    later "restore" of that CG never delivers it again), goes back to Processing until a new
+    consignment is linked, and its History keeps the voided one."""
+    from app.services import audit_service
+
+    no = cg.so_number
+    req.consignment_order_id = None
+    req.consignment_no = None
+    db.flush()
+    if status_key(db, req) == DELIVERED:
+        _undeliver(db, req, actor_id=None, why=f"{no} voided")
+    audit_service.record(
+        db,
+        event="sample_request_consignment_voided",
+        entity_type=SampleRequest.__audit_entity_type__,
+        entity_id=str(req.id),
+        old_values={"consignment_no": no},
+        new_values={"consignment_no": None},
+        description=f"Consignment {no} voided: back to Processing until a new consignment is linked.",
+        company_id=req.company_id,
+    )
 
 
 def sync_consignment(db: Session, company_id: str, so_number: str) -> int:
@@ -1417,6 +1655,7 @@ def _row_common(req: SampleRequest, ctx: Dict[str, Any]) -> Dict[str, Any]:
         "stage": stage_for(key),
         "date_feasible": req.date_feasible,
         "proposed_delivery_date": req.proposed_delivery_date,
+        "delivered_at": req.delivered_at,
     }
 
 
@@ -1483,6 +1722,19 @@ def _user_name(db: Session, user_id: Optional[str]) -> Optional[str]:
     return db.query(User.name).filter(User.id == user_id).scalar()
 
 
+def _ship_to_role(db: Session, req: SampleRequest, project: Optional[Project]) -> Optional[str]:
+    """The role the ship-to party plays on the request's project (the first, when several);
+    NULL without a project or once the party is off it."""
+    if not req.ship_to_party_id or project is None:
+        return None
+    from app.services import project_party_contact_service as party_contacts
+
+    for role, party_id in party_contacts.project_party_roles(db, project):
+        if str(party_id) == str(req.ship_to_party_id):
+            return role
+    return None
+
+
 def serialize_detail(db: Session, req: SampleRequest) -> Dict[str, Any]:
     ctx = _names(db, [req])
     project = ctx["projects"].get(req.project_id) if req.project_id else None
@@ -1521,6 +1773,8 @@ def serialize_detail(db: Session, req: SampleRequest) -> Dict[str, Any]:
             "quotation_issue_id": req.quotation_issue_id,
             "quotation_ref": _source_ref(db, req),
             "scope_note": req.scope_note,
+            "ship_to_party_id": req.ship_to_party_id,
+            "ship_to_role": _ship_to_role(db, req, project),
             "ship_to_address": req.ship_to_address,
             "site_contact_name": req.site_contact_name,
             "site_contact_phone": req.site_contact_phone,
@@ -1551,12 +1805,25 @@ def serialize_detail(db: Session, req: SampleRequest) -> Dict[str, Any]:
 
 #: Staff-side facts a portal contact never gets (review S3): which staff member answered and
 #: when, and the AutoCount consignment record behind the delivery (its id and AutoCount status).
-PORTAL_HIDDEN = ("consignment", "date_answered_at", "date_answered_by_name")
+PORTAL_HIDDEN = (
+    "consignment",
+    "date_answered_at",
+    "date_answered_by_name",
+    # SAMPLE-REQUEST-V2: staff-only in slice 1 (security review N1); slice 2 decides on purpose.
+    "ship_to_party_id",
+    "ship_to_role",
+)
 
 
-def serialize_portal_detail(db: Session, req: SampleRequest) -> Dict[str, Any]:
+#: The ship-to party a salesperson's own form (My Requests) reads back; the public portal never.
+SHIP_TO_KEYS = ("ship_to_party_id", "ship_to_role")
+
+
+def serialize_portal_detail(db: Session, req: SampleRequest, *, ship_to: bool = False) -> Dict[str, Any]:
     out = serialize_detail(db, req)
     for key in PORTAL_HIDDEN:
+        if ship_to and key in SHIP_TO_KEYS:
+            continue
         out.pop(key, None)
     return out
 

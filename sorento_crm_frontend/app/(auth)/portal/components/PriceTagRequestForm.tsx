@@ -54,6 +54,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { FormSection } from '@/components/common/FormSection';
+import { useProgressiveSections } from '@/hooks/useProgressiveSections';
 import { RevisionHistory } from './RevisionHistory';
 import {
   SearchableSelect,
@@ -509,13 +510,13 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // ---- Sections (D-P1): Customer open by default, everything else opens
   // progressively as the form gains the value the next section needs. A rule
   // fires once per section per form load; a section the user collapsed by
-  // hand (tracked in the same ref) is never reopened by a rule.
-  const [sectionOpen, setSectionOpen] = useState<Record<SectionKey, boolean>>({
-    customer: true,
-    price: false,
-    need_by: false,
-  });
-  const sectionSettledRef = useRef<Set<SectionKey>>(new Set());
+  // hand is never reopened by a rule (`hooks/useProgressiveSections`, shared with the sample
+  // request form).
+  const {
+    open: sectionOpen,
+    openOnce: openSectionOnce,
+    toggle: toggleSection,
+  } = useProgressiveSections<SectionKey>({ customer: true, price: false, need_by: false });
   // Whether the price mode reflects a real pick (a click, or a prefilled/
   // loaded value) rather than just its 'list' default at mount - the default
   // must not itself open Additional Information on a blank new form, and the
@@ -523,17 +524,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // empty until then too. Real state, not a ref: the summary has to re-render
   // off it, and a ref mutation alone never does.
   const [priceModeChosen, setPriceModeChosen] = useState(false);
-
-  const openSectionOnce = useCallback((key: SectionKey) => {
-    if (sectionSettledRef.current.has(key)) return;
-    sectionSettledRef.current.add(key);
-    setSectionOpen((prev) => (prev[key] ? prev : { ...prev, [key]: true }));
-  }, []);
-
-  const toggleSection = useCallback((key: SectionKey, next: boolean) => {
-    sectionSettledRef.current.add(key);
-    setSectionOpen((prev) => ({ ...prev, [key]: next }));
-  }, []);
 
   // Each rule opens the NEXT section in the page order Customer, Price, Sales
   // Order & Lines, Additional Information (O3). Picking a customer opens Price

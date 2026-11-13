@@ -58,7 +58,8 @@ def _assert_own_quoted_project(db: Session, token: PortalToken, project_id: Opti
     pre-fill route applies, which the company-wide portal project rule alone does not."""
     from app.services import own_scope
 
-    user_id = _linked_user_id(db, token.contact_id)
+    # A My Requests caller names its signed-in user; a portal contact its linked one.
+    user_id = getattr(token, "crm_user_id", None) or _linked_user_id(db, token.contact_id)
     if not (project_id and user_id):
         return
     if own_scope.user_is_limited(
@@ -81,6 +82,18 @@ def _own(db: Session, token: PortalToken, request_id: str):
 
 
 # ---------- The contact's sample request routes, shared with the CRM ----------
+
+
+def _crm_caller(db: Session, token: PortalToken) -> dict:
+    """SAMPLE-REQUEST-V2 slice 2: the ship-to arguments for this caller. A My Requests token carries
+    the signed-in CRM user (`my_requests._token_for`): the staff ship-to rules run as that user,
+    with that user's own grants. A public portal token carries none: nothing changes for it."""
+    user_id = getattr(token, "crm_user_id", None)
+    if not user_id:
+        return {}
+    from app.api.v1.projects._common import permission_slugs
+
+    return {"ship_to": True, "actor_user_id": user_id, "slugs": permission_slugs(db, user_id)}
 
 
 def register_sample_request_routes(router: APIRouter, token_dependency: Callable[..., Any]) -> None:
@@ -189,8 +202,10 @@ def register_sample_request_routes(router: APIRouter, token_dependency: Callable
                 svc.assert_portal_customer_allowed(
                     db, contact_id=token.contact_id, customer_id=data.get("customer_id")
                 )
-                if data.get("quotation_document_id"):
+                # Own projects only for a My Requests caller (security review B1, slice 2), as on the staff route.
+                if data.get("quotation_document_id") or getattr(token, "crm_user_id", None):
                     _assert_own_quoted_project(db, token, data.get("project_id"))
+                crm = _crm_caller(db, token)
                 req = svc.create_draft(
                     db,
                     salesperson_id=_linked_user_id(db, token.contact_id),
@@ -198,10 +213,11 @@ def register_sample_request_routes(router: APIRouter, token_dependency: Callable
                     source="portal",
                     contact_id=str(token.contact_id),
                     space_id=token.space_id,
+                    **crm,
                 )
                 db.commit()
                 db.refresh(req)
-                return svc.serialize_portal_detail(db, req)
+                return svc.serialize_portal_detail(db, req, ship_to=bool(crm))
         except Exception:
             db.rollback()
             raise
@@ -215,7 +231,9 @@ def register_sample_request_routes(router: APIRouter, token_dependency: Callable
     ):
         _assert_visible(db, token.contact_id)
         with company_scope(db, frozenset({_resolve_company(db, token)})):
-            return svc.serialize_portal_detail(db, _own(db, token, request_id))
+            return svc.serialize_portal_detail(
+                db, _own(db, token, request_id), ship_to=bool(getattr(token, "crm_user_id", None))
+            )
 
 
     @router.put("/submissions/sample_request/{request_id}")
@@ -235,7 +253,7 @@ def register_sample_request_routes(router: APIRouter, token_dependency: Callable
                     svc.assert_portal_project_allowed(
                         db, contact=PortalService(db).get_contact(token), project_id=data["project_id"]
                     )
-                if data.get("quotation_document_id"):
+                if data.get("quotation_document_id") or getattr(token, "crm_user_id", None):
                     _assert_own_quoted_project(db, token, data.get("project_id") or req.project_id)
                 # Only a CHANGED debtor is re-checked: a draft whose debtor later left the
                 # agent's book must still be saveable with the customer it already has.
@@ -243,10 +261,11 @@ def register_sample_request_routes(router: APIRouter, token_dependency: Callable
                     svc.assert_portal_customer_allowed(
                         db, contact_id=token.contact_id, customer_id=data.get("customer_id")
                     )
-                svc.update_draft(db, req, actor=_actor(token), data=data)
+                crm = _crm_caller(db, token)
+                svc.update_draft(db, req, actor=_actor(token), data=data, **crm)
                 db.commit()
                 db.refresh(req)
-                return svc.serialize_portal_detail(db, req)
+                return svc.serialize_portal_detail(db, req, ship_to=bool(crm))
         except Exception:
             db.rollback()
             raise
@@ -263,10 +282,14 @@ def register_sample_request_routes(router: APIRouter, token_dependency: Callable
         try:
             with company_scope(db, frozenset({company_id})):
                 req = _own(db, token, request_id)
-                svc.submit(db, req, actor=_actor(token))
+                # A salesperson's own request is held to the staff submit rules (slice 2).
+                staff_rules = True if getattr(token, "crm_user_id", None) else None
+                svc.submit(db, req, actor=_actor(token), staff_rules=staff_rules)
                 db.commit()
                 db.refresh(req)
-                return svc.serialize_portal_detail(db, req)
+                return svc.serialize_portal_detail(
+                    db, req, ship_to=bool(getattr(token, "crm_user_id", None))
+                )
         except Exception:
             db.rollback()
             raise
@@ -290,7 +313,9 @@ def register_sample_request_routes(router: APIRouter, token_dependency: Callable
                 svc.move(db, req, actor=_actor(token), to=svc.CANCELLED)
                 db.commit()
                 db.refresh(req)
-                return svc.serialize_portal_detail(db, req)
+                return svc.serialize_portal_detail(
+                    db, req, ship_to=bool(getattr(token, "crm_user_id", None))
+                )
         except Exception:
             db.rollback()
             raise

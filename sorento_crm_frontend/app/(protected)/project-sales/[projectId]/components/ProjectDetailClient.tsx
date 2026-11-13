@@ -85,6 +85,7 @@ import { PurchaseOrdersPanel } from './PurchaseOrdersPanel';
 import { SalesOrdersPanel } from './SalesOrdersPanel';
 import { QuotationsPanel } from './QuotationsPanel';
 import { SampleRequestsPanel } from './SampleRequestsPanel';
+import { projectTabOriginHref, withReviewOrigin } from '../../_shared/lib/reviewOrigin';
 import { SponsorshipsPanel } from './SponsorshipsPanel';
 import { StakeholdersPanel } from './StakeholdersPanel';
 import { TasksPanel } from './TasksPanel';
@@ -121,7 +122,11 @@ const LEGACY_ORDER_TABS = ['pos', 'schedules'];
 // Rung key -> the form its forward stage action opens.
 const STAGE_FORM_ROUTE: Record<string, (projectId: string) => string> = {
   specified: (id) => `/project-sales/${id}/quotation-documents/new`,
-  sample_submission: (id) => `/project-sales/sample-requests/new?project_id=${id}`,
+  sample_submission: (id) =>
+    withReviewOrigin(
+      `/project-sales/sample-requests/new?project_id=${id}`,
+      projectTabOriginHref(id, 'sample-requests'),
+    ),
   sponsorship_form: (id) => `/procurement-management/sponsorship-forms/new?project_id=${id}`,
 };
 

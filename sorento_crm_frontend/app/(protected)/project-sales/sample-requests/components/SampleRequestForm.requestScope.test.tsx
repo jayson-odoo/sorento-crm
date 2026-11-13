@@ -100,8 +100,8 @@ describe('Sample Request form, limited user', () => {
   it('the customer picker is the agent\'s own customers (my-requests), never the staff customer lookup', async () => {
     mount(LIMITED);
     await screen.findByRole('button', { name: 'Save as draft' });
-    fireEvent.focus(screen.getByLabelText(/^Customer Name/));
-    fireEvent.change(screen.getByLabelText(/^Customer Name/), { target: { value: 'Ko' } });
+    fireEvent.focus(screen.getByLabelText(/^Customer/));
+    fireEvent.change(screen.getByLabelText(/^Customer/), { target: { value: 'Ko' } });
     await waitFor(() => expect(where((c) => c.url.startsWith('/api/v1/my-requests/sample-request/customers')).length).toBeGreaterThan(0));
     expect(where((c) => c.url.includes('/procurement/') && c.url.includes('customer'))).toHaveLength(0);
   });

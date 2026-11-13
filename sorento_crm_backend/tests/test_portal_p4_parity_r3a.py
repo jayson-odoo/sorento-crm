@@ -102,7 +102,8 @@ def test_par6_sample_request_same_body_stores_the_same_row(sr_so):
     assert _stored(db, SampleRequest, mine["id"]) == _stored(db, SampleRequest, theirs["id"])
     assert _lines(db, SampleRequestLine, "request_id", mine["id"]) == _lines(db, SampleRequestLine, "request_id", theirs["id"])
     assert len(_lines(db, SampleRequestLine, "request_id", mine["id"])) == len(body["lines"])
-    assert set(mine) == set(theirs)
+    # My Requests also reads back the ship-to party (SAMPLE-REQUEST-V2 slice 2, owner Q1 a).
+    assert set(mine) - {"ship_to_party_id", "ship_to_role"} == set(theirs)
 
 
 def test_par6_new_product_application_same_body_stores_the_same_row(npa_w):

@@ -77,6 +77,26 @@ class World:
     def sr_body(self, **over) -> dict:
         return full_payload(product_id=self.product.id, **over)
 
+    def sr_me_body(self, **over) -> dict:
+        """What a salesperson's own form sends through My Requests since SAMPLE-REQUEST-V2 slice 2
+        (owner Q1 a): their debtor and a ship-to party, the staff rules. The public portal keeps
+        `sr_body`."""
+        party = getattr(self, "_ship_party", None)
+        if party is None:
+            from app.models.projects import ProjectParty
+
+            party = ProjectParty(
+                id=s.uid(), company_id=self.company_id, party_type="trading_house",
+                name=f"ZZT ship-to {s.uid()[:6]}", address="ZZT 1 Jalan Ujian, Klang",
+            )
+            self.sc.db.add(party)
+            self.sc.db.commit()
+            self._ship_party = party
+        over.setdefault("customer_id", self.rep.mine.id)
+        over.setdefault("customer_name", None)
+        over.setdefault("ship_to_party_id", party.id)
+        return self.sr_body(**over)
+
     def so_body(self, **over) -> dict:
         body = {
             "title": f"ZZT deal {s.uid()[:6]}",

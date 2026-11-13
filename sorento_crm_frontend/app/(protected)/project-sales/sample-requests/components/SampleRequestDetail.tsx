@@ -1,5 +1,6 @@
 'use client';
 
+import { TruncatedTextCell } from '@/components/common/TruncatedTextCell';
 import { SoCustomerProject, soCustomerProjectLabel } from '@/components/common/SoCustomerProject';
 import { RecordCardSlot } from '@/app/(protected)/sla-management/_shared/RecordCardSlot';
 import { useMemo, useState, type ReactNode } from 'react';
@@ -17,6 +18,8 @@ import {
   Trash2,
 } from 'lucide-react';
 import { toast } from '@/lib/toast';
+import { DatePicker } from '@/components/ui/date-picker';
+import { toIsoDate } from '@/components/ui/date-range-picker';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -45,8 +48,7 @@ import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { useEffectiveUserId } from '@/hooks/useEffectiveUserId';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useRequestScope } from '@/hooks/useRequestScope';
-import { MyRequestClientProvider } from '@/components/common/MyRequestPortalForm';
-import PortalSampleRequestForm from '@/app/(auth)/portal/components/SampleRequestForm';
+import { OwnSampleRequestDetail } from './SampleRequestForm';
 import { formatDateInMalaysia, todayMalaysiaYyyyMmDd } from '@/lib/helpers';
 import { dateAnswerProblem, dateAnswerText } from '@/lib/sample-request-tracking';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
@@ -58,6 +60,9 @@ import {
   type SampleRequestStatus,
 } from '@/types/sampleRequest';
 import { OrderInquiryStockGrid } from '../../_shared/components/OrderInquiryStockGrid';
+import { useReviewOriginHref } from '../../_shared/hooks/useReviewOrigin';
+import { withReviewOrigin } from '../../_shared/lib/reviewOrigin';
+import { projectFromOrigin, projectPagerQuery } from './SampleRequestPageHeader';
 import {
   sampleRequestsPagerQuery,
   useSampleRequestMutations,
@@ -80,7 +85,12 @@ interface Move {
   tone: 'emerald' | 'primary' | 'destructive';
 }
 
-/** The moves the card allows from each status (rule 10); the server is the authority. */
+/**
+ * The moves the card allows from each status (rule 10); the server is the authority. Owner ruling
+ * 11 Nov ~19:55: Submitted -> Processing -> Delivered, and Delivered comes ONLY from linking the
+ * AutoCount consignment (the Consignment card below), so there is no Customer confirmed and no
+ * "Mark delivered" button.
+ */
 const MOVES: Record<SampleRequestStatus, Move[]> = {
   draft: [{ to: 'cancelled', label: 'Cancel request', needs: 'either', tone: 'destructive' }],
   submitted: [
@@ -95,13 +105,6 @@ const MOVES: Record<SampleRequestStatus, Move[]> = {
   ],
   processing: [
     {
-      to: 'customer_confirmed',
-      label: 'Customer confirmed',
-      needs: 'process',
-      ask: 'date',
-      tone: 'primary',
-    },
-    {
       to: 'cancelled',
       label: 'Cancel request',
       needs: 'process',
@@ -109,9 +112,8 @@ const MOVES: Record<SampleRequestStatus, Move[]> = {
       tone: 'destructive',
     },
   ],
-  customer_confirmed: [
-    { to: 'delivered', label: 'Mark delivered', needs: 'process', ask: 'date', tone: 'primary' },
-  ],
+  // Retired (migration srv2_0002 moved every such row to Processing); kept for the type only.
+  customer_confirmed: [],
   delivered: [],
   cancelled: [],
 };
@@ -282,12 +284,13 @@ export function DateAnswerDialog({
           {feasible === false && (
             <div className="space-y-1.5">
               <Label htmlFor="sr-answer-date">Proposed date *</Label>
-              <Input
+              {/* The shared DD/MM/YYYY picker (standing rule); a date before today is refused below. */}
+              <DatePicker
                 id="sr-answer-date"
-                type="date"
-                min={today}
-                value={proposed}
-                onChange={(e) => setProposed(e.target.value)}
+                ariaLabel="Proposed date"
+                portal
+                value={proposed ? new Date(`${proposed}T00:00:00`) : undefined}
+                onChange={(d) => setProposed(toIsoDate(d) ?? '')}
               />
             </div>
           )}
@@ -447,18 +450,16 @@ function InternalDialog({
  */
 export default function SampleRequestDetail({ requestId }: { requestId: string }) {
   const { limited } = useRequestScope('sample_request');
-  if (limited) {
-    return (
-      <MyRequestClientProvider>
-        <PortalSampleRequestForm requestId={requestId} />
-      </MyRequestClientProvider>
-    );
-  }
+  // A salesperson's own request: a draft opens the guided form, anything else the read-only view
+  // (SAMPLE-REQUEST-V2 slice 2, review B1).
+  if (limited) return <OwnSampleRequestDetail requestId={requestId} />;
   return <StaffSampleRequestDetail requestId={requestId} />;
 }
 
 function StaffSampleRequestDetail({ requestId }: { requestId: string }) {
   const router = useRouter();
+  const origin = useReviewOriginHref();
+  const originProject = projectFromOrigin(origin);
   const { data: request, isLoading, isError, error } = useSampleRequestQuery(requestId);
   const { submit, move, saveInternal, answerDate, linkConsignment } =
     useSampleRequestMutations();
@@ -485,7 +486,7 @@ function StaffSampleRequestDetail({ requestId }: { requestId: string }) {
     watchFromMount: true,
     successMessage: 'Draft deleted',
     invalidateKeys: [['sample-requests']],
-    onCommitted: () => router.push(BASE_PATH),
+    onCommitted: () => router.push(origin ?? BASE_PATH),
   });
 
   const lineColumns = useMemo<ColumnDef<SampleRequestLine>[]>(
@@ -608,10 +609,7 @@ function StaffSampleRequestDetail({ requestId }: { requestId: string }) {
   const ownerActs = isOwner && canCreate;
   const busy = move.isPending || submit.isPending;
   const allowed = (m: Move) => canProcess || (m.needs === 'either' && ownerActs);
-  // Stage 2: a linked consignment is the delivery, so there is no Mark delivered by hand.
-  const moves = MOVES[r.status].filter(
-    (m) => allowed(m) && !(m.to === 'delivered' && r.consignment),
-  );
+  const moves = MOVES[r.status].filter(allowed);
 
   const run = async (m: Move, value?: string, answer?: DateAnswerValue) => {
     try {
@@ -632,10 +630,8 @@ function StaffSampleRequestDetail({ requestId }: { requestId: string }) {
 
   const stamp = r.submitted_at ?? r.created_at;
   const answerText = dateAnswerText(r, formatDateInMalaysia);
-  const canLink =
-    canProcess && ['processing', 'customer_confirmed', 'delivered'].includes(r.status);
-  const canAnswer =
-    canProcess && (r.status === 'processing' || r.status === 'customer_confirmed');
+  const canLink = canProcess && ['processing', 'delivered'].includes(r.status);
+  const canAnswer = canProcess && r.status === 'processing';
   const project = r.project_id
     ? [r.project_code, r.project_name].filter(Boolean).join(' - ')
     : r.project_name;
@@ -651,17 +647,22 @@ function StaffSampleRequestDetail({ requestId }: { requestId: string }) {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0 space-y-1">
           <h2 className="break-words text-2xl font-bold">Sample Request - {r.request_no}</h2>
-          <p className="text-sm text-muted-foreground">
-            {r.submitted_at ? 'Submitted' : 'Created'}: {stamp ? formatDateInMalaysia(stamp) : '-'}
-            {' · '}
+          {/* Separate items, no dot delimiter (owner hand test 12 Nov). */}
+          <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+            <span>
+              {r.submitted_at ? 'Submitted' : 'Created'}: {stamp ? formatDateInMalaysia(stamp) : '-'}
+            </span>
             <span className={`${STATUS_PILL_BASE} ${statusPillClass(r.status)}`}>
               {r.status_label}
             </span>
-          </p>
+          </div>
         </div>
         <DetailActions
           pager={{
-            ...sampleRequestsPagerQuery,
+            // From a project's tab, prev/next walks that project's requests (owner 11 Nov 19:40).
+            ...(originProject && origin
+              ? projectPagerQuery(originProject, origin)
+              : sampleRequestsPagerQuery),
             detailPath: BASE_PATH,
             currentId: requestId,
             ariaLabel: 'sample request',
@@ -724,7 +725,15 @@ function StaffSampleRequestDetail({ requestId }: { requestId: string }) {
           primary={
             <div className="flex flex-wrap items-center gap-2">
               {isDraft && ownerActs && (
-                <Button disabled={busy} onClick={() => submit.mutate(r.id)}>
+                <Button
+                  disabled={busy}
+                  onClick={() =>
+                    submit.mutate(r.id, {
+                      onSuccess: (done) =>
+                        toast.success(`Sample request ${done?.request_no ?? r.request_no} submitted`),
+                    })
+                  }
+                >
                   Submit
                 </Button>
               )}
@@ -741,7 +750,7 @@ function StaffSampleRequestDetail({ requestId }: { requestId: string }) {
               ))}
               {isDraft && ownerActs && (
                 <Button variant="outline" asChild>
-                  <Link href={`${BASE_PATH}/${r.id}/edit`}>Edit</Link>
+                  <Link href={withReviewOrigin(`${BASE_PATH}/${r.id}/edit`, origin)}>Edit</Link>
                 </Button>
               )}
             </div>
@@ -762,7 +771,7 @@ function StaffSampleRequestDetail({ requestId }: { requestId: string }) {
             Sample Request
           </h2>
           <div className="grid grid-cols-1 gap-x-10 gap-y-5 sm:grid-cols-2 [&>div]:min-w-0 [&_p]:break-words">
-            <Field label="Salesperson">{r.salesperson_name}</Field>
+            <Field label="Requested by">{r.salesperson_name}</Field>
             <div>
               <p className="text-sm text-muted-foreground">Customer</p>
               <p className="flex flex-wrap items-center gap-2 font-medium">
@@ -773,13 +782,15 @@ function StaffSampleRequestDetail({ requestId }: { requestId: string }) {
               </p>
             </div>
             <Field label="Project" wide>
-              <span className="line-clamp-2 break-words" title={project ?? undefined}>
-                {project}
-                {!r.project_id && r.project_name ? ' (not registered)' : ''}
-              </span>
+              {/* One clamped line, the whole title on hover and behind the eye (crew pass round 3). */}
+              <TruncatedTextCell
+                text={`${project ?? ''}${!r.project_id && r.project_name ? ' (not registered)' : ''}`}
+                dialogTitle="Project"
+              />
             </Field>
             {r.quotation_ref && <Field label="Quotation">{r.quotation_ref}</Field>}
-            <Field label="For (scope)">{r.scope_note}</Field>
+            {/* Removed from the form (SAMPLE-REQUEST-V2 rule 3): only an old request that had it shows it. */}
+            {r.scope_note && <Field label="For (scope)">{r.scope_note}</Field>}
             <Field label="Request Delivery Date">
               {day(r.delivery_date)}
             </Field>
@@ -814,7 +825,6 @@ function StaffSampleRequestDetail({ requestId }: { requestId: string }) {
             <Field label="Purpose" wide>
               {r.purpose}
             </Field>
-            {r.confirmed_at && <Field label="Customer confirmed">{day(r.confirmed_at)}</Field>}
             {r.delivered_at && (
               <Field label="Delivered">
                 {day(r.delivered_at)}
