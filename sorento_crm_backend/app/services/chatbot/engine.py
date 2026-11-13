@@ -10095,6 +10095,8 @@ def _stock_ask_reply(
             answered=turn_compose.answered_codes(envelopes),
             asked_at_turn=turn_no,
             before=pick or None,
+            # CHATBOT-CLOSE-CODES B2: a how-many this reply asks stays owed past the offer's pick.
+            owed=turn_task.owed_of(tuple(state_out.focus.tasks or ())) if text and not pick else None,
         )
     if offer is not None:
         misses = [m for m in misses if m not in offer[2]]

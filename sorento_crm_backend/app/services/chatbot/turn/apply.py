@@ -3141,8 +3141,10 @@ def _hand_on_unanswered_lists(asked: Any, specs: list[Any], verdict: dict[str, A
     verdict[task_mod.NEXT_PICKS] = {
         "options": [o for o in asked.options if o.get("position") in positions],
         "groups": open_groups,
-        # CHATBOT-CODE-MATCH R7: a did-you-mean's lists are asked again as one.
-        "did_you_mean": asked.payload.get("did_you_mean") is True,
+        # CHATBOT-CODE-MATCH R7: a did-you-mean's lists are asked again as one. CHATBOT-CLOSE-CODES:
+        # so are offer lists left open beside an answered which-one list (each group's own flag).
+        "did_you_mean": asked.payload.get("did_you_mean") is True
+        or all(g.get("did_you_mean") is True for g in open_groups),
     }
     trace.rules_fired.append("stock_pick_lists_still_open")
 

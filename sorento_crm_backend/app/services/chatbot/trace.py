@@ -513,25 +513,36 @@ def code_candidates_events(
         for match in [*(resolution.get("matches") or []), *(resolution.get("alternatives") or [])]:
             if isinstance(match, dict) and match.get("uuid"):
                 how.setdefault(str(match["uuid"]), (match.get("match_tier"), match.get("similarity")))
-    options = getattr(question, "options", None) or []
-    offered = list(
-        dict.fromkeys(
-            [
-                *(str(o.get("code")) for o in options if isinstance(o, dict) and o.get("code")),
-                *(str(c) for c in shown_codes or [] if c),
-            ]
-        )
-    )
+    options = [o for o in getattr(question, "options", None) or [] if isinstance(o, dict)]
+    payload = getattr(question, "payload", None) or {}
+    groups = [g for g in payload.get("groups") or [] if isinstance(g, dict)]
+    listed = [str(o["code"]) for o in options if o.get("code")]
+    offered_all = list(dict.fromkeys([*listed, *(str(c) for c in shown_codes or [] if c)]))
     answered_keys = set(answered or ())
 
-    def outcome_of(code: str) -> str:
-        if code in offered:
-            return "offered"
-        return "answered" if token_key(code) in answered_keys else "not_shown"
+    def offered_for(typed: str) -> list[str]:
+        """CHATBOT-CLOSE-CODES C7: the codes offered for THIS miss. A stock pick names each
+        list's typed code (`groups[].typed`) and a dealer offer its one typed code, so another
+        list's options (a which-one list, another miss's offer) are never this miss's offer."""
+        key = token_key(typed)
+        if groups:
+            at = {p for g in groups if token_key(g.get("typed")) == key for p in g.get("positions") or []}
+            return [str(o["code"]) for o in options if o.get("code") and o.get("position") in at]
+        if payload.get("did_you_mean") is True and payload.get("typed"):
+            return listed if token_key(payload.get("typed")) == key else []
+        return offered_all
 
     by_key = {token_key(token): rows for token, rows in (suggestions or {}).items()}
     events: list[dict[str, Any]] = []
     for typed in dict.fromkeys((unplaced or {}).values()):
+        offered = offered_for(typed)
+
+        def outcome_of(code: str) -> str:
+            if code in offered:
+                return "offered"
+            # A code listed in another question of this reply was shown, not answered.
+            return "answered" if token_key(code) in answered_keys and code not in listed else "not_shown"
+
         rows = [r for r in by_key.get(token_key(typed)) or [] if isinstance(r, dict) and r.get("code")]
         rows.sort(key=lambda r: offered.index(str(r["code"])) if str(r["code"]) in offered else len(offered))
         candidates = [
@@ -544,9 +555,7 @@ def code_candidates_events(
             }
             for r in rows
         ]
-        if any(c["outcome"] == "offered" for c in candidates):
-            outcome = "offered"
-        else:
-            outcome = "answered" if candidates else "no_candidate"
+        outcomes = {c["outcome"] for c in candidates}
+        outcome = "offered" if "offered" in outcomes else "answered" if "answered" in outcomes else "no_candidate"
         events.append({"typed": typed, "candidates": candidates, "outcome": outcome})
     return events
