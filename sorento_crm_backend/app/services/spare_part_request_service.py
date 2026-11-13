@@ -336,7 +336,7 @@ def get(db: Session, inquiry_id: str) -> OrderInquiry:
         .first()
     )
     if inquiry is None:
-        raise AppException(404, "This spare part request no longer exists.", code="spr_not_found")
+        raise AppException(404, "This order request no longer exists.", code="spr_not_found")
     return inquiry
 
 
@@ -811,7 +811,7 @@ def _assert_has_stage(db: Session) -> None:
         raise AppException(
             status_code=422,
             message=(
-                "No approval level is set up for spare part requests. Ask an admin to add one "
+                "No approval level is set up for order requests. Ask an admin to add one "
                 "in Form SLA configuration."
             ),
             code="spr_no_approval_stage",
@@ -1073,8 +1073,8 @@ def _notify_purchasing(db: Session, inquiry: OrderInquiry, rows: List[OrderInqui
         db,
         {
             "user_ids": [str(u) for u in user_ids],
-            "title": f"Order inquiry {inquiry.inquiry_no}",
-            "body": f"Spare part request: {count} line{'' if count == 1 else 's'} to buy.",
+            "title": f"Order request {inquiry.inquiry_no}",
+            "body": f"Order request: {count} line{'' if count == 1 else 's'} to buy.",
             "data": {
                 "order_inquiry_id": str(inquiry.id),
                 "inquiry_type": KIND,
@@ -1249,7 +1249,7 @@ def assert_deletable(db: Session, inquiry_id: str, user_id: Optional[str]) -> Or
     parked and again when it commits."""
     inquiry = db.query(OrderInquiry).filter(OrderInquiry.id == str(inquiry_id)).first()
     if inquiry is None or inquiry.inquiry_type != KIND:
-        raise AppException(404, "This spare part request no longer exists.", code="spr_not_found")
+        raise AppException(404, "This order request no longer exists.", code="spr_not_found")
     if not is_requester(inquiry, user_id):
         raise _forbidden("Only the requester can delete this request.")
     if inquiry.state not in _EDITABLE:

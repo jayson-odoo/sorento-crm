@@ -400,5 +400,5 @@ export const FORM_SLA_TYPE_LABELS: Record<FormSLASourceType, string> = {
   price_tag_request: 'Price Tag Request',
   sample_request: 'Sample Request',
   new_product_application: 'New Product Application',
-  spare_part_request: 'Spare Part Request',
+  spare_part_request: 'Order Request',
 };

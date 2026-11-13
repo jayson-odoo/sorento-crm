@@ -209,7 +209,7 @@ export function SparePartRequestsList() {
       isPlaceholderData={isPlaceholderData}
       rowHref={rowHref}
       listingKey={listingKey}
-      emptyMessage="No spare part requests yet"
+      emptyMessage="No order requests yet"
       standardToolbar={false}
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
     >

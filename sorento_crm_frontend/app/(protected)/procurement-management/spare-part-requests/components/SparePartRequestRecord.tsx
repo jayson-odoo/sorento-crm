@@ -3,7 +3,8 @@
 import { useCallback, useMemo, useState } from 'react';
 import Link from 'next/link';
 import type { RowSelectionState } from '@tanstack/react-table';
-import { FileText, History, ListOrdered } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { FileText, History, ListOrdered, Timer } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -12,6 +13,9 @@ import { RecordHeaderCard } from '@/components/common/RecordHeaderCard';
 import BackToList from '@/components/common/BackToList';
 import DetailActions from '@/components/common/DetailActions';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import FormSLATrackingTab from '@/app/(protected)/sla-management/_shared/FormSLATrackingTab';
+import { getFormSLATrackers } from '@/app/(protected)/sla-management/_shared/formSLAService';
+import { SlaActiveTrackerControls } from '@/app/(protected)/sla-management/_shared/SlaActiveTrackerControls';
 import { OrderInquiryLinesTab } from '@/app/(protected)/project-sales/order-inquiries/[id]/components/OrderInquiryLinesTab';
 import { SparePartRequestGeneralCards } from '@/app/(protected)/project-sales/order-inquiries/[id]/components/OrderInquiryGeneralTab';
 import { OrderInquiryHistory } from '@/app/(protected)/project-sales/order-inquiries/[id]/components/OrderInquiryHistory';
@@ -41,6 +45,10 @@ const NO_ROWS: OrderInquiryWorklistRow[] = [];
  * header card (number, status pill, the request's moves), then Lines, General and History, all
  * the same pieces the Order Inquiry page shows a spare part request with. Once approved it
  * links to the order inquiry purchasing works it on.
+ *
+ * Hand-test round 2 (owner 13 Nov): who acts next is shown the way Complaint shows it, the
+ * escalation / extension banner above the tabs and an SLA Tracking tab holding the shared
+ * tracker grid while an approval stage is open (assignee, stage, due).
  */
 export function SparePartRequestRecord({ id }: { id: string }) {
   const requestQuery = useSparePartRequest(id);
@@ -50,6 +58,14 @@ export function SparePartRequestRecord({ id }: { id: string }) {
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [historyLine, setHistoryLine] = useState<OrderInquiryLine | null>(null);
   const lines = useMemo(() => linesQuery.data ?? NO_ROWS, [linesQuery.data]);
+  // The same key FormSLATrackingTab reads, so the tab and the banner share one request.
+  const { data: slaTrackers } = useQuery({
+    queryKey: ['form-sla-trackers', 'spare_part_request', id],
+    queryFn: () => getFormSLATrackers('spare_part_request', id),
+    enabled: Boolean(id),
+  });
+  const activeTracker =
+    (Array.isArray(slaTrackers) ? slaTrackers : []).find((t) => !t.is_resolved) ?? null;
   const onEditLine = useCallback(
     (row: OrderInquiryWorklistRow, edit: SparePartLineEdit) =>
       editLine.mutate({ rowId: row.id, edit }),
@@ -70,13 +86,13 @@ export function SparePartRequestRecord({ id }: { id: string }) {
   if (requestQuery.isError || !request) {
     return (
       <Card className="flex flex-col items-center gap-3 p-10 text-center">
-        <div className="text-sm font-semibold">Could not load this spare part request</div>
+        <div className="text-sm font-semibold">Could not load this order request</div>
         <p className="max-w-md text-sm text-muted-foreground">
           {requestQuery.error instanceof Error
             ? requestQuery.error.message
             : 'Try again in a moment.'}
         </p>
-        <BackToList listPath={SPARE_PART_REQUESTS_PATH} label="Back to spare part requests" />
+        <BackToList listPath={SPARE_PART_REQUESTS_PATH} label="Back to order requests" />
       </Card>
     );
   }
@@ -87,7 +103,7 @@ export function SparePartRequestRecord({ id }: { id: string }) {
   return (
     <div className="space-y-4">
       <RecordHeaderCard
-        title={request.inquiry_no ?? 'Spare part request'}
+        title={request.inquiry_no ?? 'Order request'}
         badges={
           <Badge variant={sparePartStateVariant(request.state)} appearance="light" size="md">
             {sparePartRequestStatusLabel(request.state)}
@@ -114,7 +130,7 @@ export function SparePartRequestRecord({ id }: { id: string }) {
               ...sparePartRequestsPagerQuery,
               detailPath: SPARE_PART_REQUESTS_PATH,
               currentId: id,
-              ariaLabel: 'spare part request',
+              ariaLabel: 'order request',
             }}
             primary={
               showActions ? <SparePartRequestActions header={request} rows={lines} /> : undefined
@@ -122,6 +138,8 @@ export function SparePartRequestRecord({ id }: { id: string }) {
           />
         }
       />
+
+      <SlaActiveTrackerControls activeTracker={activeTracker} />
 
       <Tabs value={tab} onValueChange={setTab} className="w-full">
         <TabsList variant="line" className="mb-4 w-full justify-start">
@@ -136,6 +154,10 @@ export function SparePartRequestRecord({ id }: { id: string }) {
           <TabsTrigger value="history">
             <History />
             <span>History</span>
+          </TabsTrigger>
+          <TabsTrigger value="sla">
+            <Timer />
+            <span>SLA Tracking</span>
           </TabsTrigger>
         </TabsList>
 
@@ -164,6 +186,19 @@ export function SparePartRequestRecord({ id }: { id: string }) {
 
         <TabsContent value="history" className="mt-0 focus-visible:outline-none">
           <OrderInquiryHistory inquiryId={id} />
+        </TabsContent>
+
+        <TabsContent value="sla" className="mt-0 focus-visible:outline-none">
+          {activeTracker ? (
+            <FormSLATrackingTab sourceEntityType="spare_part_request" sourceEntityId={id} />
+          ) : (
+            <Card className="flex flex-col items-center gap-1 p-10 text-center">
+              <div className="text-sm font-semibold">No approval stage is open</div>
+              <p className="text-sm text-muted-foreground">
+                Who decides next shows here while the request waits for approval.
+              </p>
+            </Card>
+          )}
         </TabsContent>
       </Tabs>
 

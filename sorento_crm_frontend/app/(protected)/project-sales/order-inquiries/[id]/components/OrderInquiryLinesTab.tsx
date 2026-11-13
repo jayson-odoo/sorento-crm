@@ -460,7 +460,13 @@ export function OrderInquiryLinesTab({
       isLoading={isLoading}
       error={error}
       onRetry={onRetry}
-      tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
+      // A spare part grid is dense: ten columns, the approver's inputs among them, in 950 px.
+      tableLayout={{
+        width: 'fixed',
+        columnsResizable: true,
+        columnsVisibility: true,
+        dense: Boolean(sparePart),
+      }}
       emptyMessage={
         allLineRows.length === 0
           ? 'Nothing was raised on this order inquiry.'

@@ -62,7 +62,9 @@ def notify_form_voided_in_app(
         from app.services.notification_service import NotificationService
 
         svc = NotificationService(db)
-        label = source_entity_type.replace("_", " ")
+        from app.services.form_sla_service import form_type_words
+
+        label = form_type_words(source_entity_type)
         title = f"Form voided: {entity_number}" if entity_number else "Form voided"
         body = f"A {label} you were handling has been voided."
         for uid in targets:

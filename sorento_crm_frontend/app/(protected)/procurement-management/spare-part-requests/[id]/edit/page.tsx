@@ -6,7 +6,7 @@ import BackToList from '@/components/common/BackToList';
 import { SparePartRequestForm } from '@/app/(protected)/project-sales/order-inquiries/spare-part-requests/components/SparePartRequestForm';
 
 export const metadata: Metadata = {
-  title: 'Edit Spare Part Request',
+  title: 'Edit Order Request',
 };
 
 export default async function EditSparePartRequestPage({
@@ -19,7 +19,7 @@ export default async function EditSparePartRequestPage({
     <RequireAccess permission="procurement.spare_part_requests.create">
       <Container>
         <PageHeader
-          title="Edit spare part request"
+          title="Edit Order Request"
           actions={
             <BackToList
               listPath={`/procurement-management/spare-part-requests/${id}`}

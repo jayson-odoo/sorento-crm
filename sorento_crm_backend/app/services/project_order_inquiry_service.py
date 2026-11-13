@@ -1664,7 +1664,7 @@ def _refuse_draft_rows(rows) -> None:
         raise AppException(
             status_code=409,
             message=(
-                f"{len(drafts)} of those rows belong to a spare part request that is not "
+                f"{len(drafts)} of those rows belong to an order request that is not "
                 "approved yet."
             ),
             code="order_inquiry_row_not_approved",
