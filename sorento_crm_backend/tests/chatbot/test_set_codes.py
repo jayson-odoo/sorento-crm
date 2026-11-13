@@ -425,3 +425,98 @@ def test_ac2i_a_family_word_plus_a_class_word_is_not_answered_as_its_sets_with_t
     members = {c.uuid_of[m] for ms in sets.values() for m in ms}
     assert not _stocked_ids(c) & members, ("a set's parts were read with the word ignored", c.stock_calls, text)
     assert "How many units for each?" not in text, text
+
+
+# --------------------------------------------------------------------------- live pass 13 Nov: F1 alternative display, F2 near-family set codes
+
+
+def _staff_with_alternatives(c: Console, alt_of: dict[str, str]) -> None:
+    """Staff compact stock tool whose rows carry `flags.alternatives` for the codes in `alt_of`, and whose summary
+    also holds the alternative's own row (the shape `test_product_alternatives_rendered` feeds the presenter)."""
+    from app.services.ai_assistant_service import MCPRuntimeClient
+    from tests.chatbot._r9_engine_console import _present_response
+
+    _as_staff(c)
+    present = _present_response()
+    by_code = {code: pid for pid, code in c.codes.items()}
+
+    def call_tool(client, name: str, args: dict[str, Any]) -> str:
+        c.tool_calls.append((name, args))
+        if name != "crm_inventory_stock_balance_list":
+            return json.dumps({"answers": []})
+        ids = [pid for pid in args.get("product_ids") or [] if pid in c.codes]
+        wanted = [*ids, *(by_code[alt_of[c.codes[pid]]] for pid in ids if c.codes[pid] in alt_of)]
+        summary = []
+        for pid in dict.fromkeys(wanted):
+            code = c.codes[pid]
+            on_hand = 0 if code in alt_of else 12
+            flags: dict[str, Any] = {"discontinued": True, "alternatives": [alt_of[code]]} if code in alt_of else {"discontinued": False}
+            summary.append(
+                {
+                    "product_id": pid,
+                    "product_code": code,
+                    "product_name": code,
+                    "total_on_hand": on_hand,
+                    "locations": [{"warehouse_code": "BRW", "quantity_on_hand": on_hand}] if on_hand else [],
+                    "flags": flags,
+                }
+            )
+        return present(
+            name,
+            json.dumps(
+                {
+                    "data": [],
+                    "pagination": {"total": len(summary), "page": 1, "limit": 50},
+                    "empty": False,
+                    "stock_visibility": {"mode": "compact", "warehouse_codes": None, "source": "contact"},
+                    "stock_summary": summary,
+                    "last_updated_at": "2026-10-08T10:00:00",
+                }
+            ),
+        )
+
+    c._monkeypatch.setattr(MCPRuntimeClient, "call_tool", call_tool)
+
+
+@pytest.mark.parametrize("ask,typed", [("qwc604 p rl stock", "qwc604 p rl"), ("QWC604-P-RL stock", "QWC604-P-RL")], ids=["spaced", "exact"])
+def test_f1_a_members_alternative_is_an_alternative_line_inside_the_set_block_only(session_factory, monkeypatch, stub_access, ask, typed):  # noqa: F811
+    alt = "QWCX604-P-RL-NEW"
+    c = _world(session_factory, monkeypatch, stub_access, {P_RL: P_RL_MEMBERS}, extra=[alt])
+    _staff_with_alternatives(c, {"QWCX604-P-RL": alt})
+    reference = c.say("QWCX604-P-RL stock", stock(product("QWCX604-P-RL")))
+    alt_lines = [line for line in reference.splitlines() if "Alternative:" in line and alt in line]
+    assert len(alt_lines) == 1, ("the non-set reply prints no Alternative line to compare with", reference)
+
+    c.state = None
+    text = c.say(ask, stock(product(typed)))
+    lines = text.splitlines()
+    assert f"*Set {P_RL}*" in text, text
+    assert [line for line in lines if alt in line] == alt_lines, ("the alternative is printed more than once or without its label", text)
+    assert f"*Product Code:* {alt}" not in text, ("the alternative is a separate item", text)
+    set_at, alt_at = lines.index(f"*Set {P_RL}*"), lines.index(alt_lines[0])
+    pan_at = next(i for i, line in enumerate(lines) if "*Product Code:* QWCX604-P-RL" in line and i > set_at)
+    cistern_at = next(i for i, line in enumerate(lines) if f"*Product Code:* {CISTERN}" in line)
+    assert set_at < pan_at < alt_at < cistern_at, ("the alternative is not under its member inside the set block", text)
+
+
+A_SETS = {"QWC7405-RL-P-PJ": ["QWCX7405-RL-P-PJ", "QWCY7405"], "QWC7405-RL-S-PJ": ["QWCX7405-RL-S-PJ", "QWCY7405"]}
+
+
+@pytest.mark.parametrize("who", ["dealer", "staff"])
+def test_f2_a_word_that_is_a_prefix_of_two_set_codes_offers_both_and_answers_none(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+    c = _world(session_factory, monkeypatch, stub_access, A_SETS)
+    _who(c, who)
+    text = c.say("QWC7405-RL stock", stock(product("QWC7405-RL")))
+    assert not _stocked_ids(c), ("a set's members were read for a code that equals neither", c.stock_calls, text)
+    assert "*Set " not in text, text
+    offered = _option_codes(c) if c.stored_question else []
+    listed = set(offered) | {code for code in A_SETS if _word(code, text)}
+    assert set(A_SETS) <= listed, ("both sets are not offered", offered, text)
+
+
+@pytest.mark.parametrize("who", ["dealer", "staff"])
+def test_f2_lock_an_exact_set_code_still_answers_that_set(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+    c = _world(session_factory, monkeypatch, stub_access, A_SETS)
+    _who(c, who)
+    c.say("QWC7405-RL-P-PJ stock", stock(product("QWC7405-RL-P-PJ")))
+    assert _stocked_ids(c) == {c.uuid_of[m] for m in A_SETS["QWC7405-RL-P-PJ"]}, c.stock_calls
