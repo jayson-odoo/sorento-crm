@@ -69,6 +69,8 @@ _OPTIONAL_FIELDS: tuple[tuple[str, str], ...] = (
     ("use_cases", "Use cases"),
     ("current_workaround", "Current workaround"),
 )
+#: The required field of every type in `submission_types` (today `problem` for idea and issue alike).
+_REQUIRED_FIELDS: tuple[str, ...] = tuple(sorted({t.required_field for t in SUBMISSION_TYPES.values()}))
 #: Chat photos taken onto a new item (UAC P-1): sent in this window before filing, at most this many.
 _PHOTO_WINDOW = timedelta(minutes=30)
 _MAX_PHOTOS = 10
@@ -125,11 +127,10 @@ def call_create_idea(base_url: str, api_key: str, payload: dict[str, Any]) -> di
     return data
 
 
-def _missing_required(fields: dict[str, str], submission_type: str = "idea") -> list[str]:
-    """The required field of the type (`submission_types`) when the message did not give it. The one
-    seam for the shared required-field helper (LOWSTOCK-FILTER-ASK): its call replaces this body."""
-    key = SUBMISSION_TYPES[normalise_type(submission_type)].required_field
-    return [] if (fields.get(key) or "").strip() else [key]
+def _missing_required(fields: dict[str, str]) -> list[str]:
+    """The required fields the message did not give. The one seam for the shared
+    required-field helper (LOWSTOCK-FILTER-ASK): its call replaces this body."""
+    return [key for key in _REQUIRED_FIELDS if not (fields.get(key) or "").strip()]
 
 
 def _ss_failure(exc: IdeationServiceError, step: str, respond_io_id: Any) -> str:
@@ -471,7 +472,7 @@ def handle_capture_turn(
             if extraction.has_idea is False
             else fields
         )
-        if _missing_required(checked, submission_type):
+        if _missing_required(checked):
             if ask_reply:
                 # The user answered the ask-back and still gave no idea: end the ask with a
                 # statement, never a second identical question.

@@ -44,7 +44,7 @@ EXPECTED_LABELS = [
     "change a dealer contact",
     "approve or reject a purchase request",
     "take back a purchase request action",
-    "record a suggestion or wish for what the system should have or do, an idea or a feature request",
+    "record a suggestion or wish for what the system should have or do, an idea or a feature request, or report a problem with the CRM system or the assistant",
     "change one of your ideas",
     # AGENTIC-UNIFY PR 4: the three writes.
     "close a complaint",
@@ -367,7 +367,7 @@ def test_AC_R1_9_a_jev_failure_still_goes_to_chat(db, jev):
 # ------------------------------------------------------------------ AC-HT-5 the owner's message
 
 OWNER_MESSAGE = "I think we need to have sorento agentic ai"
-NEW_IDEA_LABEL = "record a suggestion or wish for what the system should have or do, an idea or a feature request"
+NEW_IDEA_LABEL = "record a suggestion or wish for what the system should have or do, an idea or a feature request, or report a problem with the CRM system or the assistant"
 OLD_IDEA_LABEL = "submit a new idea or feature request"
 
 
@@ -396,7 +396,7 @@ def _sent_labels(db, jev, contact):
     return jev.calls[-1]["criteria"]["agent"]["tools"]
 
 
-IDEA_LABEL = "record a suggestion or wish for what the system should have or do, an idea or a feature request"
+IDEA_LABEL = "record a suggestion or wish for what the system should have or do, an idea or a feature request, or report a problem with the CRM system or the assistant"
 
 
 def test_fr4_r2_an_unlinked_contact_is_told_of_no_write_or_user_read(db, jev):

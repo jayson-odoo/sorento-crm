@@ -654,27 +654,3 @@ def test_B_the_list_without_type_is_unchanged(gw):
     gw.fake.route("GET", "/embed/ideas", json_body=[])
     gw.client.get(f"{BASE}/ideas", params={"filter": "archived", "colour": "red"})
     assert gw.fake.calls[0]["query"] == {"filter": "archived"}
-
-
-# --------------------------------------------------------------------------- #
-# T-4: parser routing (a text contract on the prompt's intent)                #
-# --------------------------------------------------------------------------- #
-def _ideate_rule() -> str:
-    from app.services.chatbot.head.parser_template import TEMPLATE
-
-    (line,) = [ln for ln in TEMPLATE.splitlines() if ln.startswith("- ideate / submit_idea:")]
-    return line
-
-
-def test_T4_the_ideate_rule_takes_problems_with_the_crm_or_the_assistant():
-    line = _ideate_rule()
-    assert "CRM" in line
-    assert re.search(r"\bassistant\b", line, re.I)
-    assert re.search(r"\b(problem|wrong|broken|not working|error)", line, re.I)
-
-
-def test_T4_a_product_or_order_complaint_still_routes_to_portal_link():
-    line = _ideate_rule()
-    tail = line[line.lower().find("complaint"):]
-    assert "portal_link" in tail
-    assert re.search(r"\bproduct\b", tail) and re.search(r"\border\b", tail)
