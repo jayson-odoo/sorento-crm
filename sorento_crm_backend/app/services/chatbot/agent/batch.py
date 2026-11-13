@@ -18,6 +18,8 @@ from app.services.chatbot.agent.tools import ToolResult
 
 BATCH = "crm_batch_propose"
 MAX_ROWS = 50
+#: The user's line for a table over MAX_ROWS (the tool's message is guidance for the model).
+TOO_MANY_SAY = f"I can take at most {MAX_ROWS} rows at a time; send the table in parts."
 PREVIEW_HEAD = "I will make these changes when you confirm:"
 SKIPPED_HEAD = "Not changed:"
 NEEDS_HEAD = "Needs your choice:"
@@ -514,12 +516,13 @@ def propose(
     if definition is None or not definition.batchable or definition.runs_as != "user" or write == writes.CREATE_IDEA:
         return ToolResult("invalid", message=f"{write} cannot be proposed for a table.")
     if definition.name not in {d.name for d in batchable_writes(db, ctx)}:
-        return ToolResult("denied", message=f"{write} is outside this user's access.")
+        return ToolResult("denied", data={"say": writes.NO_ACCESS_SAY}, message=f"{write} is outside this user's access.")
     if not isinstance(rows, list) or not rows:
         return ToolResult("invalid", message="rows must be a list of at least one row.")
     if len(rows) > MAX_ROWS:
         return ToolResult(
-            "invalid", message=f"At most {MAX_ROWS} rows per confirmation; ask the user to split the table."
+            "invalid", data={"say": TOO_MANY_SAY},
+            message=f"At most {MAX_ROWS} rows per confirmation; ask the user to split the table.",
         )
     if any(not s.get("batch") for s in steps):
         return ToolResult("invalid", message="Propose the table on its own, not with other changes in the same turn.")

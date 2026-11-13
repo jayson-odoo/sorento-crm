@@ -113,7 +113,11 @@ def test_rows_of_nobody_named_are_never_answered_with_tool_guidance(db):
     result, _ = screenshot_turn(db, w, [_batch(rows), answer_("Done.")], images=False)
     assert_plain(result.reply_text)
     assert result.pending_action is None
-    assert result.reply_text.strip(), "the user got no answer"
+    # The left-out row is listed with its plain reason (review K2: an empty or generic reply is not enough).
+    from app.services.chatbot.agent.batch import LEFT_OUT_REASON
+
+    assert other.phone_number in result.reply_text, result.reply_text
+    assert LEFT_OUT_REASON in result.reply_text
 
 
 def test_a_malformed_batch_call_never_shows_its_refusal_to_the_user(db):
@@ -158,3 +162,39 @@ def test_an_attachment_does_not_bring_back_a_person_of_an_older_request(db):
     assert result.pending_action is not None, result.reply_text
     assert new.name in result.reply_text
     assert old.name not in result.reply_text, result.reply_text
+
+
+def test_an_undecided_card_expired_by_a_newer_request_does_not_return_on_a_picture_turn(db):
+    """Review B1: card A (undecided), card B expires it, then a picture turn re-sent A: A stays out."""
+    w = make_world(db)
+    a, b, c = (dealer(db, w, name=f"ZZT Card {x}") for x in "ABC")
+
+    def r(p, n):
+        return {**row_(local(p.phone_number), name=p.name, role="employee", companies=("MCH",)), "row": n}
+
+    first, _ = screenshot_turn(db, w, [_batch([r(a, 1)]), answer_("ok")], text_=f"Mocha {local(a.phone_number)}", images=False)
+    assert first.pending_action is not None
+    second, _ = screenshot_turn(db, w, [_batch([r(b, 1)], "b2"), answer_("ok")], text_=f"Mocha {local(b.phone_number)}", images=False)
+    assert second.pending_action is not None
+    third, _ = screenshot_turn(db, w, [_batch([r(a, 1), r(c, 2)], "b3"), answer_("ok")], text_="grant them Mocha employee")
+    assert third.pending_action is not None, third.reply_text
+    assert c.name in third.reply_text and a.name not in third.reply_text, third.reply_text
+
+
+def test_a_grant_call_with_bad_arguments_never_shows_the_argument_error(db):
+    """Review S1: a GRANT schema or id refusal is guidance for the model, never the reply."""
+    w = make_world(db)
+    script = [round_of(tc(GRANT, {"bogus": 1}, "g1")), answer_("Done.")]
+    result, _ = screenshot_turn(db, w, script, images=False)
+    assert_plain(result.reply_text)
+    assert "Unknown argument" not in result.reply_text and "bogus" not in result.reply_text, result.reply_text
+
+
+def test_a_table_over_the_row_limit_says_so_plainly(db):
+    """Review S2: too many rows gets its own plain line, not a request for details."""
+    from app.services.chatbot.agent.batch import MAX_ROWS, TOO_MANY_SAY
+
+    w = make_world(db)
+    rows = [{**row_(fake_phone(), role="employee", companies=("MCH",)), "row": i} for i in range(1, MAX_ROWS + 2)]
+    result, _ = screenshot_turn(db, w, [_batch(rows), answer_("Done.")])
+    assert result.reply_text.strip() == TOO_MANY_SAY, result.reply_text

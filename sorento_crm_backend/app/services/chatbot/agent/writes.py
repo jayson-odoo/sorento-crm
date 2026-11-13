@@ -552,6 +552,10 @@ def _args_problem(definition: WriteDef, args: Any) -> str | None:
     return None
 
 
+#: The user's line when a change is outside their access (the tool's own message names the tool, for the model).
+NO_ACCESS_SAY = "You do not have access to make this change."
+
+
 def propose_step(
     db, ctx, name: str, args: Any, *, seen_ids: set[str], loop_args: dict | None = None
 ) -> tuple[ToolResult, dict | None]:
@@ -563,7 +567,7 @@ def propose_step(
     if panel_closed(name) or not may_propose(db, ctx, definition):
         if definition.runs_as == "contact":
             return ToolResult("denied", message=f"{name} is not a tool you may use."), None
-        return ToolResult("denied", message=f"{name} is outside this user's access."), None
+        return ToolResult("denied", data={"say": NO_ACCESS_SAY}, message=f"{name} is outside this user's access."), None
     if name == CREATE_IDEA and staff_principal.current() is not None:
         # A panel turn runs as a test turn, so an idea would be a test idea: keep the Ideas board link instead.
         from app.services.chatbot.lanes.ideate import PANEL_IDEAS_REPLY
@@ -573,11 +577,13 @@ def propose_step(
             data={"say": PANEL_IDEAS_REPLY},
             message="No idea was created and nothing is waiting for a yes. Ideas are logged on the Ideas board: /ideas",
         ), None
+    # `loop`: an argument or id problem is guidance for the model, never the user's reply (#2256 owner hand test).
     problem = _args_problem(definition, args)
     if problem:
-        return ToolResult("invalid", message=problem), None
+        return ToolResult("invalid", data={"loop": True}, message=problem), None
     bad_id = _check_ids(args, seen_ids)
     if bad_id is not None:
+        bad_id.data = {**(bad_id.data if isinstance(bad_id.data, dict) else {}), "loop": True}
         return bad_id, None
     # Values the loop sets (never the model, which `_args_problem` already refused to accept): they travel
     # with the step and are read by the lookup and the execute.

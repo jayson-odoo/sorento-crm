@@ -1582,7 +1582,8 @@ def dealer_schemas(schemas: list[dict]) -> list[dict]:
 def dealer_reply(ledger: dict[str, dict]) -> str:
     """The flow's reply when nothing was proposed, from this turn's tool results only: the LAST refusal of the grant
     or the access change, in the tool's own words (never the loop's own messages, flagged `loop`), or "" when there
-    is none. Never the batch tool's message: it is guidance for the model (owner hand test 14 Nov); the batch's rows
+    is none. Never the batch tool's message, nor an argument or id problem (flagged `loop`): those are guidance for
+    the model (owner hand test 14 Nov); a refusal with a line for the user carries it as `say`. The batch's rows
     reach the user as the code-built tables. A proposal's card or table is shown instead by the caller (review round S6). Never the
     model's text, so nothing in it is ever marked not verified."""
     from app.services.chatbot.agent.contact_grant import GRANT
@@ -1590,10 +1591,13 @@ def dealer_reply(ledger: dict[str, dict]) -> str:
     last = ""
     for entry in ledger.values():
         data = entry.get("data") if isinstance(entry.get("data"), dict) else {}
-        if (
-            entry.get("name") in (GRANT, writes.UPDATE_CONTACT)
-            and entry.get("status") in ("invalid", "denied") and entry.get("message") and not data.get("loop")
-        ):
+        if entry.get("name") not in (GRANT, writes.UPDATE_CONTACT, batch.BATCH) or entry.get("status") not in (
+            "invalid", "denied"
+        ) or data.get("loop"):
+            continue
+        if data.get("say"):
+            last = str(data["say"])  # a line written for the user (no access, too many rows)
+        elif entry.get("name") != batch.BATCH and entry.get("message"):
             last = str(entry["message"])
     return last
 
