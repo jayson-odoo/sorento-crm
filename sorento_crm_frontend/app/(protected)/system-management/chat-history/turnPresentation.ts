@@ -41,6 +41,8 @@ const OFF_TIMELINE_STAGE_LABELS: Record<string, string> = {
   // gave up waiting. "Failed at Handover" is what an operator can act on; "delegated"
   // would read as a state it is still in.
   delegated: 'Handover',
+  // The CRM sender could not tell whether a part reached the customer.
+  send_unconfirmed: 'Not confirmed',
 };
 
 export function stageLabel(stage: string | null | undefined): string {
@@ -93,14 +95,22 @@ export interface TurnHeadline {
 }
 
 /**
+ * The words for a turn that stopped at `stage`. One function, so the turn and the Chat
+ * History list's last-failed badge name one state with one word: a send the CRM could not
+ * confirm reads "Not confirmed" (it may have reached the customer), not "Failed at ...".
+ */
+export function failedStageWords(stage: string | null | undefined): string {
+  if (stage === 'send_unconfirmed') return 'Not confirmed';
+  return `Failed at ${stageLabel(stage ?? 'received')}`;
+}
+
+/**
  * AC-251. The status word answers "what happened to this message?" in one glance, so it
  * is keyed on the LANE for a finished turn rather than on `status`, which only says
  * whether the machinery completed. "Done" would tell an operator nothing.
  */
 export function turnHeadline(turn: ChatbotTurn): TurnHeadline {
-  if (turn.status === 'failed') {
-    return { word: `Failed at ${stageLabel(turn.stage ?? 'received')}`, tone: 'failed' };
-  }
+  if (turn.status === 'failed') return { word: failedStageWords(turn.stage), tone: 'failed' };
   if (turn.status === 'queued' || turn.status === 'processing') {
     return { word: 'Running', tone: 'pending' };
   }
