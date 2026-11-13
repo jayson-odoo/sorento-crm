@@ -150,7 +150,7 @@ describe('Link to PO popup', () => {
     const { dialog } = renderDialog();
     const headers = within(dialog).getAllByRole('columnheader').map((cell) => cell.textContent);
     expect(headers.slice(1)).toEqual([
-      'Sales order', 'Line', 'Location', 'Delivery date', 'Outstanding', 'PO', 'PO qty', 'Free', 'Qty',
+      'Sales order', 'Location', 'Delivery date', 'Outstanding', 'PO', 'PO qty', 'Free', 'Qty',
     ]);
     expect(dialog).toHaveTextContent('18/11/2026');
     expect(within(dialog).getByRole('checkbox', { name: /select so425045 line 140/i })).toBeChecked();
@@ -339,7 +339,7 @@ describe('Change PO popup (STOCKDEBT-LIVE-ACTIONS, owner card 11 Nov)', () => {
     const { dialog } = renderDialog([covered], 'change');
     const headers = within(dialog).getAllByRole('columnheader').map((cell) => cell.textContent);
     expect(headers.slice(1)).toEqual([
-      'Sales order', 'Line', 'Location', 'Delivery date', 'Outstanding', 'PO', 'Open', 'Change to', 'Free',
+      'Sales order', 'Location', 'Delivery date', 'Outstanding', 'PO', 'Open', 'Change to', 'Free',
     ]);
     expect(dialog).toHaveTextContent('202610-S0007 · line 1');
     const options = [...(dialog.querySelector('[id="po-link-change-sol-1:po-7"]') as HTMLSelectElement).options];
