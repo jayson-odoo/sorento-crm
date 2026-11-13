@@ -346,7 +346,6 @@ def test_ac2e_a_word_that_completes_no_real_code_changes_nothing(session_factory
         assert not _word(code, text), (code, text)
 
 
-@pytest.mark.xfail(strict=True, reason="owner ruling 13 Nov: slice 2 (new PR) answers each part at the typed quantity")
 def test_ac3_dealer_exact_set_does_not_ask_how_many_units_for_each(session_factory, monkeypatch, stub_access):  # noqa: F811
     c = _exact_world(session_factory, monkeypatch, stub_access)
     text = c.say("QWC605RL x 1", stock(product("QWC605RL", 1)))
