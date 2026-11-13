@@ -20,6 +20,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { DocField, ReadValue } from '@/components/common/DocField';
 import { EntityAttachmentsSection } from '@/components/common/EntityAttachmentsSection';
+import { ResponseAttachmentDropzone } from '@/app/(protected)/complaint-management/complaints/components/ResponseAttachmentDropzone';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import {
@@ -255,6 +256,9 @@ export default function OrderChangeNoticeForm({ ocnId, projectId }: OrderChangeN
   };
 
   const savedId = ocnId ?? createdId;
+  /** Files picked on a NEW notice: held until it exists, then uploaded (as the NPA and price tag
+   *  forms do), so the revised PO can go on with the first save. */
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const save = async () => {
     const body = payloadFromState(state);
     if (savedId) {
@@ -262,6 +266,14 @@ export default function OrderChangeNoticeForm({ ocnId, projectId }: OrderChangeN
     }
     const created = await create.mutateAsync(body);
     setCreatedId(created.id);
+    for (const file of pendingFiles) {
+      try {
+        await uploadOrderChangeNoticeAttachment(created.id, file);
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : `${file.name} could not be attached`);
+      }
+    }
+    setPendingFiles([]);
     return created;
   };
 
@@ -518,6 +530,14 @@ export default function OrderChangeNoticeForm({ ocnId, projectId }: OrderChangeN
           </div>
         </CardContent>
       </Card>
+      {!savedId && (
+        <Card className="mt-6">
+          <CardContent className="space-y-3 py-6">
+            <h3 className="text-base font-semibold">Attachments</h3>
+            <ResponseAttachmentDropzone files={pendingFiles} onFilesChange={setPendingFiles} disabled={saving} />
+          </CardContent>
+        </Card>
+      )}
       {ocnId && record && (
         <div className="mt-6">
           <EntityAttachmentsSection

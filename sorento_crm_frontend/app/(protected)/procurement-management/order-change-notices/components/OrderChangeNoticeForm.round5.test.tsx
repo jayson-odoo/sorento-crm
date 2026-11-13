@@ -122,9 +122,13 @@ describe('round 5: a file uploaded straight onto a saved draft (N3)', () => {
     await waitFor(() => expect(svc.upload).toHaveBeenCalledWith('ocn-edit', file));
   });
 
-  it('has no drop zone on a new notice (nothing to upload onto yet)', async () => {
+  // Round 15 (hand test step 12) reverses the old "no drop zone on a new notice": a new notice
+  // holds picked files until it exists (OrderChangeNoticeForm.round15.test.tsx). What stays: no
+  // library link before there is a notice to link onto.
+  it('offers no library link on a new notice (nothing to link onto yet)', async () => {
     renderForm();
     await screen.findByRole('heading', { name: 'Order Change Notice' });
-    expect(screen.queryByRole('button', { name: /choose file/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /link attachment/i })).toBeNull();
+    expect(screen.queryByText('Linked Attachments')).toBeNull();
   });
 });
