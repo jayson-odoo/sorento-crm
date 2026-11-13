@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { toast } from '@/lib/toast';
 import { BoardDecideControl } from './BoardDecideControl';
+import { suggestedDecisionFor } from '../../_shared/lib/boardAmend';
 import type { BoardContribution } from '../../_shared/types/fulfilmentPlanning.types';
 
 vi.mock('@/lib/toast', () => ({
@@ -79,14 +80,14 @@ describe('Transfer to Cancel SO in the Decide menu', () => {
       'Borrow',
       'Use BRW',
       'Buy',
-      'Transfer to Cancel SO',
+      'Cancel',
     ]);
   });
 
   it('AC-F2: opens "Decide 1 line: Transfer to Cancel SO" with a Reason and no picker; Save needs a reason', async () => {
     renderControl([row()]);
     openMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Transfer to Cancel SO' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Cancel' }));
 
     const dialog = await screen.findByRole('dialog');
     expect(dialog).toHaveTextContent(/Decide 1 lines?: Transfer to Cancel SO/);
@@ -117,7 +118,7 @@ describe('Transfer to Cancel SO in the Decide menu', () => {
     const gone = row({ key: 'so-1:line-30', line_no: 30, item_code: 'CB110LP', cancelled: true });
     const { onSave } = renderControl([ok, covered, gone]);
     openMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Transfer to Cancel SO' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Cancel' }));
     const dialog = await screen.findByRole('dialog');
     fireEvent.change(within(dialog).getByLabelText(/^Reason/), { target: { value: 'Customer cancelled' } });
     fireEvent.click(within(dialog).getByRole('button', { name: /^Save/ }));
@@ -159,7 +160,7 @@ describe('Transfer to Cancel SO names the rows it skips (AC-F18)', () => {
   async function openCancel(contributions: BoardContribution[]) {
     renderControl(contributions);
     openMenu();
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Transfer to Cancel SO' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Cancel' }));
     return screen.findByRole('dialog');
   }
 
@@ -201,4 +202,56 @@ describe('Borrow dialog before a pick (AC-F21)', () => {
       expect(dialog.textContent).not.toMatch(/will be skipped/);
     },
   );
+});
+
+describe('Decide > Cancel on book-cancelled lines (OI-WHOLE-SO-CANCEL)', () => {
+  const bookCancelled = (n: number) =>
+    row({
+      key: `so-1:line-${n}`,
+      line_no: n,
+      qty: '0',
+      sources: [],
+      cancelled: true,
+      cancelled_at: null,
+      pending_change_batch_id: 'b1',
+    } as Partial<BoardContribution>);
+
+  async function pickCancel() {
+    openMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Cancel' }));
+    const dialog = screen.queryByRole('dialog');
+    if (dialog) {
+      const reason = within(dialog).queryByLabelText(/^Reason/);
+      if (reason) fireEvent.change(reason, { target: { value: 'Customer cancelled' } });
+      fireEvent.click(within(dialog).getByRole('button', { name: /^Save/ }));
+    }
+  }
+
+  it('saves each ticked book-cancelled row with exactly suggestedDecisionFor(row)', async () => {
+    const rows = [bookCancelled(10), bookCancelled(20), bookCancelled(30)];
+    const { onSave } = renderControl(rows);
+    await pickCancel();
+
+    await waitFor(() => expect(onSave).toHaveBeenCalled());
+    const entries = onSave.mock.calls.flatMap(
+      (call) => call[0] as unknown as { key: string; decision: unknown }[],
+    );
+    expect(entries).toEqual(
+      rows.map((r) => ({ key: r.key, decision: suggestedDecisionFor(r) })),
+    );
+    expect(entries.map((e) => e.decision)).toEqual([
+      { verdict: 'approved' },
+      { verdict: 'approved' },
+      { verdict: 'approved' },
+    ]);
+  });
+
+  it('guard: a line that is not book-cancelled picked with Cancel still saves verdict cancelled', async () => {
+    const { onSave } = renderControl([row()]);
+    await pickCancel();
+
+    await waitFor(() => expect(onSave).toHaveBeenCalled());
+    const [entries] = onSave.mock.calls[0] as unknown as [{ decision: { verdict: string } }[]];
+    expect(entries[0].decision.verdict).toBe('cancelled');
+  });
 });

@@ -5,7 +5,7 @@
  * keeps today's text; a normal saved Buy still prints its composition. Harness from
  * `FulfilmentBoardListView.so-cancel-line.test.tsx`.
  */
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type {
   BoardContribution,
@@ -70,6 +70,10 @@ const SAVED_CANCEL = {
   order_back: false,
 } as unknown as BoardDraft[string];
 
+const PRE_MARK = {
+  [KEY]: { verdict: 'approved', preMarked: true },
+} as unknown as BoardDraft;
+
 function decidedCell(contribution: BoardContribution, draft: BoardDraft): HTMLElement {
   render(
     <FulfilmentBoardListView
@@ -92,12 +96,26 @@ describe('FulfilmentBoardListView: the Decided cell of a book-cancelled line (F2
     expect(decidedCell(row(), { [KEY]: SAVED_CANCEL })).toHaveTextContent('Cancel line');
   });
 
-  it('reads "Cancel line" for a saved decision that came from the server', () => {
+  it('reads "Cancel line" for a server-saved approval (a non-pre-marked draft)', () => {
+    expect(decidedCell(row(), { [KEY]: { verdict: 'approved' } as BoardDraft[string] })).toHaveTextContent(
+      'Cancel line',
+    );
+  });
+
+  it('stays "Not decided" while the draft is only the board-load pre-mark', () => {
+    const cell = decidedCell(row(), PRE_MARK);
+    expect(cell).toHaveTextContent('Not decided');
+    expect(cell).not.toHaveTextContent('Cancel line');
+  });
+
+  it('stays "Not decided" for an OLD active decision with an empty composition and only the pre-mark', () => {
     const covered = row({
       covered: true,
       decision: { id: 'd-1', revision_no: 3, reserve: [], borrow: [], buy_qty: '0', timely_spo_qty: '0' },
     });
-    expect(decidedCell(covered, {})).toHaveTextContent('Cancel line');
+    const cell = decidedCell(covered, PRE_MARK);
+    expect(cell).not.toHaveTextContent('Cancel line');
+    expect(cell).toHaveTextContent('Not decided');
   });
 
   it('keeps today\'s text while the cancel is unsaved', () => {
@@ -112,5 +130,40 @@ describe('FulfilmentBoardListView: the Decided cell of a book-cancelled line (F2
     const cell = decidedCell(normal, { [KEY]: buy });
     expect(cell).toHaveTextContent('Buy 10');
     expect(cell).not.toHaveTextContent('Cancel line');
+  });
+});
+
+describe('FulfilmentBoardListView: book-cancelled rows are selectable (OI-WHOLE-SO-CANCEL)', () => {
+  function renderRows() {
+    const rows = [
+      row({ key: 'so-1:line-10', so_number: 'SO900001', line_no: 10, so_line_no: 10 }),
+      row({ key: 'so-2:line-20', so_number: 'SO900002', line_no: 20, so_line_no: 20 }),
+    ];
+    render(
+      <FulfilmentBoardListView
+        contributions={rows}
+        draft={{}}
+        onDecide={vi.fn()}
+        onDecideMany={vi.fn(async () => ({ saved: 0, failed: 0 }))}
+        onDecideBatch={vi.fn(async () => ({ savedKeys: [], failed: [] }))}
+      />,
+    );
+  }
+
+  it('each row checkbox is present and enabled', async () => {
+    renderRows();
+    await screen.findByText('SO900001');
+    const boxes = screen.getAllByRole('checkbox').filter((b) => /^Select SO/.test(b.getAttribute('aria-label') ?? ''));
+    expect(boxes).toHaveLength(2);
+    for (const box of boxes) expect(box).toBeEnabled();
+  });
+
+  it('select-all ticks every book-cancelled row and enables Decide', async () => {
+    renderRows();
+    await screen.findByText('SO900001');
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select all rows' }));
+    await waitFor(() => expect(screen.getByTestId('board-decide-button')).toBeEnabled());
+    const boxes = screen.getAllByRole('checkbox').filter((b) => /^Select SO/.test(b.getAttribute('aria-label') ?? ''));
+    for (const box of boxes) expect(box).toBeChecked();
   });
 });
