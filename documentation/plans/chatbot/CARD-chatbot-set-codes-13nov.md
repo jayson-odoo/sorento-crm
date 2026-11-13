@@ -52,7 +52,7 @@ members show their own description, the role is never read from a code letter; (
 lane becomes size L). Recommendation: (a), nothing reads a role today and a column would restate the description.
 
 Q2. The X insert goes now. Crew data (12 Nov): 54 active X-coded products in 29 families have neither a set nor a
-Family code link, so example 4 changes for them (narrowed answer becomes an offer). (a) remove now; the 54 are listed
+Family code link, so example 4 changes for them (the X variant is no longer reached). (a) remove now; the 54 are listed
 for data fill (set Family code or register a set), and the #833 owner tests are re-seeded with a set link so their
 answers stay; (b) keep the X insert as a fallback until those 54 are linked. Cost of (a): for those 29 families a
 "code + words" ask ("Srtwc7604 p trap") no longer reaches the X-coded variant (example 4), it is not answered wrongly,
