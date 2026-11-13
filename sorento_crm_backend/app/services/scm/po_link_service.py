@@ -906,7 +906,7 @@ class PoLinkService:
                 raise AppException(status_code=422, message="Pick which PO to change.")
             elif not current:
                 raise AppException(
-                    status_code=422, message=f"{so_label} is not covered by a PO line."
+                    status_code=422, message=f"{so_label} is not covered by exactly one PO line."
                 )
             # Crew for the owner, 11 Nov: Change PO moves the OPEN balance still covered by the
             # old PO line; what was already received stays with the old PO. `_free` is that
