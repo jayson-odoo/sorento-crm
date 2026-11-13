@@ -183,13 +183,20 @@ def _product_codes(parser: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _named_codes(parser: dict[str, Any]) -> set[str]:
-    """The codes the message's product entities name whole: each one's raw and the parser's
-    `canonical_code`, folded by `turn_state.token_key`. A parser's code that corrects or
-    completes the raw never reaches here as such: grounding sets it aside first (B1,
-    `grounding._pick_as_trgm_neighbour`)."""
+    """The codes the message's product entities name whole, folded by `turn_state.token_key`:
+    each one's raw, and the parser's `canonical_code` unless it corrects or completes that raw
+    (CHATBOT-CLOSE-CODES B1, crew ruling (a): `answer.corrects_or_completes`)."""
+    from app.services.chatbot.lanes.business.answer import corrects_or_completes
     from app.services.chatbot.turn.state import token_key
 
-    return {token_key(e.get(k)) for e in _product_codes(parser) for k in ("raw", "canonical_code") if e.get(k)} - {""}
+    out: set[str] = set()
+    for e in _product_codes(parser):
+        raw, canonical = e.get("raw"), e.get("canonical_code")
+        if raw:
+            out.add(token_key(raw))
+        if canonical and not (raw and corrects_or_completes(raw, canonical)):
+            out.add(token_key(canonical))
+    return out - {""}
 
 
 def _sizes(parser: dict[str, Any]) -> list[dict[str, Any]]:

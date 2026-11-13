@@ -5167,8 +5167,12 @@ def corrects_or_completes(typed: Any, code: Any) -> bool:
     spells is a correction: within `turn_runtime.osa_distance` (a letter changed, added or
     dropped, or two neighbouring letters swapped, each one edit) of at most half the part's
     length, and at least one (INLT, INELT, INXXT for INLET; SWTWC for SRTWC; GDL for GLD). A
-    part a longer typed word holds letter for letter in order is that part said in words (lead
-    ruling, AC-33: "gold" for GLD, "grey" for GRY), not a correction. A part left over that
+    letters-only part is said in words (lead ruling, AC-33; crew ruling, round 6), not a
+    correction, when a whole space-separated typed word of letters only is longer than it,
+    holds its letters in order, and does not start with them ("gold" for GLD, "grey" for GRY).
+    A run inside the typed code token (a digit run, SRTWTC for SRTWC) never says a part in
+    words, and a word that is the part with letters added after it (INLETT for INLET) is a
+    change to the code, so both stay corrections. A part left over that
     nothing typed accounts for, with no typed word left either, is a completion (SRTWC287-S for
     SRTWC287-S-150). A part reached only from typed words left over that spell no part ("gun
     metal" for GM) is the same code said in words, and a code equal but for case, dashes and
@@ -5184,9 +5188,13 @@ def corrects_or_completes(typed: Any, code: Any) -> bool:
             left.remove(part)
         else:
             missing.append(part)
+    words = {w.casefold() for w in jsc.nullish_str(typed).split() if w.isalpha()}
+
     def said_in(part: str, word: str) -> bool:
+        if not (part.isalpha() and word in words and len(word) > len(part)) or word.startswith(part):
+            return False
         letters = iter(word)
-        return len(word) > len(part) and all(ch in letters for ch in part)
+        return all(ch in letters for ch in part)
 
     missing = [part for part in missing if not any(said_in(part, t) for t in left)]
     if not missing:
