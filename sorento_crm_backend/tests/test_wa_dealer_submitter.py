@@ -410,6 +410,8 @@ def _case_held_list_answer(e: Env, contact: RespondContact) -> None:
     out = e.turn("1", session_vars_in=held)
     assert out["status"] != "complete"
     assert e.create_calls == []
+    # Setup only (lead sign-off): clear the similar matches so the case's follow-up real filing completes.
+    e.similar_result = {"matches": []}
 
 
 def _case_read_failure(e: Env, contact: RespondContact) -> None:

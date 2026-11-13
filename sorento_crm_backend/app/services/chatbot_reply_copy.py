@@ -386,6 +386,12 @@ IDEATION_CAPTURE_COMPLETE_ISSUE_PHOTOS = {
     "ms": "Gambar: {{count}}",
     "zh": "照片：{{count}}",
 }
+#: WA-COMPLAINT-INTAKE D-4: a console (test) turn of a dealer with no CRM user yet creates nothing.
+IDEATION_CAPTURE_TEST_TURN = {
+    "en": "Test turn: nothing was sent.",
+    "ms": "Giliran ujian: tiada apa-apa dihantar.",
+    "zh": "测试对话：没有发送任何内容。",
+}
 IDEATION_CAPTURE_ERROR = {
     "en": "Sorry, I couldn't save that idea just now. Please try again in a moment.",
     "ms": "Maaf, saya tidak dapat menyimpan idea itu sekarang. Sila cuba lagi sebentar nanti.",
@@ -490,6 +496,7 @@ FALLBACK_REPLY_COPY: dict[str, tuple[dict[str, str], tuple[str, ...]]] = {
     "ideation_capture_ask_issue": (IDEATION_CAPTURE_ASK_ISSUE, ()),
     "ideation_capture_complete_issue": (IDEATION_CAPTURE_COMPLETE_ISSUE, ("idea_number", "title")),
     "ideation_capture_complete_issue_photos": (IDEATION_CAPTURE_COMPLETE_ISSUE_PHOTOS, ("count",)),
+    "ideation_capture_test_turn": (IDEATION_CAPTURE_TEST_TURN, ()),
     "ideation_capture_error": (IDEATION_CAPTURE_ERROR, ()),
     "ideation_capture_config_error": (IDEATION_CAPTURE_CONFIG_ERROR, ()),
 }

@@ -103,14 +103,20 @@ def agent_switch_on(db, contact) -> bool:
 
 
 def linked_active_user(db, contact_pk: str):
-    """The active CRM user linked to the contact (the contact then runs as staff), or None."""
+    """The active CRM user linked to the contact (the contact then runs as staff), or None. A dealer's
+    own user, whose roles are all non-staff, is not one: the contact keeps its dealer bot (D-8)."""
     from app.models.base import company_scope
     from app.models.user import User, UserStatus
+    from app.services.user_service import only_non_staff_roles
 
     with company_scope(db, None):
         return (
             db.query(User)
-            .filter(User.respond_contact_id == contact_pk, User.status == UserStatus.ACTIVE.value)
+            .filter(
+                User.respond_contact_id == contact_pk,
+                User.status == UserStatus.ACTIVE.value,
+                ~only_non_staff_roles(),
+            )
             .order_by(User.created_at, User.id)
             .first()
         )

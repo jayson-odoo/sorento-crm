@@ -34,8 +34,9 @@ BASE_ROLES: list[dict[str, str]] = [
     {"slug": "admin", "name": "Admin", "description": "Administrative access across enabled modules."},
     {"slug": "purchasing", "name": "Purchasing", "description": "Procurement and reorder planning."},
     {"slug": "guest", "name": "Guest", "description": "Minimal read-only access."},
-    # Identity S0 (#1280), also seeded by migration identity_0001_s0_model. Protected and
-    # EMPTY: no grant sweep below names them, and none may (their access is decided in S1+).
+    # Identity S0 (#1280), also seeded by migration identity_0001_s0_model. Protected; no grant
+    # sweep below names them. Their grants come from migrations only: wa_0001_idea_submit_perm gives
+    # portal_user `ideation.ideas.submit` and salesperson `ideation.board.view` (WA-COMPLAINT-INTAKE D-1).
     {"slug": "salesperson", "name": "Salesperson", "description": "Sales agent signing in by phone."},
     {"slug": "portal_user", "name": "Portal", "description": "Portal access only."},
 ]

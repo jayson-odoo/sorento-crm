@@ -58,6 +58,11 @@ logger = logging.getLogger(__name__)
 _SIMILAR_OWN_PATH = "/ideation/intake/ideas/similar-own"
 _CREATE_PATH = "/ideation/intake/ideas"
 _VIEW_PERMISSION = "ideation.board.view"
+#: Files through the assistant and opens nothing else (a dealer's own user, WA-COMPLAINT-INTAKE D-1).
+SUBMIT_PERMISSION = "ideation.ideas.submit"
+#: The one role a dealer's own CRM user gets (D-3): non-staff, so it neither signs in (D-7) nor turns
+#: the contact into a staff principal (D-8).
+_DEALER_ROLE = "portal_user"
 _HOLD_MAX_AGE = timedelta(hours=24)
 _MAX_SIMILAR = 3
 _PHOTOS = "Photos or files"
@@ -195,7 +200,8 @@ def _held_pointer(ideation_state: dict[str, Any], is_test: bool) -> dict[str, An
 
 
 def _access_user(db: Session, respond_io_id: str) -> User | None:
-    """The active, untrashed CRM user linked to this contact who holds the Ideas permission."""
+    """The active, untrashed CRM user linked to this contact who may file: the Ideas board or the
+    submit permission (D-2)."""
     user = (
         db.query(User)
         .join(RespondContact, RespondContact.id == User.respond_contact_id)
@@ -204,9 +210,74 @@ def _access_user(db: Session, respond_io_id: str) -> User | None:
     )
     if user is None or str(user.status or "").upper() != "ACTIVE" or user.is_trashed:
         return None
-    if not UserPermissionService(db).check_user_has_permission(user.id, _VIEW_PERMISSION):
+    if not UserPermissionService(db).check_user_has_any_permission(user.id, [_VIEW_PERMISSION, SUBMIT_PERMISSION]):
         return None
     return user
+
+
+def _linked_user(db: Session, contact_id: str) -> User | None:
+    return db.query(User).filter(User.respond_contact_id == str(contact_id)).first()
+
+
+def _dealer_eligible(db: Session, contact: Any) -> bool:
+    """May the assistant give this contact its own CRM user (D-3, D-4)? AI access on for its
+    respond.io id (`chatbot_allowed_service.is_allowed`, the bot's own gate) and exactly one contact
+    row for that id."""
+    from app.services import chatbot_allowed_service
+
+    rid = str(getattr(contact, "respond_io_id", None) or "").strip()
+    if not rid or not chatbot_allowed_service.is_allowed(db, rid):
+        return False
+    return db.query(RespondContact).filter(RespondContact.respond_io_id == rid).count() == 1
+
+
+def _unlinked_dealer(db: Session, respond_io_id: str) -> RespondContact | None:
+    """The eligible contact row for this id when no CRM user is linked to it yet, else None."""
+    contact = db.query(RespondContact).filter(RespondContact.respond_io_id == respond_io_id).first()
+    if contact is None or not _dealer_eligible(db, contact) or _linked_user(db, contact.id) is not None:
+        return None
+    return contact
+
+
+def ensure_dealer_user(db: Session, contact: Any) -> User | None:
+    """The contact's own CRM user, created when it has none (D-3): through `UserService.create_user`,
+    role `portal_user` only, name and phone from the contact, no password. An existing linked user is
+    returned, never a second (D-5, D-6); None for an ineligible contact. The audit names the WhatsApp
+    assistant acting for the contact (`actor_type` contact, `auth_method` agent, as the agent's dealer
+    writes). A lost race on the one-user-per-contact index returns the winner's user."""
+    from sqlalchemy.exc import IntegrityError
+
+    from app.audit_context import AuditActor, actor_scope
+    from app.models.user import UserRole
+    from app.schemas.user import UserCreate
+    from app.services.error_handler import AppException
+    from app.services.user_service import UserService
+
+    if contact is None or not _dealer_eligible(db, contact):
+        return None
+    linked = _linked_user(db, contact.id)
+    if linked is not None:
+        return linked
+    role = db.query(UserRole).filter(UserRole.slug == _DEALER_ROLE).first()
+    if role is None:
+        logger.error("ideation: role %s is missing, no dealer user created", _DEALER_ROLE)
+        return None
+    actor = AuditActor(
+        actor_type="contact", auth_method="agent", contact_id=str(contact.id), tool_name="whatsapp_assistant"
+    )
+    savepoint = db.begin_nested()
+    try:
+        with actor_scope(actor, db=db):
+            return UserService(db).create_user(
+                UserCreate(name=contact.name, respond_contact_id=str(contact.id), role_ids=[role.id])
+            )
+    except (AppException, IntegrityError):
+        # Another message of the same contact created it first (or the create was refused): back to
+        # the savepoint, then whoever holds the contact now.
+        if savepoint.is_active:
+            savepoint.rollback()
+        logger.info("ideation: dealer user not created for contact %s", contact.id, exc_info=True)
+        return _linked_user(db, contact.id)
 
 
 def _missing_list(sent: dict[str, Any], photos: int = 0) -> list[str]:
@@ -439,8 +510,20 @@ def handle_capture_turn(
         return finish("unconfigured", "unconfigured", {}, language, pointer=held, persist=False)
 
     user = _access_user(db, respond_io_id)
-    if user is None:
+    # An eligible dealer with no CRM user yet gets one, but only once this turn really files (D-4).
+    dealer = _unlinked_dealer(db, respond_io_id) if user is None else None
+    if user is None and dealer is None:
         return finish("no_access", "no_access", {}, language)
+    if dealer is not None and is_test:
+        return finish("test_turn", "test_turn", {}, language, persist=False)
+
+    def filer() -> User | None:
+        """Who files: the linked user, else the dealer's own user, created now (the turn files)."""
+        if user is not None:
+            return user
+        if ensure_dealer_user(db, dealer) is None:
+            return None
+        return _access_user(db, respond_io_id)
 
     if isinstance(choice, int):
         idea = held["similar"][choice - 1]
@@ -459,6 +542,9 @@ def handle_capture_turn(
         source_text = held["message_text"]
         intake_ref = _valid_uuid(held.get("intake_ref")) or str(uuid.uuid4())
         submission_type = normalise_type(held.get("type"))
+        user = filer()
+        if user is None:
+            return finish("no_access", "no_access", {}, language)
     else:
         assert extraction is not None
         if extraction.failed:
@@ -492,6 +578,9 @@ def handle_capture_turn(
                 # statement, never a second identical question.
                 return finish("ask_idea_gave_up", "ask_idea_gave_up", {}, language)
             return finish("ask_idea", "ask_idea", {"type": submission_type}, language)
+        user = filer()
+        if user is None:
+            return finish("no_access", "no_access", {}, language)
         # Minted once the create is decided; a list offer keeps it so NEW (even retried after
         # an ss failure) lands on the same idea.
         intake_ref = str(uuid.uuid4())

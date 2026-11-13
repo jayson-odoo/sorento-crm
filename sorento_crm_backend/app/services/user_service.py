@@ -183,6 +183,12 @@ def _holds_staff_role():
         UserRoleAssignment.role.has(UserRole.slug.notin_(NON_STAFF_ROLE_SLUGS))
     )
 
+
+def only_non_staff_roles():
+    """The user holds at least one role and every one is non-staff (`NON_STAFF_ROLE_SLUGS`): a
+    dealer's own CRM user (WA-COMPLAINT-INTAKE D-7, D-8). A user with no role at all is not one."""
+    return User.role_assignments.any() & ~_holds_staff_role()
+
 class UserService:
     """Service for user operations."""
     
