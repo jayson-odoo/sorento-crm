@@ -12,6 +12,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import { usePolicies } from '../hooks/useWarrantyConfig';
+import { useInitialListState, useWriteListUrl } from '../hooks/useListUrlState';
 import { POLICY_LIFECYCLE_LABEL, formatCivilDate, policyLifecycle } from '../lib/warrantyLabels';
 import type { WarrantyPolicy } from '../types/warranty.types';
 import { PolicyFormDialog } from './PolicyFormDialog';
@@ -29,9 +30,16 @@ export function Text({ value, className }: { value: string | null | undefined; c
 }
 
 export function PoliciesTab() {
-  const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
-  const [sorting, setSorting] = useState<SortingState>([{ id: 'effective_from', desc: true }]);
-  const search = useDebouncedSearch();
+  const initial = useInitialListState();
+  const [pagination, setPagination] = useState<PaginationState>({ pageIndex: initial.pageIndex, pageSize: initial.pageSize });
+  const [sorting, setSorting] = useState<SortingState>(
+    initial.sorting.length ? initial.sorting : [{ id: 'effective_from', desc: true }],
+  );
+  const search = useDebouncedSearch(initial.searchQuery);
+  useWriteListUrl(
+    { pageIndex: pagination.pageIndex, pageSize: pagination.pageSize, sorting, searchQuery: search.debouncedValue },
+    {},
+  );
   const [form, setForm] = useState<{ open: boolean; policy: WarrantyPolicy | null }>({ open: false, policy: null });
   const [supersede, setSupersede] = useState<WarrantyPolicy | null>(null);
   const remove = useDeferredRowAction({

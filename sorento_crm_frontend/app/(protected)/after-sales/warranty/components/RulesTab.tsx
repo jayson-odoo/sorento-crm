@@ -11,7 +11,9 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
+import { splitMulti, joinMulti } from '@/lib/list-filters/multiValue';
 import { useKindOptions, useRules } from '../hooks/useWarrantyConfig';
+import { useInitialListState, useWriteListUrl } from '../hooks/useListUrlState';
 import { formatMatchTypeLabel } from '../lib/warrantyLabels';
 import type { WarrantyRule } from '../types/warranty.types';
 import { Text } from './PoliciesTab';
@@ -20,10 +22,15 @@ import { RuleTesterDialog } from './RuleTesterDialog';
 import WarrantyGrid from './WarrantyGrid';
 
 export function RulesTab() {
-  const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
-  const [sorting, setSorting] = useState<SortingState>([{ id: 'kind', desc: false }]);
-  const search = useDebouncedSearch();
-  const [kindFilter, setKindFilter] = useState<string[]>([]);
+  const initial = useInitialListState();
+  const [pagination, setPagination] = useState<PaginationState>({ pageIndex: initial.pageIndex, pageSize: initial.pageSize });
+  const [sorting, setSorting] = useState<SortingState>(initial.sorting.length ? initial.sorting : [{ id: 'kind', desc: false }]);
+  const search = useDebouncedSearch(initial.searchQuery);
+  const [kindFilter, setKindFilter] = useState<string[]>(splitMulti(initial.filters.kind_id));
+  useWriteListUrl(
+    { pageIndex: pagination.pageIndex, pageSize: pagination.pageSize, sorting, searchQuery: search.debouncedValue },
+    { kind_id: kindFilter.length ? joinMulti(kindFilter) : undefined },
+  );
   const [form, setForm] = useState<{ open: boolean; rule: WarrantyRule | null }>({ open: false, rule: null });
   const [testing, setTesting] = useState(false);
   const remove = useDeferredRowAction({

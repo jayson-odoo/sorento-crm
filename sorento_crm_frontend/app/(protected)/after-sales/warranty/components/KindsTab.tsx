@@ -12,7 +12,9 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
+import { splitMulti, joinMulti } from '@/lib/list-filters/multiValue';
 import { useKindRuleCounts, useKinds } from '../hooks/useWarrantyConfig';
+import { useInitialListState, useWriteListUrl } from '../hooks/useListUrlState';
 import type { WarrantyKind } from '../types/warranty.types';
 import { KindFormDialog } from './KindFormDialog';
 import { Text } from './PoliciesTab';
@@ -24,11 +26,19 @@ const ACTIVE_OPTIONS = [
 ];
 
 export function KindsTab() {
-  const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
-  const [sorting, setSorting] = useState<SortingState>([{ id: 'name', desc: false }]);
-  const search = useDebouncedSearch();
-  const [activeFilter, setActiveFilter] = useState<string[]>([]);
-  const [noRuleOnly, setNoRuleOnly] = useState(false);
+  const initial = useInitialListState();
+  const [pagination, setPagination] = useState<PaginationState>({ pageIndex: initial.pageIndex, pageSize: initial.pageSize });
+  const [sorting, setSorting] = useState<SortingState>(initial.sorting.length ? initial.sorting : [{ id: 'name', desc: false }]);
+  const search = useDebouncedSearch(initial.searchQuery);
+  const [activeFilter, setActiveFilter] = useState<string[]>(splitMulti(initial.filters.is_active));
+  const [noRuleOnly, setNoRuleOnly] = useState(initial.filters.has_no_rule === 'true');
+  useWriteListUrl(
+    { pageIndex: pagination.pageIndex, pageSize: pagination.pageSize, sorting, searchQuery: search.debouncedValue },
+    {
+      is_active: activeFilter.length ? joinMulti(activeFilter) : undefined,
+      has_no_rule: noRuleOnly ? 'true' : undefined,
+    },
+  );
   const [form, setForm] = useState<{ open: boolean; kind: WarrantyKind | null }>({ open: false, kind: null });
   const invalidateKeys = [['warranty-kinds'], ['warranty-kind-rule-counts'], ['warranty-kind-options']] as const;
   const archive = useDeferredRowAction({

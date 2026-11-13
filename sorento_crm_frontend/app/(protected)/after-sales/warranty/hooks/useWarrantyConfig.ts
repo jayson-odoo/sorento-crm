@@ -6,6 +6,7 @@ import {
   createKind,
   createPolicy,
   createRule,
+  createTerm,
   getDefectTypes,
   getKinds,
   getPolicies,
@@ -17,12 +18,14 @@ import {
   updateKind,
   updatePolicy,
   updateRule,
+  updateTerm,
 } from '../services/warrantyConfigService';
 import type {
   SupersedeValues,
   WarrantyKindValues,
   WarrantyPolicyValues,
   WarrantyRuleValues,
+  WarrantyTermValues,
 } from '../types/warranty.types';
 
 type KindsParams = DataGridApiFetchParams & { is_active?: string[]; has_no_rule?: boolean };
@@ -145,3 +148,13 @@ export function useTestKindRules() {
     onError: (e: Error) => toast.error(e.message || 'Failed to test the product'),
   });
 }
+
+export const useCreateTerm = () =>
+  useSaver((v: Omit<WarrantyTermValues, 'qualifications' | 'exclusions'>) => createTerm(v as WarrantyTermValues), 'Term added', 'Failed to add the term');
+export const useUpdateTerm = () =>
+  useSaver(
+    ({ id, values }: { id: string; values: Partial<Omit<WarrantyTermValues, 'kind_id' | 'policy_id'>> }) =>
+      updateTerm(id, values),
+    'Term updated',
+    'Failed to update the term',
+  );
