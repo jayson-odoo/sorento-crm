@@ -10087,7 +10087,6 @@ def _stock_ask_reply(
         from app.services.chatbot import dealer_stock as dealer_mod
 
         suggested = turn_compose.unplaced_suggestions(envelopes)
-        print("DBGSUG", misses, {k: [r.get("code") for r in (v or {}).get("rows") or []] for k, v in suggested.items()}, turn_compose.answered_codes(envelopes))
         offer = dealer_mod.did_you_mean_each(
             [
                 (m, (suggested.get(m) or {}).get("rows") or [], dealer_mod.quantity_of(verdict.get("entities"), m))

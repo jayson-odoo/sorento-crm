@@ -129,11 +129,13 @@ def did_you_mean(
     quantity: Any = None,
     asked_at_turn: int | None = None,
     size_asked: str = "",
+    domain: str = "inventory",
 ) -> tuple[str, Pending] | None:
     """The dealer's did-you-mean: the suggested code(s) as a pick carrying the typed
     quantity, and no escalation. One candidate reads "Couldn't find ELP3753. Did you
     mean ELP3754?" and a "yes" answers ELP3754 (`apply._answer_pending`); a "no" refers
-    the dealer to their salesman."""
+    the dealer to their salesman. `domain` is the ask the pick answers: stock, or (an
+    incoming ask, CHATBOT-CLOSE-CODES C4) the code's incoming."""
     options: list[dict[str, Any]] = []
     for row in candidates or []:
         if not isinstance(row, dict):
@@ -169,8 +171,8 @@ def did_you_mean(
         options,
         asked_at_turn=asked_at_turn,
         payload={
-            "domain": "inventory",
-            "domains": ["inventory"],
+            "domain": domain,
+            "domains": [domain],
             "stock_pick": True,
             "did_you_mean": True,
             "typed": shown,
@@ -204,6 +206,7 @@ def did_you_mean_each(
     answered: set[str] | frozenset[str] = frozenset(),
     asked_at_turn: int | None = None,
     before: dict[str, Any] | None = None,
+    domain: str = "inventory",
 ) -> tuple[str, Pending, list[str]] | None:
     """CHATBOT-CODE-MATCH R7: every missed code of one message gets its own did-you-mean,
     in one reply. `groups` is `(typed, candidates, quantity)` per missed code. A code this
@@ -220,7 +223,7 @@ def did_you_mean_each(
     blocks: list[tuple[str, Any, Pending, str]] = []
     for typed, candidates, quantity in groups:
         fresh = [r for r in candidates or [] if isinstance(r, dict) and token_key(_code_of(r)) not in seen]
-        one = did_you_mean(typed, fresh, quantity=quantity, asked_at_turn=asked_at_turn)
+        one = did_you_mean(typed, fresh, quantity=quantity, asked_at_turn=asked_at_turn, domain=domain)
         if one is None:
             continue
         seen.update(token_key(o["code"]) for o in one[1].options)
@@ -256,5 +259,6 @@ def did_you_mean_each(
 
         merged = stock_pick(options, pick_groups, asked_payload.get(OWED))
         stored = {"options": merged["options"], "payload": {**asked_payload, **merged["payload"]}}
-    pick = ask("product_pick", stored["options"], asked_at_turn=asked_at_turn, payload=stored["payload"])
+    payload = {**stored["payload"], "domain": domain, "domains": [domain]} if before is None else stored["payload"]
+    pick = ask("product_pick", stored["options"], asked_at_turn=asked_at_turn, payload=payload)
     return text, pick, [b[0] for b in blocks]
