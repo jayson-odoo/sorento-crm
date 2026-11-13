@@ -177,3 +177,31 @@ describe('Change PO answers (STOCKDEBT-LIVE-ACTIONS review, unlink first)', () =
     );
   });
 });
+
+describe('poLinkMenu: one manage state (owner, 13 Nov 18:55)', () => {
+  it('returns manage and relink, not link / change / unlink', () => {
+    const menu = poLinkMenu({ ticked: 1, linked: 0, capabilities: CAPS, loading: false }) as unknown as Record<string, unknown>;
+    expect(Object.keys(menu).sort()).toEqual(['manage', 'relink']);
+  });
+
+  it('manage is on whenever AutoCount answered, whatever the individual capabilities say', () => {
+    const menu = poLinkMenu({ ticked: 2, linked: 0, capabilities: CAPS, loading: false }) as unknown as Record<string, { enabled: boolean }>;
+    expect(menu.manage.enabled).toBe(true);
+  });
+
+  it('a fully covered line is not a reason to grey it', () => {
+    const menu = poLinkMenu({
+      ticked: 1, linked: 1, capabilities: CAPS, loading: false, coveredBy: ['202609-S0029'],
+    }) as unknown as Record<string, { enabled: boolean }>;
+    expect(menu.manage.enabled).toBe(true);
+  });
+
+  it('is greyed with the reason when nothing is ticked, while AutoCount is checked, or when it cannot be reached', () => {
+    const none = poLinkMenu({ ticked: 0, linked: 0, capabilities: CAPS, loading: false }) as unknown as Record<string, unknown>;
+    expect(none.manage).toEqual({ enabled: false, reason: 'Tick the lines to decide on' });
+    const loading = poLinkMenu({ ticked: 1, linked: 0, capabilities: null, loading: true }) as unknown as Record<string, unknown>;
+    expect(loading.manage).toEqual({ enabled: false, reason: 'Checking AutoCount…' });
+    const down = poLinkMenu({ ticked: 1, linked: 0, capabilities: null, loading: false }) as unknown as Record<string, unknown>;
+    expect(down.manage).toEqual({ enabled: false, reason: 'Could not reach AutoCount' });
+  });
+});

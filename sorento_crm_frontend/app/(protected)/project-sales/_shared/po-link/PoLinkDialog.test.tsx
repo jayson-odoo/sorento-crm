@@ -54,10 +54,11 @@ vi.mock('@/components/common/SearchableSelect', () => ({
 const linkPoLines = vi.fn();
 const changePoLines = vi.fn();
 const relocatePoLine = vi.fn();
+const unlinkPoLines = vi.fn();
 const resumePoLink = vi.fn();
 vi.mock('../../stock-debt/services/stockDebtSnapshotService', () => ({
   linkPoLines: (...args: unknown[]) => linkPoLines(...args),
-  unlinkPoLines: vi.fn(),
+  unlinkPoLines: (...args: unknown[]) => unlinkPoLines(...args),
   relinkPoLines: vi.fn(),
   changePoLines: (...args: unknown[]) => changePoLines(...args),
   relocatePoLine: (...args: unknown[]) => relocatePoLine(...args),
@@ -141,6 +142,7 @@ function renderDialog(lines = [soLine({})], mode: 'link' | 'change' | 'unlink' =
 beforeEach(() => {
   linkPoLines.mockReset();
   changePoLines.mockReset();
+  unlinkPoLines.mockReset();
   relocatePoLine.mockReset();
   resumePoLink.mockReset();
 });
@@ -545,5 +547,154 @@ describe('Change PO results offer Try again (db3 step 10)', () => {
     );
     await waitFor(() => expect(within(dialog).queryByRole('button', { name: /try again/i })).toBeNull());
     expect(changePoLines).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Owner, 13 Nov 18:55: "1 button is like link po then they can link or change link or unlink in the
+// popup". One grid, mode `manage`, titled "Link PO".
+describe('Link PO popup (mode manage)', () => {
+  const MANAGE_CAPS: PoLinkCapabilities = {
+    split_link: { enabled: true, reason: null },
+    link_row: { enabled: false, reason: null },
+    unlink_row: { enabled: true, reason: null },
+    relink_row: { enabled: false, reason: null },
+  };
+  const linked = (id: string, so: string, poId: string, poNo: string, qty: number, over: Partial<SnapshotLine> = {}) =>
+    soLine({
+      sales_order_line_id: id, so_number: so, open_qty: qty,
+      now: {
+        so_status: 'open', open_qty: qty,
+        po_links: [{ po_line_id: poId, po_number: poNo, po_line_no: 1, qty, open_qty: qty, location_code: 'MWH-BB' }],
+      },
+      ...over,
+    });
+
+  function renderManage(lines: SnapshotLine[], caps: PoLinkCapabilities = MANAGE_CAPS) {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <PoLinkDialog
+          mode={'manage' as never}
+          target={snapshotPoLinkTarget('snap', 'row')}
+          lines={lines}
+          allLines={lines}
+          capabilities={caps}
+          poLines={PO_LINES}
+          soBooks={{ 'sol-1': 'DB3', 'sol-2': 'DB3', 'sol-c': 'DB3', 'sol-p': 'DB3' }}
+          onClose={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+    return screen.getByTestId('po-link-dialog');
+  }
+  const rowOf = (dialog: HTMLElement, text: string) =>
+    within(dialog).getAllByRole('row').find((row) => (row.textContent ?? '').includes(text)) as HTMLElement;
+  const picker = (row: HTMLElement) => within(row).getAllByRole('combobox').slice(-2)[0] as HTMLSelectElement;
+  const optionNamed = (select: HTMLSelectElement, pattern: RegExp) =>
+    [...select.options].find((o) => pattern.test(o.textContent ?? '')) as HTMLOptionElement;
+  function choose(select: HTMLSelectElement, pattern: RegExp) {
+    fireEvent.change(select, { target: { value: optionNamed(select, pattern).value } });
+  }
+
+  it('is titled Link PO and has the columns tick, Sales order, Location, Delivery date, Outstanding, PO, Action', () => {
+    const dialog = renderManage([linked('sol-1', 'SO425045', 'po-7', '202610-S0007', 120)]);
+    expect(within(dialog).getByText('Link PO')).toBeInTheDocument();
+    const headers = within(dialog).getAllByRole('columnheader').map((cell) => (cell.textContent ?? '').trim());
+    expect(headers.slice(1)).toEqual(['Sales order', 'Location', 'Delivery date', 'Outstanding', 'PO', 'Action']);
+  });
+
+  it('one row per (SO line, linked PO line) plus a new row for a line that still needs qty or has no PO', () => {
+    const partly = linked('sol-1', 'SO425045', 'po-7', '202610-S0007', 60, {
+      now: { so_status: 'open', open_qty: 120, po_links: [{ po_line_id: 'po-7', po_number: '202610-S0007', po_line_no: 1, qty: 60, open_qty: 60, location_code: 'MWH-BB' }] },
+    });
+    const full = linked('sol-2', 'SO425046', 'po-live', '202609-S0064', 120);
+    const bare = soLine({ sales_order_line_id: 'sol-c', so_number: 'SO425047' });
+    const dialog = renderManage([partly, full, bare]);
+    const bodyRows = within(dialog).getAllByRole('row').slice(1);
+    // partly covered: linked row + new row; fully covered: one row; no PO: one new row.
+    expect(bodyRows).toHaveLength(4);
+    expect(bodyRows.filter((r) => (r.textContent ?? '').includes('SO425045'))).toHaveLength(2);
+    expect(bodyRows.filter((r) => (r.textContent ?? '').includes('SO425046'))).toHaveLength(1);
+    expect(bodyRows.filter((r) => (r.textContent ?? '').includes('SO425047'))).toHaveLength(1);
+  });
+
+  it('a linked row offers Keep (default), Unlink and Change to each open PO line except the current one', () => {
+    const dialog = renderManage([linked('sol-1', 'SO425045', 'po-7', '202610-S0007', 120)]);
+    const select = picker(rowOf(dialog, '202610-S0007'));
+    const labels = [...select.options].map((o) => (o.textContent ?? '').trim());
+    expect(labels[0]).toBe('Keep');
+    expect(select.value).toBe(select.options[0].value);
+    expect(labels).toContain('Unlink');
+    expect(labels.some((l) => /^Change to 202609-S0029/.test(l))).toBe(true);
+    expect(labels.some((l) => /^Change to 202609-S0064/.test(l))).toBe(true);
+    expect(labels.some((l) => /202610-S0007/.test(l))).toBe(false);
+  });
+
+  it('Save (n) sends unlink, then change (with from_po_line_id), then link; Keep rows are not sent', async () => {
+    unlinkPoLines.mockResolvedValue({ results: [result({ action: 'unlink', po_number: '202610-S0007', po_line_id: 'po-7' })] });
+    changePoLines.mockResolvedValue({ results: [result({ sales_order_line_id: 'sol-2', action: 'unlink' }), result({ sales_order_line_id: 'sol-2', action: 'link' })] });
+    linkPoLines.mockResolvedValue({ results: [result({ sales_order_line_id: 'sol-c', qty: 40 })] });
+    const keep = linked('sol-p', 'SO425044', 'po-live', '202609-S0064', 120);
+    const dialog = renderManage([
+      linked('sol-1', 'SO425045', 'po-7', '202610-S0007', 120),
+      linked('sol-2', 'SO425046', 'po-live', '202609-S0064', 120),
+      soLine({ sales_order_line_id: 'sol-c', so_number: 'SO425047', open_qty: 40, short_qty: 40 }),
+      keep,
+    ]);
+    choose(picker(rowOf(dialog, 'SO425045')), /^Unlink$/);
+    choose(picker(rowOf(dialog, 'SO425046')), /^Change to 202609-S0029/);
+    const newRow = rowOf(dialog, 'SO425047');
+    fireEvent.change(newRow.querySelector('select') as HTMLSelectElement, { target: { value: 'po-3' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save (3)' }));
+    await waitFor(() => expect(linkPoLines).toHaveBeenCalled());
+    expect(unlinkPoLines).toHaveBeenCalledWith('snap', 'row', ['po-7']);
+    expect(changePoLines).toHaveBeenCalledWith('snap', 'row', [
+      { sales_order_line_id: 'sol-2', po_line_id: 'po-3', from_po_line_id: 'po-live' },
+    ]);
+    expect(linkPoLines).toHaveBeenCalledWith('snap', 'row', [
+      { sales_order_line_id: 'sol-c', po_line_id: 'po-3', qty: 40 },
+    ]);
+    const order = [unlinkPoLines, changePoLines, linkPoLines].map((fn) => fn.mock.invocationCallOrder[0]);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+  });
+
+  it('with nothing changed the main button has nothing to save', () => {
+    const dialog = renderManage([linked('sol-1', 'SO425045', 'po-7', '202610-S0007', 120)]);
+    const save = within(dialog).getByRole('button', { name: /^Save/ });
+    expect(save).toBeDisabled();
+  });
+
+  it('shows every answer in one list in plain words, with Try again on a refusal', async () => {
+    unlinkPoLines.mockResolvedValue({ results: [result({ action: 'unlink', po_number: '202610-S0007', po_line_id: 'po-7' })] });
+    linkPoLines.mockResolvedValue({ results: [result({ sales_order_line_id: 'sol-c', outcome: 'refused', message: 'AutoCount said no.' })] });
+    const dialog = renderManage([
+      linked('sol-1', 'SO425045', 'po-7', '202610-S0007', 120),
+      soLine({ sales_order_line_id: 'sol-c', so_number: 'SO425047', open_qty: 40, short_qty: 40 }),
+    ]);
+    choose(picker(rowOf(dialog, 'SO425045')), /^Unlink$/);
+    fireEvent.change(rowOf(dialog, 'SO425047').querySelector('select') as HTMLSelectElement, { target: { value: 'po-3' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save (2)' }));
+    const cards = await within(dialog).findAllByTestId('po-link-result');
+    expect(cards.map((c) => c.textContent)).toEqual([
+      expect.stringContaining('Unlinked'),
+      expect.stringContaining('Not linked'),
+    ]);
+    expect(within(cards[1]).getByRole('button', { name: /try again/i })).toBeInTheDocument();
+  });
+
+  it('an Action option AutoCount cannot do is disabled with its reason', () => {
+    const caps = {
+      ...MANAGE_CAPS,
+      unlink_row: { enabled: false, reason: 'Waiting for AutoCount' },
+      split_link: { enabled: false, reason: 'Switched off here' },
+    };
+    const dialog = renderManage([linked('sol-1', 'SO425045', 'po-7', '202610-S0007', 120)], caps);
+    const select = picker(rowOf(dialog, '202610-S0007'));
+    const unlink = optionNamed(select, /^Unlink/);
+    expect(unlink.disabled).toBe(true);
+    expect(`${unlink.title} ${unlink.textContent}`).toContain('Waiting for AutoCount');
+    const change = optionNamed(select, /^Change to/);
+    expect(change.disabled).toBe(true);
+    expect(`${change.title} ${change.textContent}`).toContain('Switched off here');
   });
 });

@@ -263,14 +263,15 @@ beforeEach(() => {
 });
 
 describe('AC-12 the PO link items in the Actions menu', () => {
-  it('shows Link to PO, Change PO and Unlink from PO with the ticked count when the switch is on and the grant is held', async () => {
+  it('shows ONE Link PO... (n) with the ticked count, and none of Link to PO / Change PO / Unlink from PO (owner, 13 Nov 18:55)', async () => {
     await ready();
     tick('SO-P1');
     tick('SO-P2');
     openActionsMenu();
-    expect(await screen.findByRole('menuitem', { name: /^Link to PO\.\.\. \(\d+( of \d+)?\)$/ })).toBeInTheDocument();
-    expect(screen.getByRole('menuitem', { name: /^Change PO\.\.\. \(\d+( of \d+)?\)$/ })).toBeInTheDocument();
-    expect(screen.getByRole('menuitem', { name: /^Unlink from PO\.\.\. \(\d+( of \d+)?\)$/ })).toBeInTheDocument();
+    expect(await screen.findByRole('menuitem', { name: /^Link PO\.\.\. \(\d+( of \d+)?\)$/ })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: /^Link to PO/ })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: /^Change PO/ })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: /^Unlink from PO/ })).toBeNull();
   });
 
   it('with the switch off: Link to PO... stays (CRM fallback), Change PO and Unlink from PO are gone', async () => {
@@ -279,7 +280,7 @@ describe('AC-12 the PO link items in the Actions menu', () => {
     tick('SO-P1');
     openActionsMenu();
     await screen.findByRole('menuitem', { name: /Auto link all/ });
-    expect(screen.getByRole('menuitem', { name: /^Link to PO/ })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: /^Link PO/ })).toBeInTheDocument();
     expect(screen.queryByRole('menuitem', { name: /^Change PO/ })).toBeNull();
     expect(screen.queryByRole('menuitem', { name: /^Unlink from PO/ })).toBeNull();
   });
@@ -290,7 +291,7 @@ describe('AC-12 the PO link items in the Actions menu', () => {
     tick('SO-P1');
     openActionsMenu();
     await screen.findByRole('menuitem', { name: /Auto link all/ });
-    expect(screen.getByRole('menuitem', { name: /^Link to PO/ })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: /^Link PO/ })).toBeInTheDocument();
     expect(screen.queryByRole('menuitem', { name: /^Change PO/ })).toBeNull();
   });
 });
@@ -313,24 +314,24 @@ describe('AC-12 / AC-14 picking Link to PO opens the shared dialog', () => {
     tick('SO-P1');
     tick('SO-P2');
     openActionsMenu();
-    fireEvent.click(await screen.findByRole('menuitem', { name: /^Link to PO\.\.\./ }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: /^Link PO\.\.\./ }));
     const dialog = await screen.findByRole('dialog');
-    expect(within(dialog).getByText('Link to PO')).toBeInTheDocument();
+    expect(within(dialog).getByText('Link PO')).toBeInTheDocument();
     await waitFor(() => expect(optionsSpy).toHaveBeenCalled());
     expect(optionsSpy.mock.calls[0]).toContain(true);
   });
 });
 
 describe('Right-click a row: the row actions are there', () => {
-  it('opens a menu with the three PO link items for that row, and Link to PO asks options for that row only', async () => {
+  it('opens a menu with only Link PO... for that row, which asks options for that row only', async () => {
     await ready();
     fireEvent.contextMenu(screen.getByText('SO-P2'));
-    const link = await screen.findByRole('menuitem', { name: /^Link to PO\.\.\./ });
-    expect(screen.getByRole('menuitem', { name: /^Change PO\.\.\./ })).toBeInTheDocument();
-    expect(screen.getByRole('menuitem', { name: /^Unlink from PO\.\.\./ })).toBeInTheDocument();
+    const link = await screen.findByRole('menuitem', { name: /^Link PO\.\.\./ });
+    expect(screen.queryByRole('menuitem', { name: /^Change PO/ })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: /^Unlink from PO/ })).toBeNull();
     fireEvent.click(link);
     const dialog = await screen.findByRole('dialog');
-    expect(within(dialog).getByText('Link to PO')).toBeInTheDocument();
+    expect(within(dialog).getByText('Link PO')).toBeInTheDocument();
     await waitFor(() => expect(optionsSpy).toHaveBeenCalled());
     const key = JSON.stringify((optionsSpy.mock.calls[0][0] as { key: unknown }).key);
     expect(key).toContain('row-p2');
@@ -338,12 +339,11 @@ describe('Right-click a row: the row actions are there', () => {
     expect(key).not.toContain('row-p3');
   });
 
-  it('shows no PO link menu on right-click when the switch is off', async () => {
+  it('with the switch off, right-click shows no Change PO / Unlink from PO', async () => {
     poLinkSwitchOn = false;
     await ready();
     fireEvent.contextMenu(screen.getByText('SO-P2'));
     await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(screen.queryByRole('menuitem', { name: /^Link to PO/ })).toBeNull();
     expect(screen.queryByRole('menuitem', { name: /^Change PO/ })).toBeNull();
     expect(screen.queryByRole('menuitem', { name: /^Unlink from PO/ })).toBeNull();
   });
@@ -363,8 +363,7 @@ describe('AC-12 the count says how many ticked rows are in AutoCount', () => {
     tick('SO-P2');
     tick('SO-P3');
     openActionsMenu();
-    expect(await screen.findByRole('menuitem', { name: 'Link to PO... (2 of 3)' })).toBeInTheDocument();
-    expect(screen.getByRole('menuitem', { name: 'Unlink from PO... (2 of 3)' })).toBeInTheDocument();
+    expect(await screen.findByRole('menuitem', { name: 'Link PO... (2 of 3)' })).toBeInTheDocument();
   });
 
   it('falls back to the CRM placement (enabled, plain count) when the one ticked row is not in AutoCount', async () => {
@@ -374,7 +373,7 @@ describe('AC-12 the count says how many ticked rows are in AutoCount', () => {
     await ready();
     tick('SO-P1');
     openActionsMenu();
-    const item = await screen.findByRole('menuitem', { name: 'Link to PO... (1)' });
+    const item = await screen.findByRole('menuitem', { name: 'Link PO... (1)' });
     expect(item).not.toHaveAttribute('aria-disabled', 'true');
   });
 });
@@ -399,7 +398,7 @@ describe('Link to PO... without AutoCount falls back to the CRM placement dialog
     openActionsMenu();
     await screen.findByRole('menuitem', { name: /Auto link all/ });
     expect(screen.queryByRole('menuitem', { name: /^Choose document/ })).toBeNull();
-    fireEvent.click(screen.getByRole('menuitem', { name: /^Link to PO\.\.\./ }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /^Link PO\.\.\./ }));
     expect(await screen.findByText('Link to a document')).toBeInTheDocument();
     expect(await screen.findByText('ZZT-PO-0001')).toBeInTheDocument();
     expect(screen.queryByText('ZZT-SPO-0009')).toBeNull();
@@ -424,7 +423,7 @@ describe('Link to PO... for a user without the OI action grant (review finding)'
     await ready();
     tick('SO-P1');
     openActionsMenu();
-    const item = await screen.findByRole('menuitem', { name: /^Link to PO\.\.\./ }).catch(() => null);
+    const item = await screen.findByRole('menuitem', { name: /^Link PO\.\.\./ }).catch(() => null);
     if (item) {
       expect(item).toHaveAttribute('aria-disabled', 'true');
       fireEvent.click(item);
