@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from tests.chatbot.agent.test_agent_bulk_grant import (  # noqa: F401  (fixtures are used by name)
     BATCH,
+    EDIT,
     GRANT,
     _listeners,
     db,
@@ -99,7 +100,7 @@ def test_owner_turn_as_typed_keeps_each_found_contacts_current_role_on_one_card(
     """Crew 06:42: "mocha" is the company (voice typing kept it). Each found contact already an Employee keeps that
     role (read from the record, not guessed): ONE card, company Mocha from the message."""
     w = make_world(db)
-    found = [dealer(db, w, name=f"ZZT Has Role {i}", customers=[w.cust_a]) for i in range(3)]
+    found = [dealer(db, w, name=f"ZZT Has Role {i}", customers=[w.cust_b]) for i in range(3)]
     rows = [_unsaid(c, i) for i, c in enumerate(found, 1)]
     result, _ = screenshot_turn(db, w, [_batch(rows), answer_("Done.")])
     assert_plain(result.reply_text)
@@ -287,3 +288,81 @@ def test_a_single_grant_card_person_does_not_return_on_a_picture_turn(db):
     result, _ = screenshot_turn(db, w, [_batch(rows), answer_("Done.")], text_="Please grant them Mocha access")
     assert result.pending_action is not None, result.reply_text
     assert new.name in result.reply_text and earlier.name not in result.reply_text, result.reply_text
+
+
+# ------------------------------------------------------------------ security review of the crew decision
+
+
+def _bare(c, n, companies=("MCH",), **extra):
+    """A row as read from a screenshot with no name cell: nothing the user typed names the person."""
+    return {"phone": local(c.phone_number), "role": "unknown", "companies": list(companies), "row": n, **extra}
+
+
+def test_an_own_scope_user_never_learns_a_strangers_name_or_level_from_the_company_question(db):
+    """B1: an edit_own user, another salesperson's contact, no company: the old refusal, no name, and the same reply
+    whether or not the person holds dealer access anywhere."""
+    from tests.chatbot.agent.test_dealer_access_agent import own_world
+
+    o = own_world(db)
+    with_level = dealer(db, o.w, name="ZZT Secret Person", customers=[o.theirs])
+    without = dealer(db, o.w, name="ZZT Hidden Nobody")
+    replies = []
+    for c in (with_level, without):
+        result, _ = screenshot_turn(db, o.w, [_batch([_bare(c, 1, companies=())]), answer_("Done.")],
+                                    text_="Please grant them access to the chatbot")
+        assert c.name not in result.reply_text, result.reply_text
+        assert result.pending_action is None
+        replies.append(result.reply_text.replace(c.phone_number, "<phone>"))
+    assert replies[0] == replies[1], replies
+
+
+def test_an_own_scope_user_never_learns_a_strangers_name_or_level_from_the_role_question(db):
+    """B1: company and the user's own account named, no role, a contact linked only to someone else's account (or to
+    nobody): asked by phone, never by stored name, the same for both."""
+    from tests.chatbot.agent.test_dealer_access_agent import own_world
+
+    o = own_world(db)
+    with_level = dealer(db, o.w, name="ZZT Secret Level", customers=[o.theirs_m])
+    without = dealer(db, o.w, name="ZZT No Level")
+    replies = []
+    for c in (with_level, without):
+        row = _bare(c, 1, customer_codes=[o.w.cust_b.customer_code])
+        result, _ = screenshot_turn(db, o.w, [_batch([row]), answer_("Done.")], text_="grant them mocha access")
+        assert c.name not in result.reply_text, result.reply_text
+        replies.append(result.reply_text.replace(c.phone_number, "<phone>").replace(local(c.phone_number), "<phone>"))
+    assert replies[0] == replies[1], replies
+
+
+def test_a_staff_number_is_refused_before_any_question(db):
+    """S2: a row a later check refuses is never asked about."""
+    from app.models.user import User
+
+    w = make_world(db)
+    staff = dealer(db, w, name="ZZT Staff Contact")
+    db.query(User).filter(User.id == w.user_id).update({"respond_contact_id": staff.id})
+    db.commit()
+    result, _ = screenshot_turn(db, w, [_batch([_bare(staff, 1)]), answer_("Done.")], text_="grant them mocha access")
+    assert "Owner or employee" not in result.reply_text, result.reply_text
+    assert "staff member" in result.reply_text, result.reply_text
+
+
+def test_a_level_in_a_company_the_user_is_not_granted_is_never_used(db):
+    """S1: a Mocha-only user; the contact is an Employee at Sorento only. The role is asked, not read from Sorento."""
+    from app.models.company import UserCompany
+
+    w = make_world(db, slugs=(EDIT,), superadmin=False)
+    db.query(UserCompany).filter(UserCompany.user_id == w.user_id, UserCompany.company_id == w.srt).delete()
+    db.commit()
+    c = dealer(db, w, name="ZZT Sorento Only", customers=[w.cust_a])
+    result, _ = screenshot_turn(db, w, [_batch([_unsaid(c, 1)]), answer_("Done.")])
+    assert "their current role" not in result.reply_text, result.reply_text
+    assert result.reply_text.strip() == f"Owner or employee for {c.name}?", result.reply_text
+
+
+def test_a_level_from_the_other_company_is_named_as_such_on_the_card(db):
+    """S1 wording: a Sorento Employee given Mocha: the card says the role comes from Sorento, not 'current role'."""
+    w = make_world(db)
+    c = dealer(db, w, name="ZZT Srt Employee", customers=[w.cust_a])
+    result, _ = screenshot_turn(db, w, [_batch([_unsaid(c, 1)]), answer_("Done.")])
+    assert result.pending_action is not None, result.reply_text
+    assert "Employee (Mocha), as at Sorento" in result.reply_text, result.reply_text
