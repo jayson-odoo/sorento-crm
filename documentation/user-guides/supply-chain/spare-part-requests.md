@@ -6,18 +6,19 @@ A spare part request is not customer demand. It does not change committed stock 
 
 ## Raise a request (requester)
 
-You need the spare part request permission for the menu item to show.
+The menu item shows when you have the spare part request permission, or project view access (approvers use it to find the requests waiting for them).
 
 1. Open **Procurement > Supply Chain > Spare Part Requests**.
 2. Click **Create**. The page opens as **New Spare Part Request**.
 3. In the **Request** section, choose the **Currency** (required). Optionally set **Needed by**, a **Default location** and a **Reason**.
 4. In the **Products** section, search for a product by code or name (for example ZZX-100). Only products from the catalogue can be added.
-5. Check the **Location** on the line. It starts from the default location and can differ per line.
-6. Enter **Qty** and **Unit price**. The line **Total** and the request total are worked out for you, in the request currency.
-7. Click **Add product** for more lines. The bin icon removes a line.
-8. Click the arrow at the start of a line to see the stock for that product. It is information only and never limits the quantity you ask for.
-9. After the request is saved once, each line has a paperclip for photos. Use it to attach pictures of the part.
-10. Click **Save as draft** to keep working later, or **Submit** to send it for approval.
+5. The **Description** starts as the product's name; change it if purchasing needs more detail. Purchasing sees your description on the line.
+6. Check the **Location** on the line. It starts from the default location and can differ per line.
+7. Enter **Qty** and **Unit price**. The line **Total** and the request total are worked out for you, in the request currency.
+8. Click **Add product** for more lines. The bin icon removes a line.
+9. Click the arrow at the start of a line to see the stock for that product. It is information only and never limits the quantity you ask for.
+10. Each line with a product has a paperclip for photos, also on a new request. Photos added before the first save are uploaded when you save.
+11. Click **Save as draft** to keep working later, or **Submit** to send it for approval. Either way you land on the request's own page.
 
 On **Submit** the page tells you next to the field what is missing: the currency, at least one product, a quantity above 0 on every line, a price that is not negative, and a location. If no approval level has been set up yet, the request is refused with a plain message; ask your admin (see "Set up the approval levels" below).
 
@@ -26,6 +27,7 @@ On **Submit** the page tells you next to the field what is missing: the currency
 * A draft has **Delete draft**, **Edit** and **Submit** at the top of its page. **Edit** opens the same form as **Create**.
 * **Delete draft** starts a countdown with a **Cancel** button. Cancel inside the window and nothing is deleted. Otherwise the draft is removed when the countdown ends, even if you close the tab.
 * A rejected request can be edited and submitted again in the same way.
+* While a request is waiting for approval you can still **Edit** it. Saving sends it back to level 1, and **History** records the change.
 
 ## Set up the approval levels (admin)
 
@@ -33,10 +35,10 @@ Approval levels are set on **SLA Management > Form SLA Configuration**, using th
 
 ## Approve or reject (approver)
 
-The approver team of the current level is notified. Open the request on the **Order Inquiries** page and go to the **Lines** tab.
+The approver team of the current level is notified; the notification opens the request. You can also open it from **Procurement > Supply Chain > Spare Part Requests**, which lists the requests waiting for you. The request page has **Lines**, **General** and **History** tabs and the previous / next arrows. Go to the **Lines** tab.
 
 1. Where needed, change the **Qty** (0 drops the line), the **Unit price**, or add or remove photos. You cannot add or remove lines.
-2. A value you changed shows what the requester submitted, for example "was 10", next to it.
+2. A value you changed shows what the requester submitted, for example "was 10", under it.
 3. Click **Approve**. A popup titled with the request number lists **Your changes**, with an optional **Note**. Click **Approve** again to confirm, or **Back** to leave.
 4. To send it back, click **Reject**. A **Reason** is required. The requester edits it and submits again, starting from level 1.
 
@@ -56,7 +58,7 @@ Until purchasing acknowledges a line, the request has a **Revise** button. It go
 
 ## Who sees prices
 
-Unit price and total are visible to the requester, the approvers and users with cost access. Everyone else does not see them, including in the **History** tab.
+Unit price and total are visible to the requester, the approvers (also after they have approved) and users with cost access. Everyone else does not see them, including in the **History** tab.
 
 ## History
 
