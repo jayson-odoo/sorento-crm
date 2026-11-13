@@ -66,7 +66,7 @@ from app.models.product import Brand, ItemClass, Product, ProductCategory, UnitO
 from app.models.product_companion import ProductCompanionRule
 from app.models.product_set import ProductSet
 from app.models.project_so import OrderInquiryReserveRequest, OrderInquiryRow, ProjectSalesOrder
-from app.models.projects import ProjectPartyContact
+from app.models.projects import NonCancellableRule, ProjectPartyContact
 from app.models.resources import Attachment, AttachmentDirectory
 from app.models.sales import SalesOpportunity, SalesPointRatio, SalesTarget, SalesTeam, SetApartCustomer
 from app.models.saved_view import SavedView
@@ -426,6 +426,8 @@ _PARK_SCOPED_MODELS: dict = {
     "item_class.delete": ItemClass,
     "loading_plan.cancel": LoadingPlan,
     "loading_plan.delete": LoadingPlan,
+    # NON-CANCELLABLE-ITEMS: a company default rule is company scoped (uuid id).
+    "non_cancellable_rule.delete": NonCancellableRule,
     "onboarding_request.delete": OnboardingRequest,
     "order.delete": Order,
     "order.set_status": Order,
