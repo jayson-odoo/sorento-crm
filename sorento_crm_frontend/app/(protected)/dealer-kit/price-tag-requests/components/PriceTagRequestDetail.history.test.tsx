@@ -104,6 +104,7 @@ vi.mock('../../services/priceTagDataService', () => ({
 }));
 
 import {
+  claimPriceTagRequest,
   getPriceTagRequest,
   listPriceTagRequests,
   type PriceTagRequestDetail as PriceTagRequestDetailType,
@@ -112,6 +113,7 @@ import PriceTagRequestDetail from './PriceTagRequestDetail';
 
 const mockGet = vi.mocked(getPriceTagRequest);
 const mockList = vi.mocked(listPriceTagRequests);
+const mockClaim = vi.mocked(claimPriceTagRequest);
 
 const EVENTS: RecordHistoryEvent[] = [
   {
@@ -268,6 +270,22 @@ describe('PriceTagRequestDetail History tab (STANDARD-HISTORY wave 5)', () => {
     expect(
       await screen.findByText('Revised, revision 1: ZZT dealer changed the qty'),
     ).toBeInTheDocument();
+    await waitFor(() => expect(historyCalls().length).toBeGreaterThan(before));
+  });
+  it('a header action (Claim) with the History tab open reads the history again', async () => {
+    // AC-W5-6 (review round 1): the claim re-reads the request, and the tab must follow.
+    mockGet.mockResolvedValue(requestWith({ status: 'new', assigned_to_id: null, assigned_to_name: null }));
+    mockClaim.mockResolvedValue(undefined as never);
+    renderDetail();
+    await loaded();
+    switchTab('History');
+    expect(await screen.findByText('Status: Design Ready → Approved')).toBeInTheDocument();
+    const before = historyCalls().length;
+
+    mockGet.mockResolvedValue(requestWith({ status: 'designing' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Claim' }));
+
+    await waitFor(() => expect(mockClaim).toHaveBeenCalledWith('req-1'));
     await waitFor(() => expect(historyCalls().length).toBeGreaterThan(before));
   });
 });

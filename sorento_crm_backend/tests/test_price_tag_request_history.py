@@ -194,13 +194,13 @@ def _audit(db, world: World, *, at: datetime, entity_type: str = "price_tag_requ
     return row
 
 
-def _snapshot(world: World, *, notes: str, quantity: int) -> dict:
+def _snapshot(world: World, *, notes: str | None, quantity: int, needed_by: str | None = None) -> dict:
     """A price tag revision snapshot, in the shape `_serialize_price_tag_lines` writes."""
     return {
         "debtor_code": None,
         "debtor_name": "ZZT Dealer",
         "customers": None,
-        "needed_by_date": None,
+        "needed_by_date": needed_by,
         "notes": notes,
         "price_mode": "list",
         "doc_number": world.request.doc_number,
@@ -345,8 +345,8 @@ def test_every_event_kind_reads_its_title_and_actor_newest_first():
             ("assigned", "Unassigned", STAFF_NAME),
             ("changes_requested", "Changes requested: 2 comments", CONTACT_NAME),
             ("design_saved", "Design saved, version 2: ZZT moved the logo", DESIGNER_NAME),
-            ("resubmitted", "Resubmitted", CONTACT_NAME),
-            ("revised", "Revised, revision 1: ZZT dealer changed the qty", CONTACT_NAME),
+            ("resubmitted", "Appealed: ZZT office asked for a fix", CONTACT_NAME),
+            ("revised", "Edit 1: ZZT dealer changed the qty", CONTACT_NAME),
             ("changes_requested", "Changes requested: 3 comments", CONTACT_NAME),
             ("status_changed", "Status: Designing → Design Ready", DESIGNER_NAME),
             ("design_saved", "Design saved, version 1", DESIGNER_NAME),
@@ -472,6 +472,75 @@ def test_revision_lines_match_list_revisions_exactly():
         assert [_rendered(line) for line in revised["lines"]] == expected
 
 
+def test_revision_titles_are_list_revisions_own_labels():
+    """AC-W5-3 (review round 1, owner 11 Nov): original "Submitted"; a price tag revision
+    "Edit N", a resubmission "Appealed", each + ": <reason>" when given - `list_revisions`'
+    own `label` (`_revision_label`), so the portal and CRM tabs name the event the same."""
+    from app.services.portal_revision_service import PortalRevisionService
+
+    with blank_session() as db:
+        world = _world(db)
+        snap = _snapshot(world, notes="ZZT first note", quantity=2)
+        _revision(db, world, version_no=1, revision_no=0, kind="original", at=T_SUBMITTED, snapshot=snap)
+        _revision(db, world, version_no=2, revision_no=1, kind="revision", at=T_REVISED, snapshot=snap)
+        _revision(db, world, version_no=3, revision_no=1, kind="resubmission", at=T_RESUBMITTED,
+                  snapshot=snap)
+        _revision(db, world, version_no=4, revision_no=2, kind="revision", at=T_UNASSIGNED,
+                  snapshot=snap, reason="ZZT second edit")
+        _revision(db, world, version_no=5, revision_no=2, kind="resubmission", at=T_APPROVED,
+                  snapshot=snap, reason="ZZT answering the office")
+        db.commit()
+        revisions = PortalRevisionService(db).list_revisions("price_tag_request", world.request.id)
+        expected = ["Submitted"] + [
+            f"{r['label']}: {r['reason']}" if r.get("reason") else r["label"] for r in revisions[1:]
+        ]
+        assert expected == [
+            "Submitted", "Edit 1", "Appealed", "Edit 2: ZZT second edit",
+            "Appealed: ZZT answering the office",
+        ]
+        events = _events(db, world)
+        assert [e["title"] for e in reversed(events)] == expected
+
+
+def test_a_date_inside_a_revision_line_reads_dd_mm_yyyy():
+    """AC-W5-3 (review round 1): a date value reads dd/mm/yyyy (`_format_display_date`)."""
+    with blank_session() as db:
+        world = _world(db)
+        _revision(db, world, version_no=1, revision_no=0, kind="original", at=T_SUBMITTED,
+                  snapshot=_snapshot(world, notes="ZZT note", quantity=2, needed_by="2026-11-05"))
+        _revision(db, world, version_no=2, revision_no=1, kind="revision", at=T_REVISED,
+                  snapshot=_snapshot(world, notes="ZZT note", quantity=2, needed_by="2026-11-12"))
+        db.commit()
+        revised = next(e for e in _events(db, world) if e["kind"] == "revised")
+        assert [_rendered(line) for line in revised["lines"]] == ["Need by: 05/11/2026 → 12/11/2026"]
+
+
+def test_a_field_set_from_empty_or_cleared_reads_a_dash_on_the_empty_side():
+    """AC-W5-3 (review round 1): "Notes: - → ZZT note", "Notes: ZZT note → -" (None and "" are
+    both empty); an added / removed product line keeps its one side (the test below)."""
+    with blank_session() as db:
+        world = _world(db)
+        _revision(db, world, version_no=1, revision_no=0, kind="original", at=T_SUBMITTED,
+                  snapshot=_snapshot(world, notes=None, quantity=2))
+        _revision(db, world, version_no=2, revision_no=1, kind="revision", at=T_REVISED,
+                  snapshot=_snapshot(world, notes="ZZT note", quantity=2))
+        _revision(db, world, version_no=3, revision_no=2, kind="revision", at=T_UNASSIGNED,
+                  snapshot=_snapshot(world, notes="", quantity=2))
+        _revision(db, world, version_no=4, revision_no=3, kind="revision", at=T_PRINT_SELF,
+                  snapshot=_snapshot(world, notes="ZZT again", quantity=2))
+        _revision(db, world, version_no=5, revision_no=4, kind="revision", at=T_APPROVED,
+                  snapshot=_snapshot(world, notes=None, quantity=2))
+        db.commit()
+        # Oldest first, by kind, so this case does not lean on the titles.
+        edits = [e for e in reversed(_events(db, world)) if e["kind"] == "revised"]
+        assert [[_rendered(line) for line in e["lines"]] for e in edits] == [
+            ["Notes: - → ZZT note"],
+            ["Notes: ZZT note → -"],
+            ["Notes: - → ZZT again"],
+            ["Notes: ZZT again → -"],
+        ]
+
+
 def test_an_added_and_a_removed_product_line_read_with_one_side_only():
     """AC-W5-3: an added line reads "<label>: <to>", a removed one "<label>: <from>"."""
     with blank_session() as db:
@@ -486,8 +555,8 @@ def test_an_added_and_a_removed_product_line_read_with_one_side_only():
         db.commit()
         events = _events(db, world)
         added, removed = (
-            next(e for e in events if e["title"] == "Revised, revision 1"),
-            next(e for e in events if e["title"] == "Revised, revision 2: ZZT dropped the extra line"),
+            next(e for e in events if e["title"] == "Edit 1"),
+            next(e for e in events if e["title"] == "Edit 2: ZZT dropped the extra line"),
         )
         assert [_rendered(line) for line in added["lines"]] == [
             "Product line 2 added: (no item code) x3"
@@ -540,6 +609,34 @@ def test_counters_timestamps_and_line_or_tag_inserts_and_deletes_are_not_events(
         assert _events(db, world) == []
 
 
+def test_a_staff_note_is_not_a_change_request():
+    """AC-W5-3 (review round 1): only the salesperson's comments (`author_contact_id`) count;
+    a staff note (`author_user_id`, a D14 rejection note) is not counted, and a round holding
+    only staff notes is no changes_requested event."""
+    with blank_session() as db:
+        world = _world(db)
+
+        def staff_note(round_no: int, at: datetime) -> None:
+            db.add(PriceTagReviewComment(
+                id=_uid(), request_id=world.request.id, round=round_no, body="ZZT staff note",
+                author_user_id=world.staff.id, author_contact_id=None, company_id=SORENTO,
+                created_at=at,
+            ))
+            db.flush()
+
+        staff_note(1, T_ROUND1.replace(hour=0))  # earlier than the salesperson's own pins
+        _comments(db, world, round_no=1, count=2, first_at=T_ROUND1)
+        staff_note(2, T_ROUND2)
+        staff_note(2, T_ROUND2.replace(minute=5))
+        db.commit()
+
+        rounds = [e for e in _events(db, world) if e["kind"] == "changes_requested"]
+        assert [(e["title"], e["actor"]) for e in rounds] == [
+            ("Changes requested: 2 comments", CONTACT_NAME)
+        ]
+        assert rounds[0]["at"].startswith("2026-11-06T01:00")
+
+
 def test_another_requests_rows_never_reach_this_tab():
     """AC-W5-3: only rows of THIS request (by root, comments and versions of its own page)."""
     with blank_session() as db:
@@ -576,6 +673,31 @@ def test_audit_actor_resolves_a_contact_actor_to_the_contacts_name():
                          old={"print_by": None}, new={"print_by": "office"})
         names = audit_actor(db, [by_contact, by_user])
         assert names == {by_contact.id: CONTACT_NAME, by_user.id: STAFF_NAME}
+
+
+def test_contact_names_is_one_function_shared_with_list_revisions(monkeypatch):
+    """Review round 1 reuse guard: `history_common.contact_names` and
+    `PortalRevisionService._contact_names` are ONE function - `list_revisions`' `submitted_by`
+    resolves through `history_common.contact_names`."""
+    from app.services import history_common
+    from app.services.portal_revision_service import PortalRevisionService
+
+    with blank_session() as db:
+        world = _world(db)
+        _revision(db, world, version_no=1, revision_no=0, kind="original", at=T_SUBMITTED,
+                  snapshot=_snapshot(world, notes="ZZT note", quantity=2))
+        db.commit()
+        seen: list = []
+
+        def fake(db_, ids):
+            ids = {str(i) for i in ids if i}
+            seen.append(ids)
+            return {i: "ZZT Through The Shared Helper" for i in ids}
+
+        monkeypatch.setattr(history_common, "contact_names", fake)
+        revisions = PortalRevisionService(db).list_revisions("price_tag_request", world.request.id)
+        assert revisions[0]["submitted_by"] == "ZZT Through The Shared Helper"
+        assert {world.contact.id} in seen
 
 
 def test_no_uuid_ip_user_agent_or_raw_audit_json_in_the_response():
