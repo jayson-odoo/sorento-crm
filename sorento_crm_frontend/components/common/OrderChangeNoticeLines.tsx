@@ -124,19 +124,22 @@ export function OrderChangeNoticeLines({
 
   return (
     <div>
+      {/* Fits the form card at 1280 (about 880 px) and scrolls inside this wrapper below it, the
+          page itself never scrolling sideways (SampleRequestLines). A date column holds
+          "DD/MM/YYYY" beside its 34 px calendar button: 10.5rem with the cell's padding. */}
       <div className="relative overflow-x-auto">
-        <table className="w-full min-w-[960px] table-fixed text-sm">
+        <table className="w-full min-w-[880px] table-fixed text-sm">
           <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
             <tr>
-              <th className="w-12 px-2 py-2 text-left">No.</th>
-              <th className="w-[24%] px-2 py-2 text-left">Item Code</th>
-              <th className="w-24 px-2 py-2 text-left">Qty before</th>
-              <th className="w-24 px-2 py-2 text-left">Qty after</th>
-              <th className="w-40 px-2 py-2 text-left">Date before</th>
-              <th className="w-40 px-2 py-2 text-left">Date after</th>
-              <th className="w-24 px-2 py-2 text-left">Delivered</th>
+              <th className="w-8 px-2 py-2 text-left">No.</th>
+              <th className="w-[18%] px-2 py-2 text-left">Item Code</th>
+              <th className="w-[4.5rem] px-2 py-2 text-left">Qty before</th>
+              <th className="w-[4.5rem] px-2 py-2 text-left">Qty after</th>
+              <th className="w-[10.5rem] px-2 py-2 text-left">Date before</th>
+              <th className="w-[10.5rem] px-2 py-2 text-left">Date after</th>
+              <th className="w-[4.5rem] px-2 py-2 text-left">Delivered</th>
               <th className="px-2 py-2 text-left">Remark</th>
-              <th className="w-10 px-2 py-2">
+              <th className="w-11 px-1 py-2">
                 <span className="sr-only">Remove</span>
               </th>
             </tr>
@@ -208,7 +211,7 @@ export function OrderChangeNoticeLines({
                     onChange={(e) => patchLine(line.key, { remark: e.target.value })}
                   />
                 </td>
-                <td className="px-2 py-2">
+                <td className="px-1 py-2">
                   {!disabled && (
                     <Button
                       type="button"
