@@ -7,6 +7,7 @@ import { CellStockTable } from '../../fulfilment-planning/components/CellStockTa
 import { useStockDetail } from '../hooks/useFulfilmentPlanning';
 import { useStockStatus } from '@/components/stock-status/useStockStatus';
 import { groupOfWarehouseCode } from '../lib/supplyVocabulary';
+import type { Warehouse } from '@/app/(protected)/inventory-management/warehouses/types/warehouse.types';
 
 /**
  * The board's own stock position, on the OI Lines tab and the reserve dialog/card
@@ -15,16 +16,23 @@ import { groupOfWarehouseCode } from '../lib/supplyVocabulary';
  * A thin wrapper, deliberately: `CellStockTable` already draws the matrix, the group
  * subtotal and the expandable documents panel (each row's own chevron opens
  * `StockDocumentsPanel` internally) - what this component adds is turning a ROW's
- * location CODE into the `group` or `warehouse_id` `stock-detail` wants, the same rule
- * the board's own cells resolve by (`group_of_warehouse_code`, spelled once and shared
- * as `groupOfWarehouseCode`).
+ * location CODE into the `group` or `warehouse_id` `stock-detail` wants.
  *
- * `BRW-BB` -> the ownership-group suffix `BB`. A bare pool code (`BRW`, no hyphen) names
- * no group - it IS a pool - so it resolves to ITS OWN `warehouse_id` first, via
- * `getWarehouses` (the only warehouse-list fetcher that carries `id`; `warehouseSelectService`
- * keys by CODE, which `stock-detail` cannot take). `useStockDetail`'s own `enabled` gate
- * stays off until that resolution lands, so no request goes out asking for neither a group
- * nor a warehouse (the route 422s on that).
+ * The location is resolved to its own warehouse row first, via `getWarehouses` (the only
+ * warehouse-list fetcher that carries `id`; `warehouseSelectService` keys by CODE, which
+ * `stock-detail` cannot take). Then (MOCHA-STOCK-GRID, crew ruling on #2381):
+ *
+ * - `BRW-BB`, a bin IN fulfilment planning, is read as its ownership group `BB`
+ *   (`groupOfWarehouseCode`). That is the backend's own membership rule: `group_netting`
+ *   (planning_only, which `stock-detail` uses) puts a bin in its suffix group only when the
+ *   bin is in fulfilment planning.
+ * - Any other location - a bare pool code (`BRW`), or a hyphenated bin that belongs to no
+ *   ownership group (`MOCHA-WH`, whose suffix is not a group) - is read as the LOCATION
+ *   itself, by its own `warehouse_id`. Asking for group `WH` there answered "no stock".
+ * - A code the warehouse list does not hold falls back to the suffix group, as before.
+ *
+ * `useStockDetail`'s own `enabled` gate stays off until that resolution lands, so no request
+ * goes out asking for neither a group nor a warehouse (the route 422s on that).
  *
  * Product is always the row's own id, never the item code string - two products share one
  * code on the live book (AC-RS-41).
@@ -40,23 +48,17 @@ export function OrderInquiryStockGrid({
   location: string | null;
   lineIds?: string[];
 }) {
-  const group = React.useMemo(
-    () => (location ? groupOfWarehouseCode(location) : null),
-    [location],
-  );
-  const isBarePoolCode = Boolean(location) && !group;
-
-  const [resolvedWarehouseId, setResolvedWarehouseId] = React.useState<string | null>(null);
-  const [resolving, setResolving] = React.useState(isBarePoolCode);
+  const [resolved, setResolved] = React.useState<{
+    location: string;
+    warehouse: Warehouse | null;
+  } | null>(null);
 
   React.useEffect(() => {
-    if (!isBarePoolCode || !location) {
-      setResolvedWarehouseId(null);
-      setResolving(false);
+    if (!location) {
+      setResolved(null);
       return;
     }
     let cancelled = false;
-    setResolving(true);
     getWarehouses({
       pageIndex: 0,
       // Nit (review round): `getWarehouses` has no exact-code param, and a text
@@ -74,26 +76,33 @@ export function OrderInquiryStockGrid({
         const match = (response.data ?? []).find(
           (warehouse) => warehouse.warehouse_code === location,
         );
-        setResolvedWarehouseId(match?.id ?? null);
+        setResolved({ location, warehouse: match ?? null });
       })
-      .finally(() => {
-        if (!cancelled) setResolving(false);
+      .catch(() => {
+        if (!cancelled) setResolved({ location, warehouse: null });
       });
     return () => {
       cancelled = true;
     };
-  }, [isBarePoolCode, location]);
+  }, [location]);
+
+  const resolving = Boolean(location) && resolved?.location !== location;
+  const warehouse = resolving ? null : (resolved?.warehouse ?? null);
+  const suffixGroup = location ? groupOfWarehouseCode(location) : null;
+  // A known bin is read by group only when it is a member of that group (in planning);
+  // an unknown code keeps the suffix rule it had before.
+  const group = warehouse ? (warehouse.fulfilment_planning ? suffixGroup : null) : suffixGroup;
+  const warehouseId = group ? null : (warehouse?.id ?? null);
 
   // STOCK-STATUS round 6 (UAC AC-35): AutoCount's figures in the same table; a failed read
   // leaves today's.
   const autoCount = useStockStatus(productId, Boolean(location));
-  const warehouseId = isBarePoolCode ? resolvedWarehouseId : null;
   const detail = useStockDetail(
     productId,
     warehouseId,
     lineIds,
     group,
-    !isBarePoolCode || Boolean(resolvedWarehouseId),
+    !resolving && Boolean(group || warehouseId),
   );
 
   // S1 fix round (22 Sep 2026): a `group` read tags every member location `where: "group"`
