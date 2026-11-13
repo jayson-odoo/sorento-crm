@@ -1,16 +1,17 @@
 /**
- * OCN-ORDER-CHANGE-NOTICE round 20 (scope change): the portal pages for Order Change Notice ship
- * in slice 2, so the portal landing's kind selector must NOT offer it even when it is in the
- * contact's visible kinds. (It joins LANDING_KINDS for the CRM, so the landing has to exclude it.)
- * Guard: green today, goes red if registering the kind leaks it into the landing.
+ * OCN-ORDER-CHANGE-NOTICE round 20 (UAC I6, review B1): the portal pages for Order Change Notice
+ * ship in slice 2, so the landing never offers it, even when it is in the contact's visible kinds
+ * and even when a `?type=order_change_notice` deep link names it. GUARD: green on HEAD; goes red
+ * when the PORTAL_PAGES_PENDING filter in PortalLanding.landingKindsFor is removed.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 
+let searchParams = new URLSearchParams('');
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
-  useSearchParams: () => new URLSearchParams(''),
+  useSearchParams: () => searchParams,
 }));
 vi.mock('../lib/portal-client', async (importOriginal) => {
   const original = await importOriginal<typeof import('../lib/portal-client')>();
@@ -23,7 +24,7 @@ vi.mock('../lib/portal-client', async (importOriginal) => {
   };
 });
 
-import { fetchMeWithGrace } from '../lib/portal-client';
+import { fetchMeWithGrace, fetchSubmissions } from '../lib/portal-client';
 import { PortalLanding } from './PortalLanding';
 
 function me(kinds: string[]) {
@@ -38,18 +39,39 @@ function me(kinds: string[]) {
   });
 }
 
+const askedForOcn = () =>
+  (fetchSubmissions as ReturnType<typeof vi.fn>).mock.calls.some((c) =>
+    JSON.stringify(c).includes('order_change_notice'),
+  );
+
 beforeEach(() => {
   vi.clearAllMocks();
   window.localStorage.clear();
+  searchParams = new URLSearchParams('');
 });
 
-describe('PortalLanding - Order Change Notice kind (slice 2 pages not shipped)', () => {
-  it('does not offer "Order Change Notice" even when it is a visible kind', async () => {
+describe('PortalLanding - Order Change Notice is never offered (slice 2 pages not shipped)', () => {
+  it('the kind selector lists the other visible kinds but not "Order Change Notice"', async () => {
+    me(['stock_inquiry', 'complaint', 'order_change_notice']);
+    render(<PortalLanding slug="contact-x" />);
+    const trigger = await screen.findByRole('combobox');
+    await waitFor(() => expect(fetchSubmissions).toHaveBeenCalled());
+    trigger.click();
+    expect((await screen.findAllByText('Complaint')).length).toBeGreaterThan(0);
+    expect(screen.queryByRole('option', { name: /Order Change Notice/i })).toBeNull();
+    expect(screen.queryByText('Order Change Notice')).toBeNull();
+    expect(screen.queryByText('order_change_notice')).toBeNull();
+    expect(askedForOcn()).toBe(false);
+  });
+
+  it('a ?type=order_change_notice deep link falls back to a visible kind: no notice list or form', async () => {
+    searchParams = new URLSearchParams('type=order_change_notice');
     me(['stock_inquiry', 'order_change_notice']);
     render(<PortalLanding slug="contact-x" />);
-    await waitFor(() => expect(fetchMeWithGrace).toHaveBeenCalled());
-    await screen.findAllByText('Stock Inquiry');
-    expect(screen.queryByText('Order Change Notice')).not.toBeInTheDocument();
-    expect(screen.queryByText('order_change_notice')).not.toBeInTheDocument();
+    await waitFor(() => expect(fetchSubmissions).toHaveBeenCalled());
+    expect((await screen.findAllByText('Stock Inquiry')).length).toBeGreaterThan(0);
+    expect(screen.queryByText('Order Change Notice')).toBeNull();
+    expect(screen.queryByRole('link', { name: /Order Change Notice/i })).toBeNull();
+    expect(askedForOcn()).toBe(false);
   });
 });

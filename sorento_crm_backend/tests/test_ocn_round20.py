@@ -435,3 +435,97 @@ def test_i10_history_reads_requested_by_old_to_new_with_names_never_ids(ocn, _au
     for contact_id in (a, b):
         assert contact_id not in blob
     assert "sales_in_charge" not in blob
+
+
+# ================================================================== round 20b (reviewer's report)
+
+from .test_ocn_amendment_link import _create as _amend, build  # noqa: E402,F401
+
+
+def _contact_row(db, name: str) -> str:
+    from app.models.access import RespondContact
+
+    row = RespondContact(id=str(uuid.uuid4()), phone_number=f"+6011{uuid.uuid4().hex[:8]}", name=name)
+    db.add(row)
+    db.flush()
+    return row.id
+
+
+def test_r20b_an_amendment_drafted_notice_defaults_requested_by_to_the_amending_users_contact(build):
+    """I8: the notice a sales order amendment drafts gets the amending user's linked contact."""
+    from app.models.project_so import OrderChangeNotice
+
+    b = build
+    mine = _contact_row(b.db, f"{REQUESTOR} Amender")
+    _link(b.db, b.owner, mine)
+    created = _amend(b)
+    row = b.db.query(OrderChangeNotice).filter(OrderChangeNotice.id == created["ocn_id"]).one()
+    assert row.requested_by_contact_id == mine
+    assert row.requested_by == _contact_name(b.db, mine)
+
+
+def test_r20b_an_amendment_drafted_notice_has_no_requestor_when_the_user_has_no_linked_contact(build):
+    """I8 guard: empty when the amending user has no linked contact."""
+    from app.models.project_so import OrderChangeNotice
+
+    created = _amend(build)
+    row = build.db.query(OrderChangeNotice).filter(OrderChangeNotice.id == created["ocn_id"]).one()
+    assert row.requested_by_contact_id is None
+
+
+@pytest.fixture
+def rs_client():
+    from app.database import get_db
+    from app.dependencies import get_current_user_or_api_key
+    from app.main import app
+
+    from ._pg_fixture import blank_session
+    from ._sample_request_seed import make_user
+
+    with blank_session() as db:
+        caller = make_user(db, "zzt-ocn caller")
+        state = {"user": caller}
+        app.dependency_overrides[get_db] = lambda: db
+        app.dependency_overrides[get_current_user_or_api_key] = lambda: {
+            "id": state["user"], "email": "staff@zzt.test",
+        }
+        try:
+            with TestClient(app) as c:
+                yield c, db, caller
+        finally:
+            app.dependency_overrides.clear()
+
+
+SELECT = "/api/v1/master-data/respond-contacts/requestor-select"
+
+
+def test_r20b_requestor_select_returns_the_callers_own_linked_contact_outside_any_segment(rs_client):
+    """I8: include_ids holding the caller's own linked contact returns it (it is the default)."""
+    c, db, caller = rs_client
+    mine = _contact_row(db, f"{REQUESTOR} Mine")  # in no requestor segment, on no form
+    _link(db, caller, mine)
+    res = c.get(SELECT, params={"include_ids": mine})
+    assert res.status_code == 200, res.text
+    assert [i["id"] for i in res.json()["items"]] == [mine]
+
+
+def test_r20b_requestor_select_still_refuses_another_contact_on_no_form(rs_client):
+    """Fail-closed guard: someone else's contact, on no form and no segment, is not resolved."""
+    c, db, caller = rs_client
+    mine = _contact_row(db, f"{REQUESTOR} Mine")
+    _link(db, caller, mine)
+    other = _contact_row(db, f"{REQUESTOR} Other")
+    db.commit()
+    res = c.get(SELECT, params={"include_ids": other})
+    assert res.status_code == 200, res.text
+    assert [i["id"] for i in res.json()["items"]] == []
+
+
+def test_r20b_filter_form_referenced_ids_keeps_an_id_referenced_only_by_a_notice(ocn):
+    """Guard (green on HEAD): a requestor saved on an order change notice stays selectable."""
+    from app.services.requestor_options_service import filter_form_referenced_ids
+
+    cid = _eligible(ocn.db, f"{REQUESTOR} OnNotice")
+    create_with(ocn, requested_by_contact_id=cid)
+    stranger = _ineligible(ocn.db, f"{REQUESTOR} OnNothing")
+    assert filter_form_referenced_ids(ocn.db, [cid, stranger]) == [cid]
