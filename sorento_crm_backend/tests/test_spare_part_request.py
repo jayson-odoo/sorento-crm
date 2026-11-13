@@ -537,7 +537,7 @@ def test_T16_spare_part_request_is_a_form_sla_type_everywhere_it_must_match():
 
     assert KIND in f.FORM_SLA_TYPES
     assert KIND in _FORM_SLA_TYPES
-    assert f._form_detail_link(KIND, "abc") == "/project-sales/order-inquiries/abc"
+    assert f._form_detail_link(KIND, "abc") == "/procurement-management/spare-part-requests/abc"  # hand-test round G3
     row = FormSLAConfigBase(
         source_entity_type=KIND,
         stage_code="spare_part_approval",

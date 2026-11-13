@@ -89,8 +89,20 @@ def _reject(w, inquiry, reason="Too dear"):
 @pytest.fixture
 def listed(staged):
     """The requester's draft / pending / rejected / raised, plus the outsider's draft and
-    pending (the outsider is a second requester who sits on no stage team)."""
+    pending (the outsider is a second requester who sits on no stage team).
+
+    The requester here is a fresh user holding only the create grant: the shared `staged`
+    world puts its requester on stage 1's team (for A2 "never the requester"), which would let
+    them decide the outsider's pending one and so list it (lead ruling: the list shows what the
+    caller can decide, matching who can open the record)."""
+    from ._forms_chain_support import user
+    from ._spare_part_request_support import CREATE, role_grant
+
     w = staged
+    w.requester = user(w.db, "spr requester, on no stage team")
+    role_grant(w.db, w.requester, CREATE)
+    w.db.commit()
+    w.state["user"] = w.requester
     w.mine_draft = create(w)
     w.mine_pending = submitted(w)
     w.mine_rejected = _reject(w, submitted(w))
