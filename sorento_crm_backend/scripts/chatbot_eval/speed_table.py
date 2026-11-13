@@ -4,11 +4,12 @@ The owner asks the same questions in the Chatbot Console on the copy running mai
 the CHATBOT-SPEED branch ("new"). Every Console turn is stored in `chatbot.turns` with its trace; this script reads
 them back and prints one Markdown row per question:
 
-  question | before the parser old | new | saved | whole turn old | new | same answer
+  question | before the parser old | new | saved | whole turn old | new | saved | same answer
 
 "Before the parser" is the `understood` stage minus the parser's own call (`facts.latency_ms`): the part these fixes
 speed up, with the model's run-to-run noise left out. A turn is "new" when its `span_extract` event carries
-`prep_ms` (only the new code writes it). The latest old and the latest new turn of each question are paired.
+`prep_ms` (only the new code writes it). Each cell is the median of every run of that question on that code (ask the
+questions in 3 rounds); the warm-up message ("hi") is left out.
 Reads only; makes no model call; prints the question and reply text on the machine it runs on, nothing else.
 
     SORENTO_ENV_FILE=<copy env> venv/bin/python -m scripts.chatbot_eval.speed_table --minutes 120
@@ -39,26 +40,55 @@ def measure(turn: dict[str, Any]) -> dict[str, Any]:
     return {"turn_ms": turn.get("turn_ms"), "before_parser_ms": before, "reply": turn.get("reply") or ""}
 
 
-def pair(turns: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Per question (first-seen order): the latest old and the latest new turn, the saving and the answer check."""
-    latest: dict[str, dict[str, dict[str, Any]]] = {}
+#: The warm-up message sent after each restart; not a question, never counted.
+WARMUPS = ("hi",)
+
+
+def _median(values: list[Any]) -> Any:
+    values = [v for v in values if isinstance(v, (int, float))]
+    return int(statistics.median(values)) if values else None
+
+
+def _summary(measured: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not measured:
+        return None
+    return {
+        "runs": len(measured),
+        "turn_ms": _median([m["turn_ms"] for m in measured]),
+        "before_parser_ms": _median([m["before_parser_ms"] for m in measured]),
+        "replies": {m["reply"].strip() for m in measured},
+    }
+
+
+def pair(turns: list[dict[str, Any]], warmups: tuple[str, ...] = WARMUPS) -> list[dict[str, Any]]:
+    """Per question (first-seen order): the median of every old and every new run, the savings, and the answer check
+    (every reply the new code gave also came back from the old code: model wording that varies inside one arm is not
+    a change). The warm-up message is left out."""
+    runs: dict[str, dict[str, list[dict[str, Any]]]] = {}
     order: list[str] = []
+    skip = {w.strip().lower() for w in warmups}
     for turn in sorted(turns, key=lambda t: t.get("at") or 0):
         question = (turn.get("text") or "").strip()
-        if not question:
+        if not question or question.lower() in skip:
             continue
-        if question not in latest:
-            latest[question] = {}
+        if question not in runs:
+            runs[question] = {"old": [], "new": []}
             order.append(question)
-        latest[question][arm(turn.get("trace") or [])] = measure(turn)
+        runs[question][arm(turn.get("trace") or [])].append(measure(turn))
     rows = []
     for question in order:
-        old, new = latest[question].get("old"), latest[question].get("new")
-        saved = None
-        if old and new and old["before_parser_ms"] is not None and new["before_parser_ms"] is not None:
-            saved = old["before_parser_ms"] - new["before_parser_ms"]
-        same = (old["reply"].strip() == new["reply"].strip()) if old and new else None
-        rows.append({"question": question, "old": old, "new": new, "saved_before_parser_ms": saved, "answer_same": same})
+        old, new = _summary(runs[question]["old"]), _summary(runs[question]["new"])
+
+        def saved(key: str) -> Any:
+            if old and new and old[key] is not None and new[key] is not None:
+                return old[key] - new[key]
+            return None
+
+        same = new["replies"] <= old["replies"] if old and new else None
+        rows.append({
+            "question": question, "old": old, "new": new, "answer_same": same,
+            "saved_before_parser_ms": saved("before_parser_ms"), "saved_turn_ms": saved("turn_ms"),
+        })
     return rows
 
 
@@ -68,27 +98,27 @@ def _s(ms: Any) -> str:
 
 def render(rows: list[dict[str, Any]]) -> str:
     lines = [
-        "| Question | Before the parser, old (s) | new (s) | Saved (s) | Whole turn, old (s) | new (s) | Same answer |",
-        "|---|---|---|---|---|---|---|",
+        "| Question | Before the parser, old (s) | new (s) | Saved (s) | Whole turn, old (s) | new (s) | Saved (s) "
+        "| Same answer |",
+        "|---|---|---|---|---|---|---|---|",
     ]
     for r in rows:
         old, new = r["old"] or {}, r["new"] or {}
         same = {True: "yes", False: "NO", None: "-"}[r["answer_same"]]
         lines.append(
             f"| {r['question']} | {_s(old.get('before_parser_ms'))} | {_s(new.get('before_parser_ms'))} | "
-            f"{_s(r['saved_before_parser_ms'])} | {_s(old.get('turn_ms'))} | {_s(new.get('turn_ms'))} | {same} |"
+            f"{_s(r['saved_before_parser_ms'])} | {_s(old.get('turn_ms'))} | {_s(new.get('turn_ms'))} | "
+            f"{_s(r['saved_turn_ms'])} | {same} |"
         )
 
-    def med(values: list[Any]) -> Any:
-        values = [v for v in values if isinstance(v, (int, float))]
-        return statistics.median(values) if values else None
+    def col(get: Any) -> str:
+        return _s(_median([get(r) for r in rows]))
 
     lines.append(
-        f"| **Median** | {_s(med([(r['old'] or {}).get('before_parser_ms') for r in rows]))} | "
-        f"{_s(med([(r['new'] or {}).get('before_parser_ms') for r in rows]))} | "
-        f"{_s(med([r['saved_before_parser_ms'] for r in rows]))} | "
-        f"{_s(med([(r['old'] or {}).get('turn_ms') for r in rows]))} | "
-        f"{_s(med([(r['new'] or {}).get('turn_ms') for r in rows]))} | |"
+        f"| **Median** | {col(lambda r: (r['old'] or {}).get('before_parser_ms'))} | "
+        f"{col(lambda r: (r['new'] or {}).get('before_parser_ms'))} | {col(lambda r: r['saved_before_parser_ms'])} | "
+        f"{col(lambda r: (r['old'] or {}).get('turn_ms'))} | {col(lambda r: (r['new'] or {}).get('turn_ms'))} | "
+        f"{col(lambda r: r['saved_turn_ms'])} | |"
     )
     return "\n".join(lines)
 
