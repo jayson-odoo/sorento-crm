@@ -244,12 +244,14 @@ def test_j7_deleting_a_job_deletes_its_lines(env, today):
     from app.models.service_jobs import ServiceJobProduct
 
     product, job = make_product(env, *WC), make_job(env)
+    job_id = job.id
     with api(env) as c:
-        add_line(c, job.id, product.id)
-        add_line(c, job.id, product.id)
-    env.db.execute(text("delete from service_jobs where id = :i"), {"i": job.id})
+        add_line(c, job_id, product.id)
+        add_line(c, job_id, product.id)
+    assert env.db.query(ServiceJobProduct).filter(ServiceJobProduct.service_job_id == job_id).count() == 2
+    env.db.execute(text("delete from service_jobs where id = :i"), {"i": job_id})
     env.db.expire_all()
-    assert env.db.query(ServiceJobProduct).filter(ServiceJobProduct.service_job_id == job.id).count() == 0
+    assert env.db.query(ServiceJobProduct).filter(ServiceJobProduct.service_job_id == job_id).count() == 0
 
 
 # ------------------------------------------------------------------ J8 warranty on the job

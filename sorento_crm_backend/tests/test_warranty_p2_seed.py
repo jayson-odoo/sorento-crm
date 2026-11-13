@@ -50,8 +50,8 @@ def test_s2_the_policy_is_v15_backdated_to_2000_and_open_ended_with_its_text(env
 
     seed_v15(env)
     (policy,) = env.db.query(WarrantyPolicy).all()
-    assert (policy.version, policy.effective_from, policy.effective_to, policy.company_id) == (
-        "v15", date(2000, 1, 1), None, env.company_id,
+    assert (policy.version, policy.effective_from, policy.effective_to, str(policy.company_id)) == (
+        "v15", date(2000, 1, 1), None, str(env.company_id),
     )
     assert policy.policy_text and "warranty" in policy.policy_text.lower()
 

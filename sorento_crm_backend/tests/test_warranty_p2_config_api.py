@@ -32,7 +32,7 @@ from ._warranty_p2_support import (
     RULES,
     TERMS,
     WC,
-    api,
+    api as _api,
     audit_of,
     defect,
     env,  # noqa: F401
@@ -48,6 +48,12 @@ from ._warranty_p2_support import (
 from ._pg_fixture import unique_code
 
 D = date
+
+
+def api(env, *args, **kwargs):
+    """Configuration writes are admin-only (UAC P1): act as role admin."""
+    kwargs.setdefault("roles", {"admin"})
+    return _api(env, *args, **kwargs)
 
 
 def ids(resp):
