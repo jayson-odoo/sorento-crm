@@ -96,7 +96,7 @@ describe('ServiceJobsList (D2)', () => {
     renderList();
     await screen.findByText('SV26/11-0001');
     const heads = screen.getAllByRole('columnheader').map((h) => (h.textContent || '').trim()).filter(Boolean);
-    expect(heads).toEqual(['Job no.', 'Customer', 'City', 'Status', 'Scheduled', 'Technician', 'Related complaint']);
+    expect(heads).toEqual(['Job no.', 'Customer', 'City', 'Status', 'Scheduled', 'Technician', 'Related complaint', 'Warranty']);
   });
 
   it('has no icon buttons on rows', async () => {

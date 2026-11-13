@@ -38,13 +38,14 @@ describe('Complaints sidebar sections are unchanged', () => {
 });
 
 describe('After-sales is its own sidebar section', () => {
-  it('lists its three pages under the after_sales module with its own permissions', () => {
+  it('lists its four pages under the after_sales module with its own permissions', () => {
     const section = find(MENU_SIDEBAR, 'After-Sales Service');
     expect(section?.moduleKey).toBe('after_sales');
     expect(slim(section).map((c) => c.path)).toEqual([
       '/after-sales/service-jobs',
       '/after-sales/dispatch-board',
       '/after-sales/technicians',
+      '/after-sales/warranty',
     ]);
   });
 });
