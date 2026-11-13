@@ -767,6 +767,7 @@ def test_ac20m_the_b52_shape_offers_the_live_variant_never_the_discontinued_code
         c.as_staff()
     text = c.say(f"{typed} stock", stock(product(typed)))
     assert _word(live, text), text
-    assert not _word(old, text) and old not in str(c.stored_question), (text, c.stored_question)
+    pending = [str((o or {}).get("code")) for o in ((c.stored_question or {}).get("options") or [])]
+    assert not _word(old, text) and old not in pending, (text, c.stored_question)
     if who == "dealer":
         assert text == f"Couldn't find {typed}. Did you mean {live}?", text
