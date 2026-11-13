@@ -48,7 +48,8 @@ export interface SalesOrderListQuery {
   pageSize: number;
   sortField?: string;
   sortDir?: 'asc' | 'desc';
-  searchQuery?: string;
+  /** An array is sent as one repeated `query` per value (search chips). */
+  searchQuery?: string | string[];
   status?: string | null;
   priority?: string | null;
   /** Where the order came from: 'inquiry' | 'upload' | 'manual'. Omit for all. */
