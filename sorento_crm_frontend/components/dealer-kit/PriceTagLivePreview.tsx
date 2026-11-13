@@ -43,7 +43,14 @@ interface Props {
    * draw for want of a template, and whether a drawing exists at all. The form
    * keeps Approve off while either says the tag is not ready.
    */
-  onReadyChange?: (state: { missing: string[]; drawn: boolean; failed: boolean }) => void;
+  onReadyChange?: (state: {
+    missing: string[];
+    /** The form keys of the lines with no template: what a per-line flag reads, since one product
+     *  may sit on several lines (PRICETAG-ALA-CARTE). `missing` stays for the message text. */
+    missingKeys: string[];
+    drawn: boolean;
+    failed: boolean;
+  }) => void;
   /** PRICETAG-LPSP: draw this one line only (the row's eye icon). */
   lineKey?: string;
   /** One-line mode: the lightbox was closed. */
@@ -159,6 +166,7 @@ export function PriceTagLivePreview({
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
   const [missing, setMissing] = useState<string[]>([]);
+  const [missingKeys, setMissingKeys] = useState<string[]>([]);
   const codeByKey = useMemo(
     () => Object.fromEntries(lines.map((line) => [line.key, line.code])),
     [lines],
@@ -175,6 +183,7 @@ export function PriceTagLivePreview({
     if (sentRef.current.length === 0) {
       setPayload(null);
       setMissing([]);
+      setMissingKeys([]);
       setFailed(false);
       setLoading(false);
       return;
@@ -188,6 +197,7 @@ export function PriceTagLivePreview({
           if (ask !== askSeq.current) return; // a newer edit is on its way
           setPayload(previewPayload(lines, response, lineKeyRef.current !== undefined));
           setMissing(linesWithoutTemplate(lines, response, codeByKeyRef.current));
+          setMissingKeys(lines.filter((line) => !response.templates[line.key]).map((line) => line.key));
           setFailed(false);
         })
         .catch(() => {
@@ -204,10 +214,10 @@ export function PriceTagLivePreview({
   }, [signature, lookupTagPreview]);
 
   const drawn = !failed && !loading && payload !== null;
-  const missingKey = missing.join('|');
+  const missingKey = `${missing.join('|')}#${missingKeys.join('|')}`;
   useEffect(() => {
-    onReadyChange?.({ missing, drawn: sent.length > 0 && drawn, failed });
-    // `missingKey` stands for `missing`: a fresh array with the same codes is no change.
+    onReadyChange?.({ missing, missingKeys, drawn: sent.length > 0 && drawn, failed });
+    // `missingKey` stands for `missing` + `missingKeys`: a fresh array with the same values is no change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [missingKey, drawn, failed, sent.length, onReadyChange]);
 
