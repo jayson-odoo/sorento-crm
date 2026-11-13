@@ -29,6 +29,7 @@ const LEGACY_ROUTE_MODULE_PREFIXES: { prefix: string; moduleKey: string }[] = [
   { prefix: '/project-sales', moduleKey: 'projects' },
   { prefix: '/sales', moduleKey: 'sales' },
   { prefix: '/finance', moduleKey: 'finance' },
+  { prefix: '/after-sales', moduleKey: 'after_sales' },
   { prefix: '/dealer-kit', moduleKey: 'dealer_kit' },
 ];
 
