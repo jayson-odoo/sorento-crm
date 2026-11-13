@@ -77,9 +77,14 @@ class NewProductApplication(Base, CompanyScopedMixin):
     #: Typed when the customer has no debtor code; copied as TEXT from the inquiry, never matched.
     customer_name = Column(String(255), nullable=True)
     project_name = Column(Text, nullable=True)  # as stock_inquiries.project_name (npasi_0001)
-    #: PROJECT-RELATED-RECORDS AC-C1: the link to a registered project (as stock_inquiries).
+    #: PROJECT-RELATED-RECORDS AC-C1: the link to a registered project (as stock_inquiries). FK
+    #: and index carry migration prr_0001's names, so create_all builds the same objects.
     project_id = Column(
-        UUID(as_uuid=False), ForeignKey("projects.projects.id", ondelete="SET NULL"), nullable=True
+        UUID(as_uuid=False),
+        ForeignKey(
+            "projects.projects.id", ondelete="SET NULL", name="fk_new_product_applications_project_id"
+        ),
+        nullable=True,
     )
     needed_by = Column(Date, nullable=True)
     remark = Column(Text, nullable=True)
@@ -147,6 +152,11 @@ class NewProductApplication(Base, CompanyScopedMixin):
         Index("ix_new_product_applications_contact", "contact_id"),
         Index("ix_new_product_applications_inquiry", "stock_inquiry_id"),
         Index("ix_new_product_applications_new_product", "new_product_id"),
+        Index(
+            "ix_new_product_applications_project",
+            "project_id",
+            postgresql_where=text("project_id IS NOT NULL"),
+        ),
         CheckConstraint(
             "new_product_id IS NULL OR new_code_closed_reason IS NULL",
             name="ck_new_product_applications_one_new_code_outcome",

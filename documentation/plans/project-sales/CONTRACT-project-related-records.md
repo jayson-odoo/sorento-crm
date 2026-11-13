@@ -66,14 +66,14 @@ Response `RelatedRecordsResponse` = `ListResponse[RelatedRecordRow]` plus:
 `RelatedRecordRow`: `kind`, `id`, `number`, `status`, `approval_status` (PR/SF only, else null), `date` (date),
 `raised_by` (a name, never an id), `subject`, `value` (Decimal or null).
 
-Per type (registry entry):
+Per type (registry entry). Timestamps are naive UTC; "MYT day" = the Asia/Kuala_Lumpur calendar day (`project_related_records._malaysia_date`):
 | kind | label | table | number | status | approval | date | raised_by | subject | value |
 |---|---|---|---|---|---|---|---|---|---|
-| stock_inquiry | Stock Inquiry | stock_inquiries | inquiry_number | status | - | created_at::date | salesperson | item_description | - |
+| stock_inquiry | Stock Inquiry | stock_inquiries | inquiry_number | status | - | MYT day of created_at | salesperson | item_description | - |
 | complaint | Complaint | complaints | complaint_number | status | - | complaint_date | salesperson | defect_description | - |
-| purchase_request | Purchase request | purchase_requests (request_type='purchase_request') | request_number | status | approval_status | request_date | requested_by | project_title | total_project_value |
-| sponsorship_form | Sponsorship form | purchase_requests (request_type='sponsorship_form') | request_number | status | approval_status | request_date | requested_by | purpose | total_project_value |
-| new_product_application | New product application | new_product_applications | application_no | status | - | coalesce(submitted_at, created_at)::date | applicant user name | remark | cost_price |
+| purchase_request | Purchase request | purchase_requests (request_type='purchase_request') | request_number | status | approval_status | coalesce(request_date, MYT day of submitted_at, MYT day of created_at) | requested_by | project_title | total_project_value |
+| sponsorship_form | Sponsorship form | purchase_requests (request_type='sponsorship_form') | request_number | status | approval_status | coalesce(request_date, MYT day of submitted_at, MYT day of created_at) | requested_by | purpose | total_project_value |
+| new_product_application | New product application | new_product_applications | application_no | status | - | MYT day of coalesce(submitted_at, created_at) | applicant user name | remark | cost_price |
 
 Visibility per type: `own_scope.request_access(perms, access_kind)` (`access_kind` = kind). `None` -> type absent from rows,
 `type_counts` and `types`. `"own"` -> `own_scope.request_clause(model, me)` (NPA: `own_scope.npa_clause(me)`). `"all"` -> no

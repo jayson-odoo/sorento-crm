@@ -603,6 +603,51 @@ def list_project_related_records(
 
 
 @router.get(
+    "/projects/{project_id}/related-records",
+    response_model=RelatedRecordsResponse,
+)
+def list_project_related_records(
+    project_id: str,
+    type: Optional[List[str]] = Query(None, description="Record kinds (repeat or comma-join)"),
+    status: Optional[List[str]] = Query(None, description="Raw status values (repeat or comma-join)"),
+    query: Optional[str] = Query(None, description="Number, subject or raised by contains"),
+    sort: Literal[RELATED_SORT_KEYS] = Query("date"),
+    dir: Literal["asc", "desc"] = Query("desc"),
+    page: int = Query(1, ge=1),
+    limit: int = Query(25, ge=1, le=MAX_PAGE_LIMIT),
+    user: dict = Depends(require_any_permission(READ)),
+    db: Session = Depends(get_db),
+):
+    """Every stock inquiry, complaint, purchase request, sponsorship form and new product
+    application linked to this project (PROJECT-RELATED-RECORDS), one grid, sorted, searched,
+    filtered and paged on the server. Each type follows the viewer's own request rule."""
+    from app.services import own_scope
+    from app.services import project_related_records as related
+    from app.services.cost_access import can_view_cost
+    from app.utils.multi_value import multi_values
+
+    try:
+        validate_uuid_path(project_id, resource="Project")
+        projects.get_project_or_404(db, project_id)
+        return related.list_related_records(
+            db,
+            project_id=project_id,
+            perms=permission_slugs(db, user["id"]),
+            me=own_scope.me(db, user["id"]),
+            types=multi_values(type, "type"),
+            statuses=multi_values(status, "status"),
+            query=query,
+            sort=sort,
+            direction=dir,
+            page=page,
+            limit=limit,
+            cost_visible=can_view_cost(db, user["id"]),
+        )
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.get(
     "/projects/{project_id}/sponsorships/rollup",
     response_model=ProjectSponsorshipRollupResponse,
 )
