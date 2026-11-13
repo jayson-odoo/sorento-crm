@@ -6,6 +6,8 @@ Use this flow when the technical team needs to write or update its response to a
 
 Open [**Complaint Management → Complaints**](/complaint-management/complaints). The page lists every complaint with its current status - **Open**, **Responded**, **Approved**, or **Rejected**.
 
+The list has a **Last activity** column: the date and time (for example 12/11/2026, 3:05 pm) of the newest thing a person did on the complaint. That counts creating it, editing it, changing its status, approving or rejecting it, changing a line, attaching or removing a file, and posting a comment (staff, or the customer through the portal). Background jobs, SLA timers, ERP sync and automations do not count. The list opens sorted by **Last activity**, newest first; click the column header to change the sort, and your choice is kept. To narrow by date, open **Filters** and set the **Last activity** date range.
+
 Click a row to open the complaint detail page (`/complaint-management/complaints/{id}`).
 
 ## Step 1 - Open the response editor

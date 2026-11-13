@@ -27,6 +27,8 @@ export type PurchaseRequestsListQueryParams = DataGridApiFetchParams & {
   requestType?: string;
   approvalStatus?: string;
   assignedTo?: string;
+  lastActivityFrom?: string;
+  lastActivityTo?: string;
 };
 
 /**
@@ -45,6 +47,8 @@ export function purchaseRequestsListQueryKey(
     params.requestType,
     params.approvalStatus,
     params.assignedTo,
+    params.lastActivityFrom,
+    params.lastActivityTo,
   ];
 }
 
@@ -60,6 +64,8 @@ export function purchaseRequestsListParamsFromUrl(
     requestType: params.filters.request_type,
     approvalStatus: params.filters.approval_status,
     assignedTo: params.filters.assigned_to,
+    lastActivityFrom: params.filters.last_activity_from,
+    lastActivityTo: params.filters.last_activity_to,
   };
 }
 

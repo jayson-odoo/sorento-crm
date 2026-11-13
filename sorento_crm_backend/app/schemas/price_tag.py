@@ -600,6 +600,7 @@ class PriceTagRequestListItem(BaseModel):
     needed_by_date: Optional[date] = None
     notes: Optional[str] = None
     created_at: datetime
+    last_activity_at: Optional[datetime] = None
     # The four things the queue actually draws in its columns, and the four it
     # drew blank: the request row holds ids, and a listing may not show a UUID.
     # Resolved for the whole page in two set-based queries, never per row.
