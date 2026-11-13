@@ -273,9 +273,9 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
    * is needed for a line that arrived from a reopened draft (AC-S2-9) or from
    * the AI extract, neither of which goes through the picker.
    *
-   * A single combo is applied on the spot (AC-S2-1) - but only on a line that
-   * has neither a package nor any parts yet, so reopening a draft whose parts
-   * were edited by hand does not quietly put the removed ones back.
+   * The answer never changes the line's package: every new line starts ala
+   * carte and a saved line keeps the package it was saved with
+   * (PRICETAG-ALA-CARTE AC-3, AC-5).
    */
   useEffect(() => {
     const pending = lines.filter(
@@ -295,25 +295,16 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
           setLines((prev) =>
             prev.map((l) => {
               if (l.key !== line.key || l.product_id !== productId) return l;
-              const autoApply =
-                !l.combo_id && l.parts.length === 0 && lookup.combos.length === 1;
               return {
                 ...l,
                 combos_loaded: true,
                 combos: lookup.combos,
                 host_guarded: lookup.host_guarded,
-                ...(autoApply
-                  ? {
-                      combo_id: lookup.combos[0].combo_id,
-                      parts: partsFromCombo(lookup.combos[0]),
-                    }
-                  : {
-                      // A reopened multi-pick row gets its group's options back (K5).
-                      parts: restoreGroupCandidates(
-                        l.parts,
-                        lookup.combos.find((c) => c.combo_id === l.combo_id),
-                      ),
-                    }),
+                // A reopened multi-pick row gets its group's options back (K5).
+                parts: restoreGroupCandidates(
+                  l.parts,
+                  lookup.combos.find((c) => c.combo_id === l.combo_id),
+                ),
               };
             }),
           );
@@ -693,14 +684,10 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
       const [kind, id] = option.value.split(':');
       const isSet = kind === 'product_set';
       const code = option.code ?? '';
-      // R3-7: refuse a product/set already on another line, inline - the
-      // same guard the backend now enforces (DUPLICATE_LINE), so a save
-      // never round-trips just to be told this.
-      const duplicate = lines.some(
-        (l) =>
-          l.key !== key &&
-          (isSet ? l.product_set_id === id : l.product_id === id),
-      );
+      // R3-7: refuse a set already on another line, inline - the same guard
+      // the backend enforces (DUPLICATE_LINE), so a save never round-trips just
+      // to be told this. A product may repeat (PRICETAG-ALA-CARTE AC-6).
+      const duplicate = isSet && lines.some((l) => l.key !== key && l.product_set_id === id);
       if (duplicate) {
         updateLine(key, {
           guard_error: `${code || option.label} is already on this request.`,
@@ -736,8 +723,9 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
 export type PriceTagLineEditor = ReturnType<typeof usePriceTagLineEditor>;
 
 /**
- * PRICETAG-MULTI-ADD: Add N from the Item picker, through the one pick path. Options already on
- * another line, or repeated in the batch, are dropped. The first fills `key` through
+ * PRICETAG-MULTI-ADD: Add N from the Item picker, through the one pick path. A set already on
+ * another line, or an option repeated in the batch, is dropped; a product already on the request
+ * gets another line (PRICETAG-ALA-CARTE AC-7). The first fills `key` through
  * `handleItemSelect`; each further one goes on a new line directly below the previous, via
  * `addLine` and the same `handleItemSelect`. Sets no line field itself. If the row already holds
  * one of the options it keeps it and the rest go below (`handleItemSelect` would otherwise refuse
@@ -751,7 +739,8 @@ export function addPickedItems(
 ): string {
   const fresh: SearchableSelectOption[] = [];
   for (const option of options) {
-    if (lines.some((l) => l.key !== key && lineHoldsItem(l, option))) continue;
+    const isSet = option.value.startsWith('product_set:');
+    if (isSet && lines.some((l) => l.key !== key && lineHoldsItem(l, option))) continue;
     if (fresh.some((f) => f.value === option.value)) continue;
     fresh.push(option);
   }

@@ -128,8 +128,8 @@ describe('combos memory across Add N', () => {
   });
 });
 
-describe('AC-4 no duplicates', () => {
-  it('skips an option already on another line, and the same item twice in one batch', async () => {
+describe('AC-4 no duplicates in one batch (PRICETAG-ALA-CARTE AC-7: a product on the request repeats)', () => {
+  it('adds a product already on another line again, and the same item twice in one batch once', async () => {
     const { result } = hookSetup([row('A'), { ...A(), key: 'B' }]);
     const opts = await options(result);
     const a = opts.find((o) => o.value === 'product:p-a')!;
@@ -138,9 +138,9 @@ describe('AC-4 no duplicates', () => {
     act(() => addPickedItems(result.current.editor, result.current.lines, 'A', [a, x, x]));
 
     const lines = result.current.lines;
-    expect(lines.map((l) => l.code)).toEqual(['DIY-BS-4501', 'DIY-BS-4001']);
+    expect(lines.map((l) => l.code)).toEqual(['DIY-BS-4001', 'DIY-BS-4501', 'DIY-BS-4001']);
     expect(lines.filter((l) => l.product_id === 'p-x')).toHaveLength(1);
-    expect(lines.filter((l) => l.product_id === 'p-a')).toHaveLength(1);
+    expect(lines.filter((l) => l.product_id === 'p-a')).toHaveLength(2);
   });
 });
 
@@ -209,7 +209,7 @@ describe('F1 the Item picker in the table: a row click ticks and the list stays 
     expect(screen.getByRole('listbox')).toBeInTheDocument();
   });
 
-  it('(c) a row ticked in this session is checked but NOT disabled and not "Already added"; one on the request at open is disabled', async () => {
+  it('(c) a row ticked in this session is checked but NOT disabled and not "Already added"; a product on the request at open is neither (PRICETAG-ALA-CARTE AC-7)', async () => {
     render(<Harness initial={[row('A'), { ...A(), key: 'B' }]} />);
     openItemPicker();
     search('DIY');
@@ -220,11 +220,12 @@ describe('F1 the Item picker in the table: a row click ticks and the list stays 
     expect(ticked).not.toHaveAttribute('aria-disabled', 'true');
     expect(within(ticked).queryByText('Already added')).toBeNull();
     const preExisting = await rowFor('DIY-BS-4001');
-    expect(preExisting).toHaveAttribute('aria-disabled', 'true');
-    expect(within(preExisting).getByText('Already added')).toBeInTheDocument();
+    expect(preExisting).not.toHaveAttribute('aria-disabled', 'true');
+    expect(preExisting).toHaveAttribute('aria-checked', 'false');
+    expect(within(preExisting).queryByText('Already added')).toBeNull();
   });
 
-  it('after close and reopen the three ticked in the earlier session are Already added and disabled', async () => {
+  it('after close and reopen the set ticked in the earlier session is Already added and disabled, the products are not (PRICETAG-ALA-CARTE AC-7)', async () => {
     render(<Harness initial={[row('A'), { ...A(), key: 'B' }]} />);
     openItemPicker();
     await clickRow('DIY-BS-4501');
@@ -234,10 +235,13 @@ describe('F1 the Item picker in the table: a row click ticks and the list stays 
     fireEvent.keyDown(screen.getByPlaceholderText('Search...'), { key: 'Escape' });
     await waitFor(() => expect(screen.queryByPlaceholderText('Search...')).toBeNull());
     openItemPicker();
-    for (const c of ['DIY-BS-4501', 'DIY-BS-4502', 'DIY-SET-4503']) {
+    const set = await rowFor('DIY-SET-4503');
+    expect(set).toHaveAttribute('aria-disabled', 'true');
+    expect(within(set).getByText('Already added')).toBeInTheDocument();
+    for (const c of ['DIY-BS-4501', 'DIY-BS-4502']) {
       const r = await rowFor(c);
-      expect(r).toHaveAttribute('aria-disabled', 'true');
-      expect(within(r).getByText('Already added')).toBeInTheDocument();
+      expect(r).not.toHaveAttribute('aria-disabled', 'true');
+      expect(within(r).queryByText('Already added')).toBeNull();
     }
   });
 
@@ -366,7 +370,7 @@ describe('AC-14 one pick path', () => {
   const opt = (id: string, code: string) =>
     ({ value: `product:${id}`, label: code, code, name: code }) as SearchableSelectOption;
 
-  it('addPickedItems routes through handleItemSelect and addLine only, skipping taken and repeated options, and returns the last filled key', () => {
+  it('addPickedItems routes through handleItemSelect and addLine only, skipping repeated options (a product already taken repeats, PRICETAG-ALA-CARTE AC-7), and returns the last filled key', () => {
     const X = opt('x', 'X'), Y = opt('y', 'Y'), Z = opt('z', 'Z'), W = opt('w', 'W');
     const addLine = vi.fn((k?: string) => 'n' + k);
     const handleItemSelect = vi.fn();
@@ -374,9 +378,9 @@ describe('AC-14 one pick path', () => {
 
     const last = addPickedItems({ addLine, handleItemSelect } as unknown as PickEditor, lines, 'A', [W, X, X, Y, Z]);
 
-    expect(handleItemSelect.mock.calls).toEqual([['A', X], ['nA', Y], ['nnA', Z]]);
-    expect(addLine.mock.calls).toEqual([['A'], ['nA']]);
-    expect(last).toBe('nnA');
+    expect(handleItemSelect.mock.calls).toEqual([['A', W], ['nA', X], ['nnA', Y], ['nnnA', Z]]);
+    expect(addLine.mock.calls).toEqual([['A'], ['nA'], ['nnA']]);
+    expect(last).toBe('nnnA');
   });
 
   it('addPickedItems returns the origin key for a single option', () => {

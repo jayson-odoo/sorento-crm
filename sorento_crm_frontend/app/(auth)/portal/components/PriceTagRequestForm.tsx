@@ -723,6 +723,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           data.lines.map((l) => ({
             ...lineToDraft(l, data.price_mode ?? 'list'),
             key: `dup-${Math.random().toString(36).slice(2, 10)}`,
+            // Nor do they send the source's ids back (PRICETAG-ALA-CARTE AC-12).
+            saved_id: null,
           })),
         );
         // AC-D3: the sections that hold values open; a copy carries no files, so its lines are
