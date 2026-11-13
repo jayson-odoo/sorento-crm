@@ -1291,7 +1291,44 @@ class PortalService:
                 row.approved_by = None
                 row.approval_signature_ref = None
 
+        self._finish_submit(
+            kind,
+            row,
+            contact_id=token.contact_id,
+            is_resubmission=(
+                previous_status in ("rejected", "responded")
+                or previous_approval_status == "rejected"
+            ),
+            reason=previous_rejection_reason,
+            notify_as_resubmission=previous_status in ("rejected", "responded"),
+            actor_user_id=None,
+        )
+
+        return self.get_submission(token, kind, str(row.id))
+
+    def _finish_submit(
+        self,
+        kind: str,
+        row: Any,
+        *,
+        contact_id: Optional[str],
+        is_resubmission: bool,
+        reason: Optional[str],
+        notify_as_resubmission: bool,
+        actor_user_id: Optional[str],
+    ) -> None:
+        """Everything a submit does once the row's status has moved: number, history, commit,
+        notifications, the project feed and the form SLA. Shared by the portal submit and the
+        staff submit of the same form (PROJECT-STAGE-ACTIONS), so the two cannot drift."""
         row.portal_draft_at = None
+        # A request without a date takes the day it was submitted (Malaysia), so lists that show
+        # "Requested" (the project's Sponsorship Form tab) never read "-" (PROJECT-STAGE-ACTIONS).
+        if kind in ("purchase_request", "sponsorship_form") and not getattr(row, "request_date", None):
+            from datetime import datetime as _dt
+
+            from app.utils.date_format import MY_TZ
+
+            row.request_date = _dt.now(MY_TZ).date()
 
         # Document number generation (skip complaint - no number column).
         self._assign_document_number_if_missing(kind, row)
@@ -1299,14 +1336,7 @@ class PortalService:
         # Revision history: every submitted version gets a row, including this one
         # (UAC C4/G1). Runs before the commit so history and submit are atomic.
         self._record_submission_history(
-            kind,
-            row,
-            token,
-            is_resubmission=(
-                previous_status in ("rejected", "responded")
-                or previous_approval_status == "rejected"
-            ),
-            reason=previous_rejection_reason,
+            kind, row, contact_id, is_resubmission=is_resubmission, reason=reason
         )
 
         self.db.commit()
@@ -1314,9 +1344,7 @@ class PortalService:
 
         # Notifications - failures must not block the user-facing submit.
         try:
-            self._post_submit_notify(
-                kind, row, is_resubmission=previous_status in ("rejected", "responded")
-            )
+            self._post_submit_notify(kind, row, is_resubmission=notify_as_resubmission)
         except Exception as e:  # noqa: BLE001
             logger.warning("Post-submit notify failed for %s %s: %s", kind, row.id, e)
 
@@ -1361,7 +1389,7 @@ class PortalService:
                 str(row.id),
                 "submit",
                 contact_id=getattr(row, "contact_id", None),
-                actor_user_id=None,
+                actor_user_id=actor_user_id,
             )
         except Exception as e:  # noqa: BLE001
             logger.warning(
@@ -1371,13 +1399,61 @@ class PortalService:
                 e,
             )
 
-        return self.get_submission(token, kind, str(row.id))
+    def submit_staff_request(self, row: Any, *, actor_user_id: Optional[str]) -> None:
+        """Submit a draft that staff wrote in the salesperson's form (PROJECT-STAGE-ACTIONS).
+
+        A project's Sponsorship stage opens the same form a salesperson fills in; staff save it
+        through the staff create (a ``draft``) and submit it here. Same rules as the request
+        branch of ``submit_draft`` and the same tail (``_finish_submit``), so the row reaches the
+        office exactly as a salesperson's would. Two differences, both because staff are not the
+        contact: only a ``draft`` is submitted (a rejected form goes back through its
+        salesperson), and the contact's own registered-project flag is not read; a linked
+        project must still be an approved one.
+        """
+        kind = (getattr(row, "request_type", None) or "purchase_request").strip().lower()
+        if row.status != "draft":
+            raise handle_validation_error(f"Cannot submit {kind} with status {row.status!r}.")
+        # Only a draft staff wrote. A salesperson's own portal draft is theirs to submit: staff
+        # submitting it would send a form they never chose to send, and skip their contact's
+        # registered-project rule (security review, PROJECT-STAGE-ACTIONS).
+        if getattr(row, "source", None) != "manual" or getattr(row, "portal_draft_at", None):
+            raise handle_validation_error(
+                f"This {kind.replace('_', ' ')} is a salesperson's own draft; they submit it."
+            )
+        if getattr(row, "project_id", None):
+            from app.services.project_service import assert_linkable_project
+
+            assert_linkable_project(
+                self.db, row.project_id, code="purchase_request_project_not_approved"
+            )
+        if kind == "sponsorship_form":
+            self._require_sponsorship_unit_prices(row)
+        portal_required_fields.require_complete(kind, row)
+        row.status = submission_status.status_on_submit(was_rejected=False)
+        row.submitted_at = _utcnow()
+        # A submitted form starts its approval from nothing, as the portal's resubmit clears it:
+        # the staff create accepts these fields, so a stamp set there must not ride into the
+        # office queue looking approved (security review).
+        row.approval_status = None
+        row.approval_comments = None
+        row.approved_at = None
+        row.approved_by = None
+        row.approval_signature_ref = None
+        self._finish_submit(
+            kind,
+            row,
+            contact_id=getattr(row, "contact_id", None),
+            is_resubmission=False,
+            reason=None,
+            notify_as_resubmission=False,
+            actor_user_id=actor_user_id,
+        )
 
     def _record_submission_history(
         self,
         kind: str,
         row: Any,
-        token: PortalToken,
+        contact_id: Optional[str],
         *,
         is_resubmission: bool,
         reason: Optional[str],
@@ -1402,7 +1478,7 @@ class PortalService:
                 PortalRevisionService(self.db).record_submission(
                     kind,
                     row,
-                    token.contact_id,
+                    contact_id,
                     is_resubmission=is_resubmission,
                     reason=reason,
                 )

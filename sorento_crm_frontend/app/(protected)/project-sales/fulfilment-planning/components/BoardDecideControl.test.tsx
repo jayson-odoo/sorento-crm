@@ -142,7 +142,7 @@ describe('BoardDecideControl: the menu (AC-4)', () => {
       'Borrow',
       'Use BRW',
       'Buy',
-      'Transfer to Cancel SO',
+      'Cancel',
     ]);
     expect(screen.queryByRole('menuitem', { name: 'Reserve' })).not.toBeInTheDocument();
     expect(screen.queryByRole('menuitem', { name: 'Use incoming' })).not.toBeInTheDocument();
