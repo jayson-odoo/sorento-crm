@@ -77,14 +77,16 @@ const CANCEL_LABEL = 'Cancel';
 
 /**
  * Why a ticked book-cancelled row is skipped by this pick, or null when the pick saves it:
- * only "Cancel" applies to a removed line, and one already decided that way has nothing new.
+ * only "Cancel" applies to a removed line, and "As suggested" is that same Cancel because
+ * Cancel IS the suggestion (owner hand test, 13 Nov); one already decided that way has
+ * nothing new.
  */
 function bookCancelledSkip(
   row: BoardContribution,
   way: DecideWay,
   draft: BoardDraft,
 ): string | null {
-  if (way !== 'cancel_so') return 'cancelled in AutoCount, pick Cancel';
+  if (way !== 'cancel_so' && way !== 'suggested') return 'cancelled in AutoCount, pick Cancel';
   const existing = draft[row.key];
   if (existing && !existing.preMarked && existing.verdict === 'approved') {
     return 'already decided that way';
