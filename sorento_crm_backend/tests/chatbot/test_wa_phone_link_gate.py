@@ -106,6 +106,8 @@ class World:
         self.messages: list[tuple[str, str]] = []
         self.comments: list[tuple[str, str]] = []
         self.put_error: Exception | None = None
+        # WA-MERGE-WELCOME: ids Respond.io no longer has once the merge ran (a send or read answers 404).
+        self.gone: set[str] = set()
 
     def client(self):
         world = self
@@ -128,10 +130,19 @@ class World:
                     return {}
                 return {"contactId": PHONE_ID if world.merge_survivor == "phone" else CONTACT_ID}
 
+            def get_contact_by_identifier(self, identifier):
+                ident = str(identifier).replace("id:", "")
+                world.order.append("client"); world.calls.append(("get", ident))
+                if world.merges() and ident in world.gone:
+                    raise world.not_found(ident)
+                return {"id": int(ident)}
+
             def send_message(self, identifier, text_):
                 world.order.append("client"); world.calls.append(("send_message", str(identifier), text_))
                 if world.send_error is not None:
                     raise world.send_error
+                if world.merges() and str(identifier) in world.gone:
+                    raise world.not_found(str(identifier))
                 world.messages.append((str(identifier), text_))
                 return {}
 
@@ -150,6 +161,11 @@ class World:
 
     def merges(self):
         return [c for c in self.calls if c[0] == "merge"]
+
+    @staticmethod
+    def not_found(ident):
+        req = httpx.Request("POST", f"https://api.example.test/v2/contact/id:{ident}/message")
+        return httpx.HTTPStatusError("404 Not Found", request=req, response=httpx.Response(404, request=req))
 
 
 @pytest.fixture()
@@ -583,6 +599,57 @@ def test_wu12_verified_line_goes_to_the_survivor_the_merge_response_names(
         text("SELECT respond_io_id FROM respond_contacts WHERE phone_number = :p"), {"p": f"+{E164}"}
     ).scalar()
     assert rid == str(CONTACT_ID)
+
+
+def test_mw10_owner_case_merge_response_names_the_merged_away_contact(
+    session_factory, parser_calls, world, monkeypatch
+):
+    """Prod 13 Nov: the merge response named the contact Respond.io merged away, the verified line went
+    to it and Respond.io answered 404, so the user never heard they could start. The line goes to the
+    contact that is still there, once, and the CRM row points at it."""
+    _install(world, monkeypatch)
+    world.merge_survivor = "phone"
+    world.gone = {str(PHONE_ID)}
+    _seed_phone_row(session_factory, allowed=True)
+    result = _run(session_factory, _env("tap"))
+    assert result.branch_kind == "phone_linked"
+    assert world.messages == [(str(CONTACT_ID), VERIFIED)]
+    assert ("send_message", str(PHONE_ID), VERIFIED) not in world.calls
+    rid = session_factory().execute(
+        text("SELECT respond_io_id FROM respond_contacts WHERE phone_number = :p"), {"p": f"+{E164}"}
+    ).scalar()
+    assert rid == str(CONTACT_ID)
+
+
+def test_mw11_verified_line_404_is_resent_once_to_the_contact_holding_the_phone(
+    session_factory, parser_calls, world, monkeypatch
+):
+    """Belt and braces: the survivor check passed but the send still answers 404 (Respond.io finished the
+    merge in between); the CRM looks the phone up again and sends once more, never a third time."""
+    _install(world, monkeypatch)
+    _seed_phone_row(session_factory, allowed=True)
+
+    real_client = world.client
+
+    def client_with_late_merge():
+        c = real_client()
+        original = c.send_message
+
+        def send(identifier, text_):
+            if str(identifier) == str(PHONE_ID):
+                world.gone.add(str(PHONE_ID))
+                world.phone_contact_id = CONTACT_ID
+            return original(identifier, text_)
+
+        c.send_message = send
+        return c
+
+    world.client = client_with_late_merge
+    result = _run(session_factory, _env("tap"))
+    assert result.branch_kind == "phone_linked"
+    sends = [c for c in world.calls if c[0] == "send_message"]
+    assert sends == [("send_message", str(PHONE_ID), VERIFIED), ("send_message", str(CONTACT_ID), VERIFIED)]
+    assert world.messages == [(str(CONTACT_ID), VERIFIED)]
 
 
 # ---------------------------------------------------------------- 7. origin guard at the engine
