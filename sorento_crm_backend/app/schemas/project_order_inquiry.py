@@ -1060,6 +1060,8 @@ class OrderInquiryPoCandidate(BaseModel):
 
     #: `po` or `spo`. An `spo` candidate is offered to an ORDER BACK row and nothing else.
     kind: str = "po"
+    #: OI-PO-LINK: AutoCount ties this PO line to another sales order line than the row's own.
+    tied_elsewhere: bool = False
     #: The purchase order line, or the SPO allocation. Exactly one is set.
     po_line_id: Optional[str] = None
     spo_allocation_id: Optional[str] = None

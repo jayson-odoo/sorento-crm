@@ -1710,6 +1710,33 @@ def mark_order_inquiry_rows(
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 
+def _mark_tied_elsewhere(db: Session, row_id: str, candidates: list) -> None:
+    """`tied_elsewhere` per PO-line candidate: AutoCount ties the line to a sales order line other
+    than this row's own (two reads for the whole list, no per-candidate query)."""
+    from app.models.order import SalesOrderLine
+    from app.models.procurement import PurchaseOrderLine
+    from app.models.project_so import OrderInquiryRow, ProjectSalesOrderLine
+
+    own = (
+        db.query(SalesOrderLine.source_ref)
+        .select_from(OrderInquiryRow)
+        .join(ProjectSalesOrderLine, ProjectSalesOrderLine.id == OrderInquiryRow.so_line_id)
+        .join(SalesOrderLine, SalesOrderLine.id == ProjectSalesOrderLine.core_sales_order_line_id)
+        .filter(OrderInquiryRow.id == row_id)
+        .scalar()
+    )
+    own = (own or "").strip()
+    ids = [c["po_line_id"] for c in candidates if c.get("po_line_id")]
+    refs = (
+        {str(i): (r or "").strip() for i, r in db.query(PurchaseOrderLine.id, PurchaseOrderLine.from_so_line_ref)
+         .filter(PurchaseOrderLine.id.in_(ids)).all()}
+        if ids else {}
+    )
+    for candidate in candidates:
+        tied = refs.get(str(candidate.get("po_line_id")), "")
+        candidate["tied_elsewhere"] = bool(tied) and tied != own
+
+
 @router.get(
     "/order-inquiry-rows/{row_id}/po-candidates",
     response_model=OrderInquiryPoCandidatesResponse,
@@ -1732,6 +1759,7 @@ def order_inquiry_po_candidates(
             # (CS holds this route's slug). The PO number and supplier still identify the line.
             for candidate in candidates:
                 candidate["unit_cost"] = None
+        _mark_tied_elsewhere(db, row_id, candidates)
         still_to_link = service.still_to_link_for_row(row_id)
         linkable_qty = service.linkable_qty_for_row(row_id)
         return {
