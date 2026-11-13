@@ -273,8 +273,6 @@ POST /quotation-versions/{version_id}/recompute
 POST /quotations/{quotation_id}/revise
 POST /sales-orders/{pso_id}/amendments
 POST /sales-orders/{pso_id}/amendments/preview
-POST /sales-orders/{pso_id}/autocount
-POST /sales-orders/{pso_id}/autocount/cancel
 POST /sales-orders/{pso_id}/confirm
 POST /sales-orders/{pso_id}/confirm-costing
 POST /sales-orders/{pso_id}/findings/{finding_id}/acknowledge

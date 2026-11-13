@@ -29,10 +29,8 @@ import {
   sparePartRequestStatusLabel,
   sparePartStateVariant,
 } from '@/app/(protected)/project-sales/_shared/lib/sparePartRequest';
-import type {
-  OrderInquiryLine,
-  OrderInquiryWorklistRow,
-} from '@/app/(protected)/project-sales/_shared/types/orderInquiry.types';
+import type { OrderInquiryLine } from '@/app/(protected)/project-sales/_shared/lib/orderInquiryLineFold';
+import type { OrderInquiryWorklistRow } from '@/app/(protected)/project-sales/_shared/types/orderInquiry.types';
 
 const NO_ROWS: OrderInquiryWorklistRow[] = [];
 
