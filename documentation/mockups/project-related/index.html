@@ -1,0 +1,358 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Project related records (mock v3)</title>
+<style>
+/* App tokens from sorento_crm_frontend/css/config.reui.css (light), as in the other mockups. */
+:root{--fg:#09090b;--muted:#f4f4f5;--muted-fg:#71717a;--border:#ececee;--primary:#3b82f6;--primary-soft:#eff6ff;--new:#b45309;--new-soft:#fffbeb;--q:#6d28d9;--q-soft:#f5f3ff;--page:#f7f7f8;--dis:#a1a1aa;
+--g:#15803d;--g-soft:#f0fdf4;--a:#b45309;--a-soft:#fffbeb;--r:#b91c1c;--r-soft:#fef2f2;--b:#1d4ed8;--b-soft:#eff6ff;--n:#3f3f46;--n-soft:#f4f4f5}
+*{box-sizing:border-box}
+body{margin:0;background:var(--page);color:var(--fg);font:14px/1.45 Inter,ui-sans-serif,system-ui,sans-serif}
+.doc{max-width:1400px;margin:0 auto;padding:16px}
+h1{font-size:22px;margin:0 0 4px}
+.intro{color:var(--muted-fg);font-size:13px;margin:0 0 10px;max-width:980px}
+.nav{position:sticky;top:0;z-index:5;background:var(--page);padding:8px 0 10px;border-bottom:1px solid var(--border);margin-bottom:16px;display:flex;flex-wrap:wrap;gap:6px}
+.nav a{font-size:12px;text-decoration:none;border:1px solid var(--border);background:#fff;border-radius:999px;padding:3px 10px;color:var(--muted-fg)}
+section{margin:0 0 34px}
+section>h2{font-size:15px;margin:0 0 4px}
+section>.why{font-size:12.5px;color:var(--muted-fg);margin:0 0 12px;max-width:960px}
+.nb{display:inline-block;min-width:18px;height:18px;border-radius:9px;background:var(--primary);color:#fff;font-size:11px;line-height:18px;text-align:center;margin-right:6px;font-weight:600;vertical-align:middle}
+.newtag{display:inline-block;font-size:10px;font-weight:600;color:var(--new);background:var(--new-soft);border:1px solid #fcd34d;border-radius:4px;padding:0 5px;margin-left:6px;vertical-align:middle}
+.qtag{display:inline-block;font:600 10px/1.5 Inter,system-ui,sans-serif;color:var(--q);background:var(--q-soft);border:1px solid #c4b5fd;border-radius:4px;padding:0 5px;margin-left:6px;vertical-align:middle}
+.row{display:flex;flex-wrap:wrap;gap:20px;align-items:flex-start}
+.desk{width:1280px;max-width:100%;background:var(--page);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.phone{width:375px;max-width:100%;flex:none;background:var(--page);border:1px solid var(--border);border-radius:16px;overflow:hidden}
+.shell{padding:22px;display:flex;flex-direction:column;gap:14px}
+.phone .shell{padding:12px;gap:10px}
+.btn{display:inline-flex;align-items:center;gap:5px;height:32px;padding:0 12px;border-radius:6px;border:1px solid var(--border);background:#fff;font-size:12.5px;font-weight:500;white-space:nowrap}
+.btn.pri{background:var(--primary);color:#fff;border-color:var(--primary)}
+.btn.ic{width:32px;padding:0;justify-content:center;color:var(--muted-fg)}
+.muted{color:var(--muted-fg);font-size:12px}
+/* record header (PageHeader + RecordNavigation) */
+.hdr{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+.hdr .t{font-size:20px;font-weight:600;display:flex;align-items:center;gap:8px;min-width:0}
+.hdr .t span.ttl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hdr .sub{font-size:12.5px;color:var(--muted-fg);margin-top:2px}
+.hdr .act{display:flex;gap:6px;flex:none}
+.pill{display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:999px;font-size:11.5px;font-weight:500;white-space:nowrap;border:1px solid transparent}
+.pill.g{color:var(--g);background:var(--g-soft);border-color:#bbf7d0}
+.pill.a{color:var(--a);background:var(--a-soft);border-color:#fde68a}
+.pill.r{color:var(--r);background:var(--r-soft);border-color:#fecaca}
+.pill.b{color:var(--b);background:var(--b-soft);border-color:#bfdbfe}
+.pill.n{color:var(--n);background:var(--n-soft);border-color:#e4e4e7}
+/* line tabs */
+.tabs{display:flex;gap:18px;border-bottom:1px solid var(--border);font-size:13px;overflow-x:auto;white-space:nowrap}
+.tabs span{padding:8px 0;color:var(--muted-fg);display:inline-flex;align-items:center;gap:6px}
+.tabs span.on{color:var(--fg);font-weight:600;border-bottom:2px solid var(--primary);margin-bottom:-1px}
+.cnt{display:inline-block;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--muted);color:var(--fg);font-size:11px;line-height:18px;text-align:center;font-weight:600}
+.tabs span.on .cnt{background:var(--primary);color:#fff}
+.card{background:#fff;border:1px solid var(--border);border-radius:10px}
+.rollup{padding:8px 14px;font-size:12.5px;border-bottom:1px solid var(--border);display:flex;gap:16px;flex-wrap:wrap}
+.rollup b{font-weight:600}
+/* toolbar */
+.tb{display:flex;gap:8px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--border);flex-wrap:nowrap}
+.search{flex:1;min-width:0;border:1px solid var(--border);border-radius:6px;height:32px;padding:6px 10px;font-size:12.5px;color:var(--muted-fg)}
+.fbadge{display:inline-block;min-width:16px;height:16px;border-radius:8px;background:var(--primary);color:#fff;font-size:10px;line-height:16px;text-align:center}
+/* grid */
+.gwrap{overflow-x:auto}
+table.grid{border-collapse:collapse;width:100%;table-layout:fixed;font-size:12.5px;min-width:1100px}
+table.grid th{font-size:11.5px;color:var(--muted-fg);font-weight:500;text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);white-space:nowrap;background:#fafafa}
+table.grid th .s{color:var(--dis);font-size:10px;margin-left:3px}
+table.grid th.sorted{color:var(--fg)}
+table.grid td{padding:0 10px;height:38px;border-bottom:1px solid var(--border);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+table.grid tr:hover td{background:#fafafa;cursor:pointer}
+table.grid td.num{text-align:right;font-variant-numeric:tabular-nums}
+table.grid th.num{text-align:right}
+.code{font-weight:500}
+.foot{display:flex;justify-content:space-between;align-items:center;padding:8px 14px;font-size:12px;color:var(--muted-fg)}
+/* filter popover */
+.popwrap{position:relative}
+.pop{position:absolute;z-index:30;right:0;top:36px;width:300px;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);font-size:12.5px;padding:10px}
+.pop .gl{font-size:11px;color:var(--muted-fg);font-weight:500;margin:4px 0}
+.ms{border:1px solid var(--border);border-radius:6px;padding:4px}
+.ms .op{display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:4px}
+.ms .op small{margin-left:auto;color:var(--muted-fg)}
+.chk{width:15px;height:15px;border:1px solid var(--dis);border-radius:4px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;flex:none}
+.chk.on{background:var(--primary);border-color:var(--primary);color:#fff}
+.empty{padding:40px 14px;text-align:center}
+.empty b{display:block;font-size:14px;margin-bottom:4px}
+/* forms */
+.form{background:#fff;border:1px solid var(--border);border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.08);max-width:760px}
+.form .fh{padding:14px 20px;font-size:16px;font-weight:600;border-bottom:1px solid var(--border)}
+.form .fb{padding:16px 20px;display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.phone .form .fb{grid-template-columns:1fr}
+.form .ff{padding:12px 20px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px}
+.lbl{font-size:12.5px;font-weight:500;margin-bottom:4px}
+.inp{border:1px solid var(--border);border-radius:6px;min-height:32px;padding:6px 10px;font-size:13px;background:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.inp.ph{color:var(--dis)}
+.sel{position:relative;padding-right:40px}
+.sel::after{content:"\25BE";position:absolute;right:8px;top:50%;transform:translateY(-50%);color:var(--muted-fg);font-size:10px}
+.sel .clr{position:absolute;right:22px;top:50%;transform:translateY(-50%);color:var(--dis);font-size:12px}
+.hl{outline:2px solid #f59e0b;outline-offset:2px;border-radius:6px}
+.kv{display:grid;grid-template-columns:150px minmax(0,1fr);gap:8px 14px;font-size:13px;padding:14px 18px}
+.kv .k{color:var(--muted-fg)}
+table.map{border-collapse:collapse;width:100%;max-width:1220px;background:#fff;border:1px solid var(--border);font-size:12.5px}
+table.map th,table.map td{border-bottom:1px solid var(--border);padding:7px 10px;text-align:left;vertical-align:top}
+table.map th{font-size:11.5px;color:var(--muted-fg);font-weight:500;background:#fafafa}
+table.map code{font-size:11.5px;background:var(--muted);padding:1px 4px;border-radius:4px;word-break:break-all}
+.qs{max-width:1050px;background:#fff;border:1px solid var(--border);border-radius:12px;padding:14px 18px 14px 34px;font-size:13px}
+.qs li{margin-bottom:10px}
+/* phone list rows: one line each */
+.prow{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:8px;align-items:center;padding:0 12px;height:40px;border-bottom:1px solid var(--border);font-size:12.5px;white-space:nowrap}
+.prow .m{overflow:hidden;text-overflow:ellipsis}
+@media (max-width:600px){.form .fb{grid-template-columns:1fr}.desk .tabs{max-width:100%}}
+</style>
+</head>
+<body>
+<div class="doc">
+  <h1>Project related records &middot; mock v3 (PROJECT-RELATED-RECORDS)</h1>
+  <p class="intro"><b>v3:</b> owner decisions of 13 Nov folded in. D1 = a one-off reviewed list (section 5b, a review sheet crew runs; nothing is linked automatically). D2 = anyone who may edit the record can set or change its Project at any time, even closed or approved; the approval stays; the change shows in History. D3 = Project is optional for everyone; the typed name stays for projects that are not registered.</p>
+  <p class="intro"><b>v2:</b> crew's answers applied (Q1-Q4 = a). Section 5 now shows the picker's list (one line per project: code + clamped short title, no price) and the portal forms. Complaint and purchase request portal forms get the same picker: today only the portal sponsorship form has it (see the note under section 5). Owner decisions D1-D3 are marked <span class="qtag">D1</span>-<span class="qtag">D3</span>.</p>
+  <p class="intro">Static mock, nothing is built. Every project, person, customer and number below is made up. Amber
+    <span class="newtag">NEW</span> = does not exist today; violet <span class="qtag">Q1</span> to <span class="qtag">Q5</span> = the
+    questions in the behaviour card (<code>documentation/plans/project-sales/CARD-project-related-records-12nov.md</code>). Drawn to the
+    recommended answers.</p>
+  <nav class="nav">
+    <a href="#tab">1. Related tab (1280px)</a>
+    <a href="#filter">2. Filters open</a>
+    <a href="#empty">3. Empty</a>
+    <a href="#phone">4. 375px</a>
+    <a href="#link">5. Linking an SI / NPA</a>
+    <a href="#review">5b. Old records review</a>
+    <a href="#map">6. What each piece reuses</a>
+    <a href="#qs">7. Questions</a>
+  </nav>
+
+  <!-- ============================================================ 1 -->
+  <section id="tab">
+    <h2><span class="nb">1</span>Project page: one Related tab replaces Sponsorship Form <span class="qtag">Q2</span><span class="qtag">Q3</span><span class="qtag">Q4</span></h2>
+    <p class="why">Same project header and tabs as today. "Sponsorship Form" becomes "Related" with a count of the rows this user may see.
+      The sponsorship spend line stays on top (only when the project has sponsorship forms). One standard grid, one line per row, every
+      header sorts on the server. Click a row to open the record. Sorted here by Date, newest first.</p>
+    <div class="desk"><div class="shell">
+      <div class="hdr">
+        <div style="min-width:0">
+          <div class="t"><span class="ttl">PS26-0001 Fake Tower Phase 1</span><span class="pill b">Quotation</span></div>
+          <div class="sub">Sample Developer Sdn Bhd</div>
+        </div>
+        <div class="act"><span class="btn ic">&lsaquo;</span><span class="btn ic">&rsaquo;</span><span class="btn ic">&#9881;</span><span class="btn pri">Edit</span></div>
+      </div>
+      <div class="tabs">
+        <span>Overview</span><span>Documents</span><span>Proposals</span><span>Samples Request</span>
+        <span class="on">Related <span class="cnt">7</span><span class="newtag">NEW</span></span>
+        <span>PO</span><span>SO</span><span>Stakeholders</span><span>Tasks</span><span>Activity</span>
+      </div>
+      <div class="card">
+        <div class="rollup"><span>Sponsorship spend: <b>RM 18,500.00</b> across 2 forms</span><span class="muted">2025: RM 6,000.00 (1)</span><span class="muted">2026: RM 12,500.00 (1)</span></div>
+        <div class="tb">
+          <div class="search">Search number, subject, raised by</div>
+          <span class="btn">Filters</span>
+          <span class="btn">Columns</span>
+        </div>
+        <div class="gwrap">
+        <table class="grid">
+          <colgroup><col style="width:150px"><col style="width:120px"><col style="width:130px"><col style="width:100px"><col style="width:100px"><col style="width:150px"><col><col style="width:120px"></colgroup>
+          <thead><tr>
+            <th>Type<span class="s">&#8597;</span></th><th>Number<span class="s">&#8597;</span></th><th>Status<span class="s">&#8597;</span></th><th>Approval<span class="s">&#8597;</span></th>
+            <th class="sorted">Date<span class="s" style="color:var(--fg)">&darr;</span></th><th>Raised by<span class="s">&#8597;</span></th><th>Subject<span class="s">&#8597;</span></th><th class="num">Value<span class="s">&#8597;</span></th>
+          </tr></thead>
+          <tbody>
+            <tr><td>Complaint</td><td class="code">CMP-000412</td><td><span class="pill a">In progress</span></td><td>-</td><td>10/11/2026</td><td>Alex Tan</td><td title="Tile surface chipping on 3 boxes delivered to level 12 lobby">Tile surface chipping on 3 boxes delivered to level 12 lobby</td><td class="num">-</td></tr>
+            <tr><td>Stock Inquiry <span class="newtag">NEW</span></td><td class="code">SI-002231</td><td><span class="pill g">Responded</span></td><td>-</td><td>04/11/2026</td><td>Alex Tan</td><td>Matt porcelain 600x1200 grey, 2,400 m2</td><td class="num">-</td></tr>
+            <tr><td>Sponsorship form</td><td class="code">SF-000088</td><td><span class="pill n">Submitted</span></td><td><span class="pill a">Pending</span></td><td>28/10/2026</td><td>Alex Tan</td><td>Show unit sponsorship</td><td class="num">RM 12,500.00</td></tr>
+            <tr><td>New product application <span class="newtag">NEW</span></td><td class="code">NPA-000057</td><td><span class="pill b">Approved</span></td><td>-</td><td>21/10/2026</td><td>Sam Lee</td><td>Sample Brand anti-slip 300x300, outdoor deck</td><td class="num">-</td></tr>
+            <tr><td>Purchase request</td><td class="code">PR-001190</td><td><span class="pill g">Processed</span></td><td><span class="pill g">Approved</span></td><td>15/09/2026</td><td>Sam Lee</td><td>Fake Tower Phase 1 - mock-up floor</td><td class="num">RM 3,200.00</td></tr>
+            <tr><td>Stock Inquiry <span class="newtag">NEW</span></td><td class="code">SI-002010</td><td><span class="pill r">Rejected</span></td><td>-</td><td>02/09/2026</td><td>Alex Tan</td><td>Wall tile 300x600 white gloss</td><td class="num">-</td></tr>
+            <tr><td>Sponsorship form</td><td class="code">SF-000061</td><td><span class="pill g">Closed</span></td><td><span class="pill g">Approved</span></td><td>12/03/2025</td><td>Sam Lee</td><td>Launch event</td><td class="num">RM 6,000.00</td></tr>
+          </tbody>
+        </table>
+        </div>
+        <div class="foot"><span>7 records</span><span>Page 1 of 1</span></div>
+      </div>
+      <p class="muted" style="margin:0">Order Change Notice rows appear here the same way once that lane lands (one more Type value). Columns can be hidden or reordered from Columns, and the choice is kept per user.</p>
+    </div></div>
+  </section>
+
+  <!-- ============================================================ 2 -->
+  <section id="filter">
+    <h2><span class="nb">2</span>Filters: Type and Status, both multi-select</h2>
+    <p class="why">The Type list only offers types this user may view (a user without complaint access never sees "Complaint" or its rows).
+      Counts are the rows the filter would show. Two filters combine.</p>
+    <div class="desk" style="width:820px"><div class="shell">
+      <div class="card">
+        <div class="tb">
+          <div class="search">Search number, subject, raised by</div>
+          <div class="popwrap"><span class="btn">Filters <span class="fbadge">2</span></span>
+            <div class="pop">
+              <div class="gl">Type</div>
+              <div class="ms">
+                <div class="op"><span class="chk on">&#10003;</span>Stock Inquiry<small>2</small></div>
+                <div class="op"><span class="chk">&nbsp;</span>Complaint<small>1</small></div>
+                <div class="op"><span class="chk">&nbsp;</span>Purchase request<small>1</small></div>
+                <div class="op"><span class="chk">&nbsp;</span>Sponsorship form<small>2</small></div>
+                <div class="op"><span class="chk on">&#10003;</span>New product application<small>1</small></div>
+              </div>
+              <div class="gl" style="margin-top:10px">Status</div>
+              <div class="inp sel ph">Any status</div>
+              <div style="display:flex;justify-content:space-between;margin-top:10px"><span class="btn">Clear</span><span class="btn">Done</span></div>
+            </div>
+          </div>
+          <span class="btn">Columns</span>
+        </div>
+        <div style="height:260px"></div>
+      </div>
+    </div></div>
+  </section>
+
+  <!-- ============================================================ 3 -->
+  <section id="empty">
+    <h2><span class="nb">3</span>Nothing linked yet</h2>
+    <p class="why">The tab still shows, with a heading and a hint and no button (one main button per page, in the header).</p>
+    <div class="desk" style="width:820px"><div class="shell">
+      <div class="card">
+        <div class="tb"><div class="search">Search number, subject, raised by</div><span class="btn">Filters</span><span class="btn">Columns</span></div>
+        <div class="empty"><b>No related records</b><span class="muted">Records show here once their Project field names this project.</span></div>
+      </div>
+    </div></div>
+  </section>
+
+  <!-- ============================================================ 4 -->
+  <section id="phone">
+    <h2><span class="nb">4</span>375px: same grid, scrolls sideways inside the card</h2>
+    <p class="why">The page itself never scrolls sideways; the grid does, the same as every PanelDataGrid. Tabs scroll in their own row.</p>
+    <div class="row">
+      <div class="phone"><div class="shell">
+        <div class="hdr">
+          <div style="min-width:0">
+            <div class="t" style="font-size:16px"><span class="ttl">PS26-0001 Fake Tower Phase 1</span></div>
+            <div class="sub"><span class="pill b">Quotation</span></div>
+          </div>
+          <div class="act"><span class="btn pri">Edit</span></div>
+        </div>
+        <div class="tabs"><span>Proposals</span><span>Samples Request</span><span class="on">Related <span class="cnt">7</span></span><span>PO</span></div>
+        <div class="card" style="overflow:hidden">
+          <div class="rollup">Sponsorship spend: <b>RM 18,500.00</b> (2)</div>
+          <div class="tb" style="padding:8px"><div class="search">Search</div><span class="btn ic">&#9783;</span><span class="btn ic">&#9776;</span></div>
+          <div class="gwrap">
+            <table class="grid" style="min-width:760px">
+              <colgroup><col style="width:110px"><col style="width:110px"><col style="width:110px"><col style="width:90px"><col style="width:90px"><col style="width:250px"></colgroup>
+              <thead><tr><th>Type</th><th>Number</th><th>Status</th><th>Approval</th><th class="sorted">Date &darr;</th><th>Subject</th></tr></thead>
+              <tbody>
+                <tr><td>Complaint</td><td class="code">CMP-000412</td><td><span class="pill a">In progress</span></td><td>-</td><td>10/11/2026</td><td>Tile surface chipping on 3 boxes</td></tr>
+                <tr><td>Stock Inquiry</td><td class="code">SI-002231</td><td><span class="pill g">Responded</span></td><td>-</td><td>04/11/2026</td><td>Matt porcelain 600x1200 grey</td></tr>
+                <tr><td>Sponsorship form</td><td class="code">SF-000088</td><td><span class="pill n">Submitted</span></td><td><span class="pill a">Pending</span></td><td>28/10/2026</td><td>Show unit sponsorship</td></tr>
+                <tr><td>New product app.</td><td class="code">NPA-000057</td><td><span class="pill b">Approved</span></td><td>-</td><td>21/10/2026</td><td>Anti-slip 300x300</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="foot"><span>7 records</span><span>1 / 1</span></div>
+        </div>
+      </div></div>
+    </div>
+  </section>
+
+  <!-- ============================================================ 5 -->
+  <section id="link">
+    <h2><span class="nb">5</span>Linking: a Project picker on the SI and NPA forms (staff and portal) <span class="qtag">Q1</span><span class="qtag">D2 yes</span><span class="qtag">D3 optional</span></h2>
+    <p class="why">The same project picker the purchase request form uses (searchable by code and title, clearable). The typed
+      "Project name" stays. Nothing is filled from the typed name: a person picks. Every change shows in the record's History. Anyone who may edit the record can set or change the Project at any time, even when it is closed or approved, without Revise; the approval stays (D2).</p>
+    <div class="row">
+      <div class="form" style="flex:1;min-width:min(320px,100%)">
+        <div class="fh">New stock inquiry</div>
+        <div class="fb">
+          <div><div class="lbl">Customer</div><div class="inp sel">Sample Builders Sdn Bhd<span class="clr">&times;</span></div></div>
+          <div class="hl" style="position:relative"><div class="lbl">Project (optional) <span class="newtag">NEW</span></div><div class="inp sel">PS26-0001 Fake Tower Phase 1<span class="clr">&times;</span></div>
+            <div class="pop" style="left:0;right:auto;top:58px;width:100%;padding:4px">
+              <div class="search" style="margin:2px 2px 6px">fake</div>
+              <div class="ms" style="border:0">
+                <div class="op" style="background:var(--muted)"><b style="flex:none">PS26-0001</b><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="Fake Tower Phase 1">Fake Tower Phase 1</span></div>
+                <div class="op"><b style="flex:none">PS26-0007</b><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="Fake Gardens Residences Block A and B serviced apartments with retail podium">Fake Gardens Residences Block A and B serviced apartments with retail podium</span></div>
+                <div class="op"><b style="flex:none">PS26-0011</b><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Fake Lakeside Phase 2</span></div>
+              </div>
+            </div></div>
+          <div><div class="lbl">Project name</div><div class="inp">Fake Tower</div></div>
+          <div><div class="lbl">Salesperson</div><div class="inp sel">Alex Tan</div></div>
+          <div style="grid-column:1/-1;margin-top:120px"><div class="lbl">Item description</div><div class="inp">Matt porcelain 600x1200 grey, 2,400 m2</div></div>
+        </div>
+        <div class="ff"><span class="btn">Cancel</span><span class="btn pri">Submit</span></div>
+      </div>
+      <div class="card" style="flex:1;min-width:min(320px,100%);max-width:560px">
+        <div class="hdr" style="padding:14px 18px;border-bottom:1px solid var(--border)">
+          <div><div class="t" style="font-size:17px">SI-002010 <span class="pill r">Rejected</span></div><div class="sub">Wall tile 300x600 white gloss</div></div>
+        </div>
+        <div class="kv">
+          <span class="k">Customer</span><span>Sample Builders Sdn Bhd</span>
+          <span class="k">Project name</span><span>Fake Tower</span>
+          <span class="k">Project <span class="newtag">NEW</span></span><span class="hl"><span class="inp sel ph" style="display:block">Pick a project<span class="clr"></span></span></span>
+          <span class="k">Salesperson</span><span>Alex Tan</span>
+        </div>
+        <p class="muted" style="margin:0 18px 14px">History after picking: "Alex Tan set Project: - &rarr; PS26-0001 Fake Tower Phase 1, 12/11/2026, 3:40 pm".</p>
+      </div>
+    </div>
+    <p class="muted"><b>Portal forms (salesperson, WhatsApp link):</b> the SI, NPA, complaint and purchase request forms get the same picker the portal sponsorship form already has (<code>SubmissionForm.tsx:397</code>), listing only the contact's own company projects. Today the portal complaint and purchase request forms have only the typed "Project title" (<code>SubmissionForm.tsx</code> complaint / purchase_request field lists), which is why none of them is linked.</p>
+    <p class="muted">Existing records: nothing is linked automatically. See 5b.</p>
+    <p class="muted">The NPA form gets the same field next to Project name. An NPA raised from an SI starts with that SI's project picked, which the person can change or clear.</p>
+  </section>
+
+
+  <section id="review">
+    <h2><span class="nb">5b</span>Old records: one-off review sheet (D1) <span class="newtag">NEW</span></h2>
+    <p class="why">Run once by crew, not a screen in the app. It lists each existing SI, complaint, purchase request and sponsorship form
+      whose typed project name is EXACTLY the title of ONE registered project (same company). The owner, or the sales admin he names,
+      ticks the rows that are right. Only ticked rows are linked, each with a History line. A name that matches two projects, or none,
+      is not listed: those are picked by hand on the record.</p>
+    <div class="card" style="max-width:1100px">
+      <div class="gwrap">
+      <table class="grid" style="min-width:900px">
+        <colgroup><col style="width:56px"><col style="width:140px"><col style="width:120px"><col style="width:100px"><col style="width:220px"><col></colgroup>
+        <thead><tr><th>Link?</th><th>Type</th><th>Number</th><th>Date</th><th>Typed project name</th><th>Proposed project</th></tr></thead>
+        <tbody>
+          <tr><td><span class="chk on">&#10003;</span></td><td>Sponsorship form</td><td class="code">SF-000042</td><td>14/08/2026</td><td>Fake Tower Phase 1</td><td><b>PS26-0001</b> Fake Tower Phase 1</td></tr>
+          <tr><td><span class="chk on">&#10003;</span></td><td>Stock Inquiry</td><td class="code">SI-001877</td><td>02/07/2026</td><td>Fake Lakeside Phase 2</td><td><b>PS26-0011</b> Fake Lakeside Phase 2</td></tr>
+          <tr><td><span class="chk">&nbsp;</span></td><td>Complaint</td><td class="code">CMP-000301</td><td>19/06/2026</td><td>Fake Lakeside Phase 2</td><td><b>PS26-0011</b> Fake Lakeside Phase 2</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <div class="foot"><span>3 proposals (unticked rows stay unlinked)</span><span></span></div>
+    </div>
+  </section>
+
+  <!-- ============================================================ 6 -->
+  <section id="map">
+    <h2><span class="nb">6</span>What each piece reuses</h2>
+    <table class="map">
+      <tr><th>Element</th><th>Existing component / function (repo path)</th><th>Change</th></tr>
+      <tr><td>Project header, pager, tabs</td><td><code>sorento_crm_frontend/app/(protected)/project-sales/[projectId]/components/ProjectDetailClient.tsx</code> (<code>TABS</code>), <code>components/common/RecordNavigation</code></td><td>"sponsorships" tab becomes "related" (old <code>?tab=sponsorships</code> opens it filtered to Sponsorship form)</td></tr>
+      <tr><td>Grid, search, Columns, empty state</td><td><code>sorento_crm_frontend/components/common/PanelDataGrid.tsx</code> with <code>serverSorting</code>; template <code>.../[projectId]/components/SponsorshipsPanel.tsx</code></td><td>new <code>RelatedRecordsPanel.tsx</code> driven by a per-type list</td></tr>
+      <tr><td>Query string</td><td><code>buildDataGridParams</code>, <code>sorento_crm_frontend/lib/api-client.ts:216</code></td><td>reuse</td></tr>
+      <tr><td>Status / approval pills</td><td><code>sorento_crm_frontend/lib/status-pill.ts</code>; <code>lib/complaint-status.ts</code></td><td>reuse</td></tr>
+      <tr><td>Dates dd/mm/yyyy</td><td><code>formatDate</code>, <code>sorento_crm_frontend/lib/helpers.ts:128</code></td><td>reuse</td></tr>
+      <tr><td>Money</td><td><code>formatMyr</code> (as SponsorshipsPanel imports it)</td><td>reuse</td></tr>
+      <tr><td>Multi-select filters</td><td><code>SearchableMultiSelect</code></td><td>reuse</td></tr>
+      <tr><td>Spend line</td><td><code>useSponsorshipRollup</code>, <code>sponsorship_link_service.sponsorship_rollup</code> (<code>sorento_crm_backend/app/services/sponsorship_link_service.py:186</code>)</td><td>reuse as is</td></tr>
+      <tr><td>Rows (server)</td><td>pattern of <code>sponsorship_link_service.list_sponsorships</code> (<code>:152</code>)</td><td>new <code>project_related_records.py</code>: one registry entry per type, one <code>UNION ALL</code>, sort and paging in SQL; <code>GET /projects/{id}/related-records</code></td></tr>
+      <tr><td>Who sees which type / rows</td><td><code>own_scope.request_access</code>, <code>request_clause</code>, <code>npa_clause</code> (<code>sorento_crm_backend/app/services/own_scope.py:216, 237, 187</code>); project <code>READ</code> + <code>_own_scope.py</code></td><td>reuse, no new permission</td></tr>
+      <tr><td>Project picker on SI / NPA</td><td><code>useProject</code> / <code>projectCodeLabel</code> as in <code>PurchaseRequestForm.tsx:70-71, 784</code>; portal: <code>projects_for_contact</code></td><td>reuse; field added to SI and NPA forms</td></tr>
+      <tr><td>Link check</td><td><code>project_service.assert_linkable_project</code> (<code>sorento_crm_backend/app/services/project_service.py:185</code>)</td><td>reuse</td></tr>
+      <tr><td>History line</td><td>audit listeners (<code>__audit_track__</code> on StockInquiry; shared history component)</td><td>reuse</td></tr>
+      <tr><td>Assistant</td><td><code>sorento_crm_backend/app/services/assistant_registry/</code> (project module), 2 eval prompts in <code>scripts/chatbot_eval/gold/</code></td><td><span class="newtag">NEW</span> entry for the related-records list ("what is linked to project PS26-0001?")</td></tr>
+      <tr><td>DB</td><td>migrations <code>315_sponsorship_link</code>, <code>318_complaint_project_link</code> as the pattern</td><td><span class="newtag">NEW</span> nullable <code>project_id</code> + partial index on <code>stock_inquiries</code> and <code>new_product_applications</code></td></tr>
+    </table>
+  </section>
+
+  <!-- ============================================================ 7 -->
+  <section id="qs">
+    <h2><span class="nb">7</span>Card questions: Q1-Q4 = a (crew, from owner rulings); Q5 became D1-D3, decided by the owner 13 Nov</h2>
+    <ol class="qs">
+      <li><b>Q1</b> SI and NPA: add a Project picker and link field (recommended) or show them only through another record?</li>
+      <li><b>Q2</b> One Related tab replacing Sponsorship Form (recommended) or one tab per type?</li>
+      <li><b>Q3</b> Purchase requests and sponsorship forms in the same grid with a Type column (recommended) or separately?</li>
+      <li><b>Q4</b> Columns: Type, Number, Status, Approval, Date, Raised by, Subject, Value (recommended) or a shorter set?</li>
+      <li><b>Q5</b> became <b>D1</b> reviewed list (5b), <b>D2</b> Project editable any time by whoever may edit the record, approval stays, History logged, <b>D3</b> Project optional for everyone.</li>
+    </ol>
+  </section>
+</div>
+</body>
+</html>

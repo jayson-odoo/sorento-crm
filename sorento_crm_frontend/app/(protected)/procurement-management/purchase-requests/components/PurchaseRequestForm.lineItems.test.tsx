@@ -26,7 +26,6 @@ vi.mock('../hooks/usePurchaseRequests', () => ({
 }));
 
 vi.mock('../services/purchaseRequestService', () => ({
-  searchProjectsForLink: vi.fn().mockResolvedValue([]),
   getOrCreateViewLink: vi.fn(),
 }));
 
