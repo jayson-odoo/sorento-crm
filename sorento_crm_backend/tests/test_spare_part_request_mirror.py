@@ -99,3 +99,26 @@ def test_M3_a_new_view_holder_on_no_stage_team_sees_nothing(staged):
     assert res.status_code in (403, 404), res.text
     res = client.get(f"{HEADERS}/{inquiry.id}")
     assert res.status_code in (403, 404), f"OI header must stay closed: {res.status_code}"
+
+
+def test_M4_a_view_only_approver_still_opens_the_request_after_approving(staged):
+    """Browser re-check on a8162c81: right after Approve the record refetched and answered 404
+    ("Could not load this spare part request"), because a view-only approver is no longer the
+    current stage's decider. An approver of record keeps the record and finds it in the list,
+    as a Purchase Request approver does."""
+    w = staged
+    approver = _team_approver(w)
+    inquiry = submitted(w)
+    client = w.as_user(approver)
+    res = client.post(f"{SPR}/{inquiry.id}/approve", json={"note": "ok"})
+    assert res.status_code == 200, f"approve: {res.status_code} {res.text}"
+
+    res = client.get(f"{SPR}/{inquiry.id}")
+    assert res.status_code == 200, f"detail after approving: {res.status_code} {res.text}"
+    res = client.get(f"{HEADERS}/{inquiry.id}")
+    assert res.status_code == 200, f"OI header after approving: {res.status_code} {res.text}"
+    res = client.get(f"{HEADERS}/{inquiry.id}/history")
+    assert res.status_code == 200, f"history after approving: {res.status_code} {res.text}"
+    res = client.get(SPR, params={"limit": 100})
+    assert res.status_code == 200, res.text
+    assert str(inquiry.id) in {r["id"] for r in res.json()["data"]}, "the approved request is in their list"
