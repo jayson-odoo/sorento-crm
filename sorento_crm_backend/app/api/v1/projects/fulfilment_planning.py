@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, Dict, Literal, Optional, Tuple
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
 
 from app.api.v1.projects._common import permission_slugs
@@ -66,6 +66,7 @@ from app.schemas.project_supply import (
 )
 from app.services import project_service as projects
 from app.services.audit_service import log_audit
+from app.services.company_scope_resolver import widen_if_requested
 from app.services.error_handler import AppException, handle_internal_error
 from app.services.project_classification_evidence import classification_evidence
 from app.services.field_access import staff_may_see_clearance
@@ -1053,6 +1054,14 @@ def get_stock_detail(
             "behalf, which is what the pile looks like to somebody not in it."
         ),
     ),
+    company_scope: Optional[Literal["grants"]] = Query(
+        None,
+        description=(
+            "`grants` reads under every company the caller is granted (staff sessions "
+            "only): an order inquiry's line can sit at another granted company's bin."
+        ),
+    ),
+    request: Request = None,
     # SPARE-PART-ORDER-REQUEST (B3): a spare part requester reads a line's stock too (the
     # line's stock table, UAC R3). Quantities and document numbers only; no cost is on it.
     _user: dict = Depends(
@@ -1076,17 +1085,25 @@ def get_stock_detail(
                 message="Ask for one location or for one group.",
                 code="stock_detail_target_required",
             )
+        if group and company_scope:
+            # One bin only: a whole group or the pools is never read across companies.
+            raise AppException(
+                status_code=422,
+                message="Company scope applies to one location only.",
+                code="stock_detail_scope_group",
+            )
         if warehouse_id and not group:
             validate_uuid_path(warehouse_id, resource="Warehouse")
         # The SAME reader every other `*_ids` filter uses: it takes CSV, a JSON array or
         # repeated params, deduplicates, and refuses a value that is not an id by naming the
         # parameter - rather than handing the typo to the query.
         wanted = parse_uuid_list([line_ids], param_name="line_ids") or []
-        detail = FulfilmentBoardService(
-            db, reveal_eta_delay=staff_may_see_clearance(db, _user)
-        ).stock_detail(
-            product_id, warehouse_id, line_ids=wanted, group=group
-        )
+        with widen_if_requested(db, request, _user, company_scope):
+            detail = FulfilmentBoardService(
+                db, reveal_eta_delay=staff_may_see_clearance(db, _user)
+            ).stock_detail(
+                product_id, warehouse_id, line_ids=wanted, group=group
+            )
         if holds_permission(db, _user, VIEW):
             return detail
         # SPARE-PART-ORDER-REQUEST (C1): a spare part requester gets quantities only.

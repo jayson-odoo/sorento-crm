@@ -431,11 +431,22 @@ export function useStockDetail(
    * caller already knows its target before this hook is called.
    */
   enabled = true,
+  /** `grants`: the location may belong to another company the caller is granted. */
+  companyScope?: 'grants',
 ) {
   const key = (lineIds ?? []).join(',');
   return useQuery({
-    queryKey: [STOCK_DETAIL_KEY, productId, group ?? warehouseId, key],
-    queryFn: () => getStockDetail(productId, warehouseId, lineIds ?? [], group),
+    queryKey: [
+      STOCK_DETAIL_KEY,
+      productId,
+      group ?? warehouseId,
+      key,
+      ...(companyScope ? [companyScope] : []),
+    ],
+    queryFn: () =>
+      companyScope
+        ? getStockDetail(productId, warehouseId, lineIds ?? [], group, companyScope)
+        : getStockDetail(productId, warehouseId, lineIds ?? [], group),
     enabled: enabled && Boolean(warehouseId || group),
     retry: 1,
   });
