@@ -607,7 +607,7 @@ function sparePartLineColumns({
     {
       accessorKey: 'item_code',
       header: ({ column }) => <DataGridColumnHeader title="Product" column={column} />,
-      size: 150,
+      size: 130,
       meta: { headerTitle: 'Product', skeleton: <Skeleton className="h-4 w-32" /> },
       cell: ({ row }) => (
         <span className="block min-w-0 truncate">
@@ -621,7 +621,7 @@ function sparePartLineColumns({
         </span>
       ),
     },
-    { ...locationColumn(), size: 70 },
+    { ...locationColumn(), size: 90 },
     {
       accessorKey: 'qty',
       header: ({ column }) => <DataGridColumnHeader title="Qty" column={column} />,

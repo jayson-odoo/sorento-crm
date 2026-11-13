@@ -1324,7 +1324,35 @@ def prices_visible(db: Session, inquiry: OrderInquiry, user_id: Optional[str]) -
 
     if not cost_hidden():
         return True
-    return is_requester(inquiry, user_id) or can_decide(db, inquiry, user_id)
+    return (
+        is_requester(inquiry, user_id)
+        or can_decide(db, inquiry, user_id)
+        or decided_on(db, inquiry, user_id)
+    )
+
+
+#: The approver's own moves on a request, as History records them.
+_DECISION_EVENTS = ("SPR_APPROVED", "SPR_REJECTED", "SPR_LINE_CHANGED")
+
+
+def decided_on(db: Session, inquiry: OrderInquiry, user_id: Optional[str]) -> bool:
+    """An approver of record (browser pass R12): someone who approved, rejected or changed a
+    line of this request keeps seeing its prices after their level has closed."""
+    from app.models.audit import AuditLog
+
+    if not user_id:
+        return False
+    return (
+        db.query(AuditLog.id)
+        .filter(
+            AuditLog.entity_type == AUDIT_ENTITY,
+            AuditLog.entity_id == str(inquiry.id),
+            AuditLog.event.in_(_DECISION_EVENTS),
+            AuditLog.user_id == str(user_id),
+        )
+        .first()
+        is not None
+    )
 
 
 #: The worklist (Lines tab) row keys that carry a spare part request's price.
