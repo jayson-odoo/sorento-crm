@@ -1,6 +1,8 @@
 # PLAN: Order Change Notice (OCN) on the purchase request engine
 
-Status: Build, slice 1 (approved 13 Nov 00:01). Size L, full track (migration, new SLA rows, RBAC slugs).
+Status: Slice 1 hand test (13 Nov): built, reviewed (reviewer 3 rounds, security 3 rounds), kill-tested, browser-passed;
+waiting for the owner's hand test. Merges after #2383 (PROJECT-RELATED-RECORDS). Size L, full track (migration, new SLA
+rows, RBAC slugs).
 Lane OCN-ORDER-CHANGE-NOTICE. Card: `CARD-ocn-order-change-notice-12nov.md`. UAC:
 `ocn-order-change-notice-acceptance-criteria.md`. Mock: `documentation/mockups/ocn/index.html`.
 Paths: BE = `sorento_crm_backend/app/`, FE = `sorento_crm_frontend/`. Read from main aa824637.
@@ -71,3 +73,15 @@ global guards `test_schema_uuid_id_principle.py`, `test_list_pagination_limit.py
 an OCN sort-keys test (pattern `test_portal_p4_npa_sort_keys.py`), and a PR regression (PR moves still
 behave identically after the shared extraction). FE vitest: list columns/sort/filters, form shell +
 Save as draft / Submit, detail main button per status, menu entry.
+
+## Follow-ups recorded (not in this lane)
+
+- Upload helper shared with complaints and stock inquiries trusts the browser content type and has no virus scan
+  (security L6); applies to every caller, so it gets its own lane.
+- Linking a project ignores the "own projects only" limit (security L4), same as purchase requests and complaints today.
+- `apply_decision` writes an aware timestamp into a naive column (review m6), pinned PR behaviour; fix with the PR pin.
+- iOS long-press can open the Unlink menu on the wrong file (shared PurchaseOrdersPanel pattern).
+- Main-only test failures seen while testing, not from this lane: `test_every_route_a_limited_user_reaches_is_pinned`
+  (#2173 AutoCount routes unpinned) and one passkey audit test (#2375).
+- Slice 2 (`OCN-ORDER-CHANGE-NOTICE B`): portal kind, public approval / view link, PDF, assistant actions (the list is
+  already registered for reading), report, Revisions tab with portal revisions.
