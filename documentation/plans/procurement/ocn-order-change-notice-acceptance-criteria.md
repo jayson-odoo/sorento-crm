@@ -131,18 +131,12 @@ forms work right?" (mirror the purchase request's Requested by).
   MY REQUESTS list (path /procurement-management/order-change-notices, permission
   `procurement.order_change_notices.view_own`) and shows only when the salesperson's resolved portal kinds include
   `order_change_notice` (same filter as every other MY REQUESTS form).
-- **I5** Portal: GET/POST `/api/v1/public/portal/submissions/order_change_notice` (list / create),
-  GET/PUT `.../{id}` (read / update), POST `.../{id}/submit`. Every route first checks the kind is visible for the
-  token's contact (403 FORM_TYPE_NOT_VISIBLE otherwise). The raiser is the CRM user linked to the contact
-  (`users.respond_contact_id`); a contact with no linked user gets 403 (the kind is a salesperson's form). The
-  route builds the actor with `order_change_notice_service.actor_for_user(linked user)`, so the portal applies
-  exactly the CRM rules (create grant, own-only list, edit / submit rules, company scope); another user's notice
-  id is 404 (no existence leak). Portal lookups (customers, products, change types, projects) reuse the notice's
-  own lookup functions under the same rules.
-- **I6** Portal pages: list, new and detail for the kind at /portal/c/[slug]/order_change_notice (+ the legacy
-  /portal/order_change_notice paths the other kinds have), rendering the SAME notice form component as the CRM
-  (data calls injected, not a second form); the portal landing offers the kind in its selector like Sample
-  Request.
+- **I5** (moved to slice 2, crew 13 Nov 18:45: the owner tests through the CRM's View as) Portal routes
+  `/api/v1/public/portal/submissions/order_change_notice` with the visibility gate first and the actor built from
+  the contact's linked CRM user (`actor_for_user`), and portal list / new / detail pages rendering the same form.
+- **I6** Until I5 ships, the portal landing does not offer `order_change_notice` even when it is visible (no page
+  to open); the CRM MY REQUESTS item (I4) is how a salesperson raises one, and the contact / tag / segment switch
+  controls it.
 - **I7** One salesperson field: "Sales Person" (read-only creator) and "Sales Incharge" (user picker) are removed
   from the form, detail, list and API; "Requested by" replaces them: `requested_by_contact_id` + `requested_by`
   text, picked with the shared `RequestorContactSelect`, saved through the shared
@@ -157,7 +151,7 @@ forms work right?" (mirror the purchase request's Requested by).
 
 ## H. Slice 2 (follow-up PR)
 
-- **H1** Portal kind: pulled into slice 1 by the owner's hand test, see I1-I6.
+- **H1** Portal kind: registered in slice 1 (I1-I4, I6); portal routes and pages are I5.
 - **H2** Public approval link and public view link work for an OCN (approval token generic).
 - **H3** Print / PDF in the paper layout.
 - **H4** Assistant / MCP: list and read OCNs, approve / reject tools, two eval prompts each.
