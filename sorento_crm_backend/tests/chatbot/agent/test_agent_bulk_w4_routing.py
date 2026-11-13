@@ -29,13 +29,13 @@ EDIT_WRITE = "crm_contact_edit"
 
 #: The seven turns of the crew pass (laneboard/scripts/2256.md), as their messages: the table follows the phrase.
 PASS_TURNS = {
-    "P1": "update these contacts\nPhone | Name | Sponsorship registered project | Workspace\n0190002561 | ZZT A Sdn Bhd",
-    "P2": "tukar nama kontak ni\nTelefon | Nama\n0190002562 | ZZT Kedai Baru",
+    "P1": "update these contacts\nPhone | Name | Sponsorship registered project | Workspace\n0190000561 | ZZT A Sdn Bhd",
+    "P2": "tukar nama kontak ni\nTelefon | Nama\n0190000562 | ZZT Kedai Baru",
     "P4-1": "assign these sales agents\nCompany | Customer | Agent\nSRT | ZZTQ1 | NOSUCH 77",
     "P4-2": "row 2: SRT",
-    "P5": "update these contacts\nPhone | Name | Sponsorship registered project | Workspace\n0190002563 | | | No Such Workspace 77",
-    "P5b": "update these contacts\nPhone | Name\n0190002564 | ZZT Proper Case",
-    "P7": "update these contacts\nPhone | Name\n0190002565 | ZZT Own Rule",
+    "P5": "update these contacts\nPhone | Name | Sponsorship registered project | Workspace\n0190000563 | | | No Such Workspace 77",
+    "P5b": "update these contacts\nPhone | Name\n0190000564 | ZZT Proper Case",
+    "P7": "update these contacts\nPhone | Name\n0190000565 | ZZT Own Rule",
 }
 
 
