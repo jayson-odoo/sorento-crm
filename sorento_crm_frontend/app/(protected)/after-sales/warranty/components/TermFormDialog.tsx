@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
+import { NumberInput } from '@/components/ui/number-input';
 import { Label } from '@/components/ui/label';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
@@ -114,9 +115,8 @@ export function TermFormDialog({ open, onOpenChange, policyId, term }: Props) {
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1">
                 <Label htmlFor="wt-months">Months</Label>
-                <Input
+                <NumberInput
                   id="wt-months"
-                  type="number"
                   min={0}
                   value={months}
                   onChange={(e) => setMonths(e.target.value)}

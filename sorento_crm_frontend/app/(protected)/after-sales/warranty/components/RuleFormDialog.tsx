@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { NumberInput } from '@/components/ui/number-input';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import {
@@ -108,7 +109,7 @@ export function RuleFormDialog({ open, onOpenChange, rule }: Props) {
             </div>
             <div className="space-y-1">
               <Label htmlFor="wr-priority">Priority</Label>
-              <Input id="wr-priority" type="number" value={priority} onChange={(e) => setPriority(e.target.value)} />
+              <NumberInput id="wr-priority" value={priority} onChange={(e) => setPriority(e.target.value)} />
             </div>
           </DialogBody>
           <DialogFooter>

@@ -31,10 +31,8 @@ import type {
 type KindsParams = DataGridApiFetchParams & { is_active?: string[]; has_no_rule?: boolean };
 type RulesParams = DataGridApiFetchParams & { kind_id?: string[] };
 
-const listOptions = { ...LIST_QUERY_OPTIONS, retry: 1 };
-
 export function usePolicies(params: DataGridApiFetchParams) {
-  return useQuery({ ...listOptions, queryKey: ['warranty-policies', params], queryFn: () => getPolicies(params) });
+  return useQuery({ ...LIST_QUERY_OPTIONS, retry: 1, queryKey: ['warranty-policies', params], queryFn: () => getPolicies(params) });
 }
 
 export function usePolicy(id: string) {
@@ -46,7 +44,7 @@ export function usePolicyTerms(policyId: string) {
 }
 
 export function useKinds(params: KindsParams) {
-  return useQuery({ ...listOptions, queryKey: ['warranty-kinds', params], queryFn: () => getKinds(params) });
+  return useQuery({ ...LIST_QUERY_OPTIONS, retry: 1, queryKey: ['warranty-kinds', params], queryFn: () => getKinds(params) });
 }
 
 /** The pill's N of M: kinds with no rule, and all kinds. */
@@ -78,7 +76,7 @@ export function useDefectOptions() {
 }
 
 export function useRules(params: RulesParams) {
-  return useQuery({ ...listOptions, queryKey: ['warranty-rules', params], queryFn: () => getRules(params) });
+  return useQuery({ ...LIST_QUERY_OPTIONS, retry: 1, queryKey: ['warranty-rules', params], queryFn: () => getRules(params) });
 }
 
 function useInvalidate() {
