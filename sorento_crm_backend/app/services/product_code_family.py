@@ -121,6 +121,16 @@ def _set_code_tokens(db: Session, tokens: list[str]) -> dict[str, str]:
     }
 
 
+def _finds_a_set(db: Session, token: str) -> bool:
+    """Does the resolver's set probe (`entity_resolver._prefix_probe_product_set`, the product
+    code rule over set codes, case, dashes and spaces folded) find the token, whether it answers
+    the sets or holds them back as nearly named (`_ProbeRows.near`)?"""
+    from app.services.entity_resolver import _prefix_probe_product_set
+
+    found = _prefix_probe_product_set(db, token)
+    return bool(found) or bool(getattr(found, "near", False))
+
+
 def _after(words: list[str], folded_token: str) -> list[str]:
     """The words of a line after the run of words that spells `folded_token` ("qwc604", "p",
     "rl" spell QWC604PRL); empty when no run spells it."""
@@ -464,9 +474,12 @@ def narrow_code_tokens(
         else:
             picked = _pick(family, descriptor)
         if picked is None:
-            if _fold(token) != code_word:
+            if _fold(token) != code_word and not _finds_a_set(db, token):
                 # "Srtwc7604ptrap" whose words picked nothing: the code alone, rather
-                # than a folded phrase no product is coded as.
+                # than a folded phrase no product is coded as. CHATBOT-SET-CODES F2/R2: a token
+                # the resolver's set probe finds ("QWC7405 RL" over QWC7405-RL-P-PJ and
+                # QWC7405-RL-S-PJ) stays whole, as its dashed form "QWC7405-RL" does: space,
+                # dash and case are one code, so the resolver offers the sets it nearly names.
                 replaced[i] = [code_word]
             continue
         codes, terms = picked
