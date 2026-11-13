@@ -180,7 +180,13 @@ _ALSO_REQUIRED_PERMISSIONS: dict = {
 
 # Warranty configuration (after-sales P2, owner Q1): role admin or superadmin only.
 _ADMIN_ONLY_ACTIONS: frozenset = frozenset(
-    {"warranty_policy.delete", "warranty_term.delete", "warranty_kind.delete", "warranty_kind_rule.delete"}
+    {
+        "warranty_policy.delete",
+        "warranty_term.delete",
+        "warranty_kind.delete",
+        "warranty_kind.archive",
+        "warranty_kind_rule.delete",
+    }
 )
 
 _ANY_OF_PERMISSIONS: dict = {
@@ -568,6 +574,7 @@ _PARK_SCOPE_EXEMPT: frozenset = frozenset({
     # Shared reference rows (no company column); admin-only like the whole configuration.
     "warranty_term.delete",
     "warranty_kind.delete",
+    "warranty_kind.archive",
     "warranty_kind_rule.delete",
     "spec_key.delete",
     "spec_rule.remove",

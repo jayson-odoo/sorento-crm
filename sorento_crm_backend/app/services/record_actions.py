@@ -1196,6 +1196,13 @@ def _delete_warranty_kind(db: Session, payload: dict):
     return warranty_config_service.delete_kind(db, _entity_id(payload))
 
 
+def _archive_warranty_kind(db: Session, payload: dict):
+    from app.schemas.warranty_config import KindUpdate
+    from app.services import warranty_config_service
+
+    return warranty_config_service.update_kind(db, _entity_id(payload), KindUpdate(is_active=False))
+
+
 def _delete_warranty_kind_rule(db: Session, payload: dict):
     from app.services import warranty_config_service
 
@@ -1413,6 +1420,7 @@ register(
 # Warranty configuration is admin-only (owner Q1); the park route adds the role check.
 for _key, _entity, _fn, _label in (
     ("warranty_policy.delete", "warranty_policy", _delete_warranty_policy, "Delete policy"),
+    ("warranty_kind.archive", "warranty_kind", _archive_warranty_kind, "Archive kind"),
     ("warranty_term.delete", "warranty_term", _delete_warranty_term, "Delete term"),
     ("warranty_kind.delete", "warranty_kind", _delete_warranty_kind, "Delete kind"),
     ("warranty_kind_rule.delete", "warranty_kind_rule", _delete_warranty_kind_rule, "Delete rule"),
@@ -1422,7 +1430,7 @@ for _key, _entity, _fn, _label in (
             key=_key,
             entity_types=(_entity,),
             execute=_fn,
-            window=WINDOW_DESTRUCTIVE,
+            window=WINDOW_REVERSIBLE if _key.endswith(".archive") else WINDOW_DESTRUCTIVE,
             permission="after_sales.service_jobs.view",
             label=_label,
         )
