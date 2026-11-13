@@ -231,7 +231,7 @@ export function useMoveFiles() {
 
   const MoveClashDialog = (
     <Dialog open={prompt !== null} onOpenChange={(open) => !open && answer({ kind: 'cancel' })}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-xl">
         <DialogHeader>
           {/* pe-8 keeps a long name clear of the close X in the corner. */}
           <DialogTitle className="line-clamp-2 break-words pe-8" title={prompt?.conflict.message}>
@@ -281,7 +281,8 @@ export function useMoveFiles() {
             </div>
           )}
         </div>
-        <DialogFooter className="flex-col-reverse flex-wrap gap-2 pt-4 sm:flex-row">
+        {/* One row from sm up (owner, 13 Nov); on a phone the shared footer stacks. */}
+        <DialogFooter className="gap-2 pt-4 sm:flex-nowrap sm:space-x-0">
           <Button variant="ghost" onClick={() => answer({ kind: 'cancel' })}>
             Cancel
           </Button>
