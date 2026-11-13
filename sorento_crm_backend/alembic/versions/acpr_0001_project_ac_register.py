@@ -12,14 +12,14 @@ Additive only, nullable, no backfill:
   registration", OFF on deploy.
 
 Revision ID: acpr_0001_project_ac_register
-Revises: nc_0001_non_cancellable
+Revises: n8nra_0001_reply_sender
 """
 from __future__ import annotations
 
 from alembic import op
 
 revision = "acpr_0001_project_ac_register"
-down_revision = "nc_0001_non_cancellable"
+down_revision = "n8nra_0001_reply_sender"
 branch_labels = None
 depends_on = None
 
