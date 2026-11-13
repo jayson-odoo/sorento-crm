@@ -294,7 +294,6 @@ class PriceTagRequestLine(Base):
             "OR (line_type = 'product_set' AND product_set_id IS NOT NULL AND product_id IS NULL)",
             name="ck_price_tag_request_lines_one_ref",
         ),
-        UniqueConstraint("request_id", "product_id", name="uq_ptag_line_request_product"),
         UniqueConstraint("request_id", "product_set_id", name="uq_ptag_line_request_set"),
         CheckConstraint(
             "price_type IN ('list','selling')", name="ck_price_tag_request_lines_price_type"
