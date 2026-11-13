@@ -161,11 +161,16 @@ export function RelatedRecordsPanel({
   const searchQuery = useDebouncedValue(search.trim(), 300);
 
   // Mirror the grid's state into the address bar, keeping every other param (the tab, the
-  // projects list's own prev/next query).
+  // projects list's own prev/next query). Only its own `rel_*` params, and only while the page
+  // shows Related: the tab is the page's to write, so a tab click (or Back into another tab)
+  // is never written over while this panel is still mounted.
   React.useEffect(() => {
     const next = new URLSearchParams(urlKey);
+    const tab = next.get('tab');
+    if (tab !== 'related' && tab !== 'sponsorships') return;
+    // The retired Sponsorship Form tab's links open Related: the alias becomes its own name.
+    if (tab === 'sponsorships') next.set('tab', 'related');
     for (const key of Object.values(URL_KEYS)) next.delete(key);
-    next.set('tab', 'related');
     if (pagination.pageIndex > 0) next.set(URL_KEYS.page, String(pagination.pageIndex + 1));
     if (pagination.pageSize !== PAGE_SIZE) next.set(URL_KEYS.limit, String(pagination.pageSize));
     const sort = sorting[0];
