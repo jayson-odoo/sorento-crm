@@ -965,3 +965,28 @@ def test_the_result_reports_the_qty_ss_linked_not_the_qty_asked(scm_app, fake_ss
     assert resp.status_code == 200, resp.text
     (result,) = resp.json()["results"]
     assert result["outcome"] == "done" and result["qty"] == 2
+
+
+def test_worklist_rows_say_whether_a_po_link_is_tied_in_autocount(scm_app, fake_ss):
+    """The document view's lines (the worklist listing filtered to one OI) carry `in_autocount_link`:
+    true only when a linked PO line's `from_so_line_ref` equals the line's AutoCount SO line ref."""
+    from app.models.project_so import OrderInquiryLink
+
+    w = _oi_world(scm_app)
+    db = w["db"]
+    _p, tied = _po_line(db, w["product"], w["hq"], qty=20, so_ref=w["so_line"].source_ref,
+                        doc_key=12100, dtl_key=12101)
+    _p2, untied = _po_line(db, w["product"], w["hq"], qty=20, so_ref=None, doc_key=12200, dtl_key=12201)
+    for row, po_line in ((w["rows"]["a"], tied), (w["rows"]["c"], untied)):
+        db.add(OrderInquiryLink(
+            id=_u(), company_id=SORENTO_COMPANY_ID, row_id=row.id, po_line_id=po_line.id,
+            document=po_line.purchase_order.po_number, qty=Decimal("5"),
+        ))
+    db.flush()
+
+    listing = w["c"].get(OI, params={"query": w["marker"], "limit": 100})
+    assert listing.status_code == 200, listing.text
+    by_id = {r["id"]: r for r in listing.json()["data"]}
+    assert {k: by_id[w["rows"][k].id].get("in_autocount_link", "MISSING") for k in ("a", "c", "none")} == {
+        "a": True, "c": False, "none": False,
+    }
