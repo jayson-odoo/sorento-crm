@@ -93,6 +93,13 @@ def render_reply(
             lines.append(str(facts["link"]))
         return "\n".join(lines)
 
+    if kind == "complete" and not facts.get("missing"):
+        # Nothing left to add: the head line and the link only, no "add what I didn't catch" intro.
+        head = _fill(
+            _template("complete_no_link", lang, db), idea_number=facts.get("idea_number"), title=facts.get("title")
+        )
+        return f"{head}\n{facts['link']}" if facts.get("link") else head
+
     if kind == "complete":
         name = "complete" if facts.get("link") else "complete_no_link"
         return _fill(
