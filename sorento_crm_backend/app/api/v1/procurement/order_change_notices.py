@@ -119,6 +119,27 @@ def search_products(q: str = Query(""), user: dict = Depends(get_current_user), 
     return sample_request_service.search_products(db, q)
 
 
+# ai: not-for-assistant a picker's search box, not a list screen; customers are their own entity
+@router.get("/lookups/customers")
+def lookup_customers(
+    q: str = Query(""),
+    limit: int = Query(20, ge=1, le=MAX_PAGE_LIMIT),
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """The form's Customer Name picker: the purchase request's own lookup
+    (`debtor_type.lookup_customers`, one function, two routes) under the notice's rule: whoever
+    may raise (`.create`) or edit (`.edit`) a notice, a `.view_own` salesperson included, in the
+    caller's company. The purchase request route stays closed to that salesperson by its own
+    guard."""
+    from app.services.debtor_type import lookup_customers as lookup
+
+    actor = _actor(db, user)
+    if not (actor.can_create or actor.can_edit):
+        raise AppException(status_code=403, message=f"Permission required: {svc.CREATE}", code="FORBIDDEN")
+    return lookup(db, q, limit)
+
+
 @router.get("")
 def list_notices(
     status_filter: Optional[list[str]] = Query(None, alias="status"),

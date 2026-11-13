@@ -46,6 +46,10 @@ vi.mock('../services/orderChangeNoticeService', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../services/orderChangeNoticeService')>();
   return {
     ...actual,
+    // Round 17: the form searches customers through the notice's own route; the suite's customer
+    // lookup mock stands for it, so its assertions read as before.
+    lookupOrderChangeNoticeCustomers: async (q: string) =>
+      (await import('@/app/(protected)/procurement-management/purchase-requests/services/customerLookupService')).lookupCustomersForRequest(q),
     createOrderChangeNotice: (...a: unknown[]) => svc.create(...a),
     updateOrderChangeNotice: (...a: unknown[]) => svc.update(...a),
     submitOrderChangeNotice: (...a: unknown[]) => svc.submit(...a),

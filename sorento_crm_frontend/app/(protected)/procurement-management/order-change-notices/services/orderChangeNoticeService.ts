@@ -2,6 +2,7 @@ import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import { REVISION_HEADER } from '@/lib/revision-fence';
+import type { CustomerLookupItem } from '@/app/(protected)/procurement-management/purchase-requests/types/purchaseRequest.types';
 import type { DeferredFormAction } from '@/app/(protected)/sla-management/_shared/formAction';
 import type {
   OcnChangeType,
@@ -49,6 +50,15 @@ async function fail(res: Response, fallback: string): Promise<never> {
 async function read<T>(res: Response, fallback: string): Promise<T> {
   if (!res.ok) return fail(res, fallback);
   return (await res.json()) as T;
+}
+
+/** The Customer Name picker: the purchase request's lookup, through the notice's own route, so a
+ *  salesperson who may raise a notice (`.view_own` + `.create`) can search it (round 17). */
+export async function lookupOrderChangeNoticeCustomers(query: string): Promise<CustomerLookupItem[]> {
+  const sp = new URLSearchParams();
+  if (query.trim()) sp.set('q', query.trim());
+  const res = await apiFetch(`${BASE}/lookups/customers?${sp.toString()}`);
+  return read<CustomerLookupItem[]>(res, 'Failed to load customers');
 }
 
 function asList(value: MultiValue): string[] | undefined {

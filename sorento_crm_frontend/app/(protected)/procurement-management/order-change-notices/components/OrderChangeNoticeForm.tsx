@@ -33,7 +33,6 @@ import { formatDateInMalaysia } from '@/lib/helpers';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { cn } from '@/lib/utils';
 import { getUserLookup } from '@/services/userSelectService';
-import { lookupCustomersForRequest } from '@/app/(protected)/procurement-management/purchase-requests/services/customerLookupService';
 import type { CustomerLookupItem } from '@/app/(protected)/procurement-management/purchase-requests/types/purchaseRequest.types';
 import { searchProjectsForLink } from '@/app/(protected)/complaint-management/complaints/services/complaintService';
 import {
@@ -52,6 +51,7 @@ import {
 import {
   OrderChangeNoticeError,
   linkOrderChangeNoticeAttachment,
+  lookupOrderChangeNoticeCustomers,
   searchOrderChangeNoticeProducts,
   uploadOrderChangeNoticeAttachment,
 } from '../services/orderChangeNoticeService';
@@ -367,7 +367,7 @@ export default function OrderChangeNoticeForm({ ocnId, projectId }: OrderChangeN
                     patch({ customer_id: '', customer_name: v });
                   }
                 }}
-                fetchOptions={lookupCustomersForRequest}
+                fetchOptions={lookupOrderChangeNoticeCustomers}
                 optionValue={(o) => o.debtor_name}
                 optionLabel={(o) => o.debtor_name}
                 optionMeta={(o) => o.customer_code}
