@@ -873,8 +873,8 @@ function ManageDialog({
     return linkRowError(row.line, po, qty[row.id], total, capabilities, manageCap);
   }
 
-  const stateRef = React.useRef({ action, picked, qty, showErrors, rowError });
-  stateRef.current = { action, picked, qty, showErrors, rowError };
+  const stateRef = React.useRef({ action, picked, qty, showErrors, rowError, effective });
+  stateRef.current = { action, picked, qty, showErrors, rowError, effective };
 
   const tick = (rowId: string, on: boolean) => setRowSelection((prev) => ({ ...prev, [rowId]: on }));
 
@@ -942,7 +942,9 @@ function ManageDialog({
                   tick(r.id, Boolean(value));
                 }}
                 options={poLines.map((po) => {
-                  const note = wrongBook(r, po);
+                  const note = !capabilities.split_link.enabled
+                    ? (capabilities.split_link.reason ?? 'Waiting for AutoCount')
+                    : wrongBook(r, po);
                   return { value: po.po_line_id, label: labelOf(po), ...(note ? { disabled: true, description: note } : {}) };
                 })}
               />
@@ -970,12 +972,17 @@ function ManageDialog({
                   max={cap}
                   disabled={!po}
                   value={stateRef.current.qty[r.id] ?? String(cap)}
-                  error={stateRef.current.showErrors && effective(r) ? stateRef.current.rowError(r) : undefined}
+                  aria-invalid={stateRef.current.showErrors && stateRef.current.effective(r) && stateRef.current.rowError(r) ? true : undefined}
                   onChange={(event) => {
                     const typed = event.target.value;
                     setQty((prev) => ({ ...prev, [r.id]: typed }));
                   }}
                 />
+                {stateRef.current.showErrors && stateRef.current.effective(r) && stateRef.current.rowError(r) ? (
+                  <p className="mt-1 truncate text-xs text-destructive" role="alert">
+                    {stateRef.current.rowError(r)}
+                  </p>
+                ) : null}
               </>
             );
           }
@@ -1007,14 +1014,15 @@ function ManageDialog({
                 id={`po-manage-action-${r.id}`}
                 value={stateRef.current.action[r.id] ?? ''}
                 placeholder="Keep"
+                clearable
                 truncateTriggerLabel
                 onChange={(value) => {
                   setAction((prev) => ({ ...prev, [r.id]: value }));
-                  tick(r.id, Boolean(value));
+                  if (value) tick(r.id, true); // clearing goes back to Keep and leaves the row ticked
                 }}
                 options={options}
               />
-              {stateRef.current.showErrors && effective(r) && stateRef.current.rowError(r) ? (
+              {stateRef.current.showErrors && stateRef.current.effective(r) && stateRef.current.rowError(r) ? (
                 <p className="mt-1 truncate text-xs text-destructive" role="alert">
                   {stateRef.current.rowError(r)}
                 </p>
@@ -1140,12 +1148,18 @@ function ManageDialog({
                         : null
                   }
                   retryItem={
-                    batch === 'link' || (batch === 'change' && result.action === 'link')
-                      ? (sent.links[result.sales_order_line_id ?? ''] ??
-                        (result.sales_order_line_id && result.po_line_id && result.qty != null
-                          ? { sales_order_line_id: result.sales_order_line_id, po_line_id: result.po_line_id, qty: result.qty }
-                          : null))
-                      : null
+                    // A change's link half re-sends THAT result's own PO line and qty; a plain link
+                    // re-sends what was typed for its SO line.
+                    batch === 'change' && result.action === 'link'
+                      ? result.sales_order_line_id && result.po_line_id && result.qty != null
+                        ? { sales_order_line_id: result.sales_order_line_id, po_line_id: result.po_line_id, qty: result.qty }
+                        : null
+                      : batch === 'link'
+                        ? (sent.links[result.sales_order_line_id ?? ''] ??
+                          (result.sales_order_line_id && result.po_line_id && result.qty != null
+                            ? { sales_order_line_id: result.sales_order_line_id, po_line_id: result.po_line_id, qty: result.qty }
+                            : null))
+                        : null
                   }
                 />
               );
