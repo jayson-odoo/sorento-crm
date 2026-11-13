@@ -5798,6 +5798,10 @@ def _spec_row(entity: dict[str, Any]) -> dict[str, Any]:
         "canonical_code": entity.get("canonical_code") or settled_raw,
         "raw": entity.get("raw"),
         **({"display_name": entity["name"]} if entity.get("name") else {}),
+        # CHAT-CODE-LOOKUP R2 / CHATBOT-CODE-MATCH R3: a member of a set (typed, or picked off
+        # a did-you-mean) keeps the set's code, as the gate's own member rows do.
+        **({"set_code": entity["set_code"]} if entity.get("set_code") else {}),
+        **({"set_codes": list(entity["set_codes"])} if entity.get("set_codes") else {}),
     }
 
 

@@ -169,7 +169,7 @@ describe('Complaints list remembers sort and filters', () => {
     renderIt();
     await waitFor(() => expect(fetched().length).toBeGreaterThan(0));
     const last = fetched().at(-1)!;
-    expect(last.sorting).toEqual([{ id: 'created_at', desc: true }]);
+    expect(last.sorting).toEqual([{ id: 'last_activity_at', desc: true }]);
     expect(asList(last.status)).toEqual([]);
     await new Promise((r) => setTimeout(r, 1000));
     expect(service.upsertUserListColumnConfig).not.toHaveBeenCalled();
