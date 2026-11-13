@@ -677,31 +677,13 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   }
 
   /**
-   * "Link selected" (R18, owner ruling from the hand test on stack C, 25 Sep 2026,
-   * supersedes G1): the SAME mutation as `runAutoLink` below, scoped to exactly the
-   * ticked lines via `row_ids` - it never turns a suggestion into a link on its own.
-   * Pressing it re-runs the AutoCount book step for the ticked lines (in AutoCount's
-   * own name) and refreshes their suggestions, catching a mistake in the automation
-   * rather than promising a placement. Unlike `runAutoLink`, nothing ticked means
-   * nothing to do - there is no whole-OI fallback for this press.
-   */
-  function runLinkSelected() {
-    if (selectedIds.length === 0) return;
-    autoPlace.mutate(
-      { row_ids: selectedIds },
-      { onSuccess: () => setRowSelection({}) },
-    );
-  }
-
-  /**
    * Auto link (AC-DP-06, owner markup 21 Sep): ALWAYS enabled, no confirm dialog -
    * unlike the worklist's own "Auto link all", which asks for a link-horizon date
    * first. Ticked lines -> exactly those (unfiltered - the cascade itself decides what
    * it can and cannot place, the same as the worklist's own unconditional run over
    * everything); nothing ticked -> the whole OI via `filter: { inquiry_id }` (AC-AL-01).
-   * Same hook, same result reporting (`linkOutcomeText`'s toast) as `runLinkSelected`
-   * above - since R18 the two presses share the exact same call, just a different
-   * scope when nothing is ticked.
+   * Same hook and result reporting (`linkOutcomeText`'s toast) as the worklist's Recheck in
+   * AutoCount; scoped to the ticked lines when any are ticked.
    */
   function runAutoLink() {
     // Review S2: a tick on a line with only used rows is still a tick - it links nothing,
@@ -838,13 +820,6 @@ export function OrderInquiryDetail({ id }: { id: string }) {
                       >
                         <Link2 className="size-4" aria-hidden />
                         Choose document
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        disabled={selectedIds.length === 0}
-                        onSelect={selectedIds.length ? runLinkSelected : undefined}
-                      >
-                        <Wand2 className="size-4" aria-hidden />
-                        Link selected
                       </DropdownMenuItem>
                       <DropdownMenuItem
                         disabled={selectedLinked.length === 0}

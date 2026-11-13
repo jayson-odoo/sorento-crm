@@ -348,13 +348,6 @@ export function PoLinkDialog({
         cell: ({ row }) => <span className="font-medium">{row.original.line.so_number}</span>,
       },
       {
-        id: 'line',
-        header: 'Line',
-        size: 60,
-        meta: { headerClassName: 'text-end', cellClassName: 'text-end' },
-        cell: ({ row }) => <span className="tabular-nums">{soLine(row.original.line)}</span>,
-      },
-      {
         id: 'location',
         header: 'Location',
         size: 100,
