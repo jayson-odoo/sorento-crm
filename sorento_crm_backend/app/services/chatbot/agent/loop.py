@@ -1580,9 +1580,10 @@ def dealer_schemas(schemas: list[dict]) -> list[dict]:
 
 
 def dealer_reply(ledger: dict[str, dict]) -> str:
-    """The flow's reply when nothing was proposed, from this turn's tool results only: the LAST refusal of the grant,
-    the access change or the batch tool, in the tool's own words (never the loop's own messages, flagged `loop`), or
-    "" when there is none. A proposal's card or table is shown instead by the caller (review round S6). Never the
+    """The flow's reply when nothing was proposed, from this turn's tool results only: the LAST refusal of the grant
+    or the access change, in the tool's own words (never the loop's own messages, flagged `loop`), or "" when there
+    is none. Never the batch tool's message: it is guidance for the model (owner hand test 14 Nov showed "No row can
+    be changed; tell the user why, row by row."); the batch's rows reach the user as the code-built tables. A proposal's card or table is shown instead by the caller (review round S6). Never the
     model's text, so nothing in it is ever marked not verified."""
     from app.services.chatbot.agent.contact_grant import GRANT
 
@@ -1590,7 +1591,7 @@ def dealer_reply(ledger: dict[str, dict]) -> str:
     for entry in ledger.values():
         data = entry.get("data") if isinstance(entry.get("data"), dict) else {}
         if (
-            entry.get("name") in (GRANT, writes.UPDATE_CONTACT, batch.BATCH)
+            entry.get("name") in (GRANT, writes.UPDATE_CONTACT)
             and entry.get("status") in ("invalid", "denied") and entry.get("message") and not data.get("loop")
         ):
             last = str(entry["message"])
@@ -2150,7 +2151,7 @@ def _run(
                     out = batch.propose(
                         db, ctx, args, steps, seen_ids=seen_ids, skipped_out=batch_skipped,
                         waiting_out=batch_waiting, user_text=text, previous_waiting=table["waiting"],
-                        closed=closed_rows, previous=table,
+                        closed=closed_rows, previous=table, attached=bool(images or file_text),
                     )
                     if isinstance(args, dict) and isinstance(args.get("write"), str):
                         batch_write = args["write"]
