@@ -249,24 +249,62 @@ describe('MOCHA-STOCK-GRID: a location outside every ownership group is read by 
     expect(useStockDetailMock.mock.calls.every((call) => call[4] === false)).toBe(true);
   });
 
-  it('the lookup reaches every granted company, and so does the location read', async () => {
+  it('a location of the active company is read without widening anything', async () => {
     render(<OrderInquiryStockGrid productId={PRODUCT_ID} location="MOCHA-WH" />);
 
     await waitFor(() => expect(lastEnabledStockDetailCall()?.[1]).toBe('wh-mocha-wh'));
-    expect(getWarehousesMock.mock.calls[0][0]).toMatchObject({ companyScope: 'grants' });
-    expect(lastEnabledStockDetailCall()?.[5]).toBe('grants');
-    await screen.findByTestId('cell-stock-table');
-    expect(cellStockTableSpy.mock.calls.at(-1)?.[0]).toMatchObject({ companyScope: 'grants' });
+    expect(getWarehousesMock).toHaveBeenCalledTimes(1);
+    expect(getWarehousesMock.mock.calls[0][0]).not.toHaveProperty('companyScope');
+    expect(lastEnabledStockDetailCall()?.[5]).toBeUndefined();
+    expect(useStockStatusMock.mock.calls.every((call) => call[2] === undefined)).toBe(true);
   });
 
-  it('AutoCount is read across granted companies too, once the location is resolved', async () => {
-    render(<OrderInquiryStockGrid productId={PRODUCT_ID} location="MOCHA-WH" />);
+  describe('a location only another granted company holds', () => {
+    const otherCompanyBin = {
+      id: 'wh-mocha-wh', warehouse_code: 'MOCHA-WH', warehouse_name: 'Mocha', fulfilment_planning: false,
+    };
+    beforeEach(() => {
+      // The active company holds no MOCHA-WH; the grants read finds the other company's.
+      getWarehousesMock.mockImplementation(async (params: { companyScope?: string }) => ({
+        data: params.companyScope === 'grants' ? [otherCompanyBin] : [],
+      }));
+    });
 
-    await waitFor(() => expect(lastEnabledStockDetailCall()?.[1]).toBe('wh-mocha-wh'));
-    const enabled = useStockStatusMock.mock.calls.filter((call) => call[1] !== false);
-    expect(enabled.length).toBeGreaterThan(0);
-    // Never an unscoped AutoCount read for a location that may be another company's.
-    expect(enabled.every((call) => call[2] === 'grants')).toBe(true);
+    it('the lookup widens to granted companies, and so do both stock reads', async () => {
+      render(<OrderInquiryStockGrid productId={PRODUCT_ID} location="MOCHA-WH" />);
+
+      await waitFor(() => expect(lastEnabledStockDetailCall()?.[1]).toBe('wh-mocha-wh'));
+      expect(getWarehousesMock.mock.calls.at(-1)?.[0]).toMatchObject({ companyScope: 'grants' });
+      expect(lastEnabledStockDetailCall()?.[5]).toBe('grants');
+      const enabled = useStockStatusMock.mock.calls.filter((call) => call[1] !== false);
+      expect(enabled.length).toBeGreaterThan(0);
+      // Never an unscoped AutoCount read for another company's location.
+      expect(enabled.every((call) => call[2] === 'grants')).toBe(true);
+      await screen.findByTestId('cell-stock-table');
+      expect(cellStockTableSpy.mock.calls.at(-1)?.[0]).toMatchObject({ companyScope: 'grants' });
+    });
+
+    it('the widened AutoCount read shows the resolved location only, no other company rows', async () => {
+      const status = {
+        product_id: PRODUCT_ID,
+        locations: [
+          { warehouse_id: 'wh-mocha-wh', warehouse_code: 'MOCHA-WH', on_hand: 7, so_qty: 0, po_qty: 0, spo_qty: 0 },
+          { warehouse_id: 'wh-elsewhere', warehouse_code: 'ELSE-BB', on_hand: 3, so_qty: 0, po_qty: 0, spo_qty: 0 },
+          { warehouse_id: 'wh-same-code', warehouse_code: 'MOCHA-WH', on_hand: 99, so_qty: 0, po_qty: 0, spo_qty: 0 },
+        ],
+        incoming_pl: [],
+        totals: {},
+      };
+      useStockStatusMock.mockReturnValue({ data: status, isLoading: false });
+      render(<OrderInquiryStockGrid productId={PRODUCT_ID} location="MOCHA-WH" />);
+
+      await screen.findByTestId('cell-stock-table');
+      await waitFor(() =>
+        expect(cellStockTableSpy.mock.calls.at(-1)?.[0]).toMatchObject({ companyScope: 'grants' }),
+      );
+      const autoCount = cellStockTableSpy.mock.calls.at(-1)?.[0].autoCount as typeof status;
+      expect(autoCount.locations.map((loc) => loc.warehouse_id)).toEqual(['wh-mocha-wh']);
+    });
   });
 
   it('a group read is sent as today, without the grants scope', async () => {
