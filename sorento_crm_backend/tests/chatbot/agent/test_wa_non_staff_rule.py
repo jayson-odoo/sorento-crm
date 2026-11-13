@@ -12,6 +12,10 @@ import uuid
 
 import pytest
 
+# Import order (R7 S2): `writes` first. Importing `contact_grant` cold loops through
+# writes -> contact_tags -> contact_grant and fails with an ImportError when this file runs alone.
+import app.main  # noqa: F401  register every model and the app's listeners
+from app.services.chatbot.agent import writes  # noqa: F401
 from app.models.user import User, UserRole, UserRoleAssignment
 from app.services import reference_seed
 from tests._pg_fixture import blank_session, unique_code

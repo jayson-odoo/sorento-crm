@@ -747,7 +747,7 @@ def test_B_the_list_without_type_is_unchanged(gw):
 # SS #235: an ss 422 (`unknown_type`) on create is a plain reply, never retried #
 # --------------------------------------------------------------------------- #
 UNKNOWN_TYPE = {"error": {"code": "unknown_type", "message": "Unknown idea type: issue."}}
-TYPE_REFUSED_EN = "I couldn't file this as that type. Please send it again."
+TYPE_REFUSED_EN = "I couldn't file this: the Ideas workspace doesn't take this type yet."
 
 
 def test_SS235_the_bot_lane_answers_unknown_type_plainly_and_does_not_retry(env):  # noqa: F811
@@ -784,6 +784,17 @@ def test_SS235_the_type_refused_reply_exists_in_malay_and_chinese(language):
 
     text_ = CHATBOT_REPLY_COPY[f"ideation_capture_type_refused.{language}"][1]
     assert text_.strip() and text_ != TYPE_REFUSED_EN
+
+
+@pytest.mark.parametrize("language, word", [("en", "again"), ("ms", "lagi"), ("zh", "再")])
+def test_R7_the_type_refused_reply_does_not_ask_to_send_it_again(language, word):
+    """Sending the same item again gets the same refusal, so the reply never asks for it (R7 nit)."""
+    from app.services.chatbot_reply_copy import CHATBOT_REPLY_COPY
+
+    key = "ideation_capture_type_refused" if language == "en" else f"ideation_capture_type_refused.{language}"
+    text_ = CHATBOT_REPLY_COPY[key][1]
+    assert text_.strip()
+    assert word not in text_.lower(), f"{language}: {text_!r} asks to send it again"
 
 
 def test_SS235_the_staff_create_relays_an_ss_422_with_its_message(gw):
