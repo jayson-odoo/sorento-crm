@@ -1,4 +1,5 @@
-"""Stock inquiries and New Product Applications, with the product code lineage (NPA-FROM-SI).
+"""Stock inquiries, New Product Applications (with the product code lineage, NPA-FROM-SI) and order change
+notices.
 
 So the assistant answers "why does this code exist", "which codes was it made from" and "was a code already made
 from these codes" from the same rows the screens read (card `CARD-npa-from-si-07nov.md` rule 8):
@@ -21,6 +22,7 @@ from app.models.new_product_application import (
     NewProductApplicationSource,
 )
 from app.models.procurement import StockInquiry
+from app.models.project_so import OrderChangeNotice
 from app.services.assistant_registry import register
 from app.services.assistant_registry.types import EntityDef, FieldDef
 
@@ -28,6 +30,47 @@ SI_VIEW = "procurement.stock_inquiries.view"
 SI_VIEW_OWN = "procurement.stock_inquiries.view_own"
 NPA_VIEW = "procurement.new_product_applications.view"
 NPA_VIEW_OWN = "procurement.new_product_applications.view_own"
+OCN_VIEW = "procurement.order_change_notices.view"
+OCN_VIEW_OWN = "procurement.order_change_notices.view_own"
+
+
+def _ocn_own(me):
+    """The list's own rule (`order_change_notice_service.own_clause`): raised, or named sales / C.S. in charge."""
+    from app.services.order_change_notice_service import own_clause
+
+    return own_clause(me.user_id)
+
+
+def _ocn_list_column(name: str):
+    """A list column as the notice's own list sorts it (`order_change_notice_service._sorts`), so the
+    assistant reads the same value the screen shows, never a second copy of it."""
+
+    def build():
+        from app.services.order_change_notice_service import _sorts
+
+        return _sorts()[name]
+
+    return build
+
+
+def _ocn_risk():
+    """The type's risk word (the list sorts by a severity rank instead, so its sort column is not reused)."""
+    from app.models.project_so import OrderChangeType
+    from app.services.order_change_notice_service import _type_column
+
+    return _type_column(OrderChangeType.risk_level)
+
+
+def _ocn_status_words():
+    """The status as the list words it (`STATUS_LABELS`: "Done", never "processed_by_cs")."""
+    from sqlalchemy import case
+
+    from app.services.order_change_notice_service import STATUS_LABELS
+
+    return case(
+        *[(OrderChangeNotice.status == code, word) for code, word in STATUS_LABELS.items()],
+        else_=OrderChangeNotice.status,
+    )
 
 
 def _si_own(me):
@@ -136,6 +179,37 @@ register(
         screen_path="/procurement-management/new-product-applications/{id}",
         pages=("/procurement-management/new-product-applications",),
         routes=("GET /api/v1/procurement/new-product-applications",),
+    ),
+    # The Order Change Notices list (`/procurement-management/order-change-notices`): its columns, company
+    # scoped like the list (the model's company criterion), `.view` or only their own under `.view_own`.
+    EntityDef(
+        key="order_change_notice",
+        label="Order change notices",
+        module="procurement",
+        model=OrderChangeNotice,
+        view_permission=OCN_VIEW,
+        own_permission=OCN_VIEW_OWN,
+        own_clause=_ocn_own,
+        fields={
+            "ocn_number": FieldDef("OCN no."),
+            "ocn_date": FieldDef("Date"),
+            "customer_name": FieldDef("Customer"),
+            "customer_po_no": FieldDef("Customer PO no."),
+            "change_type": FieldDef("Type", expr=_ocn_list_column("change_type_name"),
+                                    note="Advance, Exchange, Cancellation or Delay."),
+            "risk": FieldDef("Risk", expr=_ocn_risk, note="The type's risk: Low, High or Highest."),
+            "project": FieldDef("Project", expr=_ocn_list_column("project_title")),
+            "sales_in_charge": FieldDef("Sales in charge", expr=_ocn_list_column("sales_in_charge_name")),
+            "status": FieldDef("Status", expr=_ocn_status_words,
+                               note="Draft, Submitted, Appealed, Approved, Rejected, Done or Voided."),
+            "description": FieldDef("Description"),
+        },
+        hint="order change notices: a customer's change to an open order, approved before it is done",
+        name_by=("ocn_number",),
+        date_field="ocn_date",
+        screen_path="/procurement-management/order-change-notices/{id}",
+        pages=("/procurement-management/order-change-notices",),
+        routes=("GET /api/v1/procurement/order-change-notices",),
     ),
     EntityDef(
         key="new_product_application_line",
