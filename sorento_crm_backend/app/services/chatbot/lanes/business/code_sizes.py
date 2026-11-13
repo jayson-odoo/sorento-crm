@@ -345,10 +345,6 @@ def _single_substring_is_an_offer(db: Any, resolved: dict[str, Any]) -> None:
         if len(rows) != 1 or rows[0].get("entity_type") != "product":
             return None
         code, typed = token_key(rows[0].get("canonical_code")), token_key(token)
-        if not any(ch.isalpha() for ch in typed):
-            # A bare number keeps the owner's 6 Oct ladder (ROGUE-CONVO-REVIEW, "8066 stock ?"):
-            # exact, prefix family, the substring family the resolver placed. #2397, release sweep.
-            return None
         return rows[0] if typed and typed in code and not code.startswith(typed) else None
 
     named: list[tuple[dict[str, Any] | None, Any, list[Any]]] = [
