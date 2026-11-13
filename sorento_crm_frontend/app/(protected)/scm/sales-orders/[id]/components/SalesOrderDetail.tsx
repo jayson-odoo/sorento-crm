@@ -1425,29 +1425,27 @@ export function SalesOrderDetail({
         // promotes), so this is never a choice between two real compositions.
         cell: ({ row }) => {
           const line = row.original;
-          const parts = line.supply_decided ?? line.supply_saved ?? null;
-          const text = (
+          // OI-WHOLE-SO-CANCEL F2: a line the book cancelled (a pending cancelled change) is decided
+          // afresh: the revision that used to cover it says nothing about the cancel, so only the
+          // saved draft counts. An approval with an empty composition is CS's saved cancel and
+          // reads "Cancel line", the word the board's Suggested and Decided columns use.
+          const pendingCancel =
+            line.line_status === 'cancelled' &&
+            line.planning_change?.kind === 'cancelled' &&
+            line.planning_change?.applied_state === 'pending';
+          const decidedParts = pendingCancel ? null : line.supply_decided;
+          const parts = decidedParts ?? line.supply_saved ?? null;
+          const savedCancel =
+            pendingCancel && line.supply_saved != null && line.supply_saved.length === 0;
+          const text = savedCancel ? (
+            <span className="block truncate" title="Cancel line">
+              Cancel line
+            </span>
+          ) : (
             <SupplyText parts={parts} ownLocation={line.warehouse_code} absent="-" />
           );
-          // THE BOOK ACTUALLY CHANGED THIS LINE. The board's own dialog, on this screen: it
-          // says what moved and - once Apply has run - where the held quantity went, which a
-          // static "Suggestion changed" badge cannot, and which the board itself can no
-          // longer be asked once a cancelled line closes and leaves it.
-          const annotation = lineChangeAnnotation(line, soNumber);
-          if (annotation) {
-            return (
-              <div className="flex min-w-0 items-center gap-1.5">
-                <span className="min-w-0 flex-1">{text}</span>
-                <BoardChangeTable annotation={annotation} compact className="shrink-0" />
-              </div>
-            );
-          }
-          // Unchanged lines keep exactly what they had: the decided composition alone, or
-          // the saved draft with its Saved / Suggestion changed badge beside it.
-          if (line.supply_decided != null || line.supply_saved == null) return text;
-          return (
-            <div className="flex min-w-0 items-center gap-1.5">
-              <span className="min-w-0 flex-1">{text}</span>
+          const savedBadge =
+            decidedParts != null || line.supply_saved == null ? null : (
               <Badge
                 data-testid={`saved-decision-badge-${line.id}`}
                 variant={line.saved_stale ? 'warning' : 'success'}
@@ -1457,6 +1455,28 @@ export function SalesOrderDetail({
               >
                 {line.saved_stale ? 'Suggestion changed' : 'Saved'}
               </Badge>
+            );
+          // THE BOOK ACTUALLY CHANGED THIS LINE. The board's own dialog, on this screen: it
+          // says what moved and - once Apply has run - where the held quantity went, which a
+          // static "Suggestion changed" badge cannot, and which the board itself can no
+          // longer be asked once a cancelled line closes and leaves it.
+          const annotation = lineChangeAnnotation(line, soNumber);
+          if (annotation) {
+            return (
+              <div className="flex min-w-0 items-center gap-1.5">
+                <span className="min-w-0 flex-1">{text}</span>
+                {pendingCancel ? savedBadge : null}
+                <BoardChangeTable annotation={annotation} compact className="shrink-0" />
+              </div>
+            );
+          }
+          // Unchanged lines keep exactly what they had: the decided composition alone, or
+          // the saved draft with its Saved / Suggestion changed badge beside it.
+          if (savedBadge === null) return text;
+          return (
+            <div className="flex min-w-0 items-center gap-1.5">
+              <span className="min-w-0 flex-1">{text}</span>
+              {savedBadge}
             </div>
           );
         },
