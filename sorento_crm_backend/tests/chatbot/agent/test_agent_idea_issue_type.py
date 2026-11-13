@@ -260,3 +260,19 @@ def test_SS235_an_ss_422_on_create_is_a_plain_refusal_sent_once(db, ss):  # noqa
     assert "does not accept that type" in text, text
     assert "ZZTDETAIL" not in text
     assert len(posts(ss, CREATE_PATH)) == 1
+
+
+@pytest.mark.parametrize("code", ["VALIDATION_ERROR", "something_else"])
+def test_SS235_only_unknown_type_says_the_type_is_not_accepted(db, ss, code):  # noqa: F811
+    """ss #235 keys the type refusal on `error.code == unknown_type`; any other 422 is the plain refusal."""
+    from tests.chatbot.agent.test_agent_writes_ideas import failure_texts
+
+    w = make_world(db)
+    ss.route("POST", CREATE_PATH, status=422, json_body={"error": {"code": code, "message": "ZZTDETAIL"}})
+    _, row = store(db, w, [(CREATE, {**ISSUE, "type": "issue"})], live=True)
+    outcome = confirm(db, w, row)
+    text = " | ".join(failure_texts(outcome))
+    assert "refused" in text, text
+    assert "does not accept that type" not in text, text
+    assert "ZZTDETAIL" not in text
+    assert len(posts(ss, CREATE_PATH)) == 1

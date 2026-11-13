@@ -750,16 +750,31 @@ UNKNOWN_TYPE = {"error": {"code": "unknown_type", "message": "Unknown idea type:
 TYPE_REFUSED_EN = "I couldn't file this as that type. Please send it again."
 
 
-@pytest.mark.parametrize("code", ["unknown_type", "something_else"])
-def test_SS235_the_bot_lane_answers_an_ss_422_plainly_and_does_not_retry(env, code):  # noqa: F811
+def test_SS235_the_bot_lane_answers_unknown_type_plainly_and_does_not_retry(env):  # noqa: F811
     from app.services.ideation_turn_service import IdeationServiceError
 
     env.ready()
     env.create_result = IdeationServiceError(
-        "create idea request failed", status_code=422, response_detail={"error": {"code": code, "message": "x"}}
+        "create idea request failed", status_code=422,
+        response_detail={"error": {"code": "unknown_type", "message": "x"}},
     )
     out = env.turn(_issue(env, language="en"))
     assert out["reply_text"] == TYPE_REFUSED_EN
+    assert len(env.create_calls) == 1
+
+
+@pytest.mark.parametrize("code", ["VALIDATION_ERROR", "something_else", None])
+def test_SS235_only_unknown_type_reads_as_a_type_refusal(env, code):  # noqa: F811
+    """ss #235 is live: `error.code == unknown_type` is the type refusal. Any other 422 (ss's own
+    VALIDATION_ERROR, an unnamed code, no body) is not about the type, so it never says it is."""
+    from app.services.ideation_turn_service import IdeationServiceError
+
+    env.ready()
+    detail = {"error": {"code": code, "message": "x"}} if code else {}
+    env.create_result = IdeationServiceError("create idea request failed", status_code=422, response_detail=detail)
+    out = env.turn(_issue(env, language="en"))
+    assert out["reply_text"] != TYPE_REFUSED_EN
+    assert "type" not in out["reply_text"].lower()
     assert len(env.create_calls) == 1
 
 
