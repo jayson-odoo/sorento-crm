@@ -372,3 +372,50 @@ def test_ac2f_a_set_whose_own_members_carry_the_words_stays_the_answer(session_f
     assert "Couldn't find" not in text, text
     assert _stocked_ids(c) == {c.uuid_of[m] for m in P_RL_MEMBERS}, (c.stock_calls, text)
     assert not _word(new_pan, text), text
+
+
+# --------------------------------------------------------------------------- round 4: lines, and family + class word
+
+
+def _couldnt_find(code: str, text: str) -> bool:
+    return re.search(rf"Couldn't find[^\n]*{re.escape(code)}", text, re.IGNORECASE) is not None
+
+
+@pytest.mark.parametrize("who", ["dealer", "staff"])
+def test_ac2g_a_word_on_the_next_line_never_narrows_the_line_above(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+    from tests.chatbot._turn_helpers import entity
+
+    c = _exact_world(session_factory, monkeypatch, stub_access)
+    _who(c, who)
+    text = c.say(
+        "QWC605-RL x 1\nQWC605-RL-NEW soft x 2",
+        stock(product("QWC605-RL", 1), product("QWC605-RL-NEW", 2), entity("soft", hint="category")),
+    )
+    for code in ("QWC605-RL", "QWC605-RL-NEW"):
+        assert not _couldnt_find(code, text), (code, text)
+    stocked = _stocked_ids(c)
+    assert {c.uuid_of[m] for m in EXACT_SETS[EXACT]} <= stocked, ("line 1's set was not read", c.stock_calls, text)
+    assert c.uuid_of["QWCX605-RL-SOFT"] not in stocked, ("line 2's word narrowed line 1", c.stock_calls)
+
+
+@pytest.mark.parametrize("who", ["dealer", "staff"])
+def test_ac2h_a_code_never_completes_across_a_line_break(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+    from tests.chatbot._turn_helpers import entity
+
+    c = _exact_world(session_factory, monkeypatch, stub_access)
+    _who(c, who)
+    c.say("QWC605-RL x 1\nsoft", stock(product("QWC605-RL", 1), entity("soft", hint="category")))
+    assert c.uuid_of["QWCX605-RL-SOFT"] not in _stocked_ids(c), ("completed across a line", c.stock_calls)
+
+
+@pytest.mark.parametrize("who", ["dealer", "staff"])
+def test_ac2i_a_family_word_plus_a_class_word_is_not_answered_as_its_sets_with_the_word_ignored(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+    from tests.chatbot._turn_helpers import entity
+
+    sets = {"QWC604-P-RL": ["QWCX604-P-RL", CISTERN], "QWC604-S-RL": ["QWCX604-S-RL", CISTERN]}
+    c = _world(session_factory, monkeypatch, stub_access, sets)
+    _who(c, who)
+    text = c.say("QWC604 basin stock", stock(product("QWC604"), entity("basin", hint="category")))
+    members = {c.uuid_of[m] for ms in sets.values() for m in ms}
+    assert not _stocked_ids(c) & members, ("a set's parts were read with the word ignored", c.stock_calls, text)
+    assert "How many units for each?" not in text, text
