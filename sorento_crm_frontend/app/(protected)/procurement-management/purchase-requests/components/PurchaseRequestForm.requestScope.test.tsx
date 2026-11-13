@@ -23,7 +23,6 @@ vi.mock('./PurchaseRequestAttachmentsSection', () => ({ __esModule: true, defaul
 vi.mock('@/components/common/LookupBoundField', () => ({ __esModule: true, default: () => null }));
 vi.mock('../services/purchaseRequestService', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  searchProjectsForLink: vi.fn().mockResolvedValue([]),
   getOrCreateViewLink: vi.fn(),
 }));
 

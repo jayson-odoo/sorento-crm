@@ -44,7 +44,6 @@ import {
 import { cn } from '@/lib/utils';
 import { SampleRequestError, type SampleRequestDetail } from '@/types/sampleRequest';
 import { portalBase } from '../lib/portal-paths';
-import type { ProjectLookupItem } from '../lib/portal-client';
 import * as portalSampleRequest from '../lib/sample-request-service';
 import type { SampleRequestCustomerHit } from '../lib/sample-request-service';
 import {
@@ -56,8 +55,7 @@ import {
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { dateAnswerText } from '@/lib/sample-request-tracking';
 import { AsyncCombobox } from './AsyncCombobox';
-import { projectCodeLabel } from '@/app/(protected)/project-sales/_shared/lib/projectCode';
-import { projectDisplayName } from '@/app/(protected)/project-sales/_shared/lib/projectName';
+import { PortalProjectCombobox } from './PortalProjectCombobox';
 
 function FormField({
   label,
@@ -353,22 +351,12 @@ export default function SampleRequestForm({
                 htmlFor="sr-project"
                 error={errors.project_id}
               >
-                <AsyncCombobox<ProjectLookupItem>
+                <PortalProjectCombobox
                   id="sr-project"
                   disabled={readOnly}
                   value={state.project_id}
                   displayValue={state.project_label}
-                  allowFreeText={false}
-                  onChange={(v, item) =>
-                    patch({
-                      project_id: v,
-                      project_label: item ? `${projectCodeLabel(item)} - ${projectDisplayName(item)}` : '',
-                    })
-                  }
-                  fetchOptions={(q) => client.lookupProjects(q)}
-                  optionValue={(o) => o.id}
-                  optionLabel={(o) => `${projectCodeLabel(o)} - ${projectDisplayName(o)}`}
-                  optionMeta={(o) => o.company_name ?? ''}
+                  onChange={(v, label) => patch({ project_id: v, project_label: label })}
                   placeholder="Search your registered projects"
                 />
               </FormField>
