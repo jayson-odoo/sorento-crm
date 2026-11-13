@@ -311,29 +311,35 @@ def question(needs: list[str], labels: list[str]) -> str:
     return f"{ask} for {', '.join(labels)}?"
 
 
-def held_role(db, contact_id: str, companies: list[str]) -> str | None:
-    """The contact's current level, as the Dealer access screen reads it: Business owner where it holds a company's
-    owner tag, else Employee where it is linked to one of that company's accounts. A requested company it already
-    holds decides; otherwise the one level it holds everywhere; None when it holds none, or both (never guessed)."""
+def held_role(db, contact_id: str, companies: list[str], allowed: set[str]) -> tuple[str | None, str | None]:
+    """(level, company code it was read from) for the contact, as the Dealer access screen reads it: Business owner
+    where it holds a company's owner tag, else Employee where it is linked to one of that company's accounts. Only
+    the companies the user is granted (`allowed`) are read (security review S1). A requested company it holds
+    decides; otherwise Employee when that is its level in every allowed company; (None, None) otherwise (never
+    guessed)."""
     from app.models.base import company_scope
     from app.models.company import Company
     from app.models.order import Customer
-    from app.services import contact_access_sheet_service as sheet
     from app.services.contact_tag_service import owner_codes_by_contact
 
-    owned = owner_codes_by_contact(db, [contact_id], sheet.COMPANY_ORDER).get(contact_id, set())
+    codes = sorted(allowed)
+    owned = owner_codes_by_contact(db, [contact_id], codes).get(contact_id, set())
     links = writes._all_links(db, contact_id)
     with company_scope(db, None):
         linked = {
             code for (code,) in db.query(Company.code).join(Customer, Customer.company_id == Company.id)
             .filter(Customer.id.in_(links))
         } if links else set()
-    held = {code: "owner" if code in owned else "employee" for code in (linked | owned) & set(sheet.COMPANY_ORDER)}
+    held = {code: "owner" if code in owned else "employee" for code in (linked | owned) & set(codes)}
     for code in companies:
         if code in held:
-            return held[code]
+            return held[code], code
+    # Another company's level carries only as Employee: Business owner is that company's own tag, so carrying it
+    # would be a promotion nobody asked for (review B1). Owner elsewhere, or both levels: asked.
     levels = set(held.values())
-    return levels.pop() if len(levels) == 1 else None
+    if levels != {"employee"}:
+        return None, None
+    return "employee", sorted(held)[0]
 
 
 def _find_contact(db, phone: str):
@@ -429,18 +435,34 @@ def plan(db, user: dict, args: dict) -> dict:
         raise _refuse("; ".join(p.rstrip(".") for p in problems) + ".")
     if choices:
         raise NeedsChoice(choices)
-    kept = False
+    contact = _find_contact(db, phone)
+    # A question about the company or role comes only once every check that could refuse the row has passed, and
+    # names the person only by what the user gave (their typed name, else the phone), never the stored name: an
+    # own-scope user learns nothing of a person they may not change (security review B1, S2).
+    label = name or phone
+    staff = _is_staff(db, phone, str(contact.id) if contact is not None else None)
+    in_scope = own_agents is None or (contact is not None and writes.contact_in_scope(db, uid, str(contact.id)))
+    if "company" in needs:
+        if staff or not in_scope:
+            raise _refuse("Name the company as SRT (Sorento) or MCH (Mocha).")  # as before: nothing told
+    elif own_agents is not None and not customers:
+        raise _refuse(NO_OWN_ACCOUNT)  # UAC A12: no grant without one of the user's own accounts
+    if staff:
+        raise _refuse("This number belongs to a staff member.")
+    kept_from = None
     if role is None:
-        found = _find_contact(db, phone)
-        role = held_role(db, str(found.id), companies) if found is not None else None
-        kept = role is not None
+        # The contact's current level, read only where the user may already see it (S1).
+        if contact is not None and in_scope:
+            scope = get_company_scope(db)
+            allowed = {
+                code for cid, code in db.query(Company.id, Company.code).filter(Company.code.in_(sheet.COMPANY_ORDER))
+                if not isinstance(scope, frozenset) or str(cid) in {str(x) for x in scope}
+            }
+            role, kept_from = held_role(db, str(contact.id), companies, allowed)
         if role is None:
             needs.append("role")
     if needs:
-        found = _find_contact(db, phone)
-        raise NeedsFacts(needs, name or (found.name if found is not None else "") or phone)
-    if own_agents is not None and not customers:
-        raise _refuse(NO_OWN_ACCOUNT)  # UAC A12: no grant without one of the user's own accounts
+        raise NeedsFacts(needs, label)
     # Business owner is the company's owner tag (UAC A6); a missing or switched-off tag refuses the row (A7). Checked
     # once the row is otherwise ready: the row's own problems and its account pick come first.
     tags: list = []
@@ -454,9 +476,6 @@ def plan(db, user: dict, args: dict) -> dict:
                 tags.append(tag)
         if missing:
             raise _refuse("; ".join(missing) + ".")
-    contact = _find_contact(db, phone)
-    if _is_staff(db, phone, str(contact.id) if contact is not None else None):
-        raise _refuse("This number belongs to a staff member.")
     # Own scope: links to accounts that are not the user's own, counted, never named (A10, A13, A14, B3).
     others = writes._not_own_links(db, uid, str(contact.id)) if own_agents is not None and contact is not None else set()
     if others and role == "owner":
@@ -496,10 +515,12 @@ def plan(db, user: dict, args: dict) -> dict:
     facets = {c["facet"] for c in changed}
     lines = [] if contact is not None else ["create contact"]
     # A role read from the record is always shown, so the card says which role the change keeps.
-    if "access_types" in facets or contact is None or add_tags or kept:
+    if "access_types" in facets or contact is None or add_tags or kept_from:
         lines.append(
-            f"{'Business owner' if role == 'owner' else 'Employee'} ({_company_words(companies)})"
-            + (", their current role" if kept else "")
+            f"{'Business owner' if role == 'owner' else 'Employee'} ({_company_words(companies)})" + (
+                "" if kept_from is None else ", their current role" if kept_from in companies and not add_tags
+                else f", as at {_company_words([kept_from])}"
+            )
         )
     if "companies" in facets:
         added = [code for code, i in company_ids.items() if i in set(todo["companies"])]
@@ -518,6 +539,8 @@ def plan(db, user: dict, args: dict) -> dict:
     before = {
         "contact_id": cid, "types": sorted(snap.access_types), "companies": sorted(snap.companies),
         "links": [h for h in held if h not in others], "targets": sorted(str(c.id) for c in customers),
+        # The level the card shows; read from the record when the user gave none, so confirm refuses a drift (N1).
+        "role": role,
     }
     if own_agents is not None:
         before["other_links"] = len(others)

@@ -622,10 +622,12 @@ def question_reply(asked: list[dict], skipped: list[dict], waiting: list[dict] |
     groups: dict[tuple, list[str]] = {}
     for a in asked:
         if not a.get("held"):
-            groups.setdefault(tuple(sorted(set(a["needs"]))), []).append(str(a.get("label") or a.get("key") or ""))
+            # A label is a name the model read (a screenshot): cleaned like a table cell (review S4).
+            groups.setdefault(tuple(sorted(set(a["needs"]))), []).append(_cell(a.get("label") or a.get("key") or ""))
     parts = [" ".join(question(list(needs), labels) for needs, labels in groups.items())]
     if skipped or waiting:
-        parts.append(preview_block([], skipped, waiting))
+        # The tables only: their closing line ("Nothing can change yet ...") would contradict the question (S3).
+        parts.append(preview_block([], skipped, waiting).rsplit("\n\n", 1)[0])
     return "\n\n".join(parts)
 
 

@@ -871,6 +871,7 @@ def proposal_block(lines: list[str]) -> str:
 def _propose(
     db, ctx, name: str, args: Any, steps: list[dict], seen_ids: set[str], action_id: str, user_text: str = "",
     is_test: bool = True, previous: dict | None = None, single_waiting: list[dict] | None = None,
+    asked: list[dict] | None = None,
 ) -> ToolResult:
     # `loop`: the loop's own refusal, never shown to the user as the tool's words (UAC F2, review round S6).
     if any(s.get("batch") for s in steps):
@@ -905,6 +906,12 @@ def _propose(
     out, step = writes.propose_step(db, ctx, name, args, seen_ids=seen_ids, loop_args=loop_args)
     if step is None:
         choices = (out.data or {}).get("choices") if isinstance(out.data, dict) else None
+        needs = (out.data or {}).get("needs") if isinstance(out.data, dict) else None
+        if typed is not None and needs and asked is not None:
+            # A single row asked for its company or role: kept like a table row's, so the answer carries what the
+            # user typed (review S1, crew decision 14 Nov).
+            asked.append({"row": 1, "key": typed["key"], "needs": list(needs), "label": out.data.get("label"),
+                          "typed": typed})
         if typed is not None and choices and single_waiting is not None:
             # A single row's pick is a pick like a table row's: the next turn may answer it (UAC F3, S7).
             single_waiting += [
@@ -1602,6 +1609,12 @@ def dealer_reply(ledger: dict[str, dict]) -> str:
     return last
 
 
+def contact_grant_write() -> str:
+    from app.services.chatbot.agent.contact_grant import GRANT
+
+    return GRANT
+
+
 def _earlier_keys(db, conv, turn_id: str) -> set:
     """Every phone an earlier table of this conversation held (ready, waiting, not changed, or a card's step): on a
     turn with a picture, such a person comes back only when the typed text names them (UAC F4, security review)."""
@@ -1618,7 +1631,7 @@ def _earlier_keys(db, conv, turn_id: str) -> set:
         ChatbotTurn.response.has_key("batch_waiting"),
     )
     for (got,) in turns:
-        for name in ("batch_typed", "batch_waiting", "batch_skipped", "batch_asked"):
+        for name in ("batch_typed", "batch_waiting", "batch_skipped"):
             keys |= {r["key"] for r in (got or {}).get(name) or [] if isinstance(r, dict) and r.get("key")}
     steps = db.query(AgentAction.steps).filter(
         AgentAction.contact_respond_id == str(conv.contact_respond_id), AgentAction.conversation_id == str(conv.id)
@@ -1687,7 +1700,7 @@ def _previous_waiting(db, conv, turn_id: str, *, immediate: bool = True) -> dict
     # The phones of the immediately preceding card, decided or waiting: a follow-up naming nobody is about it (F4).
     got = (last.response or {}) if last is not None else {}
     card = list(dict.fromkeys(
-        r.get("key") for k in ("batch_typed", "batch_waiting", "batch_skipped", "batch_asked") for r in got.get(k) or []
+        r.get("key") for k in ("batch_typed", "batch_waiting", "batch_skipped") for r in got.get(k) or []
         if isinstance(r, dict) and r.get("key")
     ))
     # The ready rows of that card while it is still undecided: the user may extend it (UAC F4).
@@ -2201,7 +2214,7 @@ def _run(
                         previous_waiting = previous_table["waiting"]
                     out = _propose(
                         db, ctx, name, args, steps, seen_ids, action_id, text, is_test,
-                        previous=previous_table, single_waiting=single_waiting,
+                        previous=previous_table, single_waiting=single_waiting, asked=batch_asked,
                     )
                 elif name in portal_writes.PORTAL_READS:
                     out = portal_writes.run_read(db, ctx, name, args, seen_ids)
@@ -2508,6 +2521,13 @@ def _run(
             {"row": e.get("row"), "key": e.get("key"), **e["typed"]}
             for e in [*steps, *batch_skipped, *batch_waiting, *batch_asked] if isinstance(e.get("typed"), dict)
         ]
+    elif batch_asked:
+        # A single row asked for its company or role: the next turn's answer is that row (review S1).
+        turn.response["batch_waiting"] = []
+        turn.response["batch_skipped"] = []
+        turn.response["batch_write"] = contact_grant_write()
+        turn.response["batch_asked"] = [{"row": a.get("row"), "key": a.get("key")} for a in batch_asked]
+        turn.response["batch_typed"] = [{"row": a.get("row"), **a["typed"]} for a in batch_asked if a.get("typed")]
     elif single_waiting:
         # A single row that waits for a pick is the table the next turn may answer (UAC F3, review round S7).
         turn.response["batch_waiting"] = [{k: v for k, v in w.items() if k != "typed"} for w in single_waiting]

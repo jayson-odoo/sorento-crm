@@ -312,7 +312,7 @@ def test_an_own_scope_user_never_learns_a_strangers_name_or_level_from_the_compa
                                     text_="Please grant them access to the chatbot")
         assert c.name not in result.reply_text, result.reply_text
         assert result.pending_action is None
-        replies.append(result.reply_text.replace(c.phone_number, "<phone>"))
+        replies.append(result.reply_text.replace(c.phone_number, "<phone>").replace(local(c.phone_number), "<phone>"))
     assert replies[0] == replies[1], replies
 
 
@@ -335,11 +335,11 @@ def test_an_own_scope_user_never_learns_a_strangers_name_or_level_from_the_role_
 
 def test_a_staff_number_is_refused_before_any_question(db):
     """S2: a row a later check refuses is never asked about."""
-    from app.models.user import User
+    from tests._ask_todo_seed import agent as seed_sales_agent
 
     w = make_world(db)
     staff = dealer(db, w, name="ZZT Staff Contact")
-    db.query(User).filter(User.id == w.user_id).update({"respond_contact_id": staff.id})
+    seed_sales_agent(db, staff.id, "ST")  # a sales agent's own contact is staff
     db.commit()
     result, _ = screenshot_turn(db, w, [_batch([_bare(staff, 1)]), answer_("Done.")], text_="grant them mocha access")
     assert "Owner or employee" not in result.reply_text, result.reply_text
@@ -366,3 +366,75 @@ def test_a_level_from_the_other_company_is_named_as_such_on_the_card(db):
     result, _ = screenshot_turn(db, w, [_batch([_unsaid(c, 1)]), answer_("Done.")])
     assert result.pending_action is not None, result.reply_text
     assert "Employee (Mocha), as at Sorento" in result.reply_text, result.reply_text
+
+
+# ------------------------------------------------------------------ code review of the crew decision
+
+
+def _tag_owner(db, contact, code):
+    from app.services.contact_tag_service import change_tags, owner_tag
+
+    change_tags(db, contact, add=[owner_tag(db, code)], actor_id=None)
+    db.commit()
+
+
+def test_a_business_owner_elsewhere_is_never_made_owner_here_without_being_asked(db):
+    """B1: Sorento Business owner, Mocha asked with no role: asked, never promoted to Mocha Business owner."""
+    w = make_world(db)
+    c = dealer(db, w, name="ZZT Srt Owner", customers=[w.cust_a])
+    _tag_owner(db, c, "SRT")
+    result, _ = screenshot_turn(db, w, [_batch([_unsaid(c, 1)]), answer_("Done.")])
+    assert result.pending_action is None, result.reply_text
+    assert result.reply_text.strip() == f"Owner or employee for {c.name}?", result.reply_text
+
+
+def test_a_role_that_changes_before_confirm_is_refused_not_applied(db):
+    """B2: the card said Employee (read from the record); the person became owner before confirm: not applied."""
+    from app.services.chatbot.agent import actions
+
+    w = make_world(db)
+    c = dealer(db, w, name="ZZT Drift", customers=[w.cust_b])
+    result, _ = screenshot_turn(db, w, [_batch([_unsaid(c, 1)]), answer_("Done.")])
+    assert "Employee (Mocha), their current role" in result.reply_text, result.reply_text
+    _tag_owner(db, c, "MCH")
+    outcome = actions.confirm(db, w.respond_id, result.pending_action["id"], via="console")
+    assert outcome.status != "executed", outcome
+    assert "role changed" in str(outcome.steps).lower(), outcome.steps
+
+
+def test_answering_a_single_grant_question_gives_the_card(db):
+    """S1: 'give 01x mocha access' -> 'Owner or employee for X?' -> 'employee' -> a card for Mocha."""
+    w = make_world(db)
+    c = dealer(db, w, name="ZZT Single Answer")
+    args = {k: v for k, v in _unsaid(c, 1).items() if k != "row"}
+    first, _ = screenshot_turn(
+        db, w, [round_of(tc(GRANT, args, "g1")), answer_("Done.")],
+        text_=f"give {local(c.phone_number)} mocha access", images=False,
+    )
+    assert first.reply_text.strip() == f"Owner or employee for {c.name}?", first.reply_text
+    second, _ = screenshot_turn(
+        db, w, [round_of(tc(GRANT, {**args, "role": "employee"}, "g2")), answer_("Done.")], text_="employee",
+        images=False,
+    )
+    assert second.pending_action is not None, second.reply_text
+    assert "add company Mocha" in str(second.pending_action["lines"]), second.pending_action
+
+
+def test_the_question_beside_a_not_changed_row_has_no_contradicting_closing_line(db):
+    """S3: the tables follow the question without 'Nothing can change yet'."""
+    w = make_world(db)
+    c = dealer(db, w, name="ZZT Ask Me")
+    rows = [_unsaid(c, 1), {**_unsaid(c, 2), "phone": "12345", "name": "ZZT Bad Phone"}]
+    result, _ = screenshot_turn(db, w, [_batch(rows), answer_("Done.")])
+    assert result.reply_text.startswith(f"Owner or employee for {c.name}?"), result.reply_text
+    assert 'Phone "12345" is not a Malaysian mobile number.' in result.reply_text
+    assert "Nothing can change yet" not in result.reply_text, result.reply_text
+
+
+def test_a_name_read_from_a_picture_cannot_become_a_link_in_the_question(db):
+    """S4: the question's names are cleaned like table cells."""
+    w = make_world(db)
+    c = dealer(db, w, name="ZZT Plain")
+    row = {**_unsaid(c, 1), "name": "ZZT [click](http://zzt.invalid)"}
+    result, _ = screenshot_turn(db, w, [_batch([row]), answer_("Done.")])
+    assert "[click]" not in result.reply_text and "](" not in result.reply_text, result.reply_text

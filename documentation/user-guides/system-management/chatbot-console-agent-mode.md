@@ -107,12 +107,15 @@ Attach a screenshot or paste a table of phones and names, then say what to give,
 all of them.
 
 * **Company:** say Sorento or Mocha. If you do not, the agent asks "Sorento or Mocha for ...?".
-* **Business owner or Employee:** a person who already has dealer access keeps their current role,
-  and the card says "..., their current role". If anyone has no role yet, the agent asks one
+* **Business owner or Employee:** if you do not say, a person who already has that company's
+  access keeps their role, and the card says "..., their current role". An Employee of the other
+  company stays an Employee, and the card says "..., as at Sorento" (or Mocha). Business owner is
+  never carried over from the other company. If anyone's role is still unknown, the agent asks one
   question, "Owner or employee for ...?", and shows the card after you answer.
 * A row that cannot change (for example a number that is not a mobile number) is listed under
   **Not changed** with the reason.
-* A screenshot adds only the people in it. Someone from an earlier request in the same chat is
+* A screenshot adds only the people in it, plus the people of the reply just before (when you are
+  answering its question or adding to its card). Someone from an older request in the same chat is
   added again only when you type their phone.
 
 ## Confirming a change
