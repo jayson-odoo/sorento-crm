@@ -15,6 +15,7 @@ import { Input } from '@/components/ui/input';
 import { NumberInput } from '@/components/ui/number-input';
 import { ProductPickCell, ProductPickMissed, useProductPickSearch } from '@/components/common/ProductPickCell';
 import { formatDateInMalaysia } from '@/lib/helpers';
+import { formatQty } from '@/app/(protected)/project-sales/_shared/lib/money';
 import type { OcnProductHit } from '@/types/orderChangeNotice';
 
 export interface OcnDraftLine {
@@ -63,6 +64,10 @@ const QTY_FIELDS = [
   ['qty_after', 'Qty after'],
 ] as const;
 
+/** A quantity box: no number spinner (typing is the input) and the date boxes' compact type, so a
+ *  decimal such as 12345.25 shows whole in the 4.75rem column; the tooltip carries the full value. */
+const QTY_BOX = 'px-1.5 text-xs [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none';
+
 const NO_SEARCH = async (): Promise<OcnProductHit[]> => [];
 const day = (v: string | null) => (v ? formatDateInMalaysia(v) : '-');
 
@@ -107,11 +112,11 @@ export function OrderChangeNoticeLines({
                   <td className="truncate px-2 py-2" title={line.label}>
                     {line.label || '-'}
                   </td>
-                  <td className="px-2 py-2 tabular-nums">{line.qty_before || '-'}</td>
-                  <td className="px-2 py-2 tabular-nums">{line.qty_after || '-'}</td>
+                  <td className="px-2 py-2 tabular-nums">{formatQty(line.qty_before)}</td>
+                  <td className="px-2 py-2 tabular-nums">{formatQty(line.qty_after)}</td>
                   <td className="px-2 py-2 tabular-nums">{day(line.date_before)}</td>
                   <td className="px-2 py-2 tabular-nums">{day(line.date_after)}</td>
-                  <td className="px-2 py-2 tabular-nums">{line.delivered_qty || '-'}</td>
+                  <td className="px-2 py-2 tabular-nums">{formatQty(line.delivered_qty)}</td>
                   <td className="break-words px-2 py-2">{line.remark || '-'}</td>
                 </tr>
               ))
@@ -128,7 +133,7 @@ export function OrderChangeNoticeLines({
           at least 96), so nothing scrolls sideways on a desktop; a phone scrolls the table in this
           wrapper, never the page (SampleRequestLines). A date cell holds "DD/MM/YYYY" beside the
           34 px calendar button through the picker's own compact props (text-xs, gap-1); the
-          quantity boxes use the same compact padding so 842 shows whole beside the number spinner. */}
+          quantity boxes (QTY_BOX) drop the number spinner so a decimal such as 12345.25 shows whole. */}
       <div className="relative overflow-x-auto">
         <table className="w-full min-w-[840px] table-fixed text-sm">
           <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
@@ -172,7 +177,8 @@ export function OrderChangeNoticeLines({
                       inputMode="decimal"
                       min={0}
                       aria-label={caption}
-                      className="px-2 text-xs"
+                      className={QTY_BOX}
+                      title={line[field] || undefined}
                       disabled={disabled}
                       value={line[field]}
                       error={errors[`${field}_${line.key}`]}
@@ -205,7 +211,8 @@ export function OrderChangeNoticeLines({
                     inputMode="decimal"
                     min={0}
                     aria-label="Delivered"
-                    className="px-2 text-xs"
+                    className={QTY_BOX}
+                    title={line.delivered_qty || undefined}
                     disabled={disabled}
                     value={line.delivered_qty}
                     error={errors[`delivered_qty_${line.key}`]}
