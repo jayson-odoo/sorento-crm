@@ -40,7 +40,7 @@ import { UnsavedDecisionPrompt, useDecisionRowExpansion } from './decisionRowExp
 import { BoardChangeTable } from './BoardChangeTable';
 import { changedFieldsOf, lineKeyOf } from '../../_shared/lib/boardChangeAnnotations';
 import type { BoardChangeAnnotation } from '../../_shared/lib/boardChangeAnnotations';
-import { awaitsCancelSo, canDecide } from '../../_shared/lib/boardAmend';
+import { awaitsCancelSo, canDecide, isBookCancelled } from '../../_shared/lib/boardAmend';
 import {
   contributionMatchesSearch,
   soLineLabel,
@@ -897,6 +897,17 @@ export function FulfilmentBoardListView({
         header: ({ column }) => <DataGridColumnHeader title="Suggested" column={column} />,
         cell: ({ row }) => {
           const contribution = row.original;
+          // OI-WHOLE-SO-CANCEL F2: what the book proposes for a removed line is to cancel it.
+          if (isBookCancelled(contribution)) {
+            return (
+              <span className="flex min-w-0 items-center gap-1.5">
+                <span className="block min-w-0 truncate" title="Cancel line">
+                  Cancel line
+                </span>
+                {changeIcons(contribution, 'suggested')}
+              </span>
+            );
+          }
           if (contribution.unplannable) {
             // The ladder was never walked for it (AC-FP16), so there is nothing to suggest -
             // and the reason is the one thing worth saying in its place.
@@ -948,6 +959,15 @@ export function FulfilmentBoardListView({
           if (isCancelSo(contribution, drafted)) {
             return <span className="block truncate">Cancel SO</span>;
           }
+          // OI-WHOLE-SO-CANCEL F2 (mirrors Suggested): a book-cancelled line whose cancel is
+          // saved - or whose decision states no supply at all - reads "Cancel line".
+          if (isCancelLineDecided(contribution, drafted)) {
+            return (
+              <span className="block truncate" title="Cancel line">
+                Cancel line
+              </span>
+            );
+          }
           const parts = contributionDecision(contribution, drafted);
           if (!parts) {
             // DECIDED BY THE BOOK, not by a board (14 Sep 2026 ruling): a line carrying a
@@ -978,6 +998,10 @@ export function FulfilmentBoardListView({
           // (AC-C13) - the words carry it, and the grid still draws one where a cell has
           // the room.
           const text = describeSupply(parts, contribution.fulfilment_location);
+          // A pre-marked cancel states no supply at all: nobody has decided it yet.
+          if (!text && isBookCancelled(contribution)) {
+            return <span className="text-muted-foreground">Not decided</span>;
+          }
           return (
             <span className="flex min-w-0 items-center gap-1.5">
               <span className="block min-w-0 truncate" title={text}>
@@ -1305,6 +1329,7 @@ function hasBuy(parts: SupplyPart[] | null): boolean {
  * the words on screen.
  */
 function suggestedSortText(contribution: BoardContribution): string {
+  if (isBookCancelled(contribution)) return 'Cancel line';
   if (contribution.unplannable) return unplannableLabel(contribution);
   const parts = contributionSuggestion(contribution);
   if (!parts) return 'Not recorded';
@@ -1320,14 +1345,32 @@ function isCancelSo(contribution: BoardContribution, drafted: BoardDecision | nu
   );
 }
 
+/**
+ * F2: a book-cancelled line CS has actually decided: a draft approval that is not just the
+ * board-load pre-mark (the row tick, Save all suggested, a server-saved draft, Decide > Cancel).
+ */
+function isCancelLineDecided(
+  contribution: BoardContribution,
+  drafted: BoardDecision | null,
+): boolean {
+  return (
+    isBookCancelled(contribution) &&
+    Boolean(drafted) &&
+    !drafted?.preMarked &&
+    drafted?.verdict === 'approved'
+  );
+}
+
 /** The Decided column's own equivalent of `suggestedSortText` above. */
 function decidedSortText(contribution: BoardContribution, drafted: BoardDecision | null): string {
   if (isCancelSo(contribution, drafted)) return 'Cancel SO';
+  if (isCancelLineDecided(contribution, drafted)) return 'Cancel line';
   const parts = contributionDecision(contribution, drafted);
   if (!parts) {
     const inquiry = contributionInquiryDecision(contribution);
     if (inquiry) return inquiry.inquiry_no ?? 'Unnumbered inquiry';
     return 'Not decided';
   }
-  return describeSupply(parts, contribution.fulfilment_location);
+  const text = describeSupply(parts, contribution.fulfilment_location);
+  return !text && isBookCancelled(contribution) ? 'Not decided' : text;
 }

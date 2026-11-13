@@ -44,6 +44,8 @@ function isPristine(line: QuotationLine | null, draft: LineDraft): line is Quota
 export interface LineFacts {
   nonStandard: boolean;
   belowFloor: boolean;
+  /** NON-CANCELLABLE-ITEMS F1: the badge under the description, by the same rule as the rest. */
+  nonCancellable: boolean;
 }
 
 /**
@@ -58,19 +60,29 @@ export function lineFacts(
 ): LineFacts {
   const asked = verdictDraft(draft);
   const linked = Boolean(asked.product_id || asked.product_set_id);
+  if (isSectionDraft(draft)) return NO_FACTS;
   if (isPristine(line, draft)) return storedLineFacts(line);
   const belowFloor = Boolean(verdict?.is_below_floor);
   const nonStandard = linked && Boolean(verdict?.is_non_standard);
-  return { nonStandard, belowFloor };
+  const nonCancellable = linked && Boolean(verdict?.is_non_cancellable);
+  return { nonStandard, belowFloor, nonCancellable };
 }
+
+/** A heading, or a line with nothing to judge: no flag of any kind. */
+const NO_FACTS: LineFacts = {
+  nonStandard: false,
+  belowFloor: false,
+  nonCancellable: false,
+};
 
 /** A saved line's facts, off its stored flags: the ones the approval banner counts. */
 export function storedLineFacts(line: QuotationLine): LineFacts {
-  if (line.is_section) return { nonStandard: false, belowFloor: false };
+  if (line.is_section) return NO_FACTS;
   const linked = Boolean(line.product_id || line.product_set_id);
   return {
     nonStandard: linked && Boolean(line.is_non_standard),
     belowFloor: Boolean(line.is_below_floor),
+    nonCancellable: linked && Boolean(line.is_non_cancellable),
   };
 }
 
@@ -91,9 +103,12 @@ function useLineFacts(
   seriesId: string | null | undefined,
   line: QuotationLine | null,
   draft: LineDraft,
+  savedSeriesId?: string | null,
 ) {
   const asked = verdictDraft(draft);
-  const pristine = isPristine(line, draft);
+  // A saved row's flags were judged against the SAVED series: once the editor's series moves
+  // (picked, changed or cleared), the row is judged afresh like any changed draft (F1).
+  const pristine = isPristine(line, draft) && !seriesMoved(seriesId, savedSeriesId);
   // A new scope has no quotation id yet: it is judged against the series the editor holds
   // (PRICING-UX-FIXES A), so the alerts are live before the first save too.
   const verdict = useLineVerdict(
@@ -101,12 +116,23 @@ function useLineFacts(
     asked,
     !pristine && Boolean(asked.product_id || asked.product_set_id),
   );
-  const facts = lineFacts(line, draft, verdict.data);
+  const facts = pristine
+    ? lineFacts(line, draft, verdict.data)
+    : lineFacts(null, draft, verdict.data);
   const floor = pristine
     ? describeFloor(line)
     : describeVerdictFloor(verdict.data ?? null);
 
   return { ...facts, floor };
+}
+
+/** The editor's series is not the one the saved rows were judged against. */
+function seriesMoved(
+  seriesId: string | null | undefined,
+  savedSeriesId: string | null | undefined,
+): boolean {
+  if (seriesId === undefined || savedSeriesId === undefined) return false;
+  return (seriesId || null) !== (savedSeriesId || null);
 }
 
 /**
@@ -117,11 +143,12 @@ function useLineFacts(
  * typed into is not hidden by the filter on the first keystroke.
  */
 export function useLinesFacts(
-  target: { quotationId: string | null; seriesId?: string | null },
+  target: { quotationId: string | null; seriesId?: string | null; savedSeriesId?: string | null },
   lines: { key: string; line: QuotationLine | null; draft: LineDraft }[],
 ): Map<string, LineFacts> {
+  const moved = seriesMoved(target.seriesId, target.savedSeriesId);
   const verdicts = useCachedLineVerdicts(
-    target,
+    { quotationId: target.quotationId, seriesId: target.seriesId },
     lines.map((row) => verdictDraft(row.draft)),
   );
   const lastKnown = React.useRef(new Map<string, LineFacts>());
@@ -129,29 +156,32 @@ export function useLinesFacts(
     const facts = new Map<string, LineFacts>();
     lines.forEach((row, index) => {
       if (isSectionDraft(row.draft)) {
-        facts.set(row.key, { nonStandard: false, belowFloor: false });
+        facts.set(row.key, NO_FACTS);
         return;
       }
       const verdict = verdicts[index];
       const asked = verdictDraft(row.draft);
+      // A series move re-judges saved rows too, as their pills do (`useLineFacts`).
+      const line = moved ? null : row.line;
       // A row naming no product or set is never judged, so it is not waiting on anything.
       const waiting =
         verdict === undefined &&
         Boolean(asked.product_id || asked.product_set_id) &&
-        !isPristine(row.line, row.draft);
+        !isPristine(line, row.draft);
       const known = lastKnown.current.get(row.key);
-      const fact = waiting && known ? known : lineFacts(row.line, row.draft, verdict ?? null);
+      const fact = waiting && known ? known : lineFacts(line, row.draft, verdict ?? null);
       lastKnown.current.set(row.key, fact);
       facts.set(row.key, fact);
     });
     return facts;
-  }, [lines, verdicts]);
+  }, [lines, verdicts, moved]);
 }
 
 /** The Product cell's flag: Non-standard. */
 export function LineFlags({
   quotationId,
   seriesId,
+  savedSeriesId,
   line,
   draft,
 }: {
@@ -159,10 +189,12 @@ export function LineFlags({
   quotationId: string | null;
   /** The series the editor is quoting from (null for none); undefined asks by quotation. */
   seriesId?: string | null;
+  /** The series the saved rows were judged against; a different editor series re-judges them. */
+  savedSeriesId?: string | null;
   line: QuotationLine | null;
   draft: LineDraft;
 }) {
-  const { nonStandard } = useLineFacts(quotationId, seriesId, line, draft);
+  const { nonStandard } = useLineFacts(quotationId, seriesId, line, draft, savedSeriesId);
   if (!nonStandard) return null;
 
   return (
@@ -182,21 +214,52 @@ export function LineFlags({
 }
 
 /**
+ * NON-CANCELLABLE-ITEMS F1 (owner hand test, 12 Nov): the badge under the description, live like
+ * Non-standard: the same `useLineFacts` (saved row while nothing moved, the line verdict the
+ * moment the item, the series or the price does), so it appears without a save or a reload.
+ */
+export function NonCancellableFlag({
+  quotationId,
+  seriesId,
+  savedSeriesId,
+  line,
+  draft,
+}: {
+  quotationId: string | null;
+  seriesId?: string | null;
+  savedSeriesId?: string | null;
+  line: QuotationLine | null;
+  draft: LineDraft;
+}) {
+  const { nonCancellable } = useLineFacts(quotationId, seriesId, line, draft, savedSeriesId);
+  if (!nonCancellable) return null;
+  return (
+    <div className="mt-1">
+      <Badge variant="warning" appearance="light" size="sm" className="whitespace-nowrap">
+        Non-cancellable
+      </Badge>
+    </div>
+  );
+}
+
+/**
  * The Rate cell's flag, under the price: "Below minimum price", no amount. Where the floor was set is the
  * badge's tooltip only; the owner removed the printed "Set on ..." line (1 Nov 2026).
  */
 export function MinimumPriceFlag({
   quotationId,
   seriesId,
+  savedSeriesId,
   line,
   draft,
 }: {
   quotationId: string | null;
   seriesId?: string | null;
+  savedSeriesId?: string | null;
   line: QuotationLine | null;
   draft: LineDraft;
 }) {
-  const { belowFloor, floor } = useLineFacts(quotationId, seriesId, line, draft);
+  const { belowFloor, floor } = useLineFacts(quotationId, seriesId, line, draft, savedSeriesId);
   if (!belowFloor) return null;
 
   return (

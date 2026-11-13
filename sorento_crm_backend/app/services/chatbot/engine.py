@@ -4321,12 +4321,12 @@ def _phone_unknown_decision(
             return "phone_handoff", "Phone link failed; handed to staff"
         survivor = outcome.survivor_respond_id or contact_respond_id
         if outcome.chatbot_allowed:
-            wa_phone_link.send_verified(db, client, identifier=survivor, turn_id=turn_id)
+            wa_phone_link.send_verified(db, client, identifier=survivor, turn_id=turn_id, phone=phone)
         else:
             # WA-PHONE-SHARE-LOOP: told once, on this turn; the contact now has a CRM row, so every
             # later message closes silently at the AI-allowed gate.
             wa_phone_link.send_verified(
-                db, client, identifier=survivor, turn_id=turn_id, line=wa_phone_link.NO_ACCESS_LINE
+                db, client, identifier=survivor, turn_id=turn_id, line=wa_phone_link.NO_ACCESS_LINE, phone=phone
             )
             comment(client, survivor, "phone verified, AI off for this contact")
         return "phone_linked", "Phone linked to the contact that holds its access"

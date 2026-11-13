@@ -153,7 +153,14 @@ def test_c1_confirm_all_cancels_the_line_and_echoes_it(api):
     assert result["lines_cancelled"] == [
         # PLAN-BATCH-HELD-CANCEL: the echo carries the reason too.
         # SO-LINE-NUMBERS: and the number the order carries, beside the sheet's own.
-        {"line_no": 10, "so_line_no": 10, "item_code": product_a.product_code, "reason": REASON}
+        # The echo also names the project line, so the board can match it to what it posted.
+        {
+            "line_no": 10,
+            "so_line_no": 10,
+            "item_code": product_a.product_code,
+            "reason": REASON,
+            "project_line_id": str(mirror_a.id),
+        }
     ]
     row = _raw(world.db, core_a.id)
     assert row.line_status == "cancelled"
@@ -178,7 +185,14 @@ def test_c1_single_confirm_route_also_cancels(api):
     assert response.json()["lines_cancelled"] == [
         # PLAN-BATCH-HELD-CANCEL: the echo carries the reason too.
         # SO-LINE-NUMBERS: and the number the order carries, beside the sheet's own.
-        {"line_no": 10, "so_line_no": 10, "item_code": product_a.product_code, "reason": REASON}
+        # The echo also names the project line, so the board can match it to what it posted.
+        {
+            "line_no": 10,
+            "so_line_no": 10,
+            "item_code": product_a.product_code,
+            "reason": REASON,
+            "project_line_id": str(mirror_a.id),
+        }
     ]
     assert _raw(world.db, core_a.id).line_status == "cancelled"
 
@@ -447,6 +461,11 @@ def test_c12_a_cancel_of_a_line_the_batch_names_rides_along_and_the_change_appli
     batch = _open_batch_naming(world, w, "a")
     batch_id = str(batch.id)
     retired_row = _cancelled_row_on_open_line(world, w, batch_id)
+    # F2 12/13 Nov: a cancel is saved like any change before Confirm
+    from ._cancel_decide import decide_cancelled_rows
+
+    decide_cancelled_rows(db, batch_id)
+    db.commit()
 
     response = client.post(
         f"{BASE}/fulfilment-planning/confirm-all",

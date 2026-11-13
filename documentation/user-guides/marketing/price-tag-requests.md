@@ -250,6 +250,25 @@ Note: a marketing price override typed on the request still wins over the pinned
 Versions are written when the design is saved, when the design is marked ready, and before an
 **Update tag**.
 
+## Request history
+
+The request's last tab, **History**, lists everything that happened to the request, newest first.
+Each entry is one sentence, then the date, time and who did it (the salesperson by name for what
+they did on the portal):
+
+* **Submitted**, **Edit 2: <reason>** or **Appealed**: each version the salesperson sent, named as
+  on the portal's History tab. An edit lists what changed, for example *Needed by: 05/11/2026 → 12/11/2026* or
+  *Product line 2 quantity: 4 → 6*.
+* **Status: Designing → Design Ready**, and every other status move.
+* **Assigned to <name>** or **Unassigned**, and **Printing: Office prints**.
+* **Line price changed**: a promotion or price set on the **Lines** tab, old → new.
+* **Design saved, version 3: Marked proof ready**: the same versions as
+  [Design history](#design-history).
+* **Changes requested: 3 comments**: one entry per review round.
+
+An entry that changed several lines shows **Show N lines**. Past 10 entries a **Search history** box
+appears. Anyone who can open the request can read its history.
+
 ## How you'll be notified
 
 * **The salesperson** gets a WhatsApp at every status change, with a link back to the portal, plus

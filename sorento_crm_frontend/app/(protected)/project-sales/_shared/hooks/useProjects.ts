@@ -6,6 +6,7 @@ import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/rea
 import type { QueryKey } from '@tanstack/react-query';
 import type { ListPagerPage, ListPagerParams } from '@/hooks/useListPager';
 import { toast } from '@/lib/toast';
+import { isOverridableRefusal } from '../lib/nonCancellable';
 import { isQtyOver } from '../lib/qtyOverQuote';
 import { splitMulti } from '@/lib/list-filters/multiValue';
 import { projectCodeLabel } from '../lib/projectCode';
@@ -39,6 +40,7 @@ import {
   changeLeadStatus,
   createQuotation,
   createQuotationLine,
+  createNonCancellableRule,
   createSeries,
   deletePriceFloor,
   deleteQuotation,
@@ -46,6 +48,10 @@ import {
   escalateLineMedia,
   deleteSeries,
   getEffectivePriceFloor,
+  listNonCancellableRules,
+  setSeriesProductNonCancellable,
+  setSeriesSetNonCancellable,
+  updateNonCancellableRule,
   getSeriesPricedRows,
   getSeriesProductRows,
   getSeriesSetRows,
@@ -133,6 +139,7 @@ import type {
   ProjectTaskBody,
   LeadListParams,
   FloorTargetLevel,
+  NonCancellableRuleBody,
   PriceFloorRuleBody,
   ProjectPurchaseOrderBody,
   ProjectPurchaseOrderSaveBody,
@@ -1284,8 +1291,15 @@ export function useQuotationLineMutations(projectId: string, versionId: string) 
   });
 
   const update = useMutation({
-    mutationFn: ({ id, body }: { id: string; body: Partial<QuotationLineBody> }) =>
-      updateQuotationLine(versionId, id, body),
+    mutationFn: ({
+      id,
+      body,
+      overrideReason,
+    }: {
+      id: string;
+      body: Partial<QuotationLineBody>;
+      overrideReason?: string;
+    }) => updateQuotationLine(versionId, id, body, overrideReason),
     onSuccess: (line) => {
       invalidate();
       if (line.is_below_floor) {
@@ -1294,16 +1308,22 @@ export function useQuotationLineMutations(projectId: string, versionId: string) 
         );
       }
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: Error) => {
+      if (!isOverridableRefusal(error)) toast.error(error.message);
+    },
   });
 
   const remove = useMutation({
-    mutationFn: (lineId: string) => deleteQuotationLine(versionId, lineId),
+    mutationFn: ({ lineId, overrideReason }: { lineId: string; overrideReason?: string }) =>
+      deleteQuotationLine(versionId, lineId, overrideReason),
     onSuccess: () => {
       invalidate();
       toast.success('Line removed');
     },
-    onError: (error: Error) => toast.error(error.message),
+    // An overridable refusal is for the caller's override dialog, not a toast.
+    onError: (error: Error) => {
+      if (!isOverridableRefusal(error)) toast.error(error.message);
+    },
   });
 
   return { create, update, remove };
@@ -1342,17 +1362,27 @@ export function useQuotationBulkLineMutation(projectId: string) {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ versionId, lines }: { versionId: string; lines: QuotationLineBulkItem[] }) =>
-      replaceQuotationLines(versionId, lines),
+    mutationFn: ({
+      versionId,
+      lines,
+      overrideReason,
+    }: {
+      versionId: string;
+      lines: QuotationLineBulkItem[];
+      overrideReason?: string;
+    }) => replaceQuotationLines(versionId, lines, overrideReason),
     onSuccess: (_lines, { versionId }) => {
       queryClient.invalidateQueries({ queryKey: linesKey(versionId) });
       queryClient.invalidateQueries({ queryKey: quotationsKey(projectId) });
       queryClient.invalidateQueries({ queryKey: [QUOTATIONS_KEY, 'versions'] });
       queryClient.invalidateQueries({ queryKey: quotationDocumentsKey(projectId) });
     },
-    // No toast: the screen raises ONE for the whole Save, and a quotation with four scopes
-    // would otherwise stack four notifications for a single button press.
-    onError: (error: Error) => toast.error(error.message),
+    // No success toast: the screen raises ONE for the whole Save, and a quotation with four
+    // scopes would otherwise stack four notifications. An overridable refusal opens the
+    // override dialog instead of a toast.
+    onError: (error: Error) => {
+      if (!isOverridableRefusal(error)) toast.error(error.message);
+    },
   });
 }
 
@@ -1489,6 +1519,27 @@ export function useSeriesProductRowMutations(seriesId?: string) {
   });
 
   return { setPricing, remove };
+}
+
+/** One product's own non-cancellable answer on a series; `null` follows its category. */
+export function useSeriesProductNonCancellable(seriesId?: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ productId, value }: { productId: string; value: boolean | null }) =>
+      setSeriesProductNonCancellable(seriesId as string, productId, value),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: SERIES_KEY }),
+    onError: (error: Error) => toast.error(error.message),
+  });
+}
+
+export function useSeriesSetNonCancellable(seriesId?: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ productSetId, value }: { productSetId: string; value: boolean }) =>
+      setSeriesSetNonCancellable(seriesId as string, productSetId, value),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: SERIES_KEY }),
+    onError: (error: Error) => toast.error(error.message),
+  });
 }
 
 export function useSeriesSetRows(seriesId?: string) {
@@ -1736,6 +1787,46 @@ export function useQuotationRecomputeMutation(projectId: string) {
     },
     onError: (error: Error) => toast.error(error.message),
   });
+}
+
+export const NON_CANCELLABLE_RULES_KEY = ['project-non-cancellable-rules'];
+
+export function useNonCancellableRules() {
+  return useQuery({
+    queryKey: NON_CANCELLABLE_RULES_KEY,
+    queryFn: () => listNonCancellableRules(),
+  });
+}
+
+export function useNonCancellableRuleMutations() {
+  const queryClient = useQueryClient();
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: NON_CANCELLABLE_RULES_KEY });
+
+  const create = useMutation({
+    mutationFn: (body: NonCancellableRuleBody) => createNonCancellableRule(body),
+    onSuccess: () => {
+      invalidate();
+      toast.success('Item saved');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const update = useMutation({
+    mutationFn: ({
+      id,
+      body,
+    }: {
+      id: string;
+      body: { non_cancellable: boolean; notes?: string | null };
+    }) => updateNonCancellableRule(id, body),
+    onSuccess: () => {
+      invalidate();
+      toast.success('Item saved');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  return { create, update };
 }
 
 export function usePriceFloorMutations() {
