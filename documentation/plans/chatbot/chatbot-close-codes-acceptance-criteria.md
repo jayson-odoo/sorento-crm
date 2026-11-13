@@ -73,7 +73,8 @@ Codes below are the shapes from crew's masked dev rows (codes are business data)
   match: an offer, never "Couldn't find X (product). Please refer to your salesman." with no offer. Company-scoped:
   the same close code in another company only gives the refer line.
 - AC-25 Dealer `SRT6537-BL X10 / SRT6532-BL X10 / SRT6534 X10` (third code opens a which-one list): every missed
-  code is named, with its offer when a close code exists; none vanishes.
+  code is named in the reply, none vanishes. SRT6537-BL gets its offer. No code is shown twice in one reply (AC-15d), so
+  a missed code whose close codes the reply already shows (here SRT6532-BL) is named without an offer of its own.
 - AC-26 Dealer `MBF97513 X 2 STOCK / MWC7627-S10 X 3 STOCK` (first answered, second missing a part; MWC7627-SH-S10
   exists): "Couldn't find MWC7627-S10. Did you mean MWC7627-SH-S10?", quantity 3 carried.
 - AC-27 Dealer `SRTK39SS / SRTKT1631SS / SRTKT38SS / 5 UNITS` (SRTKT39SS exists): the miss gets its offer.

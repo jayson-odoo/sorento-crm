@@ -15,6 +15,7 @@ ask itself is (`_eta_reply`).
 """
 from __future__ import annotations
 
+import re
 from datetime import date
 from typing import Any
 
@@ -271,8 +272,11 @@ def test_ac24_the_same_close_code_only_in_another_company_gives_the_refer_line(s
 # --------------------------------------------------------------------------- AC-25
 
 
-def test_ac25_srt65_shape_every_missed_code_is_named_with_its_offer_beside_a_which_one_list(session_factory, monkeypatch, stub_access):  # noqa: F811
-    """SRT6537-BL and SRT6532-BL are misses (each 0.54 from a catalogue code); SRT6534 opens a which-one list."""
+def test_ac25_srt65_shape_every_missed_code_is_named_and_no_code_is_shown_twice(session_factory, monkeypatch, stub_access):  # noqa: F811
+    """SRT6537-BL and SRT6532-BL are misses (each 0.54 from a catalogue code); SRT6534 opens a which-one list.
+
+    Lead sign-off 13 Nov: a close code is never shown twice in one reply (AC-15d, test_multi_code_dym E4), so
+    SRT6532-BL, whose close codes the which-one list already shows, must be named but need not get its own offer."""
     codes = ["SRT6534-BL", "SRT6534-WH", "SRT6537-GR"]
     c = _console(session_factory, monkeypatch, stub_access, codes, **_facts(*codes))
     text = c.say(
@@ -280,8 +284,11 @@ def test_ac25_srt65_shape_every_missed_code_is_named_with_its_offer_beside_a_whi
         stock(product("SRT6537-BL", 10), product("SRT6532-BL", 10), product("SRT6534", 10)),
     )
     assert "which one?" in text.lower() and "SRT6534-BL" in text and "SRT6534-WH" in text, text
+    assert _word("SRT6537-BL", text) and _word("SRT6532-BL", text), f"a missed code vanished: {text!r}"
     assert "Couldn't find SRT6537-BL. Did you mean" in text, text
-    assert "Couldn't find SRT6532-BL. Did you mean" in text, text
+    for code in codes:
+        shown = len(re.findall(rf"(?<![A-Z0-9]){re.escape(code)}(?![A-Z0-9-])", text.upper()))
+        assert shown <= 1, f"{code} shown {shown} times: {text!r}"
     assert R not in text, text
 
 
