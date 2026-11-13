@@ -20,7 +20,7 @@ from app.schemas.procurement import (
     ViewLinkRequest,
     ViewLinkResponse,
 )
-from app.schemas.common import ListResponse, MAX_PAGE_LIMIT, FormVoidRequest
+from app.schemas.common import ListResponse, MAX_PAGE_LIMIT, FormVoidRequest, RecordProjectUpdate
 from app.schemas.download import PdfExportOptions
 from app.services.error_handler import handle_internal_error
 from app.services.handling_lock_service import assert_can_act_on_form
@@ -488,6 +488,25 @@ def update_stock_inquiry(
         raise
     except Exception as e:
         raise handle_internal_error(str(e))
+
+
+@router.patch("/{inquiry_id}/project", response_model=StockInquiryResponse)
+def set_stock_inquiry_project(
+    inquiry_id: str,
+    body: RecordProjectUpdate,
+    current_user: dict = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """Set or clear the inquiry's registered project at any status (PROJECT-RELATED-RECORDS D2)."""
+    from app.services import project_related_records as related
+
+    validate_uuid_path(inquiry_id, resource="Stock Inquiry")
+    related.assert_can_set_project(db, "stock_inquiry", current_user["id"])
+    related.set_record_project(
+        db, kind="stock_inquiry", record_id=inquiry_id, project_id=body.project_id, actor=current_user["id"]
+    )
+    db.commit()
+    return StockInquiryService(db).get_inquiry_for_response(inquiry_id)
 
 
 @router.post(

@@ -92,6 +92,8 @@ vi.mock('@/components/common/SearchableSelect', () => ({
   ),
 }));
 vi.mock('../../_shared/hooks/useProjects', () => ({
+  // PROJECT-RELATED-RECORDS: the Related tab's badge reads this hook.
+  useProjectRelatedRecords: () => ({ data: undefined }),
   projectsPagerQuery: {
     listQueryKey: () => ['projects'],
     fetchPage: async () => ({ data: [], pagination: { total: 0 } }),

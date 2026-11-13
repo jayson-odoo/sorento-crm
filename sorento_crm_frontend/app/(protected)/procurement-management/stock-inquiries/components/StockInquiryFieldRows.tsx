@@ -11,6 +11,10 @@ import {
 import { Input } from '@/components/ui/input';
 import { NumberInput } from '@/components/ui/number-input';
 import { Textarea } from '@/components/ui/textarea';
+import {
+  RegisteredProjectSelect,
+  registeredProjectOption,
+} from '@/components/common/RegisteredProjectSelect';
 import { InquiryFormTableRow } from './ProductInquiryFormLayout';
 import { PRODUCT_INQUIRY_REMARK_HINT } from '../productInquiryFormConstants';
 import type { StockInquirySchemaType } from '../forms/stock-inquiry-schema';
@@ -24,10 +28,13 @@ export default function StockInquiryFieldRows({
   form,
   salesperson,
   readOnly = false,
+  savedProject,
 }: {
   form: UseFormReturn<StockInquirySchemaType>;
   salesperson: ReactNode;
   readOnly?: boolean;
+  /** The saved project link's code and title, so the picker names it before any search. */
+  savedProject?: { id?: string | null; code?: string | null; title?: string | null };
 }) {
   return (
     <>
@@ -112,6 +119,31 @@ export default function StockInquiryFieldRows({
                   value={field.value || ''}
                 />
               </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+      </InquiryFormTableRow>
+
+      <InquiryFormTableRow label="Registered project (optional)">
+        <FormField
+          control={form.control}
+          name="project_id"
+          render={({ field }) => (
+            <FormItem className="space-y-1">
+              {/* No FormControl: it is a Radix Slot and the picker renders a trigger plus its
+                  popover (the same note as the complaint form's project field). */}
+              <RegisteredProjectSelect
+                value={field.value}
+                onChange={field.onChange}
+                disabled={readOnly}
+                aria-label="Registered project"
+                selectedOption={
+                  field.value && field.value === savedProject?.id
+                    ? registeredProjectOption(field.value, savedProject?.code, savedProject?.title)
+                    : undefined
+                }
+              />
               <FormMessage />
             </FormItem>
           )}
