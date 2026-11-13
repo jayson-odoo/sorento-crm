@@ -440,6 +440,13 @@ ONE_RAW_LOOKUP = {"substring_8259", "prefix_with_colour", "name_resolving_to_not
 def test_q1_guard_answers_as_today(session_factory, monkeypatch, stub_access, gate, name):  # noqa: F811
     c, resolves = _console(session_factory, monkeypatch, stub_access, f"+60000024{GUARDS.index(name):02d}{int(gate)}", gate)
     text = _guard(name, c, gate)
+    if name == "substring_8259":
+        # CHATBOT-CLOSE-CODES AC-34: "8259" sits inside SRTWT8259-GM and VLDWT8259-GM, so the parser's pick (which
+        # completes the raw) is never answered alone; the staff reply covers both codes (the multi-code stock summary).
+        for code in ("SRTWT8259-GM", "VLDWT8259-GM"):
+            assert f"*Product Code:* {code}" in text, (code, text)
+        assert sorted(_stocked(c, 0)) == ["SRTWT8259-GM", "VLDWT8259-GM"], _stocked(c, 0)
+        return
     observed = {"reply": text, "stocked": _stocked(c, 0), "resolve_calls": len(resolves.tokens)}
     expected = dict(B173_Q1[f"{name}|{'state_path' if gate else 'old_path'}"])
     expected["resolve_calls"] += 1 if name in ONE_RAW_LOOKUP else 0
