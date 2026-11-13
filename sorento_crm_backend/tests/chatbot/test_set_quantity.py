@@ -132,3 +132,59 @@ def test_set_qty_7_picking_the_offered_set_after_x2_answers_the_same_lines(sessi
     assert _option_codes(c)[:1] == [P_RL], _option_codes(c)
     text = c.say("1", _pick(1))
     assert text == reference, (text, reference)
+
+
+# --------------------------------------------------------------------------- review round: pick path, mixed asks, fractions
+
+S_RL = "QWC604-S-RL"
+S_PAN = "QWCX604-S-RL"
+
+
+def test_q1_picking_a_set_whose_cistern_counts_2_answers_as_typing_the_set(session_factory, monkeypatch, stub_access):  # noqa: F811
+    c = _lone(session_factory, monkeypatch, stub_access, cistern_qty=2)
+    reference = c.say("QWC604-P-RL x 2", stock(product(P_RL, 2)))
+    assert ASK_EACH not in reference, reference
+    assert all(line in _lines(reference) for line in _lines(_single(c, CISTERN, 4))), ("the cistern is not at x 4", reference)
+
+    c.state = None
+    c.say("QWC604RL x 2", stock(product("QWC604RL", 2)))
+    assert _option_codes(c)[:1] == [P_RL], _option_codes(c)
+    text = c.say("1", _pick(1))
+    assert text == reference, (text, reference)
+
+
+def test_q1_picking_one_of_several_sets_applies_that_sets_own_part_quantity(session_factory, monkeypatch, stub_access):  # noqa: F811
+    codes = [PAN, S_PAN, CISTERN]
+    c = _console(session_factory, monkeypatch, stub_access, codes, **{m.replace("-", "_"): Stock(on_hand=100) for m in codes})
+    _set_with_quantities(session_factory, P_RL, [(c.uuid_of[PAN], 1), (c.uuid_of[CISTERN], 1)])
+    _set_with_quantities(session_factory, S_RL, [(c.uuid_of[S_PAN], 1), (c.uuid_of[CISTERN], 3)])
+    c.say("qwc604-rl x 2", stock(product("qwc604-rl", 2)))
+    offered = _option_codes(c)
+    assert {P_RL, S_RL} <= set(offered), offered
+    text = c.say(str(offered.index(S_RL) + 1), _pick(offered.index(S_RL) + 1))
+    assert ASK_EACH not in text, text
+    cistern_line = _lines(_single(c, CISTERN, 6))
+    assert all(line in _lines(text) for line in cistern_line), ("the cistern is not at x 6", text)
+    assert f"{S_PAN} x 2: {TICK} Got stock." in _lines(text), text
+
+
+def test_q2_a_part_typed_beside_its_set_adds_up_in_either_order(session_factory, monkeypatch, stub_access):  # noqa: F811
+    c = _lone(session_factory, monkeypatch, stub_access)
+    first = c.say("QWCY604 x 5, QWC604-P-RL x 2", stock(product(CISTERN, 5), product(P_RL, 2)))
+    c.state = None
+    second = c.say("QWC604-P-RL x 2, QWCY604 x 5", stock(product(P_RL, 2), product(CISTERN, 5)))
+    seven = f"{CISTERN} x 7: {TICK} Got stock."
+    assert seven in _lines(first), first
+    assert f"{PAN} x 2: {TICK} Got stock." in _lines(first), first
+    assert seven in _lines(second), second
+    assert sorted(_lines(first)) == sorted(_lines(second)), (first, second)
+    assert first == second, ("the reply depends on the typed order", first, second)
+
+
+@pytest.mark.parametrize("typed,part_at", [(1, 1), (5, 3)], ids=["x1_rounds_up_never_0", "x5_2.5_rounds_up_to_3"])
+def test_q3_a_fractional_part_quantity_rounds_up(session_factory, monkeypatch, stub_access, typed, part_at):  # noqa: F811
+    c = _lone(session_factory, monkeypatch, stub_access, cistern_qty=0.5)
+    text = c.say(f"QWC604-P-RL x {typed}", stock(product(P_RL, typed)))
+    assert ASK_EACH not in text, text
+    expected = _lines(_single(c, CISTERN, part_at))
+    assert all(line in _lines(text) for line in expected), (expected, text)
