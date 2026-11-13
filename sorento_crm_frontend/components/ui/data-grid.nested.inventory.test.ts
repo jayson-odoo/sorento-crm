@@ -247,6 +247,14 @@ const GRID_IN_FLOATING_SURFACE_SITES = new Map<string, string>([
     'The DataGridTable of the same grid, not a second one',
   ],
   [
+    'app/(protected)/project-sales/_shared/po-link/PoLinkDialog.tsx#3',
+    'The Link PO popup (manage mode): the same dialog shell with its own grid. Already scrollerMaxHeight={false}.',
+  ],
+  [
+    'app/(protected)/project-sales/_shared/po-link/PoLinkDialog.tsx#4',
+    'The DataGridTable of the same grid, not a second one',
+  ],
+  [
     'app/(protected)/project-sales/order-inquiries/[id]/components/ReserveConfirmDialog.tsx',
     'OI-STAGED-NOTIFY: the staged lines of the Reserve confirmation, one row per line, in a dialog. Already scrollerMaxHeight={false}. Line moved from :157 when #1727 grew the dialog.',
   ],
