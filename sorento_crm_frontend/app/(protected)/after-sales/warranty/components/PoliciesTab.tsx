@@ -64,12 +64,12 @@ export function PoliciesTab() {
       title: string,
       size: number,
       cell: (p: WarrantyPolicy) => React.ReactNode,
-      sortable = true,
     ): ColumnDef<WarrantyPolicy> => ({
       id,
+      // An accessor is what makes a column sortable; the server does the ordering.
+      accessorFn: (p) => (p as unknown as Record<string, unknown>)[id],
       header: ({ column }) => <DataGridColumnHeader title={title} column={column} />,
       size,
-      enableSorting: sortable,
       cell: ({ row }) => cell(row.original),
       meta: { headerTitle: title, skeleton: <Skeleton className="h-4 w-20" /> },
     });
@@ -97,9 +97,8 @@ export function PoliciesTab() {
             </Badge>
           );
         },
-        false,
       ),
-      col('terms', 'Terms', 90, (p) => <Text value={String(p.term_count)} />, false),
+      col('term_count', 'Terms', 90, (p) => <Text value={String(p.term_count)} />),
     ];
   }, []);
 

@@ -77,6 +77,7 @@ export function KindsTab() {
       sortable = true,
     ): ColumnDef<WarrantyKind> => ({
       id,
+      accessorFn: (k) => (k as unknown as Record<string, unknown>)[id],
       header: ({ column }) => <DataGridColumnHeader title={title} column={column} />,
       size,
       enableSorting: sortable,

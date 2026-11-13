@@ -54,6 +54,7 @@ export function RulesTab() {
   const columns = useMemo<ColumnDef<WarrantyRule>[]>(() => {
     const col = (id: string, title: string, size: number, cell: (r: WarrantyRule) => React.ReactNode): ColumnDef<WarrantyRule> => ({
       id,
+      accessorFn: (r) => (r as unknown as Record<string, unknown>)[id],
       header: ({ column }) => <DataGridColumnHeader title={title} column={column} />,
       size,
       cell: ({ row }) => cell(row.original),
