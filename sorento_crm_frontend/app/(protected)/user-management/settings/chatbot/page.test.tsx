@@ -583,3 +583,90 @@ describe('ChatbotSettingsPage - parser max output tokens', () => {
     expect(document.getElementById('chatbot-parser-max-output-tokens-error')).not.toBeNull();
   });
 });
+
+// N8N-RETIRE-A: "Bot replies sent by" (n8n / CRM for listed contacts / CRM for all), built
+// like the Direct ingress pair above. Red until the select and its payload keys exist.
+describe('ChatbotSettingsPage - bot replies sent by', () => {
+  beforeEach(() => {
+    mockMemoryQuery.mockReturnValue({ data: DEFAULT_MEMORY, isLoading: false, isError: false });
+    mockTierOrderQuery.mockReturnValue({ data: DEFAULT_TIER_ORDER, isLoading: false, isError: false });
+  });
+
+  const withReplySender = (extra: Record<string, unknown> = {}) =>
+    settings({
+      chatbot_reply_sender_mode: 'n8n',
+      chatbot_reply_sender_contacts: null,
+      ...extra,
+    } as Partial<ChatbotSettings>);
+
+  it('shows the saved value and hides the contacts box unless the listed option is chosen', () => {
+    mockMutation.mockReturnValue({ isPending: false, mutate: vi.fn() });
+    mockSettingsQuery.mockReturnValue({ data: withReplySender(), isLoading: false, isError: false });
+    renderPage();
+
+    const select = screen.getByRole('combobox', { name: /bot replies sent by/i });
+    expect(select.textContent).toMatch(/n8n/i);
+    expect(screen.queryByLabelText(/reply.*contacts/i)).toBeNull();
+  });
+
+  it('offers n8n, CRM for listed contacts and CRM for all', () => {
+    mockMutation.mockReturnValue({ isPending: false, mutate: vi.fn() });
+    mockSettingsQuery.mockReturnValue({ data: withReplySender(), isLoading: false, isError: false });
+    renderPage();
+
+    fireEvent.click(screen.getByRole('combobox', { name: /bot replies sent by/i }));
+    expect(screen.getByText('CRM for listed contacts')).toBeTruthy();
+    expect(screen.getByText('CRM for all')).toBeTruthy();
+    expect(screen.getAllByText('n8n').length).toBeGreaterThan(0);
+  });
+
+  it('shows the saved CRM-for-all value', () => {
+    mockMutation.mockReturnValue({ isPending: false, mutate: vi.fn() });
+    mockSettingsQuery.mockReturnValue({
+      data: withReplySender({ chatbot_reply_sender_mode: 'all' }),
+      isLoading: false,
+      isError: false,
+    });
+    renderPage();
+
+    expect(
+      screen.getByRole('combobox', { name: /bot replies sent by/i }).textContent,
+    ).toMatch(/CRM for all/i);
+  });
+
+  it('shows the contacts box for the listed option and saves mode and contacts', () => {
+    const mutate = vi.fn();
+    mockMutation.mockReturnValue({ isPending: false, mutate });
+    mockSettingsQuery.mockReturnValue({
+      data: withReplySender({
+        chatbot_reply_sender_mode: 'contacts',
+        chatbot_reply_sender_contacts: '100000077',
+      }),
+      isLoading: false,
+      isError: false,
+    });
+    renderPage();
+
+    const box = screen.getByLabelText(/reply.*contacts/i) as HTMLTextAreaElement;
+    expect(box.value).toBe('100000077');
+    fireEvent.change(box, { target: { value: '100000077\n100000078' } });
+    fireEvent.click(saveButton());
+
+    const [payload] = mutate.mock.calls[0];
+    expect(payload.chatbot_reply_sender_mode).toBe('contacts');
+    expect(payload.chatbot_reply_sender_contacts).toBe('100000077\n100000078');
+  });
+
+  it('picking CRM for all saves chatbot_reply_sender_mode all', () => {
+    const mutate = vi.fn();
+    mockMutation.mockReturnValue({ isPending: false, mutate });
+    mockSettingsQuery.mockReturnValue({ data: withReplySender(), isLoading: false, isError: false });
+    renderPage();
+
+    fireEvent.click(screen.getByRole('combobox', { name: /bot replies sent by/i }));
+    fireEvent.click(screen.getByText('CRM for all'));
+    fireEvent.click(saveButton());
+
+    expect(mutate.mock.calls[0][0].chatbot_reply_sender_mode).toBe('all');
+  });
+});
