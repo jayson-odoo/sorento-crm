@@ -110,9 +110,54 @@ follow-up PR titled `OCN-ORDER-CHANGE-NOTICE B: ...`.
   state, sign-off block (decision, name, date, remarks).
 - **G5** Usable at 375 px and 1280 px; no UUIDs on screen.
 
+## I. Owner hand-test round 20 (13 Nov, findings #1 + #2; pulled forward from H1)
+
+Finding #1 (owner, verbatim): "Ocn should be part of the portal forms right? And it shud appear in tags all
+those places right for us to control the form by contact". Finding #2 (owner, verbatim): "the sales in charge is
+the salesperson which default to the submitter but can be changed" + "I belive thats how requested by in other
+forms work right?" (mirror the purchase request's Requested by).
+
+- **I1** `order_change_notice` is ONE portal form kind, registered once per side: BE
+  `GRANTABLE_PORTAL_FORM_TYPES` (portal_service.py) + `_KIND_LABELS` "Order Change Notice"; FE `LANDING_KINDS` /
+  `LANDING_LABELS` (lib/portal-form-kinds.ts) + `MY_REQUEST_STAFF_PAGES`. No screen keeps its own list.
+- **I2** It is opt-in like Sample Request / New Product Application: NOT in `SUPPORTED_TYPES` (the base). A contact
+  sees it only when a tag, an active market segment or the contact's own switch turns it on; a contact switch Off
+  hides it even when a tag / segment grants it.
+- **I3** It appears, with the label "Order Change Notice", on: the contact's Portal forms card (GET
+  /user-management/contacts/{id}/portal-forms row with inherited / override / effective), the contact tag card
+  catalog (`portal_forms` options), the market segment editor's Additional portal forms, and PUT validation accepts
+  it on all three (no 422 "unknown form type").
+- **I4** CRM MY REQUESTS: the hand-added Order Change Notices item is gone; the item comes from the shared
+  MY REQUESTS list (path /procurement-management/order-change-notices, permission
+  `procurement.order_change_notices.view_own`) and shows only when the salesperson's resolved portal kinds include
+  `order_change_notice` (same filter as every other MY REQUESTS form).
+- **I5** Portal: GET/POST `/api/v1/public/portal/submissions/order_change_notice` (list / create),
+  GET/PUT `.../{id}` (read / update), POST `.../{id}/submit`. Every route first checks the kind is visible for the
+  token's contact (403 FORM_TYPE_NOT_VISIBLE otherwise). The raiser is the CRM user linked to the contact
+  (`users.respond_contact_id`); a contact with no linked user gets 403 (the kind is a salesperson's form). The
+  route builds the actor with `order_change_notice_service.actor_for_user(linked user)`, so the portal applies
+  exactly the CRM rules (create grant, own-only list, edit / submit rules, company scope); another user's notice
+  id is 404 (no existence leak). Portal lookups (customers, products, change types, projects) reuse the notice's
+  own lookup functions under the same rules.
+- **I6** Portal pages: list, new and detail for the kind at /portal/c/[slug]/order_change_notice (+ the legacy
+  /portal/order_change_notice paths the other kinds have), rendering the SAME notice form component as the CRM
+  (data calls injected, not a second form); the portal landing offers the kind in its selector like Sample
+  Request.
+- **I7** One salesperson field: "Sales Person" (read-only creator) and "Sales Incharge" (user picker) are removed
+  from the form, detail, list and API; "Requested by" replaces them: `requested_by_contact_id` + `requested_by`
+  text, picked with the shared `RequestorContactSelect`, saved through the shared
+  `requestor_options_service.apply_requestor_contact` (422 REQUESTOR_NOT_ELIGIBLE for an ineligible contact; the
+  label is the contact's current name), shown in the sign-off "Requested by" column like the purchase request.
+  List column "Requested by" (sortable).
+- **I8** Default: the submitter's contact (portal: the token's contact; CRM: the creating user's linked contact;
+  empty when the user has no linked contact); anyone who may edit the notice may change it.
+- **I9** Own-records (`view_own`): a notice is the user's when they created it, are its C.S. in charge, or are the
+  user linked to its Requested-by contact (replaces "Sales in charge user").
+- **I10** History reads "Requested by: old -> new" with names.
+
 ## H. Slice 2 (follow-up PR)
 
-- **H1** Portal kind `order_change_notice`: identical form in the portal, own-scope list.
+- **H1** Portal kind: pulled into slice 1 by the owner's hand test, see I1-I6.
 - **H2** Public approval link and public view link work for an OCN (approval token generic).
 - **H3** Print / PDF in the paper layout.
 - **H4** Assistant / MCP: list and read OCNs, approve / reject tools, two eval prompts each.
