@@ -1927,6 +1927,7 @@ def oi_po_link_change(
     ids = [("Sales order line", c.sales_order_line_id) for c in payload.changes] + [
         ("PO line", c.po_line_id) for c in payload.changes
     ]
+    ids += [("PO line", c.from_po_line_id) for c in payload.changes if c.from_po_line_id]
     return _oi_po_link_write(
         db, current_user, payload.row_ids, lambda s: s.change([c.model_dump() for c in payload.changes]), ids
     )

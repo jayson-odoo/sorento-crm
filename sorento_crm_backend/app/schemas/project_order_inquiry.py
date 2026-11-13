@@ -606,6 +606,8 @@ class OrderInquiryWorklistRow(BaseModel):
     line_cancelled: bool = False
     #: The row's sales order line is in AutoCount, so Link to PO can act on it.
     in_autocount: bool = False
+    #: A PO link of the row is tied to its AutoCount SO line (Unlink... goes through AutoCount).
+    in_autocount_link: bool = False
     #: OI-LINE-SPLIT (UAC D3): the splits of this row's SO line, for the OI Lines tab's
     #: read-only expand; empty when not split. Declared because `response_model` drops a
     #: field it has not been told about.

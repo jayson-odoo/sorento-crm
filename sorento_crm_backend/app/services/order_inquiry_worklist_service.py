@@ -631,6 +631,8 @@ _LATEST_ANSWERED_QTY = (
 #: line is cancelled, NULL-safe - a row whose mirror names no core line reads False here,
 #: not NULL, so `~_LINE_CANCELLED` in a WHERE clause still matches it instead of silently
 #: dropping it.
+_LINK_PSOL = aliased(ProjectSalesOrderLine)
+_LINK_SOL = aliased(SalesOrderLine)
 _LINE_CANCELLED = case(
     (SalesOrderLine.line_status == "cancelled", True), else_=False
 )
@@ -967,6 +969,20 @@ _COLUMNS = (
     # OI-PO-LINK: the row's SO line carries an AutoCount ref (`{db}:{DocKey}:{DtlKey}`), so the
     # PO link can act on it. Same outer join, no extra read.
     case((func.btrim(SalesOrderLine.source_ref).op("~")(r"^[^:]+:[0-9]+:[0-9]+$"), True), else_=False).label("in_autocount"),
+    # OI-PO-LINK: a PO link of this row that AutoCount ties to the row's own SO line
+    # (`from_so_line_ref` equals its ref), so Unlink... goes through AutoCount for it.
+    select(OrderInquiryLink.id)
+    .select_from(OrderInquiryLink)
+    .join(PurchaseOrderLine, PurchaseOrderLine.id == OrderInquiryLink.po_line_id)
+    .join(_LINK_PSOL, _LINK_PSOL.id == OrderInquiryRow.so_line_id)
+    .join(_LINK_SOL, _LINK_SOL.id == _LINK_PSOL.core_sales_order_line_id)
+    .where(
+        OrderInquiryLink.row_id == OrderInquiryRow.id,
+        func.btrim(PurchaseOrderLine.from_so_line_ref) == func.btrim(_LINK_SOL.source_ref),
+    )
+    .correlate(OrderInquiryRow)
+    .exists()
+    .label("in_autocount_link"),
     _ACK_USER.name.label("acknowledged_by_name"),
     OrderInquiryRow.ack_override.label("ack_override"),
     OrderInquiryRow.ack_override_at.label("ack_override_at"),
@@ -2739,6 +2755,7 @@ class OrderInquiryWorklistService:
             # itself is cancelled - `closed` and `open` both read false.
             "line_cancelled": bool(row.line_cancelled),
             "in_autocount": bool(row.in_autocount),
+            "in_autocount_link": bool(row.in_autocount_link),
             "raised_at": row.raised_at,
             "raised_by_name": row.raised_by_name,
             # AC-DT-3 (`PLAN-oi-decision-trail-ui.md`): the actual `order_inquiry_raises`

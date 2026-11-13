@@ -230,6 +230,8 @@ class PoChangeLineIn(BaseModel):
     """Change PO: the SO line, and the PO line to cover it instead of the one covering it now."""
     sales_order_line_id: str
     po_line_id: str
+    #: Which of the PO lines now covering the SO line to change (needed when there are 2 or more).
+    from_po_line_id: Optional[str] = None
 
 
 class PoChangeIn(BaseModel):

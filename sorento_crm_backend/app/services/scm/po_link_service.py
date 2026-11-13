@@ -875,7 +875,8 @@ class PoLinkService:
         (QTY_ABOVE_OUTSTANDING, AC-E2E-DB3 on db3, 11 Nov). The new link is sent only once the
         unlink is done; if it then fails, the answer names the PO that was unlinked, so the
         user knows the line is uncovered. The old PO line keeps its qty and stays open."""
-        named = [str(item["sales_order_line_id"]) for item in changes]
+        # One change per covering PO line: a line covered twice may be changed twice.
+        named = [(str(item["sales_order_line_id"]), str(item.get("from_po_line_id") or "")) for item in changes]
         if len(set(named)) != len(named):
             raise AppException(status_code=422, message="Name each sales order line once.")
         plan = []
@@ -894,9 +895,18 @@ class PoLinkService:
                     .all()
                 )
             ]
-            if len(current) != 1:
+            from_id = item.get("from_po_line_id")
+            if from_id:
+                current = [pair for pair in current if str(pair[0].id) == str(from_id)]
+                if not current:
+                    raise AppException(
+                        status_code=422, message=f"{so_label} is not covered by that PO line."
+                    )
+            elif len(current) > 1:
+                raise AppException(status_code=422, message="Pick which PO to change.")
+            elif not current:
                 raise AppException(
-                    status_code=422, message=f"{so_label} is not covered by exactly one PO line."
+                    status_code=422, message=f"{so_label} is not covered by a PO line."
                 )
             # Crew for the owner, 11 Nov: Change PO moves the OPEN balance still covered by the
             # old PO line; what was already received stays with the old PO. `_free` is that
