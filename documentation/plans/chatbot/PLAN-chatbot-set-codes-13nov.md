@@ -1,6 +1,6 @@
 # PLAN: CHATBOT-SET-CODES (a typed set code answers the set and its members)
 
-Status: Waiting on owner answers to card v1 Q1-Q5 (`CARD-chatbot-set-codes-13nov.md`, posted on #2395); draft UAC `chatbot-set-codes-acceptance-criteria.md`. Track: size M, lead pattern, cloud lane.
+Status: Build (crew answered card v1 Q1-Q5, 13 Nov; UAC final). Track: size M, lead pattern, cloud lane.
 Phase 1 slice 3 of chatbot plan v2 (owner approved 12 Nov 17:28). Follows PR #2370 (code matching, merged 13 Nov).
 
 Goal: a registered set code typed in any dash/space/case form resolves to the set and its member products through the
