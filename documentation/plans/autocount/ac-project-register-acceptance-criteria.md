@@ -23,7 +23,9 @@ rules): Q1 (a), Q2 (a), Q3 (a), Q4 (a), Q5 (a).
 - **R5** Only a project that is approved (`is_approved`: approval_state NULL or `approved`) and
   whose outcome is not `lost` can be registered. Any other project gets POST 409
   `ac_not_eligible` with the message "Only an approved project that is not lost can be
-  registered in AutoCount." The SS is not called. On the page the menu item is not shown
+  registered in AutoCount." A project still awaiting approval is refused one step earlier by
+  the shared project write check (409 `project_not_approved`, its own plain sentence); either
+  way the SS is not called. On the page the menu item is not shown
   for such a project.
 
 ## Status read (GET)
