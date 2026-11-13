@@ -1967,15 +1967,29 @@ def _group_set_rows(e: dict[str, Any], set_by_code: dict[str, list[str]], typed:
     (a caller with no typed list)."""
     plain: list[Any] = []
     by_set: dict[str, list[Any]] = {}
-    for row in e.get("items") or []:
+
+    def code_of(row: Any) -> str | None:
         fields = row.get("fields") if isinstance(row, dict) else None
-        code = next(
+        return next(
             (jsc.js_string(f.get("value")).casefold() for f in fields or [] if isinstance(f, dict) and f.get("label") == "Product Code"),
             None,
         )
+
+    # CHATBOT-SET-CODES F1: a member's alternative (`flags.alternatives`) is the "Alternative:"
+    # line under that member inside its set block, never an item of its own beside the block.
+    member_alternatives = {
+        jsc.nullish_str(alt).strip().casefold()
+        for row in e.get("items") or []
+        if set_by_code.get(code_of(row) or "")
+        for alt in jsc.array(jsc.get(jsc.get(row, "flags"), "alternatives"))
+    }
+    for row in e.get("items") or []:
+        fields = row.get("fields") if isinstance(row, dict) else None
+        code = code_of(row)
         owners = set_by_code.get(code) if code else None
         if not owners:
-            plain.append(row)
+            if code not in member_alternatives:
+                plain.append(row)
             continue
         if typed is not None and not any(owner in typed for owner in owners):
             for owner in owners:

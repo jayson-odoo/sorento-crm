@@ -2133,6 +2133,27 @@ def _prefix_probe_product(db: Session, token: str) -> list[ResolvedEntity]:
     ]
 
 
+def _within_family(rows: list, tokens: list[str]) -> list:
+    """CHATBOT-SET-CODES F2: the set rows a non-exact code token may answer. A token that lies
+    within the sets' own Family code (`product_family.family_code_for`, the catalogue's link:
+    "SRTWC7405" or the part "wc7405" of it) asks for the family, so every set it found is
+    answered (CHATBOT-SET-STOCK). A token that goes past the Family code yet equals no set code
+    ("QWC7405-RL" over QWC7405-RL-P-PJ and QWC7405-RL-S-PJ) names one set nearly: when it found
+    more than one, none is placed here, and the token's close sets are offered instead
+    (`_trgm_product_sets`, the did-you-mean). One set found is kept, as before."""
+    from app.services.product_family import family_code_for
+
+    if len(rows) < 2:
+        return rows
+    folds = [_strip_all_ws(t.lower()) for t in tokens if t]
+
+    def held(product_set: Any) -> bool:
+        family = _strip_all_ws(str(family_code_for(str(product_set.set_code)) or "").lower())
+        return bool(family) and all(f in family for f in folds)
+
+    return [r for r in rows if held(r)]
+
+
 def _prefix_probe_product_set(db: Session, token: str) -> list[ResolvedEntity]:
     """CHATBOT-SET-STOCK: the product sets a code token finds, by the product code rule
     (`_code_prefix_then_substring`: prefix, else substring).
@@ -2150,6 +2171,7 @@ def _prefix_probe_product_set(db: Session, token: str) -> list[ResolvedEntity]:
         token,
         (ProductSet.set_code, ProductSet.id),
     )
+    rows = _within_family(rows, [token])
     return [entity for _set, entity in _product_set_entities(db, rows, match_tier=tier)]
 
 
@@ -4016,7 +4038,7 @@ def _and_probe_product_set(db: Session, tokens: list[str]) -> list[ResolvedEntit
     # prefix set tier unrun for the token.
     folds = [_strip_all_ws(t.lower()) for t in tokens if t]
     exact = matched.filter(_ws_insensitive_lower(ProductSet.set_code).in_(folds)).all() if folds else []
-    rows = exact or matched.limit(AND_MODE_LIMIT).all()
+    rows = exact or _within_family(matched.limit(AND_MODE_LIMIT).all(), tokens)
     out = []
     for product_set, entity in _product_set_entities(db, rows, match_tier="and"):
         entity.match_blob = product_set.set_code
