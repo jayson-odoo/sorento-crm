@@ -109,8 +109,6 @@ const plural = (count: number, one: string, many = `${one}s`) =>
  */
 export function ConfirmGuideDialog({
   pages,
-  autocountNote = [],
-  applyLabel = 'Apply AutoCount change',
   runConfirm,
   saveRemarks,
   preparing = false,
@@ -130,13 +128,6 @@ export function ConfirmGuideDialog({
 }: {
   /** The orders of this Confirm, in board order; re-read live, so a page drops once saved away. */
   pages: ConfirmGuidePage[];
-  /**
-   * PLAN-BATCH-COUNT-DISPLAY (reviewer round 1): the board's AutoCount change note, said again on
-   * the Confirm step. With no page (no decision, only pending changes) it is the whole press, and
-   * the title and button read `applyLabel` instead of "Confirm 0 orders".
-   */
-  autocountNote?: string[];
-  applyLabel?: string;
   runConfirm: (soRemarks: ReadonlyMap<string, string>) => Promise<boolean>;
   /**
    * UAC F26: keeps saved lines' remarks in their saved decisions (board line key -> remark,
@@ -391,7 +382,7 @@ export function ConfirmGuideDialog({
           <DialogTitle className="truncate text-base">
             {pages.length > 0
               ? `Confirm ${pages.map((entry) => entry.soNumber).join(', ')}`
-              : applyLabel}
+              : 'Confirm'}
           </DialogTitle>
           <div data-testid="confirm-guide-steps">
             <WizardSteps steps={STEPS} currentId={step.kind} />
@@ -596,11 +587,6 @@ export function ConfirmGuideDialog({
                     .join(', ')}. Nothing has been sent yet.`}
                 </p>
               ) : null}
-              {autocountNote.map((line) => (
-                <p key={line} className="text-sm break-words">
-                  {line}
-                </p>
-              ))}
               {pages.length === 0 ? (
                 <p className="text-sm break-words">Nothing has been sent yet.</p>
               ) : null}
@@ -680,7 +666,7 @@ export function ConfirmGuideDialog({
               disabled={posting || refreshing || stale || wordsLoading || wordsFailed}
               onClick={() => void pressConfirm()}
             >
-              {pages.length > 0 ? `Confirm ${plural(pages.length, 'order')}` : applyLabel}
+              {pages.length > 0 ? `Confirm ${plural(pages.length, 'order')}` : 'Confirm'}
             </Button>
           )}
         </div>

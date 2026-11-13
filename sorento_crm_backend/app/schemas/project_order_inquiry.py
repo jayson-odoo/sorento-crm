@@ -608,6 +608,12 @@ class OrderInquiryWorklistRow(BaseModel):
     in_autocount: bool = False
     #: A PO link of the row is tied to its AutoCount SO line (Unlink... goes through AutoCount).
     in_autocount_link: bool = False
+    #: OI-WHOLE-SO-CANCEL v2: AC-V2-2 / AC-V2-5 / AC-V2-4b.
+    waiting_for_cs: bool = False
+    #: What the waiting change is: {kind: so_cancelled|line_removed|date|qty|product|location, was, now}.
+    waiting_change: Optional[List[Dict[str, Optional[str]]]] = None
+    so_cancelled: bool = False
+    previous_so_line_qty: Optional[str] = None
     #: OI-LINE-SPLIT (UAC D3): the splits of this row's SO line, for the OI Lines tab's
     #: read-only expand; empty when not split. Declared because `response_model` drops a
     #: field it has not been told about.
@@ -724,6 +730,10 @@ class OrderInquiryAckCounts(BaseModel):
     #: to answer. A fifth count rather than a fifth state - nothing is stored as
     #: `to_confirm` - so the chip on screen and the filter behind it read one number.
     to_confirm: int = 0
+    #: F1b: the Status column's other words, one count each.
+    waiting_for_cs: int = 0
+    so_cancelled: int = 0
+    line_cancelled: int = 0
 
 
 class OrderInquiryKindTotals(BaseModel):
@@ -1305,7 +1315,10 @@ class OrderInquiryWorklistExportRequest(BaseModel):
     linked: Optional[Literal["po", "spo", "none"]] = None
     kind: Optional[Literal["spo", "po", "buy"]] = None
     ack: Optional[
-        Literal["awaiting", "acknowledged", "changed", "rejected", "to_confirm"]
+        Literal[
+            "awaiting", "acknowledged", "changed", "rejected", "to_confirm",
+            "waiting_for_cs", "so_cancelled", "line_cancelled",
+        ]
     ] = None
     #: Free text: one location, or a list of them (each read whole). An older body may hold one string.
     location: Optional[str | List[str]] = None
