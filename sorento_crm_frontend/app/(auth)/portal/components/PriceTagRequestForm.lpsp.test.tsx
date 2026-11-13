@@ -668,7 +668,9 @@ describe('PriceTagRequestForm AI extract merge into an existing line (bug 20)', 
 
   it('a line answer that lands while Apply waits on its combos lookup is not overwritten', async () => {
     // The race: Apply builds its lines after an async combos lookup. An answer for a line already
-    // on the form (here its lone combo, auto-applied) that lands during that wait must survive.
+    // on the form (here its combos, which arm its Package select) that lands during that wait must
+    // survive. PRICETAG-ALA-CARTE AC-3: the lone combo is no longer auto-applied, so line 1 stays
+    // ala carte.
     const waiting: Record<string, (value: unknown) => void> = {};
     asMock(lookupProductCombos).mockImplementation(
       (id: string) => new Promise((resolve) => (waiting[id] = resolve)),
@@ -688,7 +690,7 @@ describe('PriceTagRequestForm AI extract merge into an existing line (bug 20)', 
     ]);
     await waitFor(() => expect(waiting[P2.id]).toBeDefined());
 
-    // The existing line's answer lands first (one combo: applied on the spot)...
+    // The existing line's answer lands first (one combo: offered, not applied)...
     await act(async () => {
       waiting[P1.id]({
         host_guarded: false,
@@ -706,10 +708,12 @@ describe('PriceTagRequestForm AI extract merge into an existing line (bug 20)', 
       });
     });
     await screen.findByLabelText('Quantity for line 2');
+    // Line 1's answer survived: both lines show their Package select.
+    expect(screen.getAllByLabelText('Ala carte')).toHaveLength(2);
     sendToMarketing();
     const payload = await lastCreatePayload();
     expect(payload.lines.map((l: { combo_id: string | null }) => l.combo_id)).toEqual([
-      'combo-p1',
+      null,
       'combo-p2',
     ]);
   });

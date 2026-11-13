@@ -911,17 +911,18 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
 
       /** The rows applied onto `base`. Pure, so it can run on the latest lines inside the
        *  state updater: the combos lookup below is async, and an answer the line editor
-       *  writes meanwhile (a lone combo, an auto promotion) must not be overwritten by
+       *  writes meanwhile (the combos lookup, an auto promotion) must not be overwritten by
        *  the lines this callback closed over. */
       const applyRows = (
         base: DraftLine[],
         hostCombos: Record<string, ProductCombosLookup | null>,
       ) => {
         const notFoundCodes: string[] = [];
-        // R3-7: a matched row whose product/set is already on the request -
-        // an existing line, or an earlier row in this SAME batch - merges
-        // into it (quantity summed, remarks joined) instead of adding a
-        // second line the server would refuse (DUPLICATE_LINE).
+        // R3-7: a matched row whose SET is already on the request - an
+        // existing line, or an earlier row in this SAME batch - merges into it
+        // (remarks joined) instead of adding a second line the server would
+        // refuse (DUPLICATE_LINE). A product row is always its own line, a
+        // bare one ala carte (PRICETAG-ALA-CARTE AC-9, AC-10).
         const merged: DraftLine[] = base.map((l) => ({ ...l }));
         let addedCount = 0;
         let mergedCount = 0;
@@ -937,11 +938,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           // never sets it, and a second sighting of the same code merging in
           // is not a second tag either.
           const qty = 1;
-          const existingIndex = merged.findIndex((l) =>
-            match.kind === 'product'
-              ? l.product_id === match.id
-              : l.product_set_id === match.id,
-          );
+          const existingIndex =
+            match.kind === 'product_set' ? merged.findIndex((l) => l.product_set_id === match.id) : -1;
           // PRICETAG-LPSP: the row's own LP/SP when the paste gave one. A row without one stays
           // untyped and follows Preferred Default, including later changes of it.
           const rowType: PriceMode | null = p.price_type ?? null;
@@ -968,7 +966,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
               : null;
           if (existingIndex >= 0) {
             const existing = merged[existingIndex];
-            // A product listed twice is one line and the later type wins.
+            // A set listed twice is one line and the later type wins.
             const nextType: PriceMode | null = rowType ?? existing.price_type ?? null;
             const typedSp =
               (nextType ?? priceMode) === 'selling' &&
