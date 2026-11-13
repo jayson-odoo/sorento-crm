@@ -26,9 +26,11 @@ marker or default size.
 - AC-20f (owner 13 Nov, Q3: "discontineud still show for what"): a discontinued code (is_discontinued, even when
   active) is never offered in a did-you-mean / close-code list, like an inactive one (AC-20). Owner-FAIL #9 (CLB109A)
   therefore offers only CL8109A (C9109A inactive; CB3109A and CB4109A discontinued); this replaces the 22-23 Oct three.
-- AC-20j (HELD pending owner follow-up, 13 Nov): a mistyped discontinued close code is replaced in the offer by its
-  active, not-discontinued alternative (`product_alternatives`). Red tests exist; built only if the owner picks it over
-  strict Q3. AC-20k/l (guards, green): no usable alternative means dropped; no duplicate; company scope kept.
+- AC-20m (owner Q4, 13 Nov ~11:13 MYT: "when we suggest, we suggest not discontinued product"): strict. A suggestion
+  for a mistyped code only ever offers active, non-discontinued codes; a discontinued close code is never offered and is
+  not swapped for its alternative (the replacement idea AC-20j was rejected). A replacement such as X-NEW is offered only
+  when it is itself an active, non-discontinued close code. The exact-code discontinued answer is unchanged (AC-20g).
+  AC-20k/l stay as guards.
 - AC-20g guard: a discontinued code typed EXACTLY keeps today's reply (PRODUCT DISCONTINUED + the Alternative line,
   owner-FAIL #6 / #7).
 - AC-21 Dealer says "no" to an offer: today's reply stays (the refer line alone, owner hand test ht26); nothing answered,

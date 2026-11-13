@@ -1,6 +1,6 @@
 # PLAN: CHATBOT-CODE-MATCH (stock code matching, close-code offers)
 
-Status: Build complete for slices 1-5 code (each reviewed READY); waiting on crew for the letters-only ruling, data counts, live-run cap and the slice 1 traces. Card v3 approved by crew 12 Nov with 8 changes, folded in below. Track: size M, lead pattern, cloud lane. Phase 1 of the
+Status: Built; every slice reviewed READY; owner Q1-Q4 answered; crew-done filed; awaiting crew's one live pass (cap US$1). Card v3 approved by crew 12 Nov with 8 changes, folded in below. Track: size M, lead pattern, cloud lane. Phase 1 of the
 chatbot plan v2 (D3, owner 12 Nov 16:08 "ok"): lookup only, no parser prompt change, no migration.
 
 Card: `CARD-chatbot-code-match-12nov.md` (v3, generic rules R0-R7). UAC: `chatbot-code-match-acceptance-criteria.md`.
@@ -25,8 +25,8 @@ run by crew locally after the Q1 head; x3 only with a new owner OK. Q3 (inactive
 Replay on 3dc5b84de3 (13 Nov): B-118 (M2155-NL-BLUE), B-52 (SRTKS8047), B-61 (SRTBF31514) lose their right close code
 from the did-you-mean. Crew data: all three are active but DISCONTINUED, so owner Q3 removes them as ruled; crew does
 not count them as code bugs. B-52 now offers the non-discontinued SRTKS8047-NEW; B-61's -NEW is discontinued too, so it
-offers nothing. Pending owner follow-up: a MISTYPED discontinued code, strict Q3 (as now) vs offering its active
-alternative. Red tests AC-20j (replacement) are written and HELD red until that answer; the live pass is held too.
+offers nothing. Owner Q4 (13 Nov ~11:13 MYT, "when we suggest, we suggest not discontinued product"): strict, as built. AC-20j
+(replacement substitution) is removed; AC-20m pins the B-52 / B-61 shapes. These three turns are owner-ruled outcomes.
 
 Owner rule (12 Nov): no rule so customised it cannot be replicated for another company in a different industry.
 
