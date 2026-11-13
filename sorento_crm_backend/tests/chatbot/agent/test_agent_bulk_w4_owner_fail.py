@@ -90,19 +90,88 @@ def test_a_screenshot_row_that_cannot_change_is_named_with_its_plain_reason(db):
     assert 'Phone "12345" is not a Malaysian mobile number.' in result.reply_text
 
 
-def test_no_role_given_reads_as_a_plain_table_not_model_guidance(db):
-    """The owner's exact words give no Owner/Employee: each row says so plainly; nothing is guessed."""
+def _unsaid(c, n, companies=("MCH",)):
+    """A screenshot row: phone and name only; the company from the typed message, no role said."""
+    return {"phone": local(c.phone_number), "name": c.name, "role": "unknown", "companies": list(companies), "row": n}
+
+
+def test_owner_turn_as_typed_keeps_each_found_contacts_current_role_on_one_card(db):
+    """Crew 06:42: "mocha" is the company (voice typing kept it). Each found contact already an Employee keeps that
+    role (read from the record, not guessed): ONE card, company Mocha from the message."""
     w = make_world(db)
-    found = [dealer(db, w, name=f"ZZT NoRole {i}") for i in range(2)]
-    rows = [
-        {"phone": local(c.phone_number), "name": c.name, "role": "unknown", "companies": [], "row": i}
-        for i, c in enumerate(found, 1)
-    ]
+    found = [dealer(db, w, name=f"ZZT Has Role {i}", customers=[w.cust_a]) for i in range(3)]
+    rows = [_unsaid(c, i) for i, c in enumerate(found, 1)]
     result, _ = screenshot_turn(db, w, [_batch(rows), answer_("Done.")])
     assert_plain(result.reply_text)
+    assert result.pending_action is not None, result.reply_text
+    assert result.reply_text.startswith("Rows from your table: 3 ready to confirm"), result.reply_text
+    assert result.reply_text.count("Employee (Mocha), their current role") == 3, result.reply_text
+
+
+def test_a_contact_with_no_role_yet_gets_one_question_then_one_card(db):
+    """Any row still without a role: ONE plain question for those people, no card and no Not changed table; the
+    answer gives ONE card for every row."""
+    w = make_world(db)
+    kept = [dealer(db, w, name=f"ZZT Kept {i}", customers=[w.cust_a]) for i in range(2)]
+    fresh = [dealer(db, w, name=f"ZZT Fresh {i}") for i in range(2)]
+    people = [*kept, *fresh]
+    rows = [_unsaid(c, i) for i, c in enumerate(people, 1)]
+    first, _ = screenshot_turn(db, w, [_batch(rows), answer_("Done.")])
+    assert_plain(first.reply_text)
+    assert first.pending_action is None, first.reply_text
+    assert first.reply_text.strip() == f"Owner or employee for {fresh[0].name}, {fresh[1].name}?", first.reply_text
+
+    answered = [{**r, "role": "employee"} if r["name"].startswith("ZZT Fresh") else r for r in rows]
+    second, _ = screenshot_turn(db, w, [_batch(answered, "b2"), answer_("Done.")], text_="employee", images=False)
+    assert_plain(second.reply_text)
+    assert second.pending_action is not None, second.reply_text
+    assert second.reply_text.startswith("Rows from your table: 4 ready to confirm"), second.reply_text
+    for c in people:
+        assert c.name in second.reply_text
+
+
+def test_without_the_company_word_the_agent_asks_which_company(db):
+    """The variant with no company word: one question for the company; never guessed, never a Not changed table."""
+    w = make_world(db)
+    found = [dealer(db, w, name=f"ZZT No Co {i}", customers=[w.cust_a]) for i in range(2)]
+    rows = [_unsaid(c, i, companies=()) for i, c in enumerate(found, 1)]
+    result, _ = screenshot_turn(db, w, [_batch(rows), answer_("Done.")], text_="Please grant them access to the chatbot")
+    assert_plain(result.reply_text)
     assert result.pending_action is None
-    assert "Rows from your table: 2 not changed." in result.reply_text, result.reply_text
-    assert "Unknown access" in result.reply_text
+    assert result.reply_text.strip() == f"Sorento or Mocha for {found[0].name}, {found[1].name}?", result.reply_text
+
+
+def test_neither_company_nor_role_known_asks_both_in_one_question(db):
+    w = make_world(db)
+    c = dealer(db, w, name="ZZT Nothing Known")
+    result, _ = screenshot_turn(
+        db, w, [_batch([_unsaid(c, 1, companies=())]), answer_("Done.")], text_="Please grant them access to the chatbot"
+    )
+    assert result.reply_text.strip() == f"Sorento or Mocha, and owner or employee, for {c.name}?", result.reply_text
+
+
+def test_an_access_word_that_is_neither_role_is_still_refused_never_guessed(db):
+    """Owner card Q3 kept: a written access word that is not Owner/Employee is refused even for a contact with a
+    current role."""
+    w = make_world(db)
+    c = dealer(db, w, name="ZZT Manager Word", customers=[w.cust_a])
+    row = {**_unsaid(c, 1), "access_as_written": "Manager"}
+    result, _ = screenshot_turn(db, w, [_batch([row]), answer_("Done.")])
+    assert result.pending_action is None
+    assert "Unknown access: Manager" in result.reply_text, result.reply_text
+
+
+def test_a_single_grant_with_no_role_asks_the_same_question(db):
+    w = make_world(db)
+    c = dealer(db, w, name="ZZT Single Ask")
+    args = {k: v for k, v in _unsaid(c, 1).items() if k != "row"}
+    result, _ = screenshot_turn(
+        db, w, [round_of(tc(GRANT, args, "g1")), answer_("Done.")],
+        text_=f"give {local(c.phone_number)} mocha access", images=False,
+    )
+    assert_plain(result.reply_text)
+    assert result.pending_action is None
+    assert result.reply_text.strip() == f"Owner or employee for {c.name}?", result.reply_text
 
 
 def test_rows_of_nobody_named_are_never_answered_with_tool_guidance(db):
