@@ -674,3 +674,25 @@ def test_the_date_is_the_malaysia_day_not_the_utc_day(scene):
     assert dates[str(early_si.id)] == "2026-11-13"
     assert dates[str(npa.id)] == "2026-11-13"
     assert dates[str(late_si.id)] == "2026-11-12"
+
+
+# ------------------------------------------------------------------ fix round 8: request date fallback
+
+
+@pytest.mark.parametrize("kind", ["purchase_request", "sponsorship_form"])
+def test_a_request_with_no_request_date_dates_by_the_malaysia_submitted_or_created_day(scene, kind):
+    """request_date is a Date and wins; without it the Malaysia day of submitted_at, then of
+    created_at (both naive UTC)."""
+    db, p = scene["db"], scene["p"]
+    submitted = _request(db, p.id, kind, request_number=f"ZZT-RQ-{kind[:2]}-S", request_date=None,
+                         submitted_at=datetime(2026, 11, 12, 23, 30), created_at=datetime(2026, 11, 10, 1, 0))
+    created = _request(db, p.id, kind, request_number=f"ZZT-RQ-{kind[:2]}-C", request_date=None,
+                       submitted_at=None, created_at=datetime(2026, 11, 12, 15, 0))
+    dated = _request(db, p.id, kind, request_number=f"ZZT-RQ-{kind[:2]}-D", request_date=date(2026, 11, 1),
+                     submitted_at=datetime(2026, 11, 12, 23, 30))
+    with acting(db, _viewer(db), FULL) as client:
+        body = _get(client, p.id)
+    dates = {row["id"]: row["date"] for row in body["data"]}
+    assert dates[str(submitted.id)] == "2026-11-13"
+    assert dates[str(created.id)] == "2026-11-12"
+    assert dates[str(dated.id)] == "2026-11-01"
