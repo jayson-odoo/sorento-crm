@@ -547,6 +547,8 @@ def _args_problem(definition: WriteDef, args: Any) -> str | None:
             return f"`{key}` must be a number."
         if kind == "array" and not (isinstance(value, list) and all(isinstance(v, str) for v in value)):
             return f"`{key}` must be a list of text values."
+        if kind == "array" and "maxItems" in spec and len(value) > spec["maxItems"]:
+            return f"`{key}` has too many values (at most {spec['maxItems']})."
         item_max = (spec.get("items") or {}).get("maxLength") if kind == "array" else None
         if item_max is not None and any(len(v) > item_max for v in value):
             return f"A value in `{key}` is too long."
