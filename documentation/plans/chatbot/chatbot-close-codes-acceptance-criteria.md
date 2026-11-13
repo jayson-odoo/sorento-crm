@@ -82,3 +82,14 @@ Codes below are the shapes from crew's masked dev rows (codes are business data)
   the offer for Cb86gm in one reply, numbered on (AC-9).
 - AC-29 Dealer `CB2515SS check ETA`: offer of up to 3 close codes, no refer line, a number answers incoming (AC-12).
 - AC-30 Guard: `Srtwt1866ss x ss3 / Have stock` still gives today's numbered list of 3.
+
+## Parser-corrected codes (crew ruling 13 Nov, owner rulings 12 Nov 15:10 and 13 Nov ~17:40)
+
+The parser may hand a code it completed or corrected. The typed text is compared with that code, part by part
+(parts = split at dashes, spaces and letter/digit changes), with no word list:
+- AC-32 A code part the customer typed with a letter changed, added or dropped (`SRTUB668-BACK INLT` -> INLET,
+  `SWTWC8354-SH-UF` -> SRTWC) is a correction: OFFERED "Did you mean X?", never answered.
+- AC-33 Typed words the parser mapped onto a code part that no typed word nearly spells (`SRTWT8259 gun metal` ->
+  SRTWT8259-GM) are the same code: answered directly (owner 13 Nov "they are the same thing").
+- AC-34 A code part nothing typed accounts for (raw `SRTWC287-S`, parser SRTWC287-S-150) is a completion: offered (AC-6).
+- AC-35 Dashes and spaces only (`srtwc 8354 sh uf`): answered directly.
