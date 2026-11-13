@@ -488,6 +488,131 @@ def test_reorder_run_chain_without_decisions_is_fully_pruned_in_one_call(db):
     assert _run_exists(db, r3)
 
 
+# Safety review keep rules: a superseded old run that somebody acted on is kept. Each test
+# carries a CONTROL old superseded run with nothing on it, which IS deleted, so a test
+# cannot pass just because the rule deleted nothing at all.
+
+def _kept_and_control(db, product):
+    current = _run(db)
+    kept = _run(db, days_ago=200, superseded_by=current.id)
+    control = _run(db, days_ago=200, superseded_by=current.id)
+    current.supersedes_run_id = kept.id
+    _rec(db, control, product)
+    db.flush()
+    return current, kept, control
+
+
+def _assert_kept_and_control_deleted(db, result, kept, control):
+    assert _run_exists(db, kept), "the run somebody acted on was deleted"
+    assert not _run_exists(db, control), "control run was not deleted"
+    assert result["runs_deleted"] == 1
+
+
+def _summary_row(db, run, product, **kw) -> OrderSummaryRow:
+    row = OrderSummaryRow(
+        id=_u(), run_id=run.id, product_id=product.id,
+        as_of=_ago(days=200).date(), computed_at=_ago(days=200), **kw,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def test_reorder_run_kept_when_a_recommendation_is_accepted(db, product):
+    """decision_service moves status off 'proposed' when the buyer accepts/adjusts/dismisses.
+    Also the dry-run check: the kept run is not counted."""
+    _, kept, control = _kept_and_control(db, product)
+    rec = _rec(db, kept, product)
+    rec.status = "accepted"
+    db.commit()
+
+    dry = _svc().prune_reorder_runs(db, retention_days=90, dry_run=True)
+    assert dry["runs_deleted"] == 1
+    assert _run_exists(db, kept) and _run_exists(db, control)
+
+    live = _svc().prune_reorder_runs(db, retention_days=90)
+
+    assert _counts(dry) == _counts(live)
+    _assert_kept_and_control_deleted(db, live, kept, control)
+
+
+@pytest.mark.parametrize("keyed_status", ["keying", "keyed"])
+def test_reorder_run_kept_when_a_recommendation_is_keyed(db, product, keyed_status):
+    _, kept, control = _kept_and_control(db, product)
+    rec = _rec(db, kept, product)
+    rec.keyed_status = keyed_status
+    db.commit()
+
+    result = _svc().prune_reorder_runs(db, retention_days=90)
+
+    _assert_kept_and_control_deleted(db, result, kept, control)
+
+
+@pytest.mark.parametrize(
+    "decision",
+    [{"chosen_qty": 5}, {"decided_at": "set"}],
+    ids=["chosen_qty", "decided_at"],
+)
+def test_reorder_run_kept_when_an_order_summary_row_is_decided(db, product, decision):
+    """summary_order_service.record_decision stamps chosen_qty and decided_at."""
+    _, kept, control = _kept_and_control(db, product)
+    if "decided_at" in decision:
+        decision = {"decided_at": _ago(days=199)}
+    _summary_row(db, kept, product, **decision)
+    db.commit()
+
+    result = _svc().prune_reorder_runs(db, retention_days=90)
+
+    _assert_kept_and_control_deleted(db, result, kept, control)
+
+
+@pytest.mark.parametrize("keyed_status", ["keying", "keyed"])
+def test_reorder_run_kept_when_an_order_summary_row_is_keyed(db, product, keyed_status):
+    _, kept, control = _kept_and_control(db, product)
+    _summary_row(db, kept, product, keyed_status=keyed_status)
+    db.commit()
+
+    result = _svc().prune_reorder_runs(db, retention_days=90)
+
+    _assert_kept_and_control_deleted(db, result, kept, control)
+
+
+@pytest.mark.parametrize("grain", ["location", "product"])
+def test_reorder_run_kept_when_a_po_line_points_at_it(db, product, grain):
+    """A drafted PO line names the run's row in source_ref: the recommendation id at
+    location grain (decision_service.py ~:1111), `<order_summary_row id>:<warehouse id>` at
+    product grain (~:947). Deleting the run would orphan that reference."""
+    from app.models.inventory import Warehouse
+    from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
+
+    _, kept, control = _kept_and_control(db, product)
+    wh = Warehouse(
+        id=_u(), warehouse_code=_code("WH")[:30], warehouse_name=f"{MARKER} warehouse",
+        is_active=True, counts_as_available=True,
+    )
+    supplier = Supplier(id=_u(), supplier_code=_code("S")[:30], supplier_name=f"{MARKER} supplier")
+    db.add_all([wh, supplier])
+    db.flush()
+    po = PurchaseOrder(id=_u(), po_number=_code("PO")[:50], supplier_id=supplier.id, status="draft")
+    db.add(po)
+    db.flush()
+    if grain == "location":
+        source_system, source_ref = "scm_recommendation", _rec(db, kept, product).id
+    else:
+        row = _summary_row(db, kept, product)
+        source_system, source_ref = "scm_order_summary_row", f"{row.id}:{wh.id}"
+    db.add(PurchaseOrderLine(
+        id=_u(), purchase_order_id=po.id, product_id=product.id, warehouse_id=wh.id,
+        qty_ordered=5, qty_received=0, line_status="open",
+        source_system=source_system, source_ref=str(source_ref),
+    ))
+    db.commit()
+
+    result = _svc().prune_reorder_runs(db, retention_days=90)
+
+    _assert_kept_and_control_deleted(db, result, kept, control)
+
+
 def test_reorder_run_dry_run_counts_match_live_run_and_change_nothing(db, product):
     runs = _three_superseded_old_runs(db, product)
     recs_before = db.query(ReorderRecommendation).count()
@@ -601,15 +726,9 @@ def _retention_migration():
     return module
 
 
-def test_migration_adds_settings_columns_and_seeds_every_retention_task(db):
-    """UAC 1 + 13, against the migration itself rather than the ORM.
-
-    Run on the blank schema, NOT the shared database: a CI database is built by
-    ``create_all`` and stamped at head (scripts/bootstrap_env.py), so a migration's seed
-    rows are never in it and asserting them there would fail for a reason unrelated to
-    this lane. The blank schema already carries the model's columns, so they are dropped
-    first to stand in for a database at the previous head (all rolled back afterwards).
-    """
+def _upgrade_retention_migration(db):
+    """Run the migration's upgrade() on the blank schema, standing in for the previous head:
+    the model-built columns are dropped first and scheduled_tasks emptied (rolled back)."""
     m = _retention_migration()
     assert len(m.revision) <= 32
     for name in SETTING_DEFAULTS:
@@ -619,6 +738,18 @@ def test_migration_adds_settings_columns_and_seeds_every_retention_task(db):
     ctx = MigrationContext.configure(db.connection())
     with Operations.context(ctx):
         m.upgrade()
+
+
+def test_migration_adds_settings_columns_and_seeds_every_retention_task(db):
+    """UAC 1 + 13, against the migration itself rather than the ORM.
+
+    Run on the blank schema, NOT the shared database: a CI database is built by
+    ``create_all`` and stamped at head (scripts/bootstrap_env.py), so a migration's seed
+    rows are never in it and asserting them there would fail for a reason unrelated to
+    this lane. The blank schema already carries the model's columns, so they are dropped
+    first to stand in for a database at the previous head (all rolled back afterwards).
+    """
+    _upgrade_retention_migration(db)
 
     cols = {
         name: (default, nullable)
@@ -645,6 +776,20 @@ def test_migration_adds_settings_columns_and_seeds_every_retention_task(db):
     assert missing == [], f"migration does not seed {missing}"
     for key in SEEDED_TASK_KEYS:
         assert rows[key] == ("days", 1), (key, rows[key])
+
+
+def test_retention_tasks_are_seeded_disabled(db):
+    """Safety review: a deploy must not start deleting on its own. The seven tasks arrive
+    switched off; an admin turns each on from Scheduled Tasks."""
+    _upgrade_retention_migration(db)
+
+    enabled = dict(db.execute(text(
+        "SELECT key, enabled FROM scheduled_tasks WHERE key = ANY(:keys)"
+    ), {"keys": SEEDED_TASK_KEYS}).all())
+
+    assert sorted(enabled) == sorted(SEEDED_TASK_KEYS)
+    switched_on = [k for k in SEEDED_TASK_KEYS if enabled[k] is not False]
+    assert switched_on == [], f"seeded enabled: {switched_on}"
 
 
 @pytest.mark.parametrize("key", SEEDED_TASK_KEYS)
