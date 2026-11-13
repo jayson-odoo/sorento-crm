@@ -37,11 +37,12 @@ recommendation and change in one place if the answer differs.
 - P-3 Photos already attached to an earlier submission are not attached again.
 
 ## B: /ideas board
-- B-1 /ideas list has a Type column (Idea / Issue), sortable, hideable, one line.
+- B-1 /ideas list has a Type column (Feature request / Issue; owner 13 Nov), sortable, hideable, one line.
 - B-2 A Type multi-select filter: tick Issue -> only issues; tick both -> all; combines with the other filters;
-  kept in the address bar like the other filters.
+  held like the other /ideas filters (component state; address-bar persistence for all /ideas filters is a
+  separate ticket).
 - B-3 The idea detail page shows Type in its metadata.
-- B-4 Type is read through ONE frontend helper; an idea with no type data reads Idea.
+- B-4 Type is read through ONE frontend helper; an idea with no type data reads Feature request.
 
 ## A: access (Q2 / Q3 pending)
 - A-1 Unchanged gate: linked active CRM user holding `ideation.board.view`; no one else can file (dealers get
