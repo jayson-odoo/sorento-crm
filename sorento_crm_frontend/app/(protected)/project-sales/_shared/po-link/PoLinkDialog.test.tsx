@@ -491,3 +491,59 @@ describe('No "Line" column in the popup (owner round, 13 Nov)', () => {
     expect(await screen.findByTestId('po-link-result')).toHaveTextContent('SO425045 line 16');
   });
 });
+
+describe('Change PO results offer Try again (db3 step 10)', () => {
+  const covered = soLine({
+    status: 'pinned', short_qty: 0, assigned_qty: 120,
+    now: {
+      so_status: 'open', open_qty: 120,
+      po_links: [{ po_line_id: 'po-7', po_number: '202610-S0007', po_line_no: 1, qty: 60, open_qty: 60, location_code: 'MWH-BB' }],
+    },
+  });
+  async function change() {
+    const { dialog } = renderDialog([covered], 'change');
+    fireEvent.change(dialog.querySelector('[id="po-link-change-sol-1:po-7"]') as HTMLSelectElement, { target: { value: 'po-3' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Change 1 line' }));
+    return dialog;
+  }
+
+  it.each(['refused', 'vendor_error'] as const)('(a) an unlink that is %s shows Try again, which re-sends the change for that SO line', async (outcome) => {
+    changePoLines
+      .mockResolvedValueOnce({ results: [result({ action: 'unlink', outcome, po_number: '202610-S0007', po_line_id: 'po-7', message: 'AutoCount said no.' })] })
+      .mockResolvedValueOnce({ results: [result({ action: 'unlink', po_number: '202610-S0007' }), result({ action: 'link', po_number: '202609-S0029' })] });
+    const dialog = await change();
+    const card = await within(dialog).findByTestId('po-link-result');
+    fireEvent.click(await within(card).findByRole('button', { name: /try again/i }));
+    await waitFor(() => expect(changePoLines).toHaveBeenCalledTimes(2));
+    expect(changePoLines.mock.calls[1]).toEqual([
+      'snap', 'row', [{ sales_order_line_id: 'sol-1', po_line_id: 'po-3', from_po_line_id: 'po-7' }],
+    ]);
+    await waitFor(() => expect(within(dialog).queryByRole('button', { name: /try again/i })).toBeNull());
+    expect(dialog).toHaveTextContent('Unlinked');
+  });
+
+  it('(b) an unlink done but a link not done shows Try again on the link card, which sends a plain link', async () => {
+    changePoLines.mockResolvedValueOnce({
+      results: [
+        result({ action: 'unlink', po_number: '202610-S0007', po_line_id: 'po-7' }),
+        result({
+          action: 'link', outcome: 'refused', po_number: '202609-S0029', po_line_id: 'po-3', qty: 60,
+          unlinked_po: '202610-S0007', message: 'AutoCount said no.',
+        }),
+      ],
+    });
+    linkPoLines.mockResolvedValue({ results: [result({ action: 'link', po_number: '202609-S0029', qty: 60 })] });
+    const dialog = await change();
+    const cards = await within(dialog).findAllByTestId('po-link-result');
+    expect(cards).toHaveLength(2);
+    expect(within(cards[0]).queryByRole('button', { name: /try again/i })).toBeNull();
+    fireEvent.click(await within(cards[1]).findByRole('button', { name: /try again/i }));
+    await waitFor(() =>
+      expect(linkPoLines).toHaveBeenCalledWith('snap', 'row', [
+        { sales_order_line_id: 'sol-1', po_line_id: 'po-3', qty: 60 },
+      ]),
+    );
+    await waitFor(() => expect(within(dialog).queryByRole('button', { name: /try again/i })).toBeNull());
+    expect(changePoLines).toHaveBeenCalledTimes(1);
+  });
+});
