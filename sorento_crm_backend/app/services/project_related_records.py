@@ -71,6 +71,17 @@ def _malaysia_date(col):
     return cast(func.timezone("Asia/Kuala_Lumpur", func.timezone("UTC", col)), Date)
 
 
+def request_record_date():
+    """A purchase request's or sponsorship form's date: its request date when set, else the
+    Malaysia day it was submitted, else the day it was created (most rows carry no request
+    date). One expression for the Related grid and the D1 review sheet."""
+    from app.models.procurement import PurchaseRequestHeader as M
+
+    return func.coalesce(
+        M.request_date, _malaysia_date(M.submitted_at), _malaysia_date(M.created_at)
+    )
+
+
 def _own(select_, access: str, clause):
     return select_.where(clause) if access == "own" else select_
 
@@ -126,7 +137,7 @@ def _request_select(kind: str, subject_column: str):
                 M.request_number.label("number"),
                 M.status.label("status"),
                 M.approval_status.label("approval_status"),
-                cast(M.request_date, Date).label("date"),
+                request_record_date().label("date"),
                 M.requested_by.label("raised_by"),
                 getattr(M, subject_column).label("subject"),
                 M.total_project_value.label("value"),
