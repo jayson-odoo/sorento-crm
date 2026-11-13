@@ -183,9 +183,9 @@ export default function ServiceJobsList() {
 
   const columns = useMemo<ColumnDef<ServiceJob>[]>(
     () => [
-      col('job_number', 'Job no.', 120, (r) => r.job_number),
-      col('customer', 'Customer', 150, (r) => r.customer_name),
-      col('city', 'City', 100, (r) => r.city),
+      col('job_number', 'Job no.', 135, (r) => r.job_number),
+      col('customer', 'Customer', 120, (r) => r.customer_name),
+      col('city', 'City', 80, (r) => r.city),
       {
         id: 'status',
         accessorFn: (r) => r.status,
@@ -199,8 +199,8 @@ export default function ServiceJobsList() {
       col('scheduled_from', 'Scheduled', 150, (r) =>
         r.scheduled_from ? formatDateTimeInMalaysia(r.scheduled_from) : null,
       ),
-      col('technician', 'Technician', 110, (r) => r.technician_name),
-      col('complaint_number', 'Related complaint', 140, (r) => r.complaint_number),
+      col('technician', 'Technician', 100, (r) => r.technician_name),
+      col('complaint_number', 'Related complaint', 120, (r) => r.complaint_number),
       {
         id: 'warranty_summary',
         accessorFn: (r) => r.warranty_summary,
