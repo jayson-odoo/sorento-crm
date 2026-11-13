@@ -73,17 +73,27 @@ beforeEach(() => {
     isError: false,
   });
   getWarehousesMock.mockResolvedValue({
-    data: [{ id: 'wh-brw-pool', warehouse_code: 'BRW', warehouse_name: 'Batu Rakit Warehouse' }],
+    data: [
+      { id: 'wh-brw-pool', warehouse_code: 'BRW', warehouse_name: 'Pool', fulfilment_planning: false },
+      { id: 'wh-brw-bb', warehouse_code: 'BRW-BB', warehouse_name: 'BB', fulfilment_planning: true },
+    ],
   });
 });
+
+/** The last `useStockDetail` call that was allowed to fetch (its 5th argument, `enabled`). */
+function lastEnabledStockDetailCall() {
+  const enabled = useStockDetailMock.mock.calls.filter((call) => call[4] !== false);
+  return enabled[enabled.length - 1];
+}
 
 describe('OrderInquiryStockGrid - AC-RS-41: location resolves to group or warehouse id', () => {
   it('a hyphenated location (BRW-BB) is fetched by GROUP, product by id', async () => {
     render(<OrderInquiryStockGrid productId={PRODUCT_ID} location="BRW-BB" />);
 
-    await waitFor(() => expect(useStockDetailMock).toHaveBeenCalled());
-    const [productId, warehouseId, , group] = useStockDetailMock.mock.calls[0];
+    await waitFor(() => expect(lastEnabledStockDetailCall()).toBeDefined());
+    const [productId, warehouseId, , group] = lastEnabledStockDetailCall();
     expect(productId).toBe(PRODUCT_ID);
+    expect(warehouseId).toBeNull();
     expect(group).toBe('BB');
     // Never the item code string - the plan is explicit ("Product = the row's product id,
     // never the item code string").
@@ -189,5 +199,47 @@ describe('STOCK-GROUPBY (AC-20): the OI line expand carries the Group by bar', (
       </QueryClientProvider>,
     );
     expect(screen.getByTestId('group-by-bar')).toBeInTheDocument();
+  });
+});
+
+
+describe('MOCHA-STOCK-GRID: a location outside every ownership group is read by itself', () => {
+  // crew-note on #2381: a line at a Mocha location (MOCHA-WH) asked `stock-detail` for
+  // group "WH", which no planning bin belongs to, so the table read "No stock position".
+  // The rule is the backend's own group membership (`group_netting`, planning_only): a bin
+  // is a member of its suffix group only when it is in fulfilment planning. Anything else
+  // is read as the location itself, by its own warehouse id. No name is special-cased.
+  beforeEach(() => {
+    getWarehousesMock.mockResolvedValue({
+      data: [
+        { id: 'wh-mocha-wh', warehouse_code: 'MOCHA-WH', warehouse_name: 'Mocha', fulfilment_planning: false },
+        { id: 'wh-brw-bb', warehouse_code: 'BRW-BB', warehouse_name: 'BB', fulfilment_planning: true },
+      ],
+    });
+  });
+
+  it('MOCHA-WH is read by its own warehouse id, never as group "WH"', async () => {
+    render(<OrderInquiryStockGrid productId={PRODUCT_ID} location="MOCHA-WH" />);
+
+    await waitFor(() => expect(lastEnabledStockDetailCall()?.[1]).toBe('wh-mocha-wh'));
+    for (const call of useStockDetailMock.mock.calls) {
+      if (call[4] !== false) expect(call[3]).toBeNull();
+    }
+  });
+
+  it('an ownership-group location (BRW-BB, in planning) is still read by its group', async () => {
+    render(<OrderInquiryStockGrid productId={PRODUCT_ID} location="BRW-BB" />);
+
+    await waitFor(() => expect(lastEnabledStockDetailCall()?.[3]).toBe('BB'));
+    expect(lastEnabledStockDetailCall()?.[1]).toBeNull();
+  });
+
+  it('no request goes out before the location is resolved', async () => {
+    render(<OrderInquiryStockGrid productId={PRODUCT_ID} location="MOCHA-WH" />);
+
+    await waitFor(() => expect(lastEnabledStockDetailCall()?.[1]).toBe('wh-mocha-wh'));
+    for (const call of useStockDetailMock.mock.calls) {
+      if (call[4] !== false) expect(call[1] ?? call[3]).toBeTruthy();
+    }
   });
 });
