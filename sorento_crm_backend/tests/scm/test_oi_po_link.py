@@ -105,6 +105,10 @@ def _oi_world(scm_app, *, permissions=(VIEW, LINK, PROJECTS_VIEW), snapshot=Fals
     other.source_system, other.source_ref, other.line_no = "autocount", f"{DB}:11999:12001", 10
     po, po_line = _po_line(db, product, hq, qty=500, received=0, doc_key=12008, dtl_key=12009)
 
+    from app.services.project_seed_service import seed_numbering_rule
+
+    # A freshly bootstrapped database has no project numbering rule (rolled back with the session).
+    seed_numbering_rule(db)
     project = register_project(
         db, company_id=SORENTO_COMPANY_ID, actor_user_id=uid, developer_party_id=None,
         title=f"{marker} Residences",
@@ -1156,11 +1160,13 @@ def test_change_holds_no_uncommitted_po_line_writes_while_the_link_half_is_sent(
     def flushed(session, ctx):
         state["pending"] = True
 
-    def committed(session):
-        state["pending"] = False
+    # Only the session's own commit() ends the request transaction; the savepoints the audit
+    # write opens and releases inside it fire `after_commit` too, so that event cannot tell.
+    real_commit = db.commit
 
-    event.listen(db, "after_flush", flushed)
-    event.listen(db, "after_commit", committed)
+    def commit():
+        real_commit()
+        state["pending"] = False
 
     def unlink(request):
         state["at_send"].append(("unlink", state["pending"]))
@@ -1173,11 +1179,13 @@ def test_change_holds_no_uncommitted_po_line_writes_while_the_link_half_is_sent(
     fake_ss.answers[UNLINK] = unlink
     fake_ss.answers[PO_LINKS] = link
     fake_ss.answers[BATCH] = (404, {"code": "NOT_FOUND", "message": "no route"})
+    event.listen(db, "after_flush", flushed)
+    db.commit = commit
     try:
         resp = _post_change(w, route, _change_item(w))
     finally:
         event.remove(db, "after_flush", flushed)
-        event.remove(db, "after_commit", committed)
+        del db.commit
     assert resp.status_code == 200, resp.text
     assert [kind for kind, _ in state["at_send"]] == ["unlink", "link"]
     assert state["at_send"] == [("unlink", False), ("link", False)], state["at_send"]
