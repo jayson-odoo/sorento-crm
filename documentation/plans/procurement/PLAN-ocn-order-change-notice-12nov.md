@@ -81,6 +81,10 @@ Save as draft / Submit, detail main button per status, menu entry.
 - Linking a project ignores the "own projects only" limit (security L4), same as purchase requests and complaints today.
 - `apply_decision` writes an aware timestamp into a naive column (review m6), pinned PR behaviour; fix with the PR pin.
 - iOS long-press can open the Unlink menu on the wrong file (shared PurchaseOrdersPanel pattern).
+- The purchase request customer lookup (`api/v1/procurement/purchase_requests.py:142`) checks no permission: any staff
+  user who is not own-scope-limited can list up to 1000 customers (security review round 4, outside this lane).
+- Salesperson breadcrumb on the notice pages reads the staff group (same as purchase requests reached from My requests).
+- Shared picker clear button fires on touch-down; a scroll starting on it may clear a value on phones (crew note, unverified).
 - Main-only test failures seen while testing, not from this lane: `test_every_route_a_limited_user_reaches_is_pinned`
   (#2173 AutoCount routes unpinned) and one passkey audit test (#2375).
 - Slice 2 (`OCN-ORDER-CHANGE-NOTICE B`): portal kind, public approval / view link, PDF, assistant actions (the list is
