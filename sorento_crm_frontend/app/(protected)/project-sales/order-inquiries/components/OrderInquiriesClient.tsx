@@ -1221,8 +1221,9 @@ export function OrderInquiriesClient({
     key: 'po-link',
     label: countLabel('Link to PO...', poViaAutocount ? poLinkEligible : selectedRows.length, selectedRows.length),
     icon: Link2,
-    disabled: Boolean(poViaAutocount ? poLinkWhyNot : linkByHandWhyNot),
-    disabledReason: poViaAutocount ? poLinkWhyNot : linkByHandWhyNot,
+    // The by-hand fallback is the old Choose document: it needs the same grants (acknowledge + action).
+    disabled: Boolean(poViaAutocount ? poLinkWhyNot : !canBulkLink ? (poLinkWhyNot ?? 'Not in AutoCount yet') : linkByHandWhyNot),
+    disabledReason: poViaAutocount ? poLinkWhyNot : !canBulkLink ? (poLinkWhyNot ?? 'Not in AutoCount yet') : linkByHandWhyNot,
     onClick: () =>
       poViaAutocount
         ? setPoDialog({ kind: 'link', rowIds: selectedRows.map((row) => row.id) })

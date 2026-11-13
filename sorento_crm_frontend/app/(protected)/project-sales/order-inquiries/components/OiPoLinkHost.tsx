@@ -22,6 +22,41 @@ const MENU_KEY: Record<PoLinkKind, 'link' | 'unlink' | 'relink' | 'change'> = {
   change: 'change',
 };
 
+/** The PO link calls for ticked Order Inquiry rows. */
+export function oiPoLinkTarget(rowIds: string[]): PoLinkTarget {
+  return {
+    key: ['project-sales', 'order-inquiries', 'po-link', ...rowIds],
+    api: {
+      options: () => getOrderInquiryPoLinkOptions(rowIds),
+      link: (lines) => linkOrderInquiryPoLines(rowIds, lines),
+      unlink: (ids) => unlinkOrderInquiryPoLines(rowIds, ids),
+      change: (changes) => changeOrderInquiryPoLines(rowIds, changes),
+      relocate: (poLineId) => relocateOrderInquiryPoLine(rowIds, poLineId),
+      resume: (input) => resumeOrderInquiryPoLink(rowIds, input),
+    },
+  };
+}
+
+/** Reads AutoCount's unlink capability for the ticked tied rows; reports the reason when it is off. */
+export function UnlinkCapability({
+  rowIds,
+  onReason,
+}: {
+  rowIds: string[];
+  onReason: (reason: string | null) => void;
+}) {
+  const ids = React.useMemo(() => rowIds, [rowIds.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
+  const target = React.useMemo(() => oiPoLinkTarget(ids), [ids]);
+  const options = usePoLinkOptions(target, true);
+  const cap = options.data?.capabilities?.unlink_row;
+  const reason = cap && !cap.enabled ? (cap.reason ?? 'Waiting for AutoCount') : null;
+  React.useEffect(() => {
+    onReason(reason);
+    return () => onReason(null);
+  }, [reason, onReason]);
+  return null;
+}
+
 /** The shared PO link popup for the ticked Order Inquiry rows. Mounted only while it is open,
  *  so the AutoCount capabilities are read fresh each time. */
 export function OiPoLinkHost({
@@ -35,20 +70,7 @@ export function OiPoLinkHost({
 }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const rowIds = React.useMemo(() => rowIdsProp, [rowIdsProp.join(',')]);
-  const target = React.useMemo<PoLinkTarget>(
-    () => ({
-      key: ['project-sales', 'order-inquiries', 'po-link', ...rowIds],
-      api: {
-        options: () => getOrderInquiryPoLinkOptions(rowIds),
-        link: (lines) => linkOrderInquiryPoLines(rowIds, lines),
-        unlink: (ids) => unlinkOrderInquiryPoLines(rowIds, ids),
-        change: (changes) => changeOrderInquiryPoLines(rowIds, changes),
-        relocate: (poLineId) => relocateOrderInquiryPoLine(rowIds, poLineId),
-        resume: (input) => resumeOrderInquiryPoLink(rowIds, input),
-      },
-    }),
-    [rowIds],
-  );
+  const target = React.useMemo<PoLinkTarget>(() => oiPoLinkTarget(rowIds), [rowIds]);
   const options = usePoLinkOptions(target, true);
   const data = options.data as OiPoLinkOptions | undefined;
   // The wire names the SO line's bin and delivery date as Stock Debt's drill lines do in the dialog.
@@ -62,8 +84,7 @@ export function OiPoLinkHost({
     [data],
   );
   const blocked = React.useMemo(() => {
-    // Unlink always opens: its popup says what AutoCount answered, line by line.
-    if (!data || kind === 'unlink') return null;
+    if (!data) return null;
     const lines = data.lines ?? [];
     const menu = poLinkMenu({
       ticked: lines.length || 1,
