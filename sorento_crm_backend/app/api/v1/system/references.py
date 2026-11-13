@@ -1851,12 +1851,19 @@ def _drop_word_code_fragments(
         # a code that STARTS with the word: a family sibling unless it is a registry word
         return not known(tokens, code)
 
-    def close_codes(owner: dict[str, Any], tokens: list[str], dropped: list[Any]) -> None:
+    def close_codes(owner: dict[str, Any] | None, tokens: list[str], dropped: list[Any]) -> None:
         if len(tokens) != 1 or _fold_code(tokens[0]) not in offer_for:
             return
         rows = [m for m in dropped if isinstance(m, dict) and m.get("entity_type") == "product"]
         rows = [m for m in rows if not known(tokens, _fold_code(m.get("canonical_code")))]
         rows = list(offerable(rows)) if callable(offerable) and rows else rows
+        if owner is None:
+            if not rows:
+                return
+            # AND mode: the one token's miss in the per-token shape every miss reader reads
+            # (`code_sizes._single_substring_is_an_offer` writes the same).
+            owner = {"token": tokens[0], "resolved": False, "ambiguous": False, "matches": [], "alternatives": []}
+            result.update({"match_mode": "or", "intersection": [], "by_entity_type": {}, "resolutions": [owner]})
         have = {str(a.get("uuid")) for a in owner.get("alternatives") or [] if isinstance(a, dict)}
         added = [m for m in rows if str(m.get("uuid")) not in have]
         if added:
@@ -1877,8 +1884,8 @@ def _drop_word_code_fragments(
         if len(keep) != len(rows):
             result["intersection"] = keep
             _rebuild_intersection_fields(result)
-            if not keep:
-                close_codes(result, tokens, [m for m in rows if m not in keep])
+            if not keep and not result.get("resolutions"):
+                close_codes(None, tokens, [m for m in rows if m not in keep])
 
 
 def _drop_word_neighbours(result: dict[str, Any], *, offer_for: set[str] | frozenset[str] = frozenset()) -> None:
@@ -3632,21 +3639,19 @@ def resolve_reference_post(
         and len(payload.tokens) == len(payload.allowed_entity_types)
         else set()
     )
-    print("DBG REF", payload.exact_match, payload.require, payload.spec_fallback, payload.tokens, payload.allowed_entity_types, typed_products, [(m.get("canonical_code"), m.get("match_tier")) for m in result.get("intersection") or []])
     if payload.exact_match:
         _drop_word_neighbours(result, offer_for=typed_products)
     if payload.require or payload.spec_fallback:
         # CODE-SUBSTRING: before Shape B and the spec fallback read the rows.
-        from app.services.chatbot.lanes.business.code_sizes import offerable_rows
+        from app.services.entity_resolver import offerable_product_rows
         from app.services.product_spec_search import _search_vocabulary
 
         _drop_word_code_fragments(
             result,
             lambda: _search_vocabulary(db, brands=[]),
             offer_for=typed_products,
-            offerable=lambda rows: offerable_rows(db, rows),
+            offerable=lambda rows: offerable_product_rows(db, rows),
         )
-        print("DBG AFTER", [(m.get("canonical_code"), m.get("match_tier"), m.get("uuid")) for m in result.get("alternatives") or []], result.get("unresolved_tokens"), result.get("intersection"))
 
     # Shape B: a domain predicate over the described set. This is NOT a fallback -
     # "what faucets have certs" is a different question from "find me a faucet",

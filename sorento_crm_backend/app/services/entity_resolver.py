@@ -3101,6 +3101,21 @@ def _drop_unofferable_products(db: Session, hits: list[ResolvedEntity]) -> list[
     return _keep_products(db, hits, offerable_products())
 
 
+def offerable_product_rows(db: Session, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The serialized product rows (`uuid` dicts) the chat may offer (`offerable_products`,
+    owner Q3), one bounded query; a row with no uuid is dropped. The dict-row twin of
+    `_drop_unofferable_products`, read by the chat's close-code offers and the reference
+    route's kept code fragments (CHATBOT-CLOSE-CODES)."""
+    from app.models.product import offerable_products
+
+    ids = [str(r["uuid"]) for r in rows if isinstance(r, dict) and r.get("uuid")]
+    if not ids:
+        return []
+    with db.begin_nested():
+        kept = {str(pid) for (pid,) in db.query(Product.id).filter(Product.id.in_(ids), offerable_products()).all()}
+    return [r for r in rows if isinstance(r, dict) and str(r.get("uuid")) in kept]
+
+
 def _embedding_scope_sql(db: Session) -> tuple[str, dict[str, Any]]:
     """``AND`` fragment company-scoping a raw vector search over ``embedding_chunks ec``.
 

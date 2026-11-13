@@ -271,7 +271,7 @@ def _unheld_size_is_a_miss(db: Any, parser: dict[str, Any], resolved: dict[str, 
         if not family:
             # The code alone, when the chat may offer it (owner Q3); else the miss offers nothing
             # (R4: a code is never answered for a size it does not store).
-            alone = offerable_rows(db, [exact[0]])
+            alone = _offerable_rows(db, [exact[0]])
             family = [_row(str(r["canonical_code"]), str(r["uuid"]), "family") for r in alone]
         miss = {
             "token": token, "resolved": False, "ambiguous": False, "matches": [], "alternatives": family, SIZE_ASKED: said,
@@ -323,17 +323,11 @@ def _all_parts_matches(db: Any, typed: str) -> list[dict[str, Any]]:
     return [_row(code, str(pid), "all_parts") for pid, code in found]
 
 
-def offerable_rows(db: Any, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The product rows the chat may offer (`offerable_products`, owner Q3), one bounded query.
-    Also the close codes `references._drop_word_code_fragments` keeps for a typed product word."""
-    from app.models.product import Product, offerable_products
+def _offerable_rows(db: Any, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The product rows the chat may offer (`entity_resolver.offerable_product_rows`, owner Q3)."""
+    from app.services.entity_resolver import offerable_product_rows
 
-    ids = [str(r["uuid"]) for r in rows if isinstance(r, dict) and r.get("uuid")]
-    if not ids:
-        return []
-    with db.begin_nested():
-        kept = {str(pid) for (pid,) in db.query(Product.id).filter(Product.id.in_(ids), offerable_products()).all()}
-    return [r for r in rows if isinstance(r, dict) and str(r.get("uuid")) in kept]
+    return offerable_product_rows(db, rows)
 
 
 def _single_substring_is_an_offer(db: Any, resolved: dict[str, Any], words: set[str] | frozenset[str] = frozenset()) -> None:
@@ -370,7 +364,7 @@ def _single_substring_is_an_offer(db: Any, resolved: dict[str, Any], words: set[
         if hit is None:
             continue
         # A code the chat may not offer (owner Q3) leaves today's no-candidate miss.
-        miss = {"token": token, "resolved": False, "ambiguous": False, "matches": [], "alternatives": offerable_rows(db, [hit])}
+        miss = {"token": token, "resolved": False, "ambiguous": False, "matches": [], "alternatives": _offerable_rows(db, [hit])}
         if res is not None:
             res.update(miss)
         else:
