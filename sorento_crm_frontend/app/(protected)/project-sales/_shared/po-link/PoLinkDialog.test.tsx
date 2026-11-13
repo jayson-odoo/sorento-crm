@@ -34,9 +34,11 @@ vi.mock('@/components/common/SearchableSelect', () => ({
     options?: { value: string; label: string; disabled?: boolean; description?: string }[];
     placeholder?: string;
     truncateTriggerLabel?: boolean;
+    clearable?: boolean;
   }) => (
     <select
       id={props.id}
+      data-clearable={props.clearable ? 'true' : 'false'}
       data-truncate={props.truncateTriggerLabel ? 'true' : 'false'}
       value={props.value ?? ''}
       onChange={(event) => props.onChange(event.target.value)}
@@ -696,5 +698,73 @@ describe('Link PO popup (mode manage)', () => {
     const change = optionNamed(select, /^Change to/);
     expect(change.disabled).toBe(true);
     expect(`${change.title} ${change.textContent}`).toContain('Switched off here');
+  });
+
+  // ---- review round (13 Nov)
+  const bare = () => soLine({ sales_order_line_id: 'sol-c', so_number: 'SO425047', open_qty: 40, short_qty: 40 });
+
+  it.each([
+    ['above what the line still needs', 'po-3', '100'],
+    ['above what the PO line has free', 'po-7', '130'],
+  ])('a new row with a qty %s shows its error next to the field and Save sends nothing', async (_n, poId, typed) => {
+    const dialog = renderManage([soLine({ sales_order_line_id: 'sol-c', so_number: 'SO425047', open_qty: 300, short_qty: 300 })]);
+    const select = dialog.querySelector('[id="po-manage-po-sol-c:new"]') as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: poId } });
+    fireEvent.change(dialog.querySelector('[id="po-manage-qty-sol-c:new"]') as HTMLInputElement, { target: { value: typed } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save (1)' }));
+    const row = rowOf(dialog, 'SO425047');
+    expect(await within(row).findByRole('alert')).toHaveTextContent(/\S/);
+    expect(linkPoLines).not.toHaveBeenCalled();
+    expect(changePoLines).not.toHaveBeenCalled();
+    expect(unlinkPoLines).not.toHaveBeenCalled();
+  });
+
+  it('with split_link off a new row\'s PO line options are disabled with AutoCount\'s reason', () => {
+    const dialog = renderManage([bare()], { ...MANAGE_CAPS, split_link: { enabled: false, reason: 'Switched off here' } });
+    const options = [...(dialog.querySelector('[id="po-manage-po-sol-c:new"]') as HTMLSelectElement).options].filter((o) => o.value);
+    expect(options.length).toBeGreaterThan(0);
+    for (const option of options) {
+      expect(option.disabled).toBe(true);
+      expect(`${option.title} ${option.textContent}`).toContain('Switched off here');
+    }
+  });
+
+  it('Try again on a failed change-link re-sends THAT change\'s PO line and qty, not the new row\'s', async () => {
+    const partly = linked('sol-1', 'SO425045', 'po-7', '202610-S0007', 60, {
+      now: { so_status: 'open', open_qty: 120, po_links: [{ po_line_id: 'po-7', po_number: '202610-S0007', po_line_no: 1, qty: 60, open_qty: 60, location_code: 'MWH-BB' }] },
+    });
+    changePoLines.mockResolvedValue({
+      results: [
+        result({ action: 'unlink', po_number: '202610-S0007', po_line_id: 'po-7', qty: 60 }),
+        result({ action: 'link', outcome: 'refused', po_number: '202609-S0029', po_line_id: 'po-3', qty: 60, unlinked_po: '202610-S0007', message: 'AutoCount said no.' }),
+      ],
+    });
+    linkPoLines
+      .mockResolvedValueOnce({ results: [result({ action: 'link', po_number: '202609-S0064', po_line_id: 'po-live', qty: 50 })] })
+      .mockResolvedValueOnce({ results: [result({ action: 'link', po_number: '202609-S0029', po_line_id: 'po-3', qty: 60 })] });
+    const dialog = renderManage([partly]);
+    choose(picker(rowOf(dialog, '202610-S0007')), /^Change to 202609-S0029/);
+    fireEvent.change(dialog.querySelector('[id="po-manage-po-sol-1:new"]') as HTMLSelectElement, { target: { value: 'po-live' } });
+    fireEvent.change(dialog.querySelector('[id="po-manage-qty-sol-1:new"]') as HTMLInputElement, { target: { value: '50' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save (2)' }));
+    await waitFor(() => expect(linkPoLines).toHaveBeenCalledTimes(1));
+    fireEvent.click(await within(dialog).findByRole('button', { name: /try again/i }));
+    await waitFor(() => expect(linkPoLines).toHaveBeenCalledTimes(2));
+    expect(linkPoLines.mock.calls[1]).toEqual([
+      'snap', 'row', [{ sales_order_line_id: 'sol-1', po_line_id: 'po-3', qty: 60 }],
+    ]);
+  });
+
+  it('a linked row\'s Action picker is clearable, and clearing it back to Keep leaves the row ticked', () => {
+    const dialog = renderManage([linked('sol-1', 'SO425045', 'po-7', '202610-S0007', 120)]);
+    const row = rowOf(dialog, '202610-S0007');
+    const select = picker(row);
+    expect(select.dataset.clearable).toBe('true');
+    choose(select, /^Unlink$/);
+    const box = within(row).getAllByRole('checkbox')[0] as HTMLInputElement;
+    expect(box.checked).toBe(true);
+    fireEvent.change(select, { target: { value: '' } });
+    expect(box.checked).toBe(true);
+    expect(within(dialog).getByRole('button', { name: /^Save/ })).toBeDisabled();
   });
 });
