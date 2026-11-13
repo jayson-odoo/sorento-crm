@@ -1,10 +1,12 @@
 """Complaints API routes."""
 import logging
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query, HTTPException, status, Request, Body, File, UploadFile
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from typing import Optional, Union, List, Any
+from app.api.v1._external_api_key import request_has_valid_external_api_key
 from app.api.v1._request_own_scope import RequestScope, complaint_own_scope, empty_page
 from app.database import get_db
 from app.services.uuid_path_param import validate_uuid_path
@@ -29,7 +31,7 @@ from app.schemas.complaints import (
 )
 from app.schemas.external.complaints import ComplaintIntegrationCreate
 from app.schemas.integration import IntegrationLogCreate
-from app.schemas.common import ListResponse, MAX_PAGE_LIMIT, FormVoidRequest
+from app.schemas.common import ListResponse, MAX_PAGE_LIMIT, FormVoidRequest, RecordProjectUpdate
 from app.schemas.procurement import ViewLinkRequest, ViewLinkResponse
 from app.services.error_handler import handle_internal_error
 from app.services.handling_lock_service import assert_can_act_on_form
@@ -1099,7 +1101,7 @@ def create_complaint(
             complaint_data = ComplaintCreate.model_validate(raw)
 
         service = ComplaintService(db)
-        requires_user_confirm = is_integration_payload or _request_has_valid_external_api_key(request)
+        requires_user_confirm = is_integration_payload or request_has_valid_external_api_key(request)
         update_identifier = (
             _resolve_complaint_update_identifier(integration_payload)
             if integration_payload is not None
@@ -1172,7 +1174,7 @@ def create_complaint(
 
         complaint = service.create_complaint(complaint_data)
         db.commit()
-        should_notify_handlers = is_integration_payload or _request_has_valid_external_api_key(request)
+        should_notify_handlers = is_integration_payload or request_has_valid_external_api_key(request)
         if should_notify_handlers:
             try:
                 service.notify_team_complaint_external_created(
@@ -1313,6 +1315,25 @@ def update_complaint(
         raise
     except Exception as e:
         raise handle_internal_error(str(e))
+
+
+@router.patch("/{complaint_id}/project", response_model=ComplaintResponse)
+def set_complaint_project(
+    complaint_id: str,
+    body: RecordProjectUpdate,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Set or clear the complaint's registered project at any status (PROJECT-RELATED-RECORDS D2)."""
+    from app.services import project_related_records as related
+
+    validate_uuid_path(complaint_id, resource="Complaint")
+    related.assert_can_set_project(db, "complaint", current_user["id"])
+    related.set_record_project(
+        db, kind="complaint", record_id=complaint_id, project_id=body.project_id, actor=current_user["id"]
+    )
+    db.commit()
+    return ComplaintService(db).get_complaint_with_attachments(complaint_id)
 
 
 @router.post(

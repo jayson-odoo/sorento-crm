@@ -78,7 +78,15 @@ def attempt_key(base: str, attempt: int) -> str:
 
 
 def is_definite_refusal(answer: Dict[str, Any]) -> bool:
-    """AutoCount refused and nothing was changed, so a new attempt cannot write twice."""
+    """AutoCount refused and nothing was changed, so a new attempt cannot write twice.
+
+    `vendor_error` with VENDOR_REFUSED counts too: AutoCount itself said no and SS wrote nothing
+    (SS plan 57: "AutoCount said no ... its text is in message"). AC-E2E-DB3 B15: a create refused
+    for a unit not in AutoCount's master file stayed on its key, so the corrected press answered
+    IDEMPOTENCY_CONFLICT for good. A bare VENDOR_ERROR (no text, may have landed) still keeps the key.
+    """
+    if answer.get("outcome") == "vendor_error":
+        return str(answer.get("errorCode") or "") == "VENDOR_REFUSED"
     if answer.get("outcome") != "refused":
         return False
     code = str(answer.get("errorCode") or "")

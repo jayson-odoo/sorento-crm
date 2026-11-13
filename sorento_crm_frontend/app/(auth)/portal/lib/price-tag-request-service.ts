@@ -393,6 +393,7 @@ export interface TagItemOption {
   /** None when unpriced or zero; a set answers its override only. Optional so a
    *  caller that builds one by hand need not invent a price. */
   list_price?: number | null;
+  is_discontinued?: boolean;
 }
 
 /** One part of a combo, as the combos lookup answers it. */

@@ -546,6 +546,18 @@ export function noTemplateForTypeMessage(line: DraftLine, priceType: 'list' | 's
 /** The Submit-time check (AC-10, client side): a many-template line needs a pick. */
 export const EMPTY_LINE = 'Pick a set or a product for this line.';
 
+/** The rows with no set or product picked (Submit's blank-row check, shared with Save Draft). */
+export function emptyRowIndexes(lines: DraftLine[]): number[] {
+  return lines
+    .map((l, index) => (l.product_id || l.product_set_id ? -1 : index))
+    .filter((index) => index >= 0);
+}
+
+/** A row nothing was done to: no item, quantity still 1, no remarks. Save Draft drops it silently. */
+export function isUntouchedBlankLine(line: DraftLine): boolean {
+  return !line.product_id && !line.product_set_id && line.quantity === 1 && !line.remarks;
+}
+
 export const MISSING_TAG_TEMPLATE = 'Pick a tag template for this line.';
 
 export function lineNeedsTemplate(line: DraftLine, priceMode?: PriceMode | null): boolean {

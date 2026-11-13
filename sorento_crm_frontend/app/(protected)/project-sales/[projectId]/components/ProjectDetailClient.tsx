@@ -9,7 +9,7 @@ import {
   Clock,
   FileText,
   Flame,
-  HandCoins,
+  Link2,
   History,
   Info,
   ListChecks,
@@ -86,7 +86,7 @@ import { SalesOrdersPanel } from './SalesOrdersPanel';
 import { QuotationsPanel } from './QuotationsPanel';
 import { SampleRequestsPanel } from './SampleRequestsPanel';
 import { projectTabOriginHref, withReviewOrigin } from '../../_shared/lib/reviewOrigin';
-import { SponsorshipsPanel } from './SponsorshipsPanel';
+import { RelatedRecordsPanel, RelatedTabCount } from './RelatedRecordsPanel';
 import { StakeholdersPanel } from './StakeholdersPanel';
 import { TasksPanel } from './TasksPanel';
 
@@ -105,7 +105,8 @@ export const TABS = [
   { id: 'documents', label: 'Documents', icon: Paperclip },
   { id: 'quotations', label: 'Proposals', icon: FileText },
   { id: 'sample-requests', label: 'Samples Request', icon: ClipboardList },
-  { id: 'sponsorships', label: 'Sponsorship Form', icon: HandCoins },
+  // PROJECT-RELATED-RECORDS: every record linked to the project, where Sponsorship Form was.
+  { id: 'related', label: 'Related', icon: Link2 },
   // PO is the old Orders tab (id kept so links hold); SO lists every sales order.
   { id: 'orders', label: 'PO', icon: ShoppingCart },
   { id: 'sales-orders', label: 'SO', icon: Package },
@@ -130,8 +131,12 @@ const STAGE_FORM_ROUTE: Record<string, (projectId: string) => string> = {
   sponsorship_form: (id) => `/procurement-management/sponsorship-forms/new?project_id=${id}`,
 };
 
+/** The retired Sponsorship Form tab; its old links open Related, filtered to sponsorship forms. */
+const LEGACY_SPONSORSHIP_TAB = 'sponsorships';
+
 export function resolveProjectTab(requested: string | null): TabId {
   if (requested === 'samples') return 'sample-requests';
+  if (requested === LEGACY_SPONSORSHIP_TAB) return 'related';
   if (requested && LEGACY_ORDER_TABS.includes(requested)) return 'orders';
   return requested && TABS.some((tab) => tab.id === requested)
     ? (requested as TabId)
@@ -504,6 +509,7 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
             <TabsTrigger key={tab.id} value={tab.id}>
               <tab.icon />
               <span>{tab.label}</span>
+              {tab.id === 'related' && <RelatedTabCount projectId={project.id} enabled={!isDraft} />}
             </TabsTrigger>
           ))}
         </TabsList>
@@ -608,8 +614,13 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
         <TabsContent value="sample-requests">
           <SampleRequestsPanel project={project} />
         </TabsContent>
-        <TabsContent value="sponsorships">
-          <SponsorshipsPanel project={project} />
+        <TabsContent value="related">
+          <RelatedRecordsPanel
+            project={project}
+            initialTypes={
+              searchParams.get('tab') === LEGACY_SPONSORSHIP_TAB ? ['sponsorship_form'] : undefined
+            }
+          />
         </TabsContent>
         <TabsContent value="orders">
           <PurchaseOrdersPanel project={project} />

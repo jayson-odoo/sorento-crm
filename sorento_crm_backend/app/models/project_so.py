@@ -31,6 +31,7 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     CheckConstraint,
     Column,
@@ -476,6 +477,17 @@ class ProjectSalesOrder(Base, CompanyScopedMixin):
     area_group = Column(String(80), nullable=True)
     provisional_ref = Column(String(80), nullable=False)
     autocount_doc_no = Column(String(80), nullable=True)
+    # AC-QTSO-CRM: written only by a `done` create/update answer. The key is never shown;
+    # `last_modified` is the raw string from the SS read-back, sent back as expectedLastModified.
+    autocount_doc_key = Column(String(80), nullable=True)
+    autocount_last_modified = Column(String(64), nullable=True)
+    # A done cancel in AutoCount: when, and by whom (a user id; no FK, it is a marker).
+    autocount_cancelled_at = Column(DateTime(timezone=False), nullable=True)
+    autocount_cancelled_by = Column(String(100), nullable=True)
+    # The AutoCount book the key belongs to (R8): SS's name at create, or the adopted source_ref's.
+    autocount_book = Column(String(40), nullable=True)
+    # Owner 11 Nov: the key + exact body of a create whose outcome is not known yet (write-ahead).
+    autocount_pending_create = Column(JSON(none_as_null=True), nullable=True)
     status = Column(String(24), nullable=False, server_default=SO_STATUS_DRAFT)
 
     # A parking route: the customer on the document is a convenience, the project is the
@@ -715,6 +727,9 @@ class SOAmendment(Base, CompanyScopedMixin):
     row_decisions = Column(JSONB, nullable=True)
     status = Column(String(16), nullable=False, server_default=AMENDMENT_PROPOSED)
     published_at = Column(DateTime(timezone=False), nullable=True)
+    # AC-QTSO-CRM: the one AutoCount step an amendment takes (the PATCH of its line edits), set
+    # when AutoCount answered done, so a second press never sends it again.
+    autocount_edit_sent_at = Column(DateTime(timezone=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     __table_args__ = (

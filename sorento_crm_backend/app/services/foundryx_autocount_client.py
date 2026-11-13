@@ -20,6 +20,7 @@ import time
 from typing import Any, Optional
 
 import httpx
+from urllib.parse import quote
 from sqlalchemy.orm import Session
 
 from app.models.integration import Integration
@@ -48,6 +49,11 @@ MAX_PAGES = 100
 #: refused us) rather than passed through, so the FE never has to special-case FoundryX's
 #: own auth vocabulary and the key's validity is never implied by the response.
 _NOT_CONFIGURED_HTTP_STATUSES = (401, 403, 404)
+
+#: Who pressed (owner, 12 Nov: every AutoCount write traced to the person). Names and limits from
+#: SS plan 63 (lane AC-DB1-READY); all optional, SS never refuses a write without them.
+ACTOR_ID_HEADER = "X-Acting-User-Id"  # 1..64 printable ASCII
+ACTOR_NAME_HEADER = "X-Acting-User-Name"  # UTF-8 percent-encoded, at most 128 characters decoded
 
 _NOT_CONFIGURED_MESSAGE = "The AutoCount connection is not set up."
 
@@ -111,6 +117,20 @@ class FoundryxAutocountClient:
             )
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
+        #: Sent on every WRITE (never a read): `X-Request-ID` and the actor, set by `trace_writes`.
+        self.trace_headers: dict[str, str] = {}
+
+    def trace_writes(self, request_id: str, actor: Optional[dict]) -> "FoundryxAutocountClient":
+        """Every write this client sends carries the press's `X-Request-ID` and the person who
+        pressed (SS plan 63). Returns the client, so a caller can chain the write."""
+        headers = {"X-Request-ID": str(request_id)[:128]}
+        if actor and actor.get("id"):
+            headers[ACTOR_ID_HEADER] = str(actor["id"])[:64]
+            name = actor.get("name") or actor.get("email")
+            if name:
+                headers[ACTOR_NAME_HEADER] = quote(str(name)[:128], safe="")
+        self.trace_headers = headers
+        return self
 
     def _headers(self) -> dict[str, str]:
         return {"X-API-Key": self._api_key}
@@ -244,7 +264,7 @@ class FoundryxAutocountClient:
         ``/po-links/relink``, ``/po-links/relocate``, ``/write-operations/{id}/resume``).
         ``request_id`` goes as the optional ``X-Request-ID`` (SS #230), so SS's call log can be
         matched to the press that sent it."""
-        headers = self._headers()
+        headers = {**self._headers(), **self.trace_headers}
         if idempotency_key:
             headers["Idempotency-Key"] = idempotency_key
         if request_id:
@@ -289,6 +309,42 @@ class FoundryxAutocountClient:
         except ValueError:
             body = None
         return response.status_code, body if isinstance(body, dict) else None
+
+    # ------------------------------------------------------- document writes (AC-QTSO-CRM)
+    # Beyond #2168's `write` / `write_capabilities` above: a PATCH with the same answer rule
+    # (a body carrying `outcome` is returned as-is for any status), and a document read.
+
+    def patch(self, path: str, body: dict, *, idempotency_key: Optional[str] = None) -> dict:
+        """``PATCH`` one document (``documents/{kind}/{docKey}``); same answer rule as ``write``."""
+        return self._send("PATCH", path, body, idempotency_key)
+
+    def read_document(self, kind: str, doc_key: Any, company_code: str) -> dict:
+        """``GET /api/v1/autocount/documents/{kind}/{docKey}?companyCode=``."""
+        return self._request(
+            "GET",
+            f"/api/v1/autocount/documents/{kind}/{doc_key}",
+            timeout=_STATUS_TIMEOUT_SECONDS,
+            params={"companyCode": company_code},
+        )
+
+    def _send(self, method: str, path: str, body: dict, idempotency_key: Optional[str]) -> dict:
+        headers = {**self._headers(), **self.trace_headers}
+        if idempotency_key:
+            headers["Idempotency-Key"] = idempotency_key
+        try:
+            with self._client(_WRITE_TIMEOUT_SECONDS) as client:
+                response = client.request(method, f"/api/v1/autocount/{path}", headers=headers, json=body)
+        except httpx.HTTPError as exc:
+            raise FoundryxPullError(
+                code="UNREACHABLE", message="Could not reach AutoCount.", status=502
+            ) from exc
+        try:
+            answer = response.json()
+        except ValueError:
+            answer = None
+        if isinstance(answer, dict) and answer.get("outcome"):
+            return answer
+        return self._parse(response)
 
 
 def check_connection(db: Session, row: Integration) -> dict:
