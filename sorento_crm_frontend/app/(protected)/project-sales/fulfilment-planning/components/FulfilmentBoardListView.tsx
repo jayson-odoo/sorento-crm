@@ -959,6 +959,15 @@ export function FulfilmentBoardListView({
           if (isCancelSo(contribution, drafted)) {
             return <span className="block truncate">Cancel SO</span>;
           }
+          // OI-WHOLE-SO-CANCEL F2 (mirrors Suggested): a book-cancelled line whose cancel is
+          // saved - or whose decision states no supply at all - reads "Cancel line".
+          if (isCancelLineDecided(contribution, drafted)) {
+            return (
+              <span className="block truncate" title="Cancel line">
+                Cancel line
+              </span>
+            );
+          }
           const parts = contributionDecision(contribution, drafted);
           if (!parts) {
             // DECIDED BY THE BOOK, not by a board (14 Sep 2026 ruling): a line carrying a
@@ -1332,9 +1341,24 @@ function isCancelSo(contribution: BoardContribution, drafted: BoardDecision | nu
   );
 }
 
+/**
+ * F2: a book-cancelled line CS has decided: a saved approval (the draft, no pre-mark), or a
+ * decision that states no supply at all (an empty composition prints as nothing).
+ */
+function isCancelLineDecided(
+  contribution: BoardContribution,
+  drafted: BoardDecision | null,
+): boolean {
+  if (!isBookCancelled(contribution)) return false;
+  if (drafted && !drafted.preMarked && drafted.verdict === 'approved') return true;
+  const parts = contributionDecision(contribution, drafted);
+  return parts !== null && describeSupply(parts, contribution.fulfilment_location) === '';
+}
+
 /** The Decided column's own equivalent of `suggestedSortText` above. */
 function decidedSortText(contribution: BoardContribution, drafted: BoardDecision | null): string {
   if (isCancelSo(contribution, drafted)) return 'Cancel SO';
+  if (isCancelLineDecided(contribution, drafted)) return 'Cancel line';
   const parts = contributionDecision(contribution, drafted);
   if (!parts) {
     const inquiry = contributionInquiryDecision(contribution);
