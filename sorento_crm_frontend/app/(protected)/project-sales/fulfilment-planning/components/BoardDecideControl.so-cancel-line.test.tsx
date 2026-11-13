@@ -255,3 +255,35 @@ describe('Decide > Cancel on book-cancelled lines (OI-WHOLE-SO-CANCEL)', () => {
     expect(entries[0].decision.verdict).toBe('cancelled');
   });
 });
+
+describe('Decide > As suggested on book-cancelled lines (owner hand test 13 Nov, OI-WHOLE-SO-CANCEL)', () => {
+  // A line AutoCount cancelled (deleted SO) is suggested "Cancel line", so taking the suggestion
+  // must save exactly what Decide > Cancel saves for it (one function for single and suggested).
+  const bookCancelled = (n: number) =>
+    row({
+      key: `so-1:line-${n}`,
+      line_no: n,
+      qty: '0',
+      sources: [],
+      cancelled: true,
+      cancelled_at: null,
+      pending_change_batch_id: 'b1',
+    } as Partial<BoardContribution>);
+
+  it('saves each ticked book-cancelled row with the same decision as Cancel, skipping none', async () => {
+    const rows = [bookCancelled(10), bookCancelled(20), bookCancelled(30)];
+    const { onSave } = renderControl(rows);
+    openMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'As suggested' }));
+
+    await waitFor(() => expect(onSave).toHaveBeenCalled());
+    const entries = onSave.mock.calls.flatMap(
+      (call) => call[0] as unknown as { key: string; decision: unknown }[],
+    );
+    expect(entries).toEqual(
+      rows.map((r) => ({ key: r.key, decision: suggestedDecisionFor(r) })),
+    );
+    expect(vi.mocked(toast.success)).toHaveBeenCalled();
+    expect(vi.mocked(toast.success).mock.calls[0][0]).not.toMatch(/pick Cancel/);
+  });
+});
