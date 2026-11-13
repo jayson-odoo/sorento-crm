@@ -24,4 +24,8 @@ Plan: `PLAN-db-retention-12nov.md`. "Old" = past the rule's setting; every rule 
 11. Import row detail older than 90 days is deleted (existing code, now actually scheduled).
 12. Audit logs: untouched.
 13. Every retention day count, batch size, sleep, time budget and dry-run is a system setting.
-14. Dry-run defaults to OFF: the jobs delete from the first night (crew ruling 12 Nov).
+14. Dry-run defaults to OFF, but the 7 new tasks are seeded switched off: nothing runs until the owner
+    switches each task on (crew safety review 13 Nov).
+15. A superseded planning run is also kept when any recommendation was accepted/adjusted/dismissed or
+    keyed, any order summary row has a chosen quantity, a decision time or a keyed status, or a purchase
+    order line was drafted from it.

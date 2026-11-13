@@ -8,7 +8,7 @@ clear that working data so the database does not keep growing.
 ## Where to find it
 
 **System > Scheduled Tasks** (`/system-management/scheduled-tasks`). Each clean-up is its own
-task, runs once a day around 2:00 am Malaysia time, and shows its last run, last error and
+task, is switched off until an admin switches it on, then runs once a day around 2:00 am Malaysia time, and shows its last run, last error and
 **Run now**. Open a task's run to see what it removed (the counts).
 
 ## What each clean-up does
@@ -20,7 +20,7 @@ task, runs once a day around 2:00 am Malaysia time, and shows its last run, last
 | API call log prune | request and response bodies after 30 days; the row after 180 days | the same as before |
 | Chat turn trace clean-up | the step-by-step trace of chat turns older than 90 days | the turn itself and the chat messages |
 | Scheduled task history clean-up | run history older than 90 days | the latest run of every task |
-| Old planning runs clean-up | replaced planning runs older than 90 days, with their recommendations | the current run, and any run someone changed or decided on |
+| Old planning runs clean-up | replaced planning runs older than 90 days, with their recommendations | the current run, and any run someone changed, decided, keyed or drafted a purchase order from |
 | Old AI search data clean-up | AI search text replaced more than 90 days ago | current AI search data |
 | Import row detail clean-up | per-row import detail older than 90 days | each import's totals and summary |
 

@@ -1,6 +1,6 @@
 # PLAN: DB retention jobs (lane DB-RETENTION)
 
-Status: Build, track L (migration + prod data). Behaviour card answered by crew 12 Nov: Q1 (a), Q2 (a), Q3 (b) ship live.
+Status: Review (crew safety review fixes), track L (migration + prod data). Behaviour card answered by crew 12 Nov: Q1 (a), Q2 (a), Q3 (b). Crew safety review 13 Nov: the 7 tasks are seeded DISABLED (owner switches each on after deploy); reorder runs with any decision trace are kept (section 2 R3c).
 
 Source: owner rulings 12 Nov 2026 on `documentation/plans/infra/db-growth-12nov.md` section 9
 (PR #2373, branch `crew/db-growth-scout`): Q1-Q5 all option (a). UAC:
@@ -35,7 +35,7 @@ continues). `data_retention_dry_run` (default false: the owner approved the dele
 | R2b | api call log (existing) | `api_call_log_prune` | unchanged windows | same shared two-stage function, now batched |
 | R3a | chat turn traces (Q3) | `chatbot_turn_trace_prune` | `chatbot.turns.created_at` past 90 d, `trace IS NOT NULL` | blank `trace`, keep the row (crew ruling) |
 | R3b | scheduler run history (Q3) | `scheduled_task_runs_prune` | `started_at` past 90 d, not the newest run of its task | delete |
-| R3c | superseded reorder runs (Q3) | `reorder_run_prune` | `scm.reorder_run.superseded_by_run_id IS NOT NULL`, created past 90 d, no `recommendation_override` / `plan_row_decision` on it (crew ruling: keep any run someone decided on) | no long transaction: delete the run's children (recommendations and their children, order summary rows) in keyset batches, one commit per batch, then the run row; same sleep and time budget |
+| R3c | superseded reorder runs (Q3) | `reorder_run_prune` | `scm.reorder_run.superseded_by_run_id IS NOT NULL`, created past 90 d, and no decision trace: no `recommendation_override` / `plan_row_decision`, no recommendation with `status != 'proposed'` or `keyed_status != 'not_keyed'`, no order summary row with `chosen_qty` / `decided_at` set or `keyed_status != 'not_keyed'`, no purchase order line whose `source_ref` names one of its recommendations (`<rec id>`) or summary rows (`<row id>:<warehouse>`) (crew safety review 13 Nov) | no long transaction: delete the run's children (recommendations and their children, order summary rows) in keyset batches, one commit per batch, then the run row; same sleep and time budget |
 | R3d | superseded AI search chunks (Q3) | `embedding_superseded_prune` | `embedding_chunks.is_current = false AND superseded_at` past 90 d | delete |
 | R3e | import rows (Q3, existing code) | `import_job_rows_prune` | unchanged (90 d) | **seed the missing `scheduled_tasks` row** so it runs |
 | Q4 | audit_logs | - | - | no change |

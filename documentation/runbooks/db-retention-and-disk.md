@@ -55,10 +55,12 @@ setup (`ha-failover.md` phase 1 step 5) is not done yet, install only the disk c
 Make a new Healthchecks.io check (period 5 minutes, grace 15) for it; never write the URL into
 the repo. After HA phase 1, drop `DISK_ONLY=1` (the full checks include disk).
 
-## 4. Turn the retention jobs live
+## 4. Switch the retention jobs on
 
-The jobs ship live (owner approved the deletions, 12 Nov) and run nightly. Each task's last run
-summary on **System management > Scheduled tasks** shows what it deleted or blanked:
+The 7 new clean-up tasks ship **switched off** (crew safety review, 13 Nov). After steps 1-3, open
+**System management > Scheduled tasks**, search "clean-up" and switch each task on (Edit, Enabled).
+Each then runs nightly at about 02:00 Malaysia time and live (dry-run is off by default); a task's
+last run summary shows what it deleted or blanked:
 
 | task | what it removes |
 |---|---|
@@ -78,8 +80,9 @@ worker container (prod has no plain `backend` service: backend_blue, backend_gre
 docker compose exec -T worker python -m app.scripts.run_data_retention --rule plan_exception_prune
 ```
 
-To pause everything at once: `UPDATE system_settings SET data_retention_dry_run = true;` (the
-nightly runs then only count) or disable single tasks on the Scheduled tasks screen.
+To see the counts first, set `UPDATE system_settings SET data_retention_dry_run = true;`, switch
+the tasks on and press Run now on each: the summaries then only count. Set it back to `false`
+when the counts look right. To pause one rule, switch its task off again.
 
 Knobs, all on `system_settings` (change with the same kind of UPDATE): `data_retention_batch_size`
 (5000 rows a batch), `data_retention_batch_sleep_ms` (200 ms between batches),
