@@ -474,6 +474,9 @@ logger = logging.getLogger(__name__)
 #: product entity whose canonical_code was dropped; `resolve_gate.pick_near_code_first` offers it
 #: first in the did-you-mean the raw then asks.
 NEAR_PICK_KEY = "near_pick"
+#: `_pick_as_trgm_neighbour`'s answer for a pick that corrects the raw while the raw reaches
+#: several codes: the pick is set aside (the raw is asked as typed), nothing is offered alone.
+SET_ASIDE: dict[str, Any] = {}
 #: CHATBOT-CLOSE-CODES (lead ruling, 13 Nov 2026): the asks whose parser-corrected code is offered
 #: even when the raw resolved to it, and whose lone prefix hit is offered (`code_sizes`): stock and
 #: incoming. Every other ask keeps today's answer.
@@ -516,10 +519,8 @@ def _pick_as_trgm_neighbour(
     `offer_resolved` (CHATBOT-CLOSE-CODES B1, crew ruling (a), stock and incoming asks): a raw
     that resolved to the pick is still offered it when the pick corrects or completes what was
     typed (`answer.corrects_or_completes`: INLT for INLET, SRTWC287-S for SRTWC287-S-150) and is
-    the raw's match. When the raw reaches several codes they all stay its matches
-    (`resolve_gate.pick_near_code_first` takes out only a single match), so the raw asks which
-    one. A pick that restates the raw (dashes and spaces, or words the parser mapped) answers as
-    today."""
+    the raw's only match; `SET_ASIDE` when the raw reaches several codes. A pick that restates
+    the raw (dashes and spaces, or words the parser mapped) answers as today."""
     # Measured (23 Oct, lane catalogue): code typos show the pick as a trgm neighbour of the raw (11/11); name asks never do.
     from sqlalchemy import text
 
@@ -548,6 +549,10 @@ def _pick_as_trgm_neighbour(
         ]
         if not (offer_resolved and wanted in held and corrects_or_completes(raw, pick)):
             return None
+        if held != [wanted]:
+            # Several codes the raw reaches: the parser's pick is never offered alone, and never
+            # answered; the raw asks which one, every code listed, as main does for the raw.
+            return SET_ASIDE
 
     token = str(_token_of({"raw": raw, "hint": _PRODUCT_HINT}) or "")
     pn = _strip_all_ws(token).lower() or token.lower()
@@ -1023,7 +1028,11 @@ def ground(
                 near = _pick_as_trgm_neighbour(
                     db, raw, canonical, offer_resolved=verdict.get("domain_hint") in CLOSE_CODE_ASKS
                 )
-                if near is not None:
+                if near is SET_ASIDE:
+                    notes.append({"from": hint, "raw": raw, "to": f"which one: {canonical} set aside (the raw reaches several codes)"})
+                    entity = {**entity, "canonical_code": None}
+                    canonical = ""
+                elif near is not None:
                     notes.append({"from": hint, "raw": raw, "to": f"did you mean: {canonical} (a typed code corrected)"})
                     entity = {**entity, "canonical_code": None, NEAR_PICK_KEY: near}
                     canonical = ""
