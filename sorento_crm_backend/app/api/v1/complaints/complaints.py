@@ -31,7 +31,7 @@ from app.schemas.complaints import (
 )
 from app.schemas.external.complaints import ComplaintIntegrationCreate
 from app.schemas.integration import IntegrationLogCreate
-from app.schemas.common import ListResponse, MAX_PAGE_LIMIT, FormVoidRequest
+from app.schemas.common import ListResponse, MAX_PAGE_LIMIT, FormVoidRequest, RecordProjectUpdate
 from app.schemas.procurement import ViewLinkRequest, ViewLinkResponse
 from app.services.error_handler import handle_internal_error
 from app.services.handling_lock_service import assert_can_act_on_form
@@ -1315,6 +1315,25 @@ def update_complaint(
         raise
     except Exception as e:
         raise handle_internal_error(str(e))
+
+
+@router.patch("/{complaint_id}/project", response_model=ComplaintResponse)
+def set_complaint_project(
+    complaint_id: str,
+    body: RecordProjectUpdate,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Set or clear the complaint's registered project at any status (PROJECT-RELATED-RECORDS D2)."""
+    from app.services import project_related_records as related
+
+    validate_uuid_path(complaint_id, resource="Complaint")
+    related.assert_can_set_project(db, "complaint", current_user["id"])
+    related.set_record_project(
+        db, kind="complaint", record_id=complaint_id, project_id=body.project_id, actor=current_user["id"]
+    )
+    db.commit()
+    return ComplaintService(db).get_complaint_with_attachments(complaint_id)
 
 
 @router.post(

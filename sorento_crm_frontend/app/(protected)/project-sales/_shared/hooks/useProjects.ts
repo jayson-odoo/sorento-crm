@@ -86,7 +86,7 @@ import {
   createPurchaseOrderLine,
   updatePurchaseOrderLine,
   deletePurchaseOrderLine,
-  listProjectSponsorships,
+  listProjectRelatedRecords,
   getSponsorshipRollup,
   getProjectDashboard,
   createLead,
@@ -160,6 +160,7 @@ import type {
   ProjectTypeBody,
   ProjectTemplateTaskBody,
   ProjectUpdateBody,
+  RelatedRecordsParams,
   TaskPhase,
   TaskStatusChangeBody,
 } from '../types/project.types';
@@ -1977,19 +1978,35 @@ export function usePurchaseOrderLineMutations(projectId: string, poId: string) {
 
 export const SPONSORSHIPS_KEY = 'project-sponsorships';
 
-export function useProjectSponsorships(projectId: string | undefined) {
+export const RELATED_RECORDS_KEY = 'project-related-records';
+
+/**
+ * PROJECT-RELATED-RECORDS: the project's Related tab rows for these grid params, sorted,
+ * searched, filtered and paged on the server. The tab badge reads `type_counts` off the same
+ * query (the panel's opening params), so opening the tab costs no second request.
+ */
+export function useProjectRelatedRecords(
+  projectId: string | undefined,
+  params: RelatedRecordsParams,
+  options: { enabled?: boolean } = {},
+) {
   return useQuery({
-    queryKey: [SPONSORSHIPS_KEY, projectId],
-    queryFn: () => listProjectSponsorships(projectId as string),
-    enabled: Boolean(projectId),
+    queryKey: [RELATED_RECORDS_KEY, projectId, params],
+    queryFn: () => listProjectRelatedRecords(projectId as string, params),
+    enabled: Boolean(projectId) && (options.enabled ?? true),
+    // Keep the page on screen while the next sort, search or page loads (M4-01).
+    ...LIST_QUERY_OPTIONS,
   });
 }
 
-export function useSponsorshipRollup(projectId: string | undefined) {
+export function useSponsorshipRollup(
+  projectId: string | undefined,
+  options: { enabled?: boolean } = {},
+) {
   return useQuery({
     queryKey: [SPONSORSHIPS_KEY, 'rollup', projectId],
     queryFn: () => getSponsorshipRollup(projectId as string),
-    enabled: Boolean(projectId),
+    enabled: Boolean(projectId) && (options.enabled ?? true),
   });
 }
 
