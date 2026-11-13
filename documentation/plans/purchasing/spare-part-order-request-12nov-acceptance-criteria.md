@@ -34,3 +34,12 @@ One record: a spare part request IS an Order Inquiry with `inquiry_type = spare_
 ## History and assistant
 - H1 Submit, approve (per stage), reject, each approver change, revise and the final raise show on the OI History tab.
 - H2 Assistant: OI headers have no assistant reader today (impact check); this lane adds none. The PR says so.
+
+## Hand-test round (owner 13 Nov, confirmed flow; supersedes R1c "opens on the OI page")
+Approval stays the existing Form SLA config, exactly like the other forms (owner: "the setting should be same like other form sla config"): no new Settings approver, no new approve permission.
+- G1 Description: the create/edit line table has a Description column, prefilled from the picked product's name, editable; stored in the line's description; shown on the record page and to purchasing.
+- G2 Save as draft and Submit stay on the spare part request (its own record page), never redirect to the Order Inquiry page.
+- G3 Own pages: sidebar Spare Part Requests opens a Spare Part Requests list (standard DataGrid: number, status, requested by, needed by, lines, total, submitted; search, multi-select status filter, server sort, columns, Create) and a row opens the spare part request record page: header card (number, status pill Draft / Pending approval / Approved / Rejected, actions), tabs Lines, General (Request + Approval cards), History. Once approved the header shows "Raised to purchasing" with a link to the order inquiry. The approver's notification and the SLA task link open this record page.
+- G4 Photos can be attached per line on the Create page; they upload on the first Save as draft / Submit.
+- G5 The requester can edit while Draft, Pending approval or Rejected. An edit while Pending approval restarts approval at the first level and is recorded in History ("Edited, approval restarted").
+- Unchanged: approver edits qty / unit price / photos while pending; purchasing works it on the Order Inquiry pages only after approval; prices masked by cost access.
