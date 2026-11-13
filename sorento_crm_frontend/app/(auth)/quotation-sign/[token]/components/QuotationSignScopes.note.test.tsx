@@ -153,11 +153,12 @@ describe('QuotationSignScopes matrix scope remark', () => {
 
 /**
  * Crew pass at 1280 (13 Nov): the plain table summed to 1274px of minimum widths inside the sign
- * card's 1182px inner width, clipping GRAND TOTAL. jsdom has no layout, so the guard reads each
+ * card's 1182px inner width (crew copy; the cloud re-check measured the table box at 1152px,
+ * the scrollbar and padding being the difference), clipping GRAND TOTAL. jsdom has no layout, so the guard reads each
  * header's `min-w-[Npx]` (and the feedback column's `w-10` = 40px) and sums them. Tailwind's
  * preflight is border-box, so a min width already includes the cell padding.
  */
-const SIGN_CARD_INNER_AT_1280 = 1182;
+const SIGN_CARD_INNER_AT_1280 = 1152;
 
 function headerMinWidth(th: Element): number {
   const classes = Array.from(th.classList);
@@ -168,7 +169,7 @@ function headerMinWidth(th: Element): number {
 }
 
 describe('QuotationSignScopes plain table width with REMARK', () => {
-  it('fits the sign card at 1280: header min widths sum to at most 1182px, REMARK at least 130px', () => {
+  it('fits the sign card at 1280: header min widths sum to at most 1152px, REMARK at least 130px', () => {
     const columns = [
       { key: 'item', label: 'ITEM' },
       { key: 'spec', label: 'TECHNICAL SPEC' },
