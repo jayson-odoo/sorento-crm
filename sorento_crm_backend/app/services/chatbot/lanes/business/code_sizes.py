@@ -314,14 +314,21 @@ def _all_parts_matches(db: Any, typed: str) -> list[dict[str, Any]]:
 
 
 def _offerable_rows(db: Any, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The product rows the chat may offer (`offerable_products`, owner Q3), one bounded query."""
-    from app.models.product import Product, offerable_products
+    """The product rows the chat may offer (`offerable_products`, owner Q3), one bounded query.
+    Also chat-searchable (`chat_searchable_products`): a product hidden from the chat is never
+    offered (#2397, release sweep 13 Nov: test_chat_fit_line AC-22 named a hidden SKU)."""
+    from app.models.product import Product, chat_searchable_products, offerable_products
 
     ids = [str(r["uuid"]) for r in rows if isinstance(r, dict) and r.get("uuid")]
     if not ids:
         return []
     with db.begin_nested():
-        kept = {str(pid) for (pid,) in db.query(Product.id).filter(Product.id.in_(ids), offerable_products()).all()}
+        kept = {
+            str(pid)
+            for (pid,) in db.query(Product.id)
+            .filter(Product.id.in_(ids), offerable_products(), chat_searchable_products())
+            .all()
+        }
     return [r for r in rows if isinstance(r, dict) and str(r.get("uuid")) in kept]
 
 
@@ -338,6 +345,10 @@ def _single_substring_is_an_offer(db: Any, resolved: dict[str, Any]) -> None:
         if len(rows) != 1 or rows[0].get("entity_type") != "product":
             return None
         code, typed = token_key(rows[0].get("canonical_code")), token_key(token)
+        if not any(ch.isalpha() for ch in typed):
+            # A bare number keeps the owner's 6 Oct ladder (ROGUE-CONVO-REVIEW, "8066 stock ?"):
+            # exact, prefix family, the substring family the resolver placed. #2397, release sweep.
+            return None
         return rows[0] if typed and typed in code and not code.startswith(typed) else None
 
     named: list[tuple[dict[str, Any] | None, Any, list[Any]]] = [
