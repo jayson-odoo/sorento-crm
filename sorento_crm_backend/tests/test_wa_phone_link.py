@@ -81,8 +81,12 @@ class FakeClient:
     """Records every call. `phone_contact_id` None = Respond.io has no contact for the phone (404)."""
 
     def __init__(self, phone_contact_id=PHONE_ID, *, lookup_error=None, merge_error=None, put_error=None, wrapped=False,
-                 merge_result="phone", after_merge_id=None, lookup_fail_after_merge=False):
+                 merge_result="phone", after_merge_id=None, lookup_fail_after_merge=False, gone=(),
+                 send_error=None):
         self.wrapped = wrapped
+        # WA-MERGE-WELCOME: ids Respond.io no longer has once the merge ran (the merged-away contact).
+        self.gone = {str(i) for i in gone}
+        self.send_error = send_error
         self.merge_result = merge_result  # "phone" | "turn" | "none"
         self.after_merge_id = after_merge_id
         self.lookup_fail_after_merge = lookup_fail_after_merge
@@ -115,6 +119,21 @@ class FakeClient:
         if self.merge_result == "turn":
             return {"contactId": TURN_ID}
         return {}
+
+    def get_contact_by_identifier(self, identifier):
+        ident = str(identifier).replace("id:", "")
+        self.calls.append(("get", ident))
+        if "merge" in self.kinds() and ident in self.gone:
+            req = httpx.Request("GET", f"https://api.example.test/v2/contact/id:{ident}")
+            raise httpx.HTTPStatusError("not found", request=req, response=httpx.Response(404, request=req))
+        return {"id": int(ident)}
+
+    def send_message(self, identifier, text):
+        ident = str(identifier).replace("id:", "")
+        self.calls.append(("send", ident, text))
+        if self.send_error is not None and ident in self.send_error:
+            raise self.send_error[ident]
+        return {"messageId": 1}
 
     def update_contact(self, identifier, payload):
         self.calls.append(("put", str(identifier).replace("id:", ""), payload))
@@ -690,3 +709,124 @@ def test_wu12_a_merge_response_naming_a_third_id_is_ignored_and_the_second_looku
         assert client.kinds().count("lookup") == 2
         assert [r.respond_io_id for r in _rows(db)] == [str(TURN_ID)]
         assert str(row.id) == str(_rows(db)[0].id)
+
+
+# ---------------------------------------------------------------- WA-MERGE-WELCOME: the survivor really exists
+# Prod 13 Nov: the verified line went to the merged-away contact and Respond.io answered 404. Respond.io
+# keeps the OLDER contact; the merge response (or the lookup right after it) may still name the one that
+# is gone, so the CRM checks the id it is about to keep before it writes the row or sends the line.
+
+
+def _not_found(ident):
+    req = httpx.Request("POST", f"https://api.example.test/v2/contact/id:{ident}/message")
+    return httpx.HTTPStatusError("Client error '404 Not Found'", request=req, response=httpx.Response(404, request=req))
+
+
+def test_mw1_merge_response_naming_the_merged_away_contact_keeps_the_other_one():
+    m = _mod()
+    with blank_session() as db:
+        ws = _workspace(db)
+        _row(db, f"+{E164}", respond_io_id=str(PHONE_ID), workspace_id=str(ws.id))
+        client = FakeClient(merge_result="phone", gone={PHONE_ID})
+        out = m.link_phone(db, client, contact_respond_id=str(TURN_ID), phone=E164)
+        assert out.status == "merged"
+        assert out.survivor_respond_id == str(TURN_ID)
+        assert ("put", str(TURN_ID), {"phone": f"+{E164}"}) in client.calls
+        assert [r.respond_io_id for r in _rows(db)] == [str(TURN_ID)]
+
+
+def test_mw2_lookup_after_a_bare_merge_response_naming_the_merged_away_contact_keeps_the_other_one():
+    m = _mod()
+    with blank_session() as db:
+        _workspace(db)
+        client = FakeClient(merge_result="none", after_merge_id=PHONE_ID, gone={PHONE_ID})
+        out = m.link_phone(db, client, contact_respond_id=str(TURN_ID), phone=E164)
+        assert out.status == "merged"
+        assert out.survivor_respond_id == str(TURN_ID)
+        assert [r.respond_io_id for r in _rows(db)] == [str(TURN_ID)]
+
+
+def test_mw3_card_sender_named_but_gone_keeps_the_phone_contact_with_no_phone_write():
+    m = _mod()
+    with blank_session() as db:
+        _workspace(db)
+        client = FakeClient(merge_result="turn", gone={TURN_ID})
+        out = m.link_phone(db, client, contact_respond_id=str(TURN_ID), phone=E164)
+        assert out.status == "merged"
+        assert out.survivor_respond_id == str(PHONE_ID)
+        assert "put" not in client.kinds()
+        assert [r.respond_io_id for r in _rows(db)] == [str(PHONE_ID)]
+
+
+def test_mw4_neither_merged_contact_found_is_a_failure_with_no_crm_write():
+    m = _mod()
+    with blank_session() as db:
+        ws = _workspace(db)
+        _row(db, f"+{E164}", respond_io_id="900000077", workspace_id=str(ws.id))
+        client = FakeClient(merge_result="phone", gone={PHONE_ID, TURN_ID})
+        out = m.link_phone(db, client, contact_respond_id=str(TURN_ID), phone=E164)
+        assert out.status == "failed"
+        assert [r.respond_io_id for r in _rows(db)] == ["900000077"]
+
+
+def test_mw5_named_survivor_that_exists_is_kept_unchanged():
+    m = _mod()
+    with blank_session() as db:
+        _workspace(db)
+        client = FakeClient(merge_result="phone", gone={TURN_ID})
+        out = m.link_phone(db, client, contact_respond_id=str(TURN_ID), phone=E164)
+        assert out.status == "merged" and out.survivor_respond_id == str(PHONE_ID)
+        assert "put" not in client.kinds()
+
+
+def _logs(db):
+    from app.models.integration import IntegrationLog
+
+    return db.query(IntegrationLog).order_by(IntegrationLog.created_at).all()
+
+
+def test_mw6_verified_line_404_is_resent_once_to_the_contact_holding_the_phone():
+    m = _mod()
+    turn_id = str(uuid.uuid4())
+    with blank_session() as db:
+        client = FakeClient(phone_contact_id=TURN_ID, send_error={str(PHONE_ID): _not_found(PHONE_ID)})
+        ok = m.send_verified(db, client, identifier=str(PHONE_ID), turn_id=turn_id, phone=E164)
+        assert ok is True
+        sends = [c for c in client.calls if c[0] == "send"]
+        assert sends == [("send", str(PHONE_ID), m.VERIFIED_LINE), ("send", str(TURN_ID), m.VERIFIED_LINE)]
+        assert [(r.status, r.external_reference) for r in _logs(db)] == [
+            ("failed", str(PHONE_ID)),
+            ("success", str(TURN_ID)),
+        ]
+
+
+def test_mw7_verified_line_not_404_is_not_resent():
+    m = _mod()
+    with blank_session() as db:
+        err = _http_error(500)
+        client = FakeClient(phone_contact_id=TURN_ID, send_error={str(PHONE_ID): err})
+        ok = m.send_verified(db, client, identifier=str(PHONE_ID), turn_id=str(uuid.uuid4()), phone=E164)
+        assert ok is False
+        assert [c[0] for c in client.calls].count("send") == 1
+
+
+def test_mw8_verified_line_404_with_the_phone_on_the_same_contact_is_not_resent():
+    m = _mod()
+    with blank_session() as db:
+        client = FakeClient(phone_contact_id=PHONE_ID, send_error={str(PHONE_ID): _not_found(PHONE_ID)})
+        ok = m.send_verified(db, client, identifier=str(PHONE_ID), turn_id=str(uuid.uuid4()), phone=E164)
+        assert ok is False
+        assert [c[0] for c in client.calls].count("send") == 1
+
+
+def test_mw9_verified_line_retry_failing_too_is_logged_and_not_tried_a_third_time():
+    m = _mod()
+    with blank_session() as db:
+        client = FakeClient(
+            phone_contact_id=TURN_ID,
+            send_error={str(PHONE_ID): _not_found(PHONE_ID), str(TURN_ID): _not_found(TURN_ID)},
+        )
+        ok = m.send_verified(db, client, identifier=str(PHONE_ID), turn_id=str(uuid.uuid4()), phone=E164)
+        assert ok is False
+        assert [c[0] for c in client.calls].count("send") == 2
+        assert [r.status for r in _logs(db)] == ["failed", "failed"]
