@@ -625,6 +625,21 @@ PERMISSION_REGISTRY.extend([
             "and edit any project regardless of ownership."
         ),
     },
+    # PROJECT-MIGRATION-TOOL (PLAN-project-import-12nov.md): the in-app import of the PO
+    # register workbook. Migration pimp_0001 grants both to the superadmin and admin roles
+    # (who also pass by bypass); any other role gets them only when someone grants them.
+    {
+        "slug": "projects.import.view",
+        "name": "View Project Imports",
+        "description": "See project import runs, their value links and their results.",
+    },
+    {
+        "slug": "projects.import.run",
+        "name": "Run Project Imports",
+        "description": (
+            "Upload a PO register workbook, link its values, preview, import and revert a run."
+        ),
+    },
     {
         "slug": "projects.quotations.approve",
         "name": "Approve Quotation Discounts and Off-Series Lines",

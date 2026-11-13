@@ -279,6 +279,11 @@ const STAFF_SIDEBAR: MenuConfig = [
             permission: 'projects.types.view',
           },
           {
+            title: 'Project import',
+            path: '/project-sales/import',
+            permission: 'projects.import.view',
+          },
+          {
             title: 'Price Floors',
             path: '/project-sales/price-floors',
             permission: 'projects.types.view',
@@ -2447,6 +2452,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         title: 'Series',
         path: '/project-sales/series',
         permission: 'projects.types.view',
+      },
+      {
+        title: 'Project import',
+        path: '/project-sales/import',
+        permission: 'projects.import.view',
       },
       {
         title: 'Price Floors',

@@ -339,8 +339,9 @@ describe('every DataGrid list segment has a loading.tsx (M5-01)', () => {
     // DataGrid list segments with their own `loading.tsx` (ListPageSkeleton); `after-sales/dispatch-board` renders
     // no DataGrid, so it is not a list segment. Total: 179.
     // SPARE-PART-ORDER-REQUEST (hand-test round G3): `procurement-management/spare-part-requests`
-    // is a new DataGrid list segment with its own `loading.tsx` (ListPageSkeleton). Total: 180.
-    expect(requiredSegmentNames.length).toBe(180);
+    // and PROJECT-MIGRATION-TOOL (#2385): `project-sales/import` are new DataGrid list segments,
+    // each with its own `loading.tsx` (ListPageSkeleton). Total: 181.
+    expect(requiredSegmentNames.length).toBe(181);
 
     for (const name of requiredSegmentNames) {
       const dir = path.join(PROTECTED_ROOT, name);

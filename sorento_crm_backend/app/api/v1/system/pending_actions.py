@@ -306,6 +306,17 @@ def _assert_entity_visible(
         from app.services.customer_group_service import CustomerGroupService
 
         CustomerGroupService(db).get_group(entity_id)
+    elif action_key == "project_import_run.revert":
+        # The run is an `import_jobs` row (no company mixin): read in scope by the service,
+        # 404 for another company's run and 409 for a run that is not imported.
+        from app.services.project_import.service import assert_revertable
+
+        assert_revertable(db, entity_id)
+    elif action_key == "project_import_run.delete":
+        # Same reading as revert: in scope (404 otherwise), and 422 for an imported run.
+        from app.services.project_import.service import assert_deletable
+
+        assert_deletable(db, entity_id)
     elif action_key == "quotation_document.delete":
         from app.services.record_actions import assert_quotation_deletable
 
@@ -483,6 +494,8 @@ _PARK_SCOPED_MODELS: dict = {
 # Record actions NOT read through `_PARK_SCOPED_MODELS`, each for a reason.
 _PARK_SCOPE_EXEMPT: frozenset = frozenset({
     # Checked by their own branch in `_assert_entity_visible` (or `own_scope`).
+    "project_import_run.revert",
+    "project_import_run.delete",
     "accessory_image.delete",
     "certificate_link.remove",
     "combo.unlink_tag_templates",
