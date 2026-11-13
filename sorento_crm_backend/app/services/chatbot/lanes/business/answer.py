@@ -5166,11 +5166,13 @@ def corrects_or_completes(typed: Any, code: Any) -> bool:
     every code part typed as is is accounted for. A part left over that a typed part nearly
     spells is a correction: within `turn_runtime.osa_distance` (a letter changed, added or
     dropped, or two neighbouring letters swapped, each one edit) of at most half the part's
-    length, and at least one (INLT, INELT, INXXT for INLET; SWTWC for SRTWC). A part left over that nothing typed accounts for, with no
-    typed word left either, is a completion (SRTWC287-S for SRTWC287-S-150). A part reached
-    only from typed words left over that spell no part ("gun metal" for GM) is the same code
-    said in words, and a code equal but for case, dashes and spaces is the code: neither is a
-    correction. Reads no word list and no company's letters."""
+    length, and at least one (INLT, INELT, INXXT for INLET; SWTWC for SRTWC; GDL for GLD). A
+    part a longer typed word holds letter for letter in order is that part said in words (lead
+    ruling, AC-33: "gold" for GLD, "grey" for GRY), not a correction. A part left over that
+    nothing typed accounts for, with no typed word left either, is a completion (SRTWC287-S for
+    SRTWC287-S-150). A part reached only from typed words left over that spell no part ("gun
+    metal" for GM) is the same code said in words, and a code equal but for case, dashes and
+    spaces is the code: neither is a correction. Reads no word list and no company's letters."""
     from app.services.chatbot.turn_runtime import osa_distance
 
     if token_key(jsc.nullish_str(typed)) == token_key(jsc.nullish_str(code)):
@@ -5182,6 +5184,11 @@ def corrects_or_completes(typed: Any, code: Any) -> bool:
             left.remove(part)
         else:
             missing.append(part)
+    def said_in(part: str, word: str) -> bool:
+        letters = iter(word)
+        return len(word) > len(part) and all(ch in letters for ch in part)
+
+    missing = [part for part in missing if not any(said_in(part, t) for t in left)]
     if not missing:
         return False
     if any(osa_distance(t, part) <= max(1, len(part) // 2) for part in missing for t in left):
