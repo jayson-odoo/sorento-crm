@@ -395,7 +395,13 @@ def test_ac2g_a_word_on_the_next_line_never_narrows_the_line_above(session_facto
         assert not _couldnt_find(code, text), (code, text)
     stocked = _stocked_ids(c)
     assert {c.uuid_of[m] for m in EXACT_SETS[EXACT]} <= stocked, ("line 1's set was not read", c.stock_calls, text)
-    assert c.uuid_of["QWCX605-RL-SOFT"] not in stocked, ("line 2's word narrowed line 1", c.stock_calls)
+    if who == "dealer":
+        assert c.uuid_of["QWCX605-RL-SOFT"] not in stocked, ("line 2's word narrowed line 1", c.stock_calls)
+    else:
+        # Lead sign-off 13 Nov: for staff the separate word "soft" is also kept by the existing CODE-SUBSTRING
+        # rule (references.py, a word that is a whole segment of a code; same on main), which adds the
+        # QWC605-RL-SOFT set as its own block. Line 1 is not narrowed: it keeps its own set block.
+        assert "*Set QWC605-RL*" in text, text
 
 
 @pytest.mark.parametrize("who", ["dealer", "staff"])
