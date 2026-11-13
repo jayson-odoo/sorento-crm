@@ -290,6 +290,9 @@ export interface Project {
   reject_reason?: string | null;
   submitted_at?: string | null;
   decided_at?: string | null;
+  /** AC-PROJECT-REGISTER: the AutoCount project number once registered (a stored fact). */
+  autocount_project_no?: string | null;
+  autocount_registered_at?: string | null;
   registration?: ProjectRegistrationInfo | null;
   /** Filled on a pending project's detail only. */
   possible_duplicates?: ProjectPossibleDuplicate[];

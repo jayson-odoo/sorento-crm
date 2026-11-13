@@ -103,6 +103,8 @@ export interface SystemSetting {
   sampleRequestRequireProject?: boolean;
   /** AutoCount quotations and sales orders from Project sales (AC-QTSO-CRM). Off by default. */
   projectAutocountWriteEnabled?: boolean;
+  /** AutoCount project registration (AC-PROJECT-REGISTER). Off by default. */
+  projectAutocountRegisterEnabled?: boolean;
   stockDebtPoLinkEnabled?: boolean;
 
   /**

@@ -315,6 +315,8 @@ export default function Page() {
     sampleRequestRequireProject: Boolean(settings?.sampleRequestRequireProject),
     // Off is the shipped state (AC-QTSO-CRM).
     projectAutocountWriteEnabled: Boolean(settings?.projectAutocountWriteEnabled),
+    // Off is the shipped state (AC-PROJECT-REGISTER).
+    projectAutocountRegisterEnabled: Boolean(settings?.projectAutocountRegisterEnabled),
     stockDebtPoLinkEnabled: Boolean(settings?.stockDebtPoLinkEnabled),
     priceTagGuardedClasses: settings?.priceTagGuardedClasses ?? [],
     purchaseRequestDefaultApproverUserId:
@@ -392,6 +394,7 @@ export default function Page() {
       borrowFromOrderEnabled: Boolean(settings.borrowFromOrderEnabled),
       sampleRequestRequireProject: Boolean(settings.sampleRequestRequireProject),
       projectAutocountWriteEnabled: Boolean(settings.projectAutocountWriteEnabled),
+      projectAutocountRegisterEnabled: Boolean(settings.projectAutocountRegisterEnabled),
       stockDebtPoLinkEnabled: Boolean(settings.stockDebtPoLinkEnabled),
       priceTagGuardedClasses: settings.priceTagGuardedClasses ?? [],
       purchaseRequestDefaultApproverUserId:
@@ -451,6 +454,7 @@ export default function Page() {
         borrow_from_order_enabled: values.borrowFromOrderEnabled,
         sample_request_require_project: values.sampleRequestRequireProject,
         project_autocount_write_enabled: values.projectAutocountWriteEnabled,
+        project_autocount_register_enabled: values.projectAutocountRegisterEnabled,
         stock_debt_po_link_enabled: values.stockDebtPoLinkEnabled,
         price_tag_guarded_classes: values.priceTagGuardedClasses,
         purchase_request_default_approver_user_id:
@@ -1297,6 +1301,28 @@ export default function Page() {
                         />
                         <Label htmlFor="project-autocount-write-enabled">
                           AutoCount quotations and sales orders from Project sales
+                        </Label>
+                      </div>
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="projectAutocountRegisterEnabled"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormControl>
+                      <div className="flex items-center space-x-2 rounded-lg bg-accent/60 p-4">
+                        <Switch
+                          id="project-autocount-register-enabled"
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                        />
+                        <Label htmlFor="project-autocount-register-enabled">
+                          AutoCount project registration
                         </Label>
                       </div>
                     </FormControl>

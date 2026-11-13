@@ -3,6 +3,7 @@ import { extractApiError } from '@/lib/api-client';
 import type {
   AutocountWriteCapabilities,
   AutocountWriteResult,
+  ProjectAutocountRegisterStatus,
 } from '../types/projectAutocountWrite.types';
 
 const BASE = '/api/v1/project-sales';
@@ -21,6 +22,14 @@ export async function getAutocountWriteSwitch(): Promise<boolean> {
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load settings'));
   const data = await response.json();
   return Boolean(data?.project_autocount_write_enabled);
+}
+
+/** AC-PROJECT-REGISTER: the "AutoCount project registration" switch, off the same projection. */
+export async function getAutocountRegisterSwitch(): Promise<boolean> {
+  const response = await apiFetch('/api/user-management/settings/app-config');
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load settings'));
+  const data = await response.json();
+  return Boolean(data?.project_autocount_register_enabled);
 }
 
 export async function getAutocountWriteCapabilities(): Promise<AutocountWriteCapabilities> {
@@ -55,3 +64,15 @@ export const cancelQuotationInAutocount = (documentId: string) =>
     `/quotation-documents/${documentId}/autocount/cancel`,
     'Could not cancel the quotation in AutoCount',
   );
+
+/** AC-PROJECT-REGISTER: whether this project can be registered in AutoCount now. */
+export async function getProjectAutocountRegister(
+  projectId: string,
+): Promise<ProjectAutocountRegisterStatus> {
+  const response = await apiFetch(`${BASE}/${projectId}/autocount-register`);
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to check AutoCount'));
+  return response.json();
+}
+
+export const registerProjectInAutocount = (projectId: string) =>
+  post(`/${projectId}/autocount-register`, 'Could not register the project in AutoCount');
