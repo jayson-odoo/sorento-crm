@@ -1393,6 +1393,9 @@ def _target_facts(db: Session, target_ids: set) -> Dict[str, dict]:
             # `spo_allocations.from_po_line_ref` - how `_chain_allocations` walks the chain
             # line to line rather than document to document.
             "source_ref": (line.source_ref or "").strip(),
+            # Who the book ties this line to now; an `autocount` claim places only while it is
+            # still the row's own SO line (a line freed in AutoCount stays unlinked).
+            "from_so_line_ref": (line.from_so_line_ref or "").strip(),
         }
     for allocation, supplier in (
         db.query(SPOAllocation, Supplier.supplier_name)
@@ -1864,6 +1867,8 @@ def pair_needs(
             if fact["kind"] == _SPO:
                 take(claim["target_id"], from_book=True)
                 continue
+            if claim["source"] == "autocount" and fact.get("from_so_line_ref") != ref:
+                continue  # freed or re-pointed in AutoCount since the claim was raised
             _through_po(claim["target_id"])
 
         if book_targets_out is not None:
