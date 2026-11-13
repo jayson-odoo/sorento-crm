@@ -357,3 +357,56 @@ def test_r5_2_letters_out_of_order_are_offered_not_answered(session_factory, mon
     c = _who(session_factory, monkeypatch, stub_access, who, [GLD])
     text = c.say(f"{raw} x 2 stock", _corrected(raw, GLD, 2))
     _assert_offered_not_answered(c, text, who, raw, GLD)
+
+
+# --------------------------------------------------------------------------- round 6 (reviewer probe, crew ruling)
+#
+# Crew ruling: a colour/finish word typed AFTER the code that holds every letter of a letters-only code part in order
+# and is longer than it is the code said in words (answered directly). Any change inside the typed code token itself is
+# a correction (offered, never answered): a letter or digit added, dropped, changed or swapped.
+
+from app.services.chatbot.lanes.business.answer import corrects_or_completes  # noqa: E402
+
+
+@pytest.mark.parametrize(
+    ("typed", "code", "expected"),
+    [
+        # corrections the reviewer found answered directly (must be True)
+        ("SRTWT8259 gold", "SRTWT825-GLD", True),  # the word is fine, the digits are not
+        ("SRTWT82259", "SRTWT8259", True),  # a digit added
+        ("SRTWTC287", "SRTWC287", True),  # a letter added inside the code
+        ("SRTWCC287", "SRTWC287", True),  # a letter doubled inside the code
+        ("INLETT", "INLET", True),  # a letter added to a code word
+        ("SRTUB668-BACK INLETT", INLET, True),
+        # guards: the code said in words, or a real swap
+        ("SRTWT8259 gold", GLD, False),
+        ("SRTWT8259 grey", GRY, False),
+        ("SRTWT8259 gun metal", GM, False),
+        ("SRTWT8259 GDL", GLD, True),
+    ],
+    ids=[
+        "gold_vs_825_GLD", "digit_added", "letter_added_SRTWTC", "letter_doubled_SRTWCC", "INLETT", "BACK_INLETT",
+        "guard_gold", "guard_grey", "guard_gun_metal", "guard_GDL_swap",
+    ],
+)
+def test_r6_corrects_or_completes_reads_a_change_inside_the_code_as_a_correction(typed, code, expected):
+    assert corrects_or_completes(typed, code) is expected, (typed, code)
+
+
+T8259 = "SRTWT8259"
+
+
+@WHO
+def test_r6_a_digit_added_to_the_code_is_offered_never_answered(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+    raw = "SRTWT82259"
+    c = _who(session_factory, monkeypatch, stub_access, who, [T8259])
+    text = c.say(f"{raw} x 2 stock", _corrected(raw, T8259, 2))
+    _assert_offered_not_answered(c, text, who, raw, T8259)
+
+
+@WHO
+def test_r6_a_letter_added_to_a_code_word_is_offered_never_answered(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+    raw = "SRTUB668-BACK INLETT"
+    c = _who(session_factory, monkeypatch, stub_access, who, [INLET])
+    text = c.say(f"{raw} x 2 stock", _corrected(raw, INLET, 2))
+    _assert_offered_not_answered(c, text, who, raw, INLET)
