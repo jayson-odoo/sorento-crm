@@ -41,7 +41,7 @@ before returning.
 Plan: documentation/plans/procurement/PLAN-ocn-order-change-notice-12nov.md.
 
 Revision ID: ocn_0001_order_change_notice
-Revises: nc_0001_non_cancellable
+Revises: n8nra_0001_reply_sender
 """
 from __future__ import annotations
 
@@ -53,7 +53,7 @@ from alembic import op
 
 # Kept <=32 chars: alembic_version.version_num is varchar(32).
 revision = "ocn_0001_order_change_notice"
-down_revision = "nc_0001_non_cancellable"
+down_revision = "n8nra_0001_reply_sender"
 branch_labels = None
 depends_on = None
 
