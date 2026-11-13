@@ -8,7 +8,9 @@ Use an Order Change Notice when an order has already been received and something
 
 Open **Project Sales Admin > Order Change Notices**, after **Sponsorship Forms**. The page lists every notice you may see. Click a row to open it.
 
-You see all notices of your company, or only the ones you raised or are named on (as sales in charge or C.S. in charge), depending on your role.
+A salesperson finds it under **My requests > Order Change Notice** instead. Like the other request forms, it shows there only when **Order Change Notice** is visible for the salesperson's contact: an admin turns it on (or off) per contact on the contact's **Portal forms** card, for a group on the contact tag card, or for a market segment under **Additional portal forms**. It is off until someone turns it on. A contact's own setting wins over its tags and segments.
+
+You see all notices of your company, or only the ones you raised or are named on (as **Requested by** or C.S. in charge), depending on your role.
 
 ## Types of change
 
@@ -25,13 +27,14 @@ The risk is shown for information. It does not change who approves or how long e
 
 ## Steps - raise a notice (salesperson)
 
-1. Open **Project Sales Admin > Order Change Notices** and click **Create**.
+1. Open **Project Sales Admin > Order Change Notices** (a salesperson: **My requests > Order Change Notice**) and click **Create**.
 2. Fill in the header:
    * **Customer Name** (required) - search and pick the customer.
    * **Customer PO No.** (required) - type it, for example `XT04/3871 (R1)` for a revised PO.
    * **SO No.** - type it.
    * **Registered project (optional)** - search a project by code or title. It becomes required only when an admin has switched on **Order change notices need a registered project**.
-   * **C.S. Incharge** and **Sales Incharge** - choose a person each.
+   * **Requested by** - the salesperson the notice is for. It starts as you (your contact) and you can change it, the same way as **Requested by** on a purchase request; only contacts that may be requestors are offered.
+   * **C.S. Incharge** - choose a person.
    * **Type of change** (required) - Advance, Exchange, Cancellation or Delay.
    * **Description** - say what is changing and why.
 3. Under **Line items**, click **Add row** for each affected item and fill in **Product**, **Qty before**, **Qty after**, **Date before**, **Date after**, **Delivered** and **Remark**. Delivered is for information; nothing is blocked if goods have already been delivered. Add at least one line to submit.
