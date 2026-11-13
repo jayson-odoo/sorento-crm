@@ -532,6 +532,23 @@ exports[`MENU_SIDEBAR for staff is unchanged > admin with every permission: filt
   {
     "children": [
       {
+        "path": "/after-sales/service-jobs",
+        "title": "Service Jobs",
+      },
+      {
+        "path": "/after-sales/dispatch-board",
+        "title": "Dispatch Board",
+      },
+      {
+        "path": "/after-sales/technicians",
+        "title": "Technicians",
+      },
+    ],
+    "title": "After-Sales Service",
+  },
+  {
+    "children": [
+      {
         "path": "/sla-management/sla-policies",
         "title": "SLA Policies",
       },

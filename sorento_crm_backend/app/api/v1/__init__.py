@@ -13,6 +13,7 @@ from app.api.v1 import (
     projects,
     forms,
     complaints,
+    after_sales,
     sla,
     resources,
     user_management,
@@ -148,6 +149,12 @@ api_router.include_router(
     prefix="/complaints-management",
     tags=["complaints"],
     dependencies=[Depends(require_module_enabled_with_api_key("complaints"))],
+)
+api_router.include_router(
+    after_sales.router,
+    prefix="/after-sales",
+    tags=["after-sales"],
+    dependencies=[Depends(require_module_enabled_with_api_key("after_sales"))],
 )
 api_router.include_router(
     sla.router,
