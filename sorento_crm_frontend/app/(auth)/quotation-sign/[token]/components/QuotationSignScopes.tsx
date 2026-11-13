@@ -48,7 +48,7 @@ const PRESENTATION: Record<string, { th: string; td: string }> = {
   product_code: { th: 'min-w-[120px] text-left', td: '' },
   qty: { th: 'min-w-[70px] text-right', td: 'text-right tabular-nums' },
   unit_rate: { th: 'min-w-[120px] text-right', td: 'text-right tabular-nums' },
-  complete_set: { th: 'min-w-[110px] text-left', td: 'text-muted-foreground' },
+  complete_set: { th: 'min-w-[90px] text-left', td: 'text-muted-foreground' },
   // The flag and the line note arrive on separate lines (QUOTE-LINE-NOTE-REMARK); a long note wraps
   // inside the header's width, so the table still fits the sign card at 1280.
   remark: { th: 'min-w-[140px] text-left', td: 'whitespace-pre-line break-words' },
