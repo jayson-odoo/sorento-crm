@@ -96,8 +96,24 @@ Figures in an answer that the agent cannot trace back to something it looked up 
 | **Update customer ask** | Marks a customer ask done or open, and/or sets its note. | Customer asks: edit |
 | **Create opportunity** / **Update opportunity** | Adds an opportunity or changes one. | Opportunities: add / edit |
 | **Update contact access** | Switches a dealer contact between Business owner and Employee, turns their AI replies on or off, links or unlinks their customer accounts. Resigning a contact (AI replies off and accounts unlinked) can be undone. | Contacts: edit (or edit own) |
+| **Give chatbot access** | Gives one or more dealer contacts AI access for Sorento or Mocha, from a typed list, a pasted table or a screenshot (for example of the Contacts list). | Contacts: edit (or edit own) |
 | **Decide purchase request** | Approves or rejects a purchase request or sponsorship form. A rejection needs a reason. The requester and the dealer contact are told. | Purchase requests: approve |
 | **Undo purchase request action** | Withdraws a decision that is still waiting to apply, or undoes one that already applied (needs a reason; everyone involved is told). | Purchase requests: approve |
+
+### Giving chatbot access from a list or a screenshot
+
+Attach a screenshot or paste a table of phones and names, then say what to give, for example
+"Please grant them Mocha access to the chatbot". The agent finds each person and shows one card for
+all of them.
+
+* **Company:** say Sorento or Mocha. If you do not, the agent asks "Sorento or Mocha for ...?".
+* **Business owner or Employee:** a person who already has dealer access keeps their current role,
+  and the card says "..., their current role". If anyone has no role yet, the agent asks one
+  question, "Owner or employee for ...?", and shows the card after you answer.
+* A row that cannot change (for example a number that is not a mobile number) is listed under
+  **Not changed** with the reason.
+* A screenshot adds only the people in it. Someone from an earlier request in the same chat is
+  added again only when you type their phone.
 
 ## Confirming a change
 
