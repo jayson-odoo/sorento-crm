@@ -270,7 +270,10 @@ TOOL_LABELS: dict[str, str] = {
     "crm_purchase_request_decide": "approve or reject a purchase request",
     "crm_purchase_request_action_undo": "take back a purchase request action",
     "crm_agent_actions_recent": "recent changes",
-    "crm_idea_create": "record a suggestion or wish for what the system should have or do, an idea or a feature request",
+    "crm_idea_create": (
+        "record a suggestion or wish for what the system should have or do, an idea or a feature request, "
+        "or report a problem with the CRM system or the assistant"
+    ),
     "crm_idea_update": "change one of your ideas",
     "crm_ideas_list": "your ideas",
     "crm_my_requests_list": "the customer's own requests and their notes",

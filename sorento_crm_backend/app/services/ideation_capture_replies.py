@@ -20,6 +20,7 @@ from app.services.chatbot_reply_copy import (
     FALLBACK_LANGUAGES,
     language_suffix,
 )
+from app.services.submission_types import SUBMISSION_TYPES, normalise_type
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +75,22 @@ def render_reply(
         lines.append(_template("similar_offered_reply", lang, db))
         if facts.get("see_all"):
             lines.append(_fill(_template("similar_offered_see_all", lang, db), link=facts["see_all"]))
+        return "\n".join(lines)
+
+    row = SUBMISSION_TYPES[normalise_type(facts.get("type"))]
+
+    if kind == "ask_idea":
+        return _template(row.ask_copy, lang, db)
+
+    if kind == "complete" and row.complete_copy != "complete":
+        # One fact per line: what was logged, the title, the photos that landed, the link.
+        lines = [
+            _fill(_template(row.complete_copy, lang, db), idea_number=facts.get("idea_number"), title=facts.get("title"))
+        ]
+        if facts.get("photos"):
+            lines.append(_fill(_template(f"{row.complete_copy}_photos", lang, db), count=facts["photos"]))
+        if facts.get("link"):
+            lines.append(str(facts["link"]))
         return "\n".join(lines)
 
     if kind == "complete":

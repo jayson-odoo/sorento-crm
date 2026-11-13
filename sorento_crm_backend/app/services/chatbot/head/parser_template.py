@@ -237,7 +237,7 @@ The domain is what this message's own words ask about, by meaning, in any langua
 - purchase_cost / check_po_cost: what we paid a supplier (see R-P3-02).
 - goods_receive / check_goods_receive: GR, GRN, goods receive.
 - forms / get_forms: a request for a form. portal_link / get_portal_link: a complaint, a stock inquiry, a product inquiry, a purchase request, a sponsorship form.
-- ideate / submit_idea: the user proposes something that does not exist yet (an idea, a suggestion, a feature request, an improvement, "it would be great if", "cadangan"); asking for existing data stays in its own domain, a complaint stays portal_link, asking for a human is request_for_help (see R-P3-04).
+- ideate / submit_idea: the user proposes something that does not exist yet (an idea, a suggestion, a feature request, an improvement, "it would be great if", "cadangan"), or reports a problem with the CRM system or the assistant itself (an error, a screen or an answer that is wrong or not working); asking for existing data stays in its own domain, a complaint about a product or an order stays portal_link, asking for a human is request_for_help (see R-P3-04).
 - A message that names two or more domains: see R-P3-10.
 
 R-P3-02 PRICE: list price, promotion price, purchase cost

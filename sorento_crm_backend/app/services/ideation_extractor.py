@@ -59,6 +59,7 @@ from sqlalchemy.orm import Session
 from app.services import ai_prompt_registry
 from app.services.ai_assistant_service import AIAssistantConfigService
 from app.services.llm_provider import get_provider, resolve_api_key
+from app.services.submission_types import DEFAULT_TYPE, SUBMISSION_TYPES, normalise_type
 
 logger = logging.getLogger(__name__)
 
@@ -213,6 +214,17 @@ IDEATE_EXTRACTION_JSON_SCHEMA: dict[str, Any] = {
                 "a change."
             ),
         },
+        "type": {
+            "type": "string",
+            "enum": sorted(SUBMISSION_TYPES),
+            "description": (
+                "What the message is, read by its meaning: 'issue' when it reports something "
+                "wrong with the CRM system or the AI assistant (an error, a page or answer that "
+                "is broken, wrong or not working); 'idea' when it is a wish, a feature request "
+                "or a change the user wants. A complaint about a product or an order is neither "
+                "and stays 'idea' here."
+            ),
+        },
         "language": {
             "type": ["string", "null"],
             "enum": ["en", "ms", "zh", None],
@@ -233,6 +245,7 @@ IDEATE_EXTRACTION_JSON_SCHEMA: dict[str, Any] = {
         "change_text",
         "duplicate_choice",
         "has_idea",
+        "type",
         "language",
     ],
 }
@@ -253,6 +266,8 @@ class IdeateExtraction:
     language: str | None = None
     #: False when the message only announces an idea without stating one; None when unknown.
     has_idea: bool | None = None
+    #: The submission type the model read (`submission_types`): idea or issue, idea when unknown.
+    type: str = DEFAULT_TYPE
     #: True when the message could not be read at all (config read, no key for the configured
     #: provider, prompt render, provider or parse error). An empty extraction with
     #: ``failed`` set says nothing about the message, so callers must not read it as "no
@@ -495,6 +510,7 @@ def extract_ideate_turn(
         use_cases=use_cases,
         language=language,
         has_idea=has_idea,
+        type=normalise_type(data.get("type")),
         remove=remove,
         skip=skip,
         title=title,

@@ -368,6 +368,24 @@ IDEATION_CAPTURE_COMPLETE_NO_LINK = {
     "ms": "Idea {{idea_number}} sudah diterima: {{title}}",
     "zh": "创意 {{idea_number}} 已收到：{{title}}",
 }
+#: WA-COMPLAINT-INTAKE (UAC I-2, I-3): an issue (something wrong with the CRM or the assistant).
+#: The filed reply is one fact per line; the Photos line (only when photos landed) and the link
+#: line are added by code after these two lines.
+IDEATION_CAPTURE_ASK_ISSUE = {
+    "en": "What went wrong? Tell me what you saw and where.",
+    "ms": "Apa yang tidak kena? Beritahu saya apa yang anda nampak dan di mana.",
+    "zh": "出了什么问题？请告诉我您看到了什么，在哪里看到的。",
+}
+IDEATION_CAPTURE_COMPLETE_ISSUE = {
+    "en": "Logged as issue {{idea_number}}\n{{title}}",
+    "ms": "Direkodkan sebagai isu {{idea_number}}\n{{title}}",
+    "zh": "已记录为问题 {{idea_number}}\n{{title}}",
+}
+IDEATION_CAPTURE_COMPLETE_ISSUE_PHOTOS = {
+    "en": "Photos: {{count}}",
+    "ms": "Gambar: {{count}}",
+    "zh": "照片：{{count}}",
+}
 IDEATION_CAPTURE_ERROR = {
     "en": "Sorry, I couldn't save that idea just now. Please try again in a moment.",
     "ms": "Maaf, saya tidak dapat menyimpan idea itu sekarang. Sila cuba lagi sebentar nanti.",
@@ -469,6 +487,9 @@ FALLBACK_REPLY_COPY: dict[str, tuple[dict[str, str], tuple[str, ...]]] = {
         ("idea_number", "title", "missing", "link"),
     ),
     "ideation_capture_complete_no_link": (IDEATION_CAPTURE_COMPLETE_NO_LINK, ("idea_number", "title")),
+    "ideation_capture_ask_issue": (IDEATION_CAPTURE_ASK_ISSUE, ()),
+    "ideation_capture_complete_issue": (IDEATION_CAPTURE_COMPLETE_ISSUE, ("idea_number", "title")),
+    "ideation_capture_complete_issue_photos": (IDEATION_CAPTURE_COMPLETE_ISSUE_PHOTOS, ("count",)),
     "ideation_capture_error": (IDEATION_CAPTURE_ERROR, ()),
     "ideation_capture_config_error": (IDEATION_CAPTURE_CONFIG_ERROR, ()),
 }

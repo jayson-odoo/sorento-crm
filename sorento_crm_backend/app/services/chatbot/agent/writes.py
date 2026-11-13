@@ -21,6 +21,7 @@ from fastapi import HTTPException
 from sqlalchemy import or_
 
 from app.services.chatbot import principal as staff_principal
+from app.services.submission_types import SUBMISSION_TYPES, normalise_type
 from app.services.chatbot.agent.tools import (
     ToolResult, _check_ids, _collect_uuids, _permitted, cap_result, clean_detail, panel_closed,
 )
@@ -2286,7 +2287,8 @@ def _idea_values(given: dict, keys: tuple[str, ...], joiner: str) -> list[str]:
 
 def _idea_create_summary(args: dict, before: dict) -> str:
     given = _idea_given(args)
-    line = f"Log idea {_q(given['title'])}" if given.get("title") else "Log idea"
+    head = f"Log {normalise_type(args.get('type'))}"
+    line = f"{head} {_q(given['title'])}" if given.get("title") else head
     line += ": " + ", ".join(_idea_values(given, ("problem", "desired_outcome", "use_cases", "current_workaround"), " "))
     similar = before.get("similar") or []
     if similar:
@@ -2299,7 +2301,8 @@ def _idea_create_execute(db, user: dict, args: dict) -> dict:
 
     from app.services.error_handler import AppException
     from app.services.ideation_capture_service import (
-        IdeationServiceError, _CREATE_PATH, _idea_link, _missing_list, _post_json, _valid_uuid, build_create_payload,
+        IdeationServiceError, _CREATE_PATH, _idea_link, _missing_list, _post_json, _valid_uuid, attach_chat_photos,
+        build_create_payload,
     )
     from app.services.ideation_turn_service import _resolve_ideation_config
 
@@ -2326,6 +2329,7 @@ def _idea_create_execute(db, user: dict, args: dict) -> dict:
             # idea proposed again must land on the same idea.
             intake_ref=str(uuid.uuid5(uuid.NAMESPACE_OID, f"{user['linked_user_id']}\n{is_test}\n{text}")),
             is_test=is_test,
+            submission_type=args.get("type"),
         )
         result = _post_json(config.base_url, config.api_key, _CREATE_PATH, payload, "create idea")
     except IdeationServiceError as exc:
@@ -2360,6 +2364,11 @@ def _idea_create_execute(db, user: dict, args: dict) -> dict:
     note = (f"Idea {number}" if number else "The idea") + (f": {link}" if link else "") + f". Not given: {missing}."
     if is_test:
         note += " This is a test idea, so it is not on the board."
+    else:
+        # The user's recent chat photos go onto the new item; a test item gets none (I-5).
+        photos = attach_chat_photos(db, user_id=user["linked_user_id"], idea_id=result["idea_id"])
+        if photos:
+            note += f" Photos: {photos}."
     return {
         "id": str(result["idea_id"]),
         "after": {"idea_number": number, "title": result.get("title") or given.get("title")},
@@ -2459,11 +2468,24 @@ WRITES[CREATE_IDEA] = WriteDef(
         "function": {
             "name": CREATE_IDEA,
             "description": (
-                "Propose logging one new idea or feature request from the user. Nothing is created until the "
-                "user confirms. Use only what the user said: write a short title from their words and leave any "
+                "Propose logging one new idea or feature request from the user, or a problem they report with the "
+                "CRM system or the AI assistant (type issue; problem = what went wrong, where). Nothing is created "
+                "until the user confirms. Use only what the user said: write a short title from their words and leave any "
                 "other field out. As soon as you have the problem, propose it: do not ask the user to adjust or add more first. Call once per idea."
             ),
-            "parameters": {"type": "object", "properties": {"problem": {"type": "string", "maxLength": MAX_NOTE_CHARS}, **_IDEA_PROPS}, "required": ["problem"]},
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "problem": {"type": "string", "maxLength": MAX_NOTE_CHARS},
+                    **_IDEA_PROPS,
+                    "type": {
+                        "type": "string",
+                        "enum": sorted(SUBMISSION_TYPES),
+                        "description": "issue = something wrong with the CRM system or the AI assistant; idea = a wish or feature request.",
+                    },
+                },
+                "required": ["problem"],
+            },
         },
     },
     read_before=_idea_create_read_before,

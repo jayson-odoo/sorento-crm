@@ -21,14 +21,23 @@ from app.database import get_db
 from app.dependencies import require_permission, require_permission_with_api_key
 from app.services.error_handler import AppException
 from app.services.user_service import UserPermissionService
-from app.services.ideation_gateway_service import UNREACHABLE, call_ss, relay, relay_masked, require_uuid, ss_path
+from app.services.ideation_gateway_service import (
+    UNREACHABLE,
+    call_ss,
+    relay,
+    relay_masked,
+    require_uuid,
+    ss_path,
+    upload_idea_attachment,
+)
 
 VIEW = "ideation.board.view"
 MANAGE = "ideation.ideas.manage"
 #: ss's own upload ceiling (ss `routers/embed.py`); read at most one byte past it.
 ATTACHMENT_CAP_BYTES = 25 * 1024 * 1024
-#: The idea fields a create or an edit may carry to ss. The last three are legacy (retired from the
-#: CRM UI, still forwardable for old clients and the chatbot).
+#: The idea fields a create or an edit may carry to ss. `proposedSolution`, `impact` and `department`
+#: are legacy (retired from the CRM UI, still forwardable for old clients and the chatbot); `type` is
+#: the submission type (`app.services.submission_types`).
 IDEA_FIELDS = (
     "title",
     "problem",
@@ -39,6 +48,7 @@ IDEA_FIELDS = (
     "proposedSolution",
     "impact",
     "department",
+    "type",
 )
 #: The idea fields a merge may take from a chosen idea (ss `POST /embed/ideas/merge` `fields`).
 MERGE_FIELD_KEYS = ("title", "problem", "desiredOutcome", "useCases", "currentWorkaround", "rawText")
@@ -91,7 +101,7 @@ def _masked_comment(resp: httpx.Response) -> Response:
 
 @router.get("/ideas")
 def list_ideas(request: Request, user: dict = _read, db: Session = Depends(get_db)):
-    params = {k: v for k, v in request.query_params.items() if k in ("filter", "search")}
+    params = {k: v for k, v in request.query_params.items() if k in ("filter", "search", "type")}
     if request.query_params.get("mine") == "true":
         params["mine"] = "true"
     return _forward(db, user, "GET", ss_path("embed", "ideas"), params=params)
@@ -155,8 +165,7 @@ def upload_attachment(
     content = file.file.read(ATTACHMENT_CAP_BYTES + 1)
     if len(content) > ATTACHMENT_CAP_BYTES:
         raise AppException(413, "File is too large.", code="PAYLOAD_TOO_LARGE")
-    files = {"file": (file.filename or "file", content, file.content_type or "application/octet-stream")}
-    return _forward(db, user, "POST", ss_path("embed", "ideas", str(idea_id), "attachments"), files=files)
+    return relay(upload_idea_attachment(db, user, idea_id, file.filename, content, file.content_type))
 
 
 @router.post("/ideas/{idea_id}/comments", status_code=201)

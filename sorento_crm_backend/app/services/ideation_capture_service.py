@@ -33,6 +33,7 @@ from app.models.user import User
 from app.services.chatbot_reply_copy import FALLBACK_LANGUAGES
 from app.services.conversation_variables_service import overwrite_for_contact
 from app.services.ideation_capture_replies import render_reply
+from app.services.ideation_gateway_service import upload_idea_attachment, user_for_requester
 from app.services.ideation_extractor import (
     IdeateExtraction,
     clean_use_cases,
@@ -49,6 +50,7 @@ from app.services.ideation_turn_service import (
     _parse_iso,
     _resolve_ideation_config,
 )
+from app.services.submission_types import SUBMISSION_TYPES, normalise_type, ss_fields_for_type
 from app.services.user_service import UserPermissionService
 
 logger = logging.getLogger(__name__)
@@ -67,7 +69,11 @@ _OPTIONAL_FIELDS: tuple[tuple[str, str], ...] = (
     ("use_cases", "Use cases"),
     ("current_workaround", "Current workaround"),
 )
-_REQUIRED_FIELDS: tuple[str, ...] = ("problem",)
+#: Chat photos taken onto a new item (UAC P-1): sent in this window before filing, at most this many.
+_PHOTO_WINDOW = timedelta(minutes=30)
+_MAX_PHOTOS = 10
+#: `session_vars` key holding when this contact last filed live; photos before it went with that one (P-3).
+_FILED_AT_KEY = "ideation_filed_at"
 _EDGE = " \t\r\n.,!?;:'\"()[]"
 
 
@@ -119,10 +125,11 @@ def call_create_idea(base_url: str, api_key: str, payload: dict[str, Any]) -> di
     return data
 
 
-def _missing_required(fields: dict[str, str]) -> list[str]:
-    """The required fields the message did not give. The one seam for the shared
-    required-field helper (LOWSTOCK-FILTER-ASK): its call replaces this body."""
-    return [key for key in _REQUIRED_FIELDS if not (fields.get(key) or "").strip()]
+def _missing_required(fields: dict[str, str], submission_type: str = "idea") -> list[str]:
+    """The required field of the type (`submission_types`) when the message did not give it. The one
+    seam for the shared required-field helper (LOWSTOCK-FILTER-ASK): its call replaces this body."""
+    key = SUBMISSION_TYPES[normalise_type(submission_type)].required_field
+    return [] if (fields.get(key) or "").strip() else [key]
 
 
 def _ss_failure(exc: IdeationServiceError, step: str, respond_io_id: Any) -> str:
@@ -218,8 +225,10 @@ def build_create_payload(
     source_text: str,
     intake_ref: str,
     is_test: bool,
+    submission_type: str | None = "idea",
 ) -> dict[str, Any]:
-    """The ss create payload: the one builder the WhatsApp capture and the agent's idea tool share."""
+    """The ss create payload: the one builder the WhatsApp capture and the agent's idea tool share.
+    The type rides on `ss_fields_for_type` (an idea adds nothing, so its payload is unchanged)."""
     payload: dict[str, Any] = {
         "product_id": config.product_id,
         "problem": fields.get("problem", ""),
@@ -240,7 +249,84 @@ def build_create_payload(
         payload["title"] = title
     if contact.submitter_tier:
         payload["submitter_tier"] = contact.submitter_tier
+    payload.update(ss_fields_for_type(submission_type))
     return payload
+
+
+def _naive_utc(value: datetime) -> datetime:
+    """`attachments` timestamps are naive UTC."""
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def attach_chat_photos(db: Session, *, user_id: Any, idea_id: Any) -> int:
+    """Upload the images the user's linked contact sent in chat onto the new item, as that user
+    (UAC P-1..P-3), and return how many landed. The one function the bot lane and the agent tool call
+    after a LIVE create (a test item gets none).
+
+    The images are the media lane's (`media_tasks._store_media_bytes`: attachments linked to a
+    `chatbot_turn`, uploaded by the contact), sent in the 30 minutes before now and after this
+    contact's previous live filing, newest first, at most 10. Each goes through
+    `ideation_gateway_service.upload_idea_attachment`, the staff upload route's own function. A failed
+    read or upload is logged and skipped, never failing the filing."""
+    from app.models.entity_attachment import EntityAttachmentLink
+    from app.models.resources import Attachment
+    from app.services.resources_service import AttachmentService
+
+    now = datetime.now(timezone.utc)
+    user_row = db.query(User).filter(User.id == str(user_id)).first()
+    contact = (
+        db.query(RespondContact).filter(RespondContact.id == user_row.respond_contact_id).first()
+        if user_row is not None and user_row.respond_contact_id
+        else None
+    )
+    if contact is None:
+        return 0
+    session_vars = dict(contact.session_vars) if isinstance(contact.session_vars, dict) else {}
+    since = now - _PHOTO_WINDOW
+    filed_at = _parse_iso(session_vars.get(_FILED_AT_KEY))
+    if filed_at is not None and filed_at > since:
+        since = filed_at
+    photos = (
+        db.query(Attachment)
+        .join(EntityAttachmentLink, EntityAttachmentLink.attachment_id == Attachment.id)
+        .filter(
+            EntityAttachmentLink.entity_type == "chatbot_turn",
+            Attachment.uploaded_by_contact_id == contact.id,
+            Attachment.mime_type.like("image/%"),
+            Attachment.is_deleted.is_(False),
+            Attachment.uploaded_at > _naive_utc(since),
+        )
+        .order_by(Attachment.uploaded_at.desc())
+        .limit(_MAX_PHOTOS)
+        .all()
+    )
+    # Written before the uploads: whatever happens to them, these photos went with this filing.
+    session_vars[_FILED_AT_KEY] = now.isoformat()
+    contact.session_vars = session_vars
+    db.flush()
+
+    if not photos:
+        return 0
+    try:
+        as_user = user_for_requester(db, str(user_row.id))
+    except Exception:  # noqa: BLE001 - a photo never fails the filing (P-2)
+        logger.warning("ideation: chat photos not sent to item %s", idea_id, exc_info=True)
+        return 0
+    landed = 0
+    for photo in photos:
+        try:
+            upload_idea_attachment(
+                db,
+                as_user,
+                str(idea_id),
+                photo.original_filename or photo.stored_filename or "photo",
+                AttachmentService(db).get_file_content_for(photo),
+                photo.mime_type,
+            )
+            landed += 1
+        except Exception:  # noqa: BLE001 - a photo never fails the filing (P-2)
+            logger.warning("ideation: chat photo %s did not reach item %s", photo.id, idea_id, exc_info=True)
+    return landed
 
 
 def handle_capture_turn(
@@ -357,6 +443,7 @@ def handle_capture_turn(
         use_cases = clean_use_cases(held.get("use_cases"))
         source_text = held["message_text"]
         intake_ref = _valid_uuid(held.get("intake_ref")) or str(uuid.uuid4())
+        submission_type = normalise_type(held.get("type"))
     else:
         assert extraction is not None
         if extraction.failed:
@@ -376,6 +463,7 @@ def handle_capture_turn(
         }
         title = normalise_title(extraction.title)
         use_cases = list(extraction.use_cases)
+        submission_type = normalise_type(extraction.type)
         # An intent-only message ("I have an idea") carries no idea whatever the extractor
         # wrote into problem, so problem is not counted when has_idea is False.
         checked = (
@@ -383,12 +471,12 @@ def handle_capture_turn(
             if extraction.has_idea is False
             else fields
         )
-        if _missing_required(checked):
+        if _missing_required(checked, submission_type):
             if ask_reply:
                 # The user answered the ask-back and still gave no idea: end the ask with a
                 # statement, never a second identical question.
                 return finish("ask_idea_gave_up", "ask_idea_gave_up", {}, language)
-            return finish("ask_idea", "ask_idea", {}, language)
+            return finish("ask_idea", "ask_idea", {"type": submission_type}, language)
         # Minted once the create is decided; a list offer keeps it so NEW (even retried after
         # an ss failure) lands on the same idea.
         intake_ref = str(uuid.uuid4())
@@ -435,6 +523,7 @@ def handle_capture_turn(
                 "intake_ref": intake_ref,
                 "updated_at": _now_iso(),
                 "is_test": bool(is_test),
+                "type": submission_type,
             }
             if extraction.language in FALLBACK_LANGUAGES:
                 pointer["language"] = extraction.language
@@ -451,6 +540,7 @@ def handle_capture_turn(
         source_text=source_text,
         intake_ref=intake_ref,
         is_test=is_test,
+        submission_type=submission_type,
     )
 
     try:
@@ -466,5 +556,8 @@ def handle_capture_turn(
         "title": result.get("title") or title,
         "link": link,
         "missing": _missing_list(payload),
+        "type": submission_type,
+        # A test item gets no photos (I-5).
+        "photos": 0 if is_test else attach_chat_photos(db, user_id=user.id, idea_id=result.get("idea_id")),
     }
     return finish("complete", "complete", facts, language, link=link)
