@@ -62,12 +62,12 @@ Open **After-Sales Service**, **Warranty Configuration**. It has three tabs.
 
 **Policies.** One line per policy version, with **Version**, **In force from**, **In force to**, status and the number of terms. Two versions can never be in force on the same day.
 
-* **Create** adds a version. Right-click a version for **Edit**, **Supersede** or **Delete**.
-* **Supersede** starts a new version on a date you pick and ends the current one the day before. The dialog shows both versions' dates before you save. Products bought before the new date keep the old version's answers.
-* Click a version to open it: **Details** (dates and policy text), **Terms** (grouped by kind: part, cover, defects, installation) and **History**.
-* A term is either lifetime or a number of months, never both.
+* **Create** adds a version. Right-click a version for **Edit**, **Supersede** (only on the version still in force) or **Delete**. Delete counts down with a **Cancel**; there is no confirmation box.
+* **Supersede** starts a new version on a date you pick and ends the current one the day before. The dialog shows both versions' dates before you save. Products bought before the new date keep the old version's answers. The new version starts with no terms: add them on its **Terms** tab.
+* Click a version to open it. It opens on **Details** (dates and policy text). **Terms** lists the terms grouped by kind (part, cover, defects, installation); **History** shows every change.
+* On **Terms**, press **Create** to add a term: pick the **Kind**, type the **Part**, then either tick **Lifetime** or enter the **Months**, never both. Leave **Defects** empty to cover every defect. Right-click a term to **Edit** or **Delete** it.
 
-**Kinds.** The kinds of product the policy names, for example Water Closet or Mirror Cabinet. A pill such as "29 of 31 kinds have no rule" filters the list to the kinds no rule points at yet. A kind that is used by a term, a rule or a job line cannot be deleted: archive it instead. An archived kind stays on old job lines but is not offered on new ones.
+**Kinds.** The kinds of product the policy names, for example Water Closet or Mirror Cabinet. A pill such as "29 of 31 kinds have no rule" filters the list to the kinds no rule points at yet. Right-click a kind to **Edit**, **Archive** or **Delete** it. A kind that is used by a term, a rule or a job line cannot be deleted: archive it instead. An archived kind stays on old job lines but is not offered on new ones; right-click it and choose **Restore** to offer it again.
 
 **Rules.** Which products are which kind. A rule matches on a series, a list of model codes, a category or a code prefix, and has a priority. When several rules match, the highest priority wins. Press **Test a product** to see which kind a product lands in and which rule decided it.
 
@@ -81,7 +81,7 @@ Open **After-Sales Service**, **Warranty Configuration**. It has three tabs.
 
 * Anyone who can see service jobs sees the **Products** and **Warranty** cards and the list's **Warranty** column, and can open Warranty Configuration to read it.
 * Anyone with the service jobs dispatch permission can add, edit and remove job products.
-* Only admins can change policies, terms, kinds and rules.
+* Only admins can change policies, terms, kinds and rules. Everyone else sees Warranty Configuration read-only, without Create or the right-click changes, and does not have it in the sidebar.
 
 ## How you'll be notified
 
