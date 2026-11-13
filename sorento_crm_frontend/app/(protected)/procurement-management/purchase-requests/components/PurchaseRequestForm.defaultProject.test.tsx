@@ -59,7 +59,6 @@ vi.mock('../hooks/usePurchaseRequests', () => ({
 }));
 vi.mock('../services/purchaseRequestService', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../services/purchaseRequestService')>()),
-  searchProjectsForLink: vi.fn().mockResolvedValue([]),
   getOrCreateViewLink: vi.fn(),
 }));
 vi.mock('@/hooks/usePublicViewLinksEnabled', () => ({ usePublicViewLinksEnabled: () => false }));

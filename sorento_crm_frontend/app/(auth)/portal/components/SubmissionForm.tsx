@@ -73,7 +73,6 @@ import {
   PortalUnauthorizedError,
   ProductLookupItem,
   SUBMISSION_LABELS,
-  type ProjectLookupItem,
   statusLabel,
   submitVerb,
 } from '../lib/portal-client';
@@ -98,6 +97,7 @@ import { AIExtractDialog, AIExtractApplyPayload } from './AIExtractDialog';
 import { AttachmentDropzone } from './AttachmentDropzone';
 import { portalSessionRedirectPath } from '../lib/portal-auth-redirect';
 import { AsyncCombobox } from './AsyncCombobox';
+import { PortalProjectCombobox } from './PortalProjectCombobox';
 import { CustomerDebtorCombobox } from '@/components/common/CustomerDebtorCombobox';
 import { DOFilterMultiSelect } from './DOFilterMultiSelect';
 import { LookupSelect } from './LookupSelect';
@@ -117,10 +117,7 @@ import {
   ProductInquiryFormLayout,
 } from '@/app/(protected)/procurement-management/stock-inquiries/components/ProductInquiryFormLayout';
 import { projectCodeLabel } from '@/app/(protected)/project-sales/_shared/lib/projectCode';
-import {
-  PROJECT_NAME_MAX_LENGTH,
-  projectDisplayName,
-} from '@/app/(protected)/project-sales/_shared/lib/projectName';
+import { PROJECT_NAME_MAX_LENGTH } from '@/app/(protected)/project-sales/_shared/lib/projectName';
 import { complaintStatusLabel } from '@/lib/complaint-status';
 import {
   InquiryApplicationsList,
@@ -214,6 +211,18 @@ interface FieldDef {
   showWhenDetail?: (detail: PortalSubmissionDetail | null) => boolean;
 }
 
+/**
+ * PROJECT-RELATED-RECORDS AC-C3: the sponsorship form's project picker (below), on the stock
+ * inquiry, complaint and purchase request too. Optional for everyone (D3): the typed project
+ * name stays for a project that is not registered. The server checks the pick is the contact's.
+ */
+const REGISTERED_PROJECT_FIELD: FieldDef = {
+  name: 'project_id',
+  label: 'Registered project (optional)',
+  widget: 'project-async',
+  displayFromDetail: 'project_code',
+};
+
 const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
   stock_inquiry: [
     { name: 'product_code', label: 'Product code', widget: 'product-async' },
@@ -226,6 +235,7 @@ const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
       widget: 'debtor-async',
     },
     { name: 'project_name', label: 'Project name' },
+    REGISTERED_PROJECT_FIELD,
     {
       name: 'salesperson_contact_id',
       label: 'Salesperson',
@@ -352,12 +362,14 @@ const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
       required: true,
     },
     { name: 'project_title', label: 'Project title' },
+    REGISTERED_PROJECT_FIELD,
   ],
   purchase_request: [
     { name: 'customer_name', label: 'Customer name', widget: 'debtor-async' },
     { name: 'customer_id', label: 'Customer', widget: 'hidden' },
     { name: 'pic', label: 'PIC', placeholder: 'Name and contact number' },
     { name: 'project_title', label: 'Project title' },
+    REGISTERED_PROJECT_FIELD,
     { name: 'purpose', label: 'Purpose', widget: 'textarea' },
     {
       name: 'sales_type',
@@ -3409,23 +3421,12 @@ function FieldControl({
       );
     case 'project-async':
       return (
-        <AsyncCombobox<ProjectLookupItem>
+        <PortalProjectCombobox
           id={field.name}
           value={stringValue}
           onChange={(v) => onChange(v)}
-          fetchOptions={(q) => client.lookupProjects(q)}
-          optionValue={(o) => o.id}
-          optionLabel={(o) => `${projectCodeLabel(o)} - ${projectDisplayName(o)}`}
-          // A registered project is picked, never typed: the column is a UUID FK, so
-          // free text would reach the server as an id and fail there instead of here.
-          allowFreeText={false}
           displayValue={displayValue}
-          // The company on every row (AC-F4a): a contact mapped to two of them cannot
-          // otherwise tell two similarly-named phases apart.
-          optionMeta={(o) => o.company_name ?? ''}
-          placeholder={
-            field.placeholder ?? 'Search your registered projects...'
-          }
+          placeholder={field.placeholder}
           disabled={disabled}
         />
       );
