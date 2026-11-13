@@ -276,14 +276,14 @@ def test_j8_the_job_carries_per_line_fields_and_verdicts_from_the_v15_policy(env
     assert set(fit) >= {"part_name", "verdict", "expiry", "reason", "is_lifetime", "installation_included", "policy_version"}
 
 
-def test_j8_a_line_with_no_kind_reads_unknown_kind_not_set_and_no_lines_is_empty(env, today):
+def test_j8_a_line_with_no_kind_reads_unknown_no_warranty_rule_and_no_lines_is_empty(env, today):
     seed_v15(env)
     cb, job, empty = make_product(env, *CB), make_job(env), make_job(env)
     with api(env) as c:
         add_line(c, job.id, cb.id, purchase_date="2020-03-15")
         (line,) = c.get(f"{JOBS}/{job.id}").json()["warranty"]
         assert [v["verdict"] for v in line["verdicts"]] == ["unknown"]
-        assert "Kind not set" in line["verdicts"][0]["reason"]
+        assert line["verdicts"][0]["reason"] == "No warranty rule for this product yet"
         assert c.get(f"{JOBS}/{empty.id}").json()["warranty"] == []
 
 
@@ -438,3 +438,19 @@ def test_p3_writing_lines_needs_dispatch_and_reading_needs_only_view(env, today)
         assert c.patch(f"{lines_url(job.id)}/{line.id}", json={"purchase_date": "2021-01-02"}).status_code == 403
         assert c.delete(f"{lines_url(job.id)}/{line.id}").status_code == 403
         assert c.get(lines_url(job.id)).status_code == 200
+
+
+# ------------------------------------------------------------------ S3 / E6 no guessed kind
+
+
+def test_s3_a_category_that_equals_a_kind_name_or_code_still_gets_no_kind(env, today):
+    seed_v15(env)
+    product = make_product(env, "ZZT-GUESS-1", "water_closet", name="Water Closet")
+    job = make_job(env)
+    with api(env) as c:
+        line = add_line(c, job.id, product.id, purchase_date="2020-03-15").json()
+        assert line["kind_id"] is None
+        (w,) = c.get(f"{JOBS}/{job.id}").json()["warranty"]
+        assert [v["verdict"] for v in w["verdicts"]] == ["unknown"]
+        assert w["verdicts"][0]["reason"] == "No warranty rule for this product yet"
+        assert summary_of(c, job) == "unknown"

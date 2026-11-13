@@ -19,7 +19,7 @@ Engine contract the coder implements, module `app.services.warranty_service` (na
     defect_not_covered, no_term, unknown. "Today" for the judgement is warranty_today().
 
 Reason texts pinned here: "N years from dd/mm/yyyy" (whole years), "N months from dd/mm/yyyy" (otherwise),
-"Lifetime cover", "No policy in force on dd/mm/yyyy", "Purchase date not entered", "Kind not set",
+"Lifetime cover", "No policy in force on dd/mm/yyyy", "Purchase date not entered", "No warranty rule for this product yet",
 "Defect not stated".  Verdict order inside one line: the terms' sort order, then part name (the term table
 has no sort column unless the coder adds one; ties fall to part name).  A line with a kind but no purchase
 date gets one `unknown` per term of the policy in force today (so the card can name the parts).
@@ -256,13 +256,13 @@ def test_e6_no_purchase_date_gives_unknown_per_term_never_expired(env, today):
     assert all(v.verdict == "unknown" and "Purchase date not entered" in v.reason for v in verdicts)
 
 
-def test_e6_no_kind_gives_unknown_kind_not_set(env, today):
+def test_e6_no_kind_gives_unknown_no_warranty_rule(env, today):
     make_policy(env)
     verdicts = svc().resolve(
         env.db, kind_id=None, purchase_date=date(2020, 3, 15), defect_type_id=None, company_id=env.company_id
     )
     assert [v.verdict for v in verdicts] == ["unknown"]
-    assert "Kind not set" in verdicts[0].reason
+    assert verdicts[0].reason == "No warranty rule for this product yet"
 
 
 # ---------------------------------------------------------------- E7 verdict fields

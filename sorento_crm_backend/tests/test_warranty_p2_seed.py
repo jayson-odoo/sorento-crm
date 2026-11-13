@@ -136,3 +136,9 @@ def test_s1_one_migration_creates_the_five_tables_and_touches_no_complaint_table
     body = hits[0].read_text()
     assert not re.search(r"""["']complaint[a-z_]*["']""", body), "the migration must not touch a complaint table"
     assert "warranty_assessments" not in body
+
+
+def test_s3_seeding_never_adds_rules_beyond_the_two_even_when_run_again(env):
+    seed_v15(env)
+    seed_v15(env)
+    assert counts(env)["rules"] == 2
