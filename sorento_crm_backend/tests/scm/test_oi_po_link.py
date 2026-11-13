@@ -1082,3 +1082,104 @@ def test_po_candidates_say_which_lines_are_tied_to_another_so_line(scm_app, fake
     assert flags.get(w["po_line"].id) is False
     assert flags.get(elsewhere.id) is True
     assert flags.get(own.id) is False
+
+
+# --------------------------------------------------------------------------- db3 run on 1d0d2480b (crew, 13 Nov)
+
+
+def _merge_world(scm_app, route):
+    """Row A (4, linked to the SO line) and row B (6, free) on one PO, plus the free 500 target
+    on another PO: AutoCount merges an unlinked A into B (`replacedLines`, one row of 10)."""
+    w = _oi_world(scm_app, snapshot=(route == "stock_debt"))
+    db = w["db"]
+    _po, row_b = _po_line(db, w["product"], w["hq"], qty=6, so_ref=None, doc_key=12200, dtl_key=12209)
+    _po2, row_a = _po_line(db, w["product"], w["hq"], qty=4, so_ref=w["so_line"].source_ref,
+                           doc_key=12200, dtl_key=12201, po=_po)
+    w["row_a"], w["row_b"] = row_a, row_b
+    db.flush()
+    return w
+
+
+_MERGED_UNLINK = (200, {
+    "operationId": "op-m2", "actionId": None, "outcome": "done", "errorCode": None, "message": "",
+    "warnings": [], "docKey": 12200, "docNo": "202609-S0040",
+    "replacedLines": [{"oldDtlKey": 12201, "newDtlKey": 12209}],
+    "document": {"DocKey": 12200, "DocNo": "202609-S0040", "Details": [
+        {"DtlKey": 12209, "ItemCode": "X", "Location": "HQ", "Qty": 10, "FromSODtlKey": 0},
+    ]},
+})
+
+
+@pytest.mark.parametrize("route", ["oi", "stock_debt"])
+def test_unlinked_card_shows_the_qty_that_was_unlinked_not_the_free_row_it_merged_into(scm_app, fake_ss, route):
+    """db3 step 8: R2's 5 merged into PO A's free row (12) and the card said "(12)"; it says 5."""
+    w = _merge_world(scm_app, route)
+    fake_ss.answers[UNLINK] = _MERGED_UNLINK
+    if route == "oi":
+        resp = w["c"].post(f"{OI}/po-link/unlink", json={
+            "row_ids": _ids(w, "a", "b", "c"), "po_line_ids": [w["row_a"].id]})
+    else:
+        resp = w["c"].post(
+            f"{SNAP}/{w['sid']}/rows/{w['snap_row_id']}/po-link/unlink", json={"po_line_ids": [w["row_a"].id]})
+    assert resp.status_code == 200, resp.text
+    (result,) = resp.json()["results"]
+    assert result["outcome"] == "done"
+    assert result["qty"] == 4
+
+
+@pytest.mark.parametrize("route", ["oi", "stock_debt"])
+def test_change_unlink_card_shows_the_unlinked_qty(scm_app, fake_ss, route):
+    """db3 step 7: R1's 4 merged into PO A's free row (3 + 4 = 7) and the card said "(7)"."""
+    w = _merge_world(scm_app, route)
+    fake_ss.answers[UNLINK] = _MERGED_UNLINK
+    fake_ss.answers[PO_LINKS] = _done_split
+    resp = _post_change(w, route, _change_item(w))
+    assert resp.status_code == 200, resp.text
+    unlinked = [r for r in resp.json()["results"] if r.get("action") == "unlink"]
+    assert [r["qty"] for r in unlinked] == [4]
+
+
+@pytest.mark.parametrize("route", ["oi", "stock_debt"])
+def test_change_holds_no_uncommitted_po_line_writes_while_the_link_half_is_sent(scm_app, fake_ss, route):
+    """db3 step 7 / 10: the unlink half's read-back was flushed but not committed when the link
+    half went out, so the Shared Service's push of the link read-back to the CRM PO ingest
+    waited on those PO-line row locks until the CRM's own 60 s timeout, and the screen said
+    "Not linked ... Could not reach AutoCount" for a link that had landed. Every write the CRM
+    has flushed is committed before an AutoCount write is sent."""
+    from sqlalchemy import event
+
+    w = _merge_world(scm_app, route)
+    db = w["db"]
+    db.commit()  # the seeded world is not the request's own work
+    state = {"pending": False, "at_send": []}
+
+    def flushed(session, ctx):
+        state["pending"] = True
+
+    def committed(session):
+        state["pending"] = False
+
+    event.listen(db, "after_flush", flushed)
+    event.listen(db, "after_commit", committed)
+
+    def unlink(request):
+        state["at_send"].append(("unlink", state["pending"]))
+        return _MERGED_UNLINK
+
+    def link(request):
+        state["at_send"].append(("link", state["pending"]))
+        return _done_split(request)
+
+    fake_ss.answers[UNLINK] = unlink
+    fake_ss.answers[PO_LINKS] = link
+    fake_ss.answers[BATCH] = (404, {"code": "NOT_FOUND", "message": "no route"})
+    try:
+        resp = _post_change(w, route, _change_item(w))
+    finally:
+        event.remove(db, "after_flush", flushed)
+        event.remove(db, "after_commit", committed)
+    assert resp.status_code == 200, resp.text
+    assert [kind for kind, _ in state["at_send"]] == ["unlink", "link"]
+    assert state["at_send"] == [("unlink", False), ("link", False)], state["at_send"]
+    linked = [r for r in resp.json()["results"] if r.get("action") == "link"]
+    assert [r["outcome"] for r in linked] == ["done"]
