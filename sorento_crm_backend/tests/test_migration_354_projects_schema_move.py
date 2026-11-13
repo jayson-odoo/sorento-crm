@@ -108,6 +108,9 @@ BORN_AFTER_THE_MOVE = frozenset({
     # autosaved state and its insert-only History, born straight into `projects`.
     "quotation_document_drafts",
     "quotation_document_snapshots",
+    # PROJECT-MIGRATION-TOOL (#2385, migration pimp_0001_import_value_maps): the project import's
+    # saved value links, born straight into `projects`.
+    "import_value_maps",
 })
 
 MIGRATION = (

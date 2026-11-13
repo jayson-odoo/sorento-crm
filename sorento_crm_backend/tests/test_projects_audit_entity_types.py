@@ -119,6 +119,9 @@ BORN_AFTER_THE_MOVE = frozenset({
     # autosaved state and its insert-only History, born straight into `projects`.
     "quotation_document_drafts",
     "quotation_document_snapshots",
+    # PROJECT-MIGRATION-TOOL (#2385, migration pimp_0001_import_value_maps): the project import's
+    # saved value links, born straight into `projects`.
+    "import_value_maps",
 })
 
 
@@ -192,6 +195,10 @@ def test_a_model_born_after_the_move_keeps_the_prefix_convention_it_was_born_wit
     from app.models.sample_request import SampleRequest
 
     assert _audit_entity_type(SampleRequest) == "project_sample_requests"
+    # PROJECT-MIGRATION-TOOL (#2385): the same convention, pinned at birth.
+    from app.models.project_import import ProjectImportValueMap
+
+    assert _audit_entity_type(ProjectImportValueMap) == "project_import_value_maps"
 
 
 def test_every_renamed_model_pins_its_pre_move_audit_entity_type():

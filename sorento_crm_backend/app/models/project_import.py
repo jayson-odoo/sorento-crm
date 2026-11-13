@@ -36,6 +36,8 @@ def _uuid_str() -> str:
 
 class ProjectImportValueMap(Base, CompanyScopedMixin):
     __tablename__ = "import_value_maps"
+    # Born straight into `projects`: the `project_` audit prefix its siblings pin (ADR-0011).
+    __audit_entity_type__ = "project_import_value_maps"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     kind = Column(String(16), nullable=False)
