@@ -578,6 +578,10 @@ def test_r12_an_unknown_outcome_keeps_the_key_and_the_next_press_resends_it(api,
     third = client.post(_url(world.project.id))
     assert third.json()["message"] == "PJ-0003 is already in AutoCount."
     assert len(fake_ss.to("POST", PROJECTS_CREATE_PATH)) == 2, "nothing is created twice"
+    # R14: both presses reached the SS, so each left one Activity row; the third sent nothing.
+    assert sorted(_activity(db, world.project)) == sorted(
+        [NOT_DONE_PREFIX + first.json()["message"], DONE_PREFIX + "PJ-0003"]
+    )
 
 
 # =========================================================================== R15: one-shot
@@ -587,8 +591,12 @@ def test_r15_editing_a_registered_project_sends_nothing_to_autocount(api, fake_s
     client, db, world = api
     offer_projects(fake_ss)
     fake_ss.answers[("POST", PROJECTS_CREATE_PATH)] = (200, done_body(doc_no="PJ-0004", doc_key=558))
+    fields = ("title", "project_code", "outcome", "status_id", "approval_state", "owner_user_id")
+    before = {f: getattr(world.project, f) for f in fields}
     assert client.post(_url(world.project.id)).json()["outcome"] == "done"
     calls = len(fake_ss.calls)
+    db.refresh(world.project)
+    assert {f: getattr(world.project, f) for f in fields} == before, "registering changes nothing else"
 
     edit = client.put(f"{BASE}/projects/{world.project.id}", json={"title": "ZZT renamed development"})
 
