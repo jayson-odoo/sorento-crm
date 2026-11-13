@@ -80,6 +80,9 @@ function itemPickPatch(option: SearchableSelectOption): Partial<DraftLine> {
     name: option.name ?? option.label,
     code: option.code ?? '',
     guard_error: null,
+    // A picked Item makes this a new line: a saved id claims the saved line's tags on the server,
+    // so it travels only with the product it was saved with (PRICETAG-ALA-CARTE review).
+    saved_id: null,
     // A set is printed as one thing and carries no package (D2: a cabinet
     // request never mixes set and combo on one line), so both kinds reset
     // here and only a product goes on to ask what it is sold as - the effect
@@ -662,6 +665,8 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
           name: '',
           code: '',
           guard_error: null,
+          // An empty row is no longer the saved line.
+          saved_id: null,
           // The package belonged to the product that just went away.
           combo_id: null,
           combos: [],

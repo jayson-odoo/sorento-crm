@@ -138,6 +138,14 @@ def sales_agents_for_contact(db: Session, contact_id: str) -> list:
     return agents_for_contact(db, contact_id)
 
 
+def _item_key(line_data: dict) -> tuple:
+    """A payload line's (product_id, product_set_id), compared the way the stored columns read."""
+    return tuple(
+        str(line_data.get(field)).lower() if line_data.get(field) else None
+        for field in ("product_id", "product_set_id")
+    )
+
+
 class PriceTagRequestService:
     """Stateless helpers for price tag requests."""
 
@@ -371,10 +379,15 @@ class PriceTagRequestService:
         claimed: set[str] = set()
         claims: dict[int, dict] = {}
         # Claims by id first, so a line without one can never take an old line a
-        # later payload line names.
+        # later payload line names. An id is a claim only on a saved line of the
+        # SAME product or set (review): otherwise the line is treated as new.
         for idx, line_data in enumerate(lines):
             old = old_by_id.get(str(line_data.get("id") or ""))
-            if old is not None and old["id"] not in claimed:
+            if (
+                old is not None
+                and old["id"] not in claimed
+                and old["key"][:2] == _item_key(line_data)
+            ):
                 claims[idx] = old
                 claimed.add(old["id"])
         for idx, line_data in enumerate(lines):

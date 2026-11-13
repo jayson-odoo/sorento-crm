@@ -7,6 +7,7 @@ from decimal import Decimal
 from typing import Annotated, Any, Literal, Optional, Union
 
 from pydantic import (
+    AfterValidator,
     BaseModel,
     ConfigDict,
     Field,
@@ -46,6 +47,30 @@ class LinePartIn(BaseModel):
     candidates: list[str] = Field(default_factory=list, max_length=50)
 
 
+#: PRICETAG-ALA-CARTE review: a product may now repeat on a request, so nothing else bounds how
+#: many lines (or parts) one save writes. One constant per limit, read by create, update and
+#: portal revise alike.
+MAX_LINES_PER_REQUEST = 500
+LINES_LIMIT_MESSAGE = f"A request holds at most {MAX_LINES_PER_REQUEST} lines."
+MAX_PARTS_PER_LINE = 100
+PARTS_LIMIT_MESSAGE = f"A line holds at most {MAX_PARTS_PER_LINE} parts."
+
+
+def _check_parts(value):
+    if value is not None and len(value) > MAX_PARTS_PER_LINE:
+        raise ValueError(PARTS_LIMIT_MESSAGE)
+    return value
+
+
+def _check_lines(value):
+    if value is not None and len(value) > MAX_LINES_PER_REQUEST:
+        raise ValueError(LINES_LIMIT_MESSAGE)
+    return value
+
+
+_LineParts = Annotated[list[LinePartIn], AfterValidator(_check_parts)]
+
+
 #: PRICETAG-UPGRADE-VARIANTS: a product id as a line's unticked member (a UUID is 36 characters);
 #: anything longer is a 422 at the boundary, never a database error.
 _VariantId = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=36)]
@@ -67,7 +92,7 @@ class PriceTagRequestLineCreate(BaseModel):
     # display order (D2). `alternatives` is gone - the OR-choices field it carried
     # is what the open part row replaced.
     combo_id: Optional[str] = None
-    parts: list[LinePartIn] = Field(default_factory=list)
+    parts: _LineParts = Field(default_factory=list)
     included_accessories: Optional[str] = None
     # Free-text note on the line (D6, r7).
     remarks: Optional[str] = None
@@ -91,6 +116,9 @@ class PriceTagRequestLineCreate(BaseModel):
     # PRICETAG-UPGRADE-VARIANTS S3: the variant members UNTICKED for this tag. Each must sit in
     # the line product's variant tree (422 NOT_A_VARIANT), checked in the service.
     excluded_variant_ids: list[_VariantId] = Field(default_factory=list, max_length=500)
+
+
+_RequestLines = Annotated[list[PriceTagRequestLineCreate], AfterValidator(_check_lines)]
 
 
 class PriceTagReviseLineIn(BaseModel):
@@ -120,7 +148,7 @@ class PriceTagReviseLineIn(BaseModel):
     product_set_id: Optional[str] = None
     #: The line's package (None = ala carte) and its parts; absent = the old line's are kept.
     combo_id: Optional[str] = None
-    parts: Optional[list[LinePartIn]] = None
+    parts: Optional[_LineParts] = None
     quantity: int = Field(default=1, ge=1)
     remarks: Optional[str] = None
     promotion_id: Optional[str] = None
@@ -380,7 +408,7 @@ class PriceTagRequestCreate(BaseModel):
     # SUBMIT by `validate_submittable` (not here - a draft may pick Selling
     # before it has a promotion, same as it may have no debtor yet).
     price_mode: Literal["list", "selling"] = "list"
-    lines: list[PriceTagRequestLineCreate] = Field(default_factory=list)
+    lines: _RequestLines = Field(default_factory=list)
 
     # Review round 2: the date input clears to "", not omission - Optional[date]
     # rejects that outright with a 422 instead of treating it as "no date".
@@ -425,7 +453,7 @@ class PriceTagRequestUpdate(BaseModel):
     # handles that regardless of what the default is; an explicit null is
     # now a 422, same as any other unknown price_mode value.
     price_mode: Literal["list", "selling"] = "list"
-    lines: Optional[list[PriceTagRequestLineCreate]] = None
+    lines: Optional[_RequestLines] = None
 
     # Review round 2: same "" -> None coercion as PriceTagRequestCreate.
     @field_validator("needed_by_date", mode="before")

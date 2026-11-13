@@ -421,9 +421,12 @@ def _convert_ptag_revise_line(raw: dict, idx: int) -> dict:
             if error.get("loc") and str(error["loc"][0]) in labels
         ]
         field = failed[0] if failed else "details"
+        from app.schemas.price_tag import PARTS_LIMIT_MESSAGE
+
+        capped = any(PARTS_LIMIT_MESSAGE in str(error.get("msg", "")) for error in exc.errors())
         raise AppException(
             status_code=422,
-            message=f"This line's {field} could not be saved.",
+            message=PARTS_LIMIT_MESSAGE if capped else f"This line's {field} could not be saved.",
             detail=f"line:{idx}",
             code="VALIDATION_ERROR",
         ) from exc
@@ -491,7 +494,7 @@ def _apply_price_tag_lines(db: Session, row: Any, payload: dict) -> None:
     """
     from app.services.dealer_kit import tag_data_service
     from app.services.error_handler import AppException
-    from app.services.price_tag_request_service import PriceTagRequestService
+    from app.services.price_tag_request_service import PriceTagRequestService, _item_key
 
     # Review round 3: `price_mode` reaches the row via bare-setattr
     # (`portal._apply_payload`) - create/update validate it through
@@ -600,7 +603,13 @@ def _apply_price_tag_lines(db: Session, row: Any, payload: dict) -> None:
         by_id: dict[int, str] = {}
         for idx, line in enumerate(converted):
             line_id = str(line.get("id") or "")
-            if line_id in old_by_id and line_id not in claimed:
+            # A claim only on a saved line of the same product or set (review);
+            # anything else is a new line and carries nothing.
+            if (
+                line_id in old_by_id
+                and line_id not in claimed
+                and (old_by_id[line_id][0], old_by_id[line_id][1]) == _item_key(line)
+            ):
                 claimed.add(line_id)
                 by_id[idx] = line_id
         for idx, line in enumerate(converted):
@@ -612,7 +621,7 @@ def _apply_price_tag_lines(db: Session, row: Any, payload: dict) -> None:
                         old_id
                         for old_id, old in old_by_id.items()
                         if old_id not in claimed
-                        and (old[0], old[1]) == (line.get("product_id"), line.get("product_set_id"))
+                        and (old[0], old[1]) == _item_key(line)
                         and ("combo_id" not in line or old[3] == line.get("combo_id"))
                     ),
                     "",
@@ -1795,6 +1804,20 @@ class PortalRevisionService:
             raise handle_unprocessable(
                 f"Keep the reason under {REASON_MAX_LEN} characters."
             )
+        # PRICETAG-ALA-CARTE review: the revise payload is a raw dict, so the line cap the
+        # create / update schemas carry is checked here, before anything is written.
+        if source_entity_type == "price_tag_request":
+            from app.schemas.price_tag import LINES_LIMIT_MESSAGE, MAX_LINES_PER_REQUEST
+            from app.services.error_handler import AppException
+
+            products = (payload or {}).get("products")
+            if isinstance(products, list) and len(products) > MAX_LINES_PER_REQUEST:
+                raise AppException(
+                    status_code=422,
+                    message=LINES_LIMIT_MESSAGE,
+                    detail="products",
+                    code="VALIDATION_ERROR",
+                )
 
         # 3. Backfill version 0 from current state for a pre-feature submission, BEFORE
         #    the payload is applied so it records the version being superseded (UAC G2).
