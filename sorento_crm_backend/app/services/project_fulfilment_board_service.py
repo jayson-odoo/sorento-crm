@@ -929,8 +929,19 @@ class FulfilmentBoardService:
         # build is proposing, and before `_allocate` there is no proposal to compare with.
         # CANCEL-STOP-AT-SO: a line an AutoCount Cancel SO cancelled carries the Transfer to
         # Cancel SO the sync proposed (or CS saved) for CS to confirm or dismiss.
+        # OI-WHOLE-SO-CANCEL F2: and a book-cancelled line (cancelled, not transferred, a pending
+        # change names it) carries the cancel CS saved, even when its OI rows were already handed
+        # over (`cancel_open_oi_rows` 0).
         self._attach_drafts(
-            [*rows, *(row for row in cancelled_rows if row.cancel_open_oi_rows)]
+            [
+                *rows,
+                *(
+                    row
+                    for row in cancelled_rows
+                    if row.cancel_open_oi_rows
+                    or (row.cancelled and not row.cancelled_at and row.pending_change_batch_id)
+                ),
+            ]
         )
         self._attach_saved_remarks([*rows, *cancelled_rows])
 
@@ -974,7 +985,8 @@ class FulfilmentBoardService:
             ),
             "unplanned_orders": self._unplanned_orders(numbers, rows),
             "orders": self._standings(
-                rows, adopted_by_so, pending_by_so, undo_by_so, decision_headers_by_so
+                rows, adopted_by_so, pending_by_so, undo_by_so, decision_headers_by_so,
+                cancelled_rows=cancelled_rows,
             ),
             # SELECTION-scoped totals, counted over every contributing line before any window
             # is applied - never over the cells on screen.
@@ -1890,7 +1902,7 @@ class FulfilmentBoardService:
                 # invisible here while the board shows the order itself, so the one line
                 # this read exists for - the one ordinary demand cannot see - vanished on
                 # exactly the completed orders this lane put on screen.
-                SalesOrder.status.in_(["open", "closed"]),
+                SalesOrder.status.in_(["open", "closed", "cancelled"]),
                 admitted_to_planning(),
                 (SalesOrderLine.line_status != "open") | (demand_qty() <= 0),
                 PlanningChangeRow.applied_state == PLANNING_CHANGE_STATE_PENDING,
@@ -5989,6 +6001,7 @@ class FulfilmentBoardService:
         pending_by_so: Optional[Dict[str, str]] = None,
         undo_by_so: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
         decision_headers_by_so: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
+        cancelled_rows: Sequence[_Row] = (),
     ) -> List[Dict[str, Any]]:
         """Per order: how much of it is on this board, and how much of it can never be decided.
 
@@ -6010,7 +6023,13 @@ class FulfilmentBoardService:
         undo_by_so = undo_by_so or {}
         decision_headers_by_so = decision_headers_by_so or {}
         by_order: Dict[str, Dict[str, Any]] = {}
-        for row in rows:
+        # OI-WHOLE-SO-CANCEL (AC-WC-9d): an order whose ONLY board lines are read-only
+        # cancelled ones still needs its standing (the Confirm posts off it). They seed the
+        # entry and add nothing to any count, exactly as before for an ordinary order.
+        counted = {id(row) for row in rows}
+        for row in [*rows, *cancelled_rows]:
+            if id(row) not in counted and row.sales_order_id in by_order:
+                continue
             standing = by_order.setdefault(
                 row.sales_order_id,
                 {
@@ -6043,6 +6062,8 @@ class FulfilmentBoardService:
                     "decision": decision_headers_by_so.get(row.sales_order_id),
                 },
             )
+            if id(row) not in counted:
+                continue
             standing["line_count"] += 1
             if row.unplannable:
                 standing["unplannable_count"] += 1

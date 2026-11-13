@@ -581,6 +581,11 @@ def test_confirm_all_counts_and_applies_the_cancelled_row(api):
     counted in `lines_decided`."""
     client, world, order, core_so, core_line, line, batch = _one_held_line_cancelled(api)
     db = world.db
+    # F2 12/13 Nov: a cancel is saved like any change before Confirm
+    from .._cancel_decide import decide_cancelled_rows
+
+    decide_cancelled_rows(db, batch.id)
+    db.commit()
 
     response = client.post(f"{BASE}/fulfilment-planning/confirm-all", json={
         "orders": [{"pso_id": order.id, "lines": [], "batch_id": str(batch.id)}],
