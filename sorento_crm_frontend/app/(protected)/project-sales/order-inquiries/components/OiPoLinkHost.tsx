@@ -62,7 +62,8 @@ export function OiPoLinkHost({
     [data],
   );
   const blocked = React.useMemo(() => {
-    if (!data) return null;
+    // Unlink always opens: its popup says what AutoCount answered, line by line.
+    if (!data || kind === 'unlink') return null;
     const lines = data.lines ?? [];
     const menu = poLinkMenu({
       ticked: lines.length || 1,

@@ -126,6 +126,7 @@ export function LinkDocumentDialog({
   linkedQty,
   deliveryDate,
   linkUpTo,
+  poLinesOnly = false,
   onDone,
 }: {
   rowId: string;
@@ -146,16 +147,18 @@ export function LinkDocumentDialog({
    * never refused it.
    */
   linkUpTo?: string | null;
+  /** Offer PO lines only (the "Link to PO..." fallback): no SPO allocation is listed. */
+  poLinesOnly?: boolean;
   onDone: () => void;
 }) {
   const candidatesQuery = useOrderInquiryPoCandidates(rowId);
   const { placeAllocations } = useOrderInquiryPlacementMutations();
   // Stable across a render that touches nothing to do with the query itself (typing in a
   // Take input, expanding a row) - see `EMPTY_CANDIDATES`'s own note.
-  const candidates = React.useMemo(
-    () => candidatesQuery.data?.candidates ?? EMPTY_CANDIDATES,
-    [candidatesQuery.data],
-  );
+  const candidates = React.useMemo(() => {
+    const all = candidatesQuery.data?.candidates ?? EMPTY_CANDIDATES;
+    return poLinesOnly ? all.filter((candidate) => candidate.kind !== 'spo') : all;
+  }, [candidatesQuery.data, poLinesOnly]);
   const [expanded, setExpanded] = React.useState<ExpandedState>({});
   /**
    * ONLY the hand edits, keyed by candidate. The cascade's own preview is read straight

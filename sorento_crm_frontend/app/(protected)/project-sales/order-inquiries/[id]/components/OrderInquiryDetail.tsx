@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   Ban,
   Bookmark,
@@ -39,6 +40,9 @@ import { useDeferredBulkAction } from '@/hooks/useDeferredBulkAction';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { LinkDocumentDialog } from '../../../_shared/components/LinkDocumentDialog';
+import { usePoLinkSwitch } from '../../../_shared/po-link/usePoLink';
+import type { PoLinkKind } from '../../../_shared/po-link/poLinkWording';
+import { OiPoLinkHost } from '../../components/OiPoLinkHost';
 import { OrderInquiryHistory } from './OrderInquiryHistory';
 import { OrderSplitsDialog } from '../../../_shared/components/LineSplitInfo';
 import { BulkRejectOrderInquiryDialog } from '../../../_shared/components/BulkRejectOrderInquiryDialog';
@@ -120,9 +124,15 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
+  const queryClient = useQueryClient();
   const canAct = useHasPermission(ORDER_INQUIRY_ACTION_PERMISSION);
   const canAcknowledge = useHasPermission(ORDER_INQUIRY_ACKNOWLEDGE_PERMISSION);
   const canReserve = useHasPermission(ORDER_INQUIRY_RESERVE_PERMISSION);
+  // OI-PO-LINK: one permission and one Settings switch for the AutoCount PO link, as on the worklist.
+  const holdsLinkPo = useHasPermission('projects.stock_debt.link_po');
+  const poLinkSwitch = usePoLinkSwitch(holdsLinkPo);
+  const canLinkPo = holdsLinkPo && poLinkSwitch.data === true;
+  const [poDialog, setPoDialog] = useState<{ kind: PoLinkKind; rowIds: string[] } | null>(null);
   // #1312 (Q6): the Lines tab's own paperclip upload/remove - the same grant that
   // confirms the board and writes OI lines.
   const canEditAttachments = useHasPermission('projects.projects.edit');
@@ -302,8 +312,24 @@ export function OrderInquiryDetail({ id }: { id: string }) {
     () => selectedLines.filter((l) => l.state === 'placed' || l.state === 'partly_linked'),
     [selectedLines],
   );
+  // The one ticked line the CRM placement dialog (Link to PO... where AutoCount cannot take the
+  // link) is about.
   const chooseDocumentLine =
     selectedIds.length === 1 ? (activeLines.find((l) => l.id === selectedIds[0]) ?? null) : null;
+  const poProducts = new Set(selectedLines.map((l) => l.product_id ?? l.item_code));
+  // The AutoCount link needs the switch, the grant and every ticked line in AutoCount.
+  const poViaAutocount =
+    canLinkPo && selectedLines.length > 0 && selectedLines.every((l) => l.in_autocount !== false);
+  const poWhyNot =
+    selectedLines.length === 0
+      ? 'Tick the lines to link to a PO.'
+      : poProducts.size > 1
+        ? 'Tick lines of one product.'
+        : !poViaAutocount && selectedLines.length !== 1
+          ? 'Tick one line to link it by hand.'
+          : undefined;
+  const autocountLinked = selectedLinked.filter((l) => canLinkPo && l.in_autocount_link);
+  const crmOnlyLinked = selectedLinked.filter((l) => !(canLinkPo && l.in_autocount_link));
 
   // AC-RS-23: enabled only when EVERY selected row is requestable; disabled otherwise,
   // with a tooltip naming the FIRST reason (not a tally of every one).
@@ -702,7 +728,10 @@ export function OrderInquiryDetail({ id }: { id: string }) {
    */
   function unlinkSelected() {
     if (selectedLinked.length === 0) return;
-    unlinkSelectedAction.run(selectedLinked.map((line) => ({ id: line.id })));
+    // Lines AutoCount ties to a PO unlink through the shared dialog; the rest (CRM-only links)
+    // keep the deferred countdown.
+    if (autocountLinked.length > 0) setPoDialog({ kind: 'unlink', rowIds: autocountLinked.map((l) => l.id) });
+    if (crmOnlyLinked.length > 0) unlinkSelectedAction.run(crmOnlyLinked.map((line) => ({ id: line.id })));
   }
 
   // S1 (reviewer, fix round 22 Sep 2026): `page.tsx`'s own `PageHeader` already renders
@@ -808,25 +837,42 @@ export function OrderInquiryDetail({ id }: { id: string }) {
                         Auto link
                       </DropdownMenuItem>
                       <DropdownMenuItem
-                        disabled={!chooseDocumentLine}
+                        disabled={Boolean(poWhyNot)}
                         onSelect={
-                          chooseDocumentLine
-                            ? (e) => {
+                          poWhyNot
+                            ? undefined
+                            : (e) => {
                                 e.preventDefault();
-                                setChooseDocumentOpen(true);
+                                if (poViaAutocount) setPoDialog({ kind: 'link', rowIds: selectedIds });
+                                else setChooseDocumentOpen(true);
                               }
-                            : undefined
                         }
                       >
                         <Link2 className="size-4" aria-hidden />
-                        Choose document
+                        {`Link to PO... (${selectedLines.length})`}
                       </DropdownMenuItem>
+                      {canLinkPo ? (
+                        <DropdownMenuItem
+                          disabled={Boolean(poWhyNot) || !poViaAutocount}
+                          onSelect={
+                            poWhyNot || !poViaAutocount
+                              ? undefined
+                              : (e) => {
+                                  e.preventDefault();
+                                  setPoDialog({ kind: 'change', rowIds: selectedIds });
+                                }
+                          }
+                        >
+                          <Wand2 className="size-4" aria-hidden />
+                          {`Change PO... (${selectedLines.length})`}
+                        </DropdownMenuItem>
+                      ) : null}
                       <DropdownMenuItem
                         disabled={selectedLinked.length === 0}
                         onSelect={selectedLinked.length ? unlinkSelected : undefined}
                       >
                         <Unlink className="size-4" aria-hidden />
-                        Unlink selected
+                        {`Unlink... (${selectedLinked.length})`}
                       </DropdownMenuItem>
                       <DropdownMenuItem
                         disabled={selectedRejectable.length === 0}
@@ -1068,9 +1114,23 @@ export function OrderInquiryDetail({ id }: { id: string }) {
             (chooseDocumentLine.links ?? []).reduce((sum, l) => sum + Number(l.qty || '0'), 0),
           )}
           deliveryDate={chooseDocumentLine.delivery_date}
+          poLinesOnly
           onDone={() => {
             setChooseDocumentOpen(false);
             setRowSelection({});
+          }}
+        />
+      ) : null}
+
+      {poDialog ? (
+        <OiPoLinkHost
+          kind={poDialog.kind}
+          rowIds={poDialog.rowIds}
+          onClose={() => {
+            setPoDialog(null);
+            setRowSelection({});
+            void queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_HEADER_LINES_KEY, id] });
+            void queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_HEADER_KEY, id] });
           }}
         />
       ) : null}

@@ -617,7 +617,7 @@ describe('Unlink selected is a server-deferred pending action, not a confirm dia
       },
     );
     fireEvent.click(
-      await screen.findByRole('menuitem', { name: /unlink selected/i }),
+      await screen.findByRole('menuitem', { name: /^unlink\.\.\./i }),
     );
 
     // Target behaviour: no confirmation dialog at all, a deferred countdown instead.
@@ -642,7 +642,7 @@ describe('Unlink selected is a server-deferred pending action, not a confirm dia
       },
     );
     fireEvent.click(
-      await screen.findByRole('menuitem', { name: /unlink selected/i }),
+      await screen.findByRole('menuitem', { name: /^unlink\.\.\./i }),
     );
     await waitFor(() =>
       expect(createPendingActionSpy).toHaveBeenCalledTimes(1),
@@ -962,10 +962,10 @@ describe('Document view gear: Link to PO / Change PO / one Unlink... item', () =
   it.each([
     ['the switch is off', () => { poLinkState.switchOn = false; }],
     ['the grant is missing', () => { permState.denied.add(LINK_PO); }],
-  ])('%s: no Link to PO / Change PO, and Unlink... runs the countdown even for an AutoCount line', async (_name, setup) => {
+  ])('%s: no Change PO (Link to PO... falls back to the CRM dialog), and Unlink... runs the countdown even for an AutoCount line', async (_name, setup) => {
     setup();
     await gear([A, C], ['ZZT-AAA']);
-    expect(screen.queryByRole('menuitem', { name: /^Link to PO/ })).toBeNull();
+    expect(screen.getByRole('menuitem', { name: /^Link to PO/ })).toBeInTheDocument();
     expect(screen.queryByRole('menuitem', { name: /^Change PO/ })).toBeNull();
     fireEvent.click(screen.getByRole('menuitem', { name: /^Unlink\.\.\./ }));
     await waitFor(() => expect(createPendingActionSpy).toHaveBeenCalledTimes(1));
