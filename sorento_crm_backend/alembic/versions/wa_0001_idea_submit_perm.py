@@ -6,7 +6,7 @@ what lets that user file (the capture gate) and opens no Ideas page. Salespeople
 ``portal_user`` is never given ``ideation.board.view``. Idempotent; follows 411_ideation_board_view_perm.
 
 Revision ID: wa_0001_idea_submit_perm
-Revises: nc_0001_non_cancellable
+Revises: n8nra_0001_reply_sender
 Create Date: 2026-11-13
 """
 import uuid
@@ -16,7 +16,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "wa_0001_idea_submit_perm"
-down_revision = "nc_0001_non_cancellable"
+down_revision = "n8nra_0001_reply_sender"
 branch_labels = None
 depends_on = None
 
