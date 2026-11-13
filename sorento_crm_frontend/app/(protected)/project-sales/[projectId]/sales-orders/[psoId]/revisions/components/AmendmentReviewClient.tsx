@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import Link from 'next/link';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { ocnStatusPillKey, ocnStatusWord } from '@/types/orderChangeNotice';
 import { GitCompareArrows } from 'lucide-react';
@@ -42,6 +43,8 @@ import { AmendmentUnmatchedSection } from '../../../../components/AmendmentUnmat
 import { SalesOrderStatusPill } from '../../../../components/SalesOrderStatusPill';
 
 const SCHEDULE_PREFIX = 'schedule:';
+/** `?amendment=<id>`: the amendment this review page shows (the notice's Linked amendment links here). */
+export const AMENDMENT_PARAM = 'amendment';
 const PO_PREFIX = 'po:';
 
 /**
@@ -86,11 +89,23 @@ export function AmendmentReviewClient({
 
   /**
    * The amendment CREATE writes something the preview did not: from here on, decisions and
-   * the change list address rows by `row_key`, which only exists once created. `create.data`
-   * (rather than local state) is the source of the id, so it survives whatever the create
-   * dialog does with its own "created" screen.
+   * the change list address rows by `row_key`, which only exists once created. The id comes
+   * from the create result in this tab, else from `?amendment=` (a reload, or the notice's
+   * Linked amendment link), so an existing amendment can always be opened again.
    */
-  const amendmentId = create.data?.amendment_id ?? null;
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const amendmentFromUrl = searchParams?.get(AMENDMENT_PARAM) ?? null;
+  const amendmentId = create.data?.amendment_id ?? amendmentFromUrl;
+  const createdId = create.data?.amendment_id ?? null;
+  // A created amendment goes into the URL, so a reload opens it rather than an empty compare.
+  React.useEffect(() => {
+    if (!createdId || createdId === amendmentFromUrl) return;
+    const next = new URLSearchParams(searchParams?.toString() ?? '');
+    next.set(AMENDMENT_PARAM, createdId);
+    router.replace(`${pathname}?${next.toString()}`);
+  }, [createdId, amendmentFromUrl, searchParams, pathname, router]);
   const amendment = useAmendment(amendmentId ?? undefined);
   const changeList = useAmendmentAutocountChangeList(amendmentId ?? undefined);
   const exportChangeList = useAmendmentAutocountChangeListExport(amendmentId ?? '');

@@ -723,6 +723,22 @@ class ProjectSODeltaService:
             actor_user_id=actor_user_id,
         )
 
+    def _notice_customer_and_po(self, order: ProjectSalesOrder):
+        """The drafted notice's customer and customer PO no., through the order's own links:
+        its PO's issuing party's customer record (the chain the order itself uses,
+        `ProjectSODraftService._customer_for`) and that PO's number. (None, None) when unlinked."""
+        from app.services.project_so_draft_service import ProjectSODraftService
+
+        po = (
+            self.db.query(ProjectPurchaseOrder)
+            .filter(ProjectPurchaseOrder.id == order.purchase_order_id)
+            .first()
+            if order.purchase_order_id
+            else None
+        )
+        customer = ProjectSODraftService(self.db)._customer_for(order) if po is not None else None
+        return customer, (po.po_number if po is not None else None)
+
     def _persist_amendment(
         self,
         order: ProjectSalesOrder,
@@ -770,9 +786,15 @@ class ProjectSODeltaService:
             ocn.project_sales_order_id = ocn.project_sales_order_id or order.id
             ocn.purchase_order_id = ocn.purchase_order_id or order.purchase_order_id
         else:
+            customer, po_number = self._notice_customer_and_po(order)
             ocn = OrderChangeNotice(
                 company_id=order.company_id,
                 ocn_number=self._next_ocn_number(order.company_id),
+                # From the order's explicit links only (never by matching text): blank when a
+                # link is missing, and Submit then names the field.
+                customer_id=customer.id if customer else None,
+                customer_name=customer.customer_name if customer else None,
+                customer_po_no=po_number,
                 project_id=order.project_id,
                 purchase_order_id=order.purchase_order_id,
                 project_sales_order_id=order.id,

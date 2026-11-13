@@ -156,6 +156,9 @@ export function useAmendment(amendmentId: string | undefined) {
     queryKey: [AMENDMENT_KEY, amendmentId],
     queryFn: () => getAmendment(amendmentId as string),
     enabled: Boolean(amendmentId),
+    // The notice is approved on another screen; back on this tab, its pill and Publish state
+    // must be current (browser pass 4).
+    refetchOnWindowFocus: true,
   });
 }
 

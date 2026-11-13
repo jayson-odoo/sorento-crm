@@ -218,6 +218,15 @@ describe('round 4: the linked amendment on the Details tab (review B1)', () => {
     expect(document.body.textContent).not.toMatch(UUID_RE);
   });
 
+  it('round 14: the sales order link opens this amendment, by number on screen', async () => {
+    mount(amendmentBorn(), []);
+    await ready();
+    const so = screen.getByRole('link', { name: 'SO397450' });
+    expect(so.getAttribute('href')).toBe(
+      `/project-sales/${ocnDetail().project_id}/sales-orders/${SO_ID}/revisions?amendment=${AMENDMENT_ID}`,
+    );
+  });
+
   it('is not drawn for a notice raised by hand with no amendment', async () => {
     mount(ocnDetail(), []);
     await ready();

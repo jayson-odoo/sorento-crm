@@ -276,7 +276,11 @@ function LinkedAmendment({ r }: { r: OcnDetail }) {
           <DocField label="Sales order">
             <ReadValue>
               {r.so_ref && projectPath && soId ? (
-                <Link href={`${projectPath}/sales-orders/${soId}/revisions`} className="text-primary hover:underline">
+                <Link
+                  // Opens this amendment, not an empty compare (`?amendment=`, the review page's param).
+                  href={`${projectPath}/sales-orders/${soId}/revisions${r.amendment_id ? `?amendment=${r.amendment_id}` : ''}`}
+                  className="text-primary hover:underline"
+                >
                   {r.so_ref}
                 </Link>
               ) : (

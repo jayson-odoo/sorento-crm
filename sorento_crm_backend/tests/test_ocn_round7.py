@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from app.api.v1.audit.audit_logs import _derive_description
 
 from ._forms_chain_support import world  # noqa: F401
+from .test_ocn_amendment_link import build  # noqa: F401  (fixture)
 from ._ocn_support import (  # noqa: F401  (fixtures)
     approved,
     create,
@@ -88,3 +89,38 @@ def test_r7_the_history_route_words_a_real_done(ocn, sla):
     said = [r["description"] for r in res.json()["data"] if r["description"]]
     assert "Status: Approved → Done" in said
     assert not any("processed_by_cs" in s or "(ocn." in s or "approval_status" in s for s in said)
+
+
+# ================================================================== round 14: drafted notice prefill
+
+
+def test_r14_a_drafted_notice_takes_the_orders_customer_and_po_from_its_links(build):
+    """The PO's issuing party's customer record and that PO's number (explicit links, never text)."""
+    from app.models.project_so import OrderChangeNotice
+    from app.models.projects import ProjectParty, ProjectPurchaseOrder
+
+    from .test_ocn_amendment_link import _create
+    from .test_project_so_draft import _customer
+
+    b = build
+    customer = _customer(b.db, "ZZT Prefill Customer")
+    po = b.db.get(ProjectPurchaseOrder, b.orders["TOWER"].purchase_order_id)
+    b.db.get(ProjectParty, po.issuing_party_id).customer_id = customer.id
+    b.db.flush()
+    created = _create(b)
+    ocn = b.db.get(OrderChangeNotice, created["ocn_id"])
+    assert ocn.customer_id == customer.id
+    assert ocn.customer_name == customer.customer_name
+    assert ocn.customer_po_no == po.po_number == "HQ/26/01/121"
+
+
+def test_r14_a_missing_link_leaves_the_field_blank(build):
+    from app.models.project_so import OrderChangeNotice
+
+    from .test_ocn_amendment_link import _create
+
+    b = build  # the build's party has no customer record
+    created = _create(b)
+    ocn = b.db.get(OrderChangeNotice, created["ocn_id"])
+    assert ocn.customer_id is None and ocn.customer_name is None
+    assert ocn.customer_po_no == "HQ/26/01/121"

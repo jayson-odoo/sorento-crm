@@ -34,10 +34,12 @@ vi.mock('../../../../../_shared/services/fileDownload', async (importOriginal) =
   return { ...actual, saveBlobAs: (...args: unknown[]) => saveBlobAs(...args) };
 });
 
+// The URL the page reads (`?amendment=`) and the replace it writes (round 14).
+const nav = vi.hoisted(() => ({ search: '', replace: vi.fn() }));
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  useRouter: () => ({ push: vi.fn(), replace: nav.replace }),
   usePathname: () => '/project-sales/p1/sales-orders/so-1/revisions',
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => new URLSearchParams(nav.search),
 }));
 
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
@@ -506,6 +508,33 @@ describe('AmendmentReviewClient, once the amendment is created', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Create the amendment' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Done' }));
   }
+
+  // Round 14 (browser pass 4): an existing amendment opens again from the URL, and a created
+  // one is put there, so a reload or the notice's link never lands on an empty compare.
+  it('opens the amendment named in ?amendment= without creating anything', async () => {
+    nav.search = 'amendment=am-1';
+    try {
+      getAmendment.mockResolvedValue(amendmentDetail({ ocn_id: 'ocn-1', ocn_status: 'draft' }));
+      getAmendmentAutocountChangeList.mockResolvedValue({ rows: [], declined_count: 0 });
+      renderReview();
+      expect(await screen.findByRole('link', { name: 'Change notice OCN-000045' })).toBeInTheDocument();
+      expect(getAmendment).toHaveBeenCalledWith('am-1');
+      expect(screen.queryByText('Nothing compared yet')).toBeNull();
+      expect(createAmendment).not.toHaveBeenCalled();
+    } finally {
+      nav.search = '';
+    }
+  });
+
+  it('puts a created amendment in the URL', async () => {
+    nav.replace.mockClear();
+    getAmendment.mockResolvedValue(amendmentDetail());
+    getAmendmentAutocountChangeList.mockResolvedValue({ rows: [], declined_count: 0 });
+    await createTheAmendment();
+    await waitFor(() =>
+      expect(nav.replace).toHaveBeenCalledWith('/project-sales/p1/sales-orders/so-1/revisions?amendment=am-1'),
+    );
+  });
 
   // Round 12 (browser pass 3): the page reads the rows where the API keeps them, under
   // `delta`. On the old reads (`detail.rows`) this crashed the page in AmendmentDeltaSummary.
