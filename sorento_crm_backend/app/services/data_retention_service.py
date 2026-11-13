@@ -20,7 +20,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Iterable, Optional
 
-from sqlalchemy import String, and_, cast, delete, exists, func, null, or_, select, tuple_, update
+from sqlalchemy import String, and_, cast, delete, exists, func, null, or_, select, union, update
 from sqlalchemy.orm import Session, aliased
 
 logger = logging.getLogger(__name__)
@@ -369,7 +369,7 @@ def prune_reorder_runs(
     max_seconds: Optional[float] = None,
 ) -> dict:
     """R3c. A superseded planning run past the window goes, unless somebody acted on it
-    (see ``acted_on`` below). No long transaction: its children are deleted bottom-up in
+    (``_reorder_runs_acted_on``). No long transaction: its children are deleted bottom-up in
     keyset batches (location allocations of its order summary rows, the order summary rows,
     the recommendations), one commit each, then the run row. Oldest run first, so a run is
     never orphaned of its ``superseded_by_run_id`` while it still waits its turn.
@@ -379,76 +379,50 @@ def prune_reorder_runs(
     under a recommendation: recommendation_override and plan_row_decision (CASCADE, and
     their presence keeps the run) and order_summary_location_allocation (SET NULL; under
     order_summary_row it CASCADEs)."""
-    from app.models.procurement import PurchaseOrderLine
     from app.models.scm import (
         OrderSummaryLocationAllocation,
         OrderSummaryRow,
-        PlanRowDecision,
-        RecommendationOverride,
         ReorderRecommendation,
         ReorderRun,
     )
 
-    rec_id = cast(ReorderRecommendation.id, String)
-    row_id = cast(OrderSummaryRow.id, String)
-    # Every trace of a person acting on a run, in ONE place: the live loop and the dry-run
-    # prediction both start from this candidate list.
-    acted_on = or_(
-        exists().where(
-            ReorderRecommendation.run_id == ReorderRun.id,
-            or_(
-                ReorderRecommendation.status != "proposed",  # accepted / adjusted / dismissed
-                ReorderRecommendation.keyed_status != "not_keyed",
-                exists().where(RecommendationOverride.recommendation_id == ReorderRecommendation.id),
-                exists().where(PlanRowDecision.recommendation_id == ReorderRecommendation.id),
-                # A drafted PO line at location grain names the recommendation id
-                # (decision_service); served by ix_purchase_order_lines_source_ref_system.
-                exists().where(PurchaseOrderLine.source_ref == rec_id),
-            ),
-        ),
-        exists().where(
-            OrderSummaryRow.run_id == ReorderRun.id,
-            or_(
-                OrderSummaryRow.chosen_qty.isnot(None),
-                OrderSummaryRow.decided_at.isnot(None),
-                OrderSummaryRow.keyed_status != "not_keyed",
-                # Product grain: source_ref is "<order summary row id>:<warehouse id>". The
-                # split_part equality lets the planner hash-join instead of a LIKE per row.
-                exists().where(
-                    func.split_part(PurchaseOrderLine.source_ref, ":", 1) == row_id,
-                    PurchaseOrderLine.source_ref.like(row_id + ":%"),
-                ),
-            ),
-        ),
+    base = [ReorderRun.superseded_by_run_id.isnot(None), ReorderRun.created_at < _cutoff(retention_days)]
+    old = aliased(ReorderRun)
+    old_runs = select(old.id).where(
+        old.superseded_by_run_id.isnot(None), old.created_at < _cutoff(retention_days)
     )
-    candidate = [
-        ReorderRun.superseded_by_run_id.isnot(None),
-        ReorderRun.created_at < _cutoff(retention_days),
-        ~acted_on,
+    # Candidates: old, superseded, nobody acted on them. Listed ONCE per call (oldest first)
+    # for both the live loop and the dry-run prediction.
+    ordered = [
+        r[0]
+        for r in db.execute(
+            select(ReorderRun.id)
+            .where(*base, ReorderRun.id.notin_(_reorder_runs_acted_on(old_runs)))
+            .order_by(ReorderRun.created_at, ReorderRun.id)
+        )
     ]
-    # A run another remaining run names as its superseder stays: the link is ON DELETE SET
-    # NULL, so deleting it would turn that run (kept for a decision) back into a current
-    # one. Re-checked per run, so an undecided chain drains oldest first in one call.
-    pointer = aliased(ReorderRun)
-    eligible = candidate + [~exists().where(pointer.superseded_by_run_id == ReorderRun.id)]
     if dry_run:
         return rule_result(
             "reorder_run_prune", dry_run=True, finished=True,
-            runs_deleted=_predict_reorder_runs_deleted(db, ReorderRun, candidate),
+            runs_deleted=_predict_reorder_runs_deleted(db, ReorderRun, ordered),
         )
 
+    # A run another remaining run names as its superseder stays: the link is ON DELETE SET
+    # NULL, so deleting it would turn that run (kept for a decision) back into a current
+    # one. Checked per run as the loop goes, so an undecided chain drains in one call; the
+    # acted-on trace is re-checked for that one run too (cheap: it is keyed on the run).
+    pointer = aliased(ReorderRun)
     budget = Budget(sleep_ms=sleep_ms, max_seconds=max_seconds)
     runs_deleted = 0
     finished = True
-    last = None
-    while finished:
-        q = select(ReorderRun.id, ReorderRun.created_at).where(*eligible)
-        if last is not None:
-            q = q.where(tuple_(ReorderRun.created_at, ReorderRun.id) > tuple_(*last))
-        nxt = db.execute(q.order_by(ReorderRun.created_at, ReorderRun.id).limit(1)).first()
-        if nxt is None:
-            break
-        run_id = nxt[0]
+    for run_id in ordered:
+        still_eligible = base + [
+            ReorderRun.id == run_id,
+            ~exists().where(pointer.superseded_by_run_id == ReorderRun.id),
+            ReorderRun.id.notin_(_reorder_runs_acted_on([run_id])),
+        ]
+        if db.execute(select(ReorderRun.id).where(*still_eligible)).first() is None:
+            continue
         children = [
             (
                 OrderSummaryLocationAllocation,
@@ -470,25 +444,54 @@ def prune_reorder_runs(
             break
         runs_deleted += _rowcount(
             db.execute(
-                delete(ReorderRun)
-                .where(ReorderRun.id == run_id, *eligible)
-                .execution_options(synchronize_session=False)
+                delete(ReorderRun).where(*still_eligible).execution_options(synchronize_session=False)
             )
         )
         db.commit()
-        last = (nxt[1], run_id)
     return rule_result("reorder_run_prune", dry_run=False, finished=finished, runs_deleted=runs_deleted)
 
 
-def _predict_reorder_runs_deleted(db: Session, ReorderRun, candidate: list) -> int:
+def _reorder_runs_acted_on(run_ids):
+    """The ids among ``run_ids`` (a select or a list) of planning runs somebody acted on:
+    the ONE place the keep rules live. Accepted / adjusted / dismissed or keyed
+    recommendations, overrides, plan row decisions, decided or keyed order summary rows,
+    and drafted PO lines naming a recommendation (location grain) or
+    ``<order summary row id>:<warehouse id>`` (product grain, decision_service).
+
+    Set-based joins rather than EXISTS under an OR: Postgres cannot turn an OR'd EXISTS
+    into a join, and the product-grain PO-line probe then scanned purchase_order_lines once
+    per summary row (did not finish in 18 min at synthetic prod volume). As one NOT IN it is
+    a hashed subplan: 1.7 s for 213 runs / 511k recommendations / 155k PO lines, most of it
+    JIT. The location-grain probe can use ix_purchase_order_lines_source_ref_system; the
+    product-grain one hash/merge-joins on split_part (no index serves a prefix match)."""
+    from app.models.procurement import PurchaseOrderLine as POL
+    from app.models.scm import (
+        OrderSummaryRow as Row,
+        PlanRowDecision,
+        RecommendationOverride,
+        ReorderRecommendation as Rec,
+    )
+
+    rec_in = Rec.run_id.in_(run_ids)
+    row_in = Row.run_id.in_(run_ids)
+    row_id = cast(Row.id, String)
+    return union(
+        select(Rec.run_id).where(rec_in, or_(Rec.status != "proposed", Rec.keyed_status != "not_keyed")),
+        select(Rec.run_id).join(RecommendationOverride, RecommendationOverride.recommendation_id == Rec.id).where(rec_in),
+        select(Rec.run_id).join(PlanRowDecision, PlanRowDecision.recommendation_id == Rec.id).where(rec_in),
+        select(Rec.run_id).join(POL, POL.source_ref == cast(Rec.id, String)).where(rec_in),
+        select(Row.run_id).where(
+            row_in, or_(Row.chosen_qty.isnot(None), Row.decided_at.isnot(None), Row.keyed_status != "not_keyed")
+        ),
+        select(Row.run_id)
+        .join(POL, and_(func.split_part(POL.source_ref, ":", 1) == row_id, POL.source_ref.like(row_id + ":%")))
+        .where(row_in),
+    )
+
+
+def _predict_reorder_runs_deleted(db: Session, ReorderRun, ordered: list) -> int:
     """What the live loop deletes, without writing: walk the candidates in its order
     (oldest first) and take one once every run naming it as superseder is already taken."""
-    ordered = [
-        row[0]
-        for row in db.execute(
-            select(ReorderRun.id).where(*candidate).order_by(ReorderRun.created_at, ReorderRun.id)
-        )
-    ]
     if not ordered:
         return 0
     pointers: dict = {}
