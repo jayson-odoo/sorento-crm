@@ -112,6 +112,7 @@ export interface NewProductApplicationSummary {
   needed_by: string | null;
   submitted_at: string | null;
   created_at: string | null;
+  last_activity_at?: string | null;
 }
 
 /** One file attached to the application (shape of the generic attachment list). */

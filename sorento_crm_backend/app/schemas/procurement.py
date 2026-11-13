@@ -1163,6 +1163,7 @@ class StockInquiryRejectReopenRequest(BaseModel):
 
 class StockInquiryResponse(StockInquiryBase):
     id: str
+    last_activity_at: Optional[datetime] = None
     # Requestor display name, resolved live from the FK so a contact rename
     # fixes every screen with no backfill. Read-only, response-only.
     salesperson_contact_name: Optional[str] = None
@@ -1435,6 +1436,7 @@ class PurchaseRequestUpdateAndReply(PurchaseRequestHeaderUpdate):
 class PurchaseRequestHeaderListResponse(PurchaseRequestHeaderBase):
     """Response for list endpoint (no lines)."""
     id: str
+    last_activity_at: Optional[datetime] = None
     # Requestor display name, resolved live from the FK (read-only, response-only).
     requested_by_contact_name: Optional[str] = None
     request_number: Optional[str] = None
