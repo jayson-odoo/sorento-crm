@@ -24,6 +24,23 @@ close code exists. Discovery (static read on main, each one gets a red test befo
 | G6 ranking sees only the resolver's first 5 trigram rows | an all-parts code ranked 6th or lower is never offered | `entity_resolver.py:3258`, `:6080`; ranking `answer.py:4999-5021` |
 | G7 trace | no all-parts flag; a miss with no candidate reads `answered` | `app/services/chatbot/trace.py:479-547` |
 
+## Crew data (13 Nov, dev DB, 30 Oct - 12 Nov, masked; data request a55349904)
+
+2389 dealer stock/incoming turns; 510 had "Couldn't find"; 359 of those got an offer. All of these turns are BEFORE
+#2370 merged (13 Nov), so each shape below is replayed as a test on current main before anything is built for it.
+
+| Shape | Turns | Card gap |
+| --- | --- | --- |
+| letters-only miss dropped silently | 0 real | G1 (kept: red tests exist, cheap) |
+| digit misses dropped silently beside a which-one list (`SRT6537-BL X10 / SRT6532-BL X10 / SRT6534 X10`) | seen | G1b new |
+| miss beside a question reply (`Cb86BL and Cb86gm stock` -> "Couldn't find: Cb86gm." + "How many units of CB86-BL?") | 20 | G2 |
+| bare "Couldn't find: X." beside a plain stock answer, close code not offered (`MBF97513 X 2 STOCK / MWC7627-S10 X 3 STOCK`, MWC7627-SH-S10 trgm .71) | 58 | G2b new |
+| letters-only code inside / prefix of codes (`SRTWC-SH-NEW`) | 2 | G3 |
+| incoming ask: did-you-mean then refer line (`CB2515SS check ETA`) | 3 of 9 incoming misses | G4 |
+| "Couldn't find X (product). Please refer to your salesman." with no offer (`SRTWT6855-GY got stock?`) | 100 turns, 68 tokens, 61 with a code at trigram > 0.4 (inferred, not company-scoped) | G0 new, likely fixed by #2370 slice 1: replay decides |
+| embedding tier | 0 seen (tiers recorded on 55 of 510 miss turns) | G5: not built unless a replay shows it |
+| works today: `Srtwt1866ss x ss3` -> numbered list of 3 | - | guard |
+
 ## Rules (plain words)
 
 C1. Every code a dealer types that is not found gets the same treatment, alone or among other codes: "Couldn't find X."
