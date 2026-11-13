@@ -44,6 +44,9 @@ A registered product set (Products > Product Sets) is answered as the set when i
 dashes or capital letters different: `cwc604prl`, `cwc604-p-rl` and `cwc604 p rl` all give the set CWC604-P-RL, with
 its member products' stock. Only that set is answered, never the longer set codes that start with it (typing
 CWC605-RL does not also answer CWC605-RL-SOFT). Other punctuation does not count: `cwc604/p/rl` is not the set.
+The same holds when the last part of the code is typed as a separate word on the same line: `CWC605-RL soft x 1` is
+the set CWC605-RL-SOFT. A word on the next line never joins the code above it, and a word that completes no real code
+changes nothing.
 
 When the typed code is close to a set but not the same:
 

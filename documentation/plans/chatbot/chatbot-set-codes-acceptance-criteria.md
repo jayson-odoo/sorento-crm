@@ -35,6 +35,12 @@ Harness: `engine.run_turn` over seeded Postgres rows (Console in `tests/chatbot/
 - AC-3 (exact set answers only itself). Sets QWC605-RL, QWC605-RL-SOFT, QWC605-RL-NEW, QWC605-RL-WEPLS.
   `QWC605RL x 1` and `qwc605-rl stock`: staff reply holds exactly one set block (QWC605-RL) and none of the 3 siblings'
   codes; dealer reply is the QWC605-RL answer at x1 (no "How many units for each?", none of the siblings' codes).
+- AC-2b..AC-2i (review rounds and owner ruling 13 Nov ~17:40, "CWC605-RL soft" IS CWC605-RL-SOFT): a set code typed
+  with spaces whose last part is a word is the set (2b); a code plus the words after it ON ITS OWN LINE that fold
+  (case, dashes, spaces) to a real code is that code, direct answer (2c set, 2d product); a word completing no code
+  changes nothing (2e); a set whose words complete nothing stays the set (2f); another line never narrows or completes
+  a code (2g, 2h); a family word plus a class word is not answered as its sets with the word ignored (2i). Tests:
+  `tests/chatbot/test_set_codes.py`. Dealer set + typed quantity ("How many units for each?") is slice 2 (strict xfail).
 - AC-4 (fold, Q5). `qwc604/p/rl stock` is never answered directly as QWC604-P-RL.
 
 ## Family from catalogue links only (Q2)
