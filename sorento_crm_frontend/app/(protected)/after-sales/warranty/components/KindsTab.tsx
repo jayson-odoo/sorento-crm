@@ -95,7 +95,7 @@ export function KindsTab() {
 
   const pill = counts ? (
     <button type="button" onClick={() => setNoRuleOnly((v) => !v)} aria-pressed={noRuleOnly} className="shrink-0">
-      <Badge variant={noRuleOnly ? 'warning' : 'warning'} appearance={noRuleOnly ? 'default' : 'light'} size="sm">
+      <Badge variant="warning" appearance={noRuleOnly ? 'solid' : 'light'} size="sm">
         {`${counts.without} of ${counts.total} kinds have no rule`}
       </Badge>
     </button>
