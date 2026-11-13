@@ -1075,6 +1075,13 @@ def get_stock_detail(
                 message="Ask for one location or for one group.",
                 code="stock_detail_target_required",
             )
+        if group and company_scope:
+            # One bin only: a whole group or the pools is never read across companies.
+            raise AppException(
+                status_code=422,
+                message="Company scope applies to one location only.",
+                code="stock_detail_scope_group",
+            )
         if warehouse_id and not group:
             validate_uuid_path(warehouse_id, resource="Warehouse")
         # The SAME reader every other `*_ids` filter uses: it takes CSV, a JSON array or
