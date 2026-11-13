@@ -7,6 +7,7 @@ declared before `/{application_id}`.
 """
 from __future__ import annotations
 
+from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Response, status
@@ -144,8 +145,10 @@ def list_applications(
     applicant_id: Optional[list[str]] = Query(None),
     page: int = Query(1, ge=1),
     limit: int = Query(25, ge=1, le=200),
-    sort: Optional[str] = Query(None),
+    sort: Optional[str] = Query("last_activity_at"),
     dir: str = Query("desc"),
+    last_activity_from: Optional[date] = Query(None, description="YYYY-MM-DD, Malaysia day, inclusive"),
+    last_activity_to: Optional[date] = Query(None, description="YYYY-MM-DD, Malaysia day, inclusive"),
     user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -162,6 +165,8 @@ def list_applications(
         limit=limit,
         sort=sort,
         direction=dir,
+        last_activity_from=last_activity_from,
+        last_activity_to=last_activity_to,
     )
 
 

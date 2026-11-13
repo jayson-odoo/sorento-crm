@@ -50,12 +50,12 @@ class EntityConversationMessage(Base):
             "created_at",
         ),
         Index("ix_entity_conversation_messages_author", "author_user_id"),
-        # Mirrors migrations 150 + fcom_0002, so a schema built by create_all (tests, CI
+        # Mirrors migrations 150 + fcom_0002 + fla_0001, so a schema built by create_all (tests, CI
         # bootstrap) refuses what the migrated database refuses. Widen both together.
         CheckConstraint(
             "entity_type IN ('commercial_project','commercial_master_quotation',"
             "'commercial_project_task','commercial_master_quotation_task','commercial_lead',"
-            "'complaint','stock_inquiry','purchase_request','sponsorship_form')",
+            "'complaint','stock_inquiry','purchase_request','sponsorship_form','sample_request')",
             name="ck_entity_conversation_messages_entity_type",
         ),
         CheckConstraint(

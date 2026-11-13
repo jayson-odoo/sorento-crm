@@ -64,6 +64,9 @@ class ListSearchRequest(BaseModel):
     # Products "List price changed at" range (LIST-PRICE-CHANGE-UI), Malaysia-day inclusive.
     list_price_changed_from: Optional[date] = None
     list_price_changed_to: Optional[date] = None
+    # Workflow submissions "Last activity" range (FORMS-LAST-ACTIVITY), Malaysia-day inclusive.
+    last_activity_from: Optional[date] = None
+    last_activity_to: Optional[date] = None
     # Workflow forms (list-query + UI quick filters)
     workflow_definition_is_active: Optional[bool] = None
     workflow_form_definition_id: Optional[str] = None
