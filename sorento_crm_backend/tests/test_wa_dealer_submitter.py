@@ -771,16 +771,18 @@ def test_R4_an_unlinked_dealer_skips_the_similar_lookup(env):
 
 def test_R5_a_phone_already_on_another_user_says_the_account_could_not_be_set_up(env):
     contact = _dealer(env)
-    env.db.add(
-        User(
-            id=str(uuid.uuid4()),
-            email=f"zzt-{uuid.uuid4().hex[:8]}@test.com",
-            name="Someone Else",
-            status="ACTIVE",
-            contact_number=normalize_msisdn(contact.phone_number),
-        )
+    # A non-staff user (another dealer's own user, portal_user only) holds the phone: not staff, so the
+    # contact stays eligible and the phone collision blocks the user creation.
+    other = User(
+        id=str(uuid.uuid4()),
+        email=f"zzt-{uuid.uuid4().hex[:8]}@test.com",
+        name="Someone Else",
+        status="ACTIVE",
+        contact_number=normalize_msisdn(contact.phone_number),
     )
+    env.db.add(other)
     env.db.flush()
+    _assign(env.db, other, "portal_user")
     env.created()
     out = env.turn(env.idea_message(language="en"))
     assert out["reply_text"] == ACCOUNT_FAILED_EN

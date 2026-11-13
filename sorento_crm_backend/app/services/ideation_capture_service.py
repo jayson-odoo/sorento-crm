@@ -252,7 +252,7 @@ def _dealer_eligible(db: Session, contact: Any) -> bool:
         return False
     if db.query(RespondContact).filter(RespondContact.respond_io_id == rid).count() != 1:
         return False
-    return not _is_staff(db, str(contact.phone_number or ""), str(contact.id), roleless_is_staff=False)
+    return not _is_staff(db, str(contact.phone_number or ""), str(contact.id))
 
 
 def _unlinked_dealer(db: Session, respond_io_id: str) -> RespondContact | None:
