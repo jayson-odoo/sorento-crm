@@ -46,6 +46,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { FORM_SLA_TYPE_LABELS, type FormSLASourceType } from '@/app/(protected)/sla-management/_shared/formSLAService';
 
 const PAGE_SIZE = 5;
 const MAX_TIER = 3;
@@ -134,6 +135,8 @@ function humanizeType(item: AnyTask): string {
   const route = ENTITY_ROUTES[item.source_entity_type ?? ''];
   if (route) return route.label;
   if (item.is_form_sla && item.source_entity_type) {
+    const label = FORM_SLA_TYPE_LABELS[item.source_entity_type as FormSLASourceType];
+    if (label) return label;
     return item.source_entity_type
       .replace(/_/g, ' ')
       .replace(/\b\w/g, (c) => c.toUpperCase());

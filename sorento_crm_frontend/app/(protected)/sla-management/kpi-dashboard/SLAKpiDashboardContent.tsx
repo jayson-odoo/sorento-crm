@@ -37,6 +37,7 @@ import {
   type KpiTaskRow,
   type KpiWindow,
 } from './slaKpiService';
+import { FORM_SLA_TYPE_LABELS, type FormSLASourceType } from '@/app/(protected)/sla-management/_shared/formSLAService';
 
 // All three KPI aggregates are expensive (full conversation_sla_tracking scans),
 // so cache for 5 minutes - revisits/reloads inside the window hit the cache
@@ -268,7 +269,11 @@ function TasksCard({ scope, filter, onClear, window }: { scope: KpiScope; filter
       {
         accessorKey: 'source_entity_type',
         header: ({ column }) => <DataGridColumnHeader title="Type" column={column} />,
-        cell: ({ row }) => (row.original.source_entity_type || 'conversation').replace(/_/g, ' '),
+        cell: ({ row }) => {
+          // One name everywhere: the same label map the SLA tab and Form SLA config use.
+          const type = row.original.source_entity_type || 'conversation';
+          return FORM_SLA_TYPE_LABELS[type as FormSLASourceType] ?? type.replace(/_/g, ' ');
+        },
         size: 150,
       },
       {

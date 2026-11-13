@@ -622,7 +622,7 @@ function sparePartLineColumns({
     {
       accessorKey: 'item_code',
       header: ({ column }) => <DataGridColumnHeader title="Product code" column={column} />,
-      size: 96,
+      size: 124,
       meta: { headerTitle: 'Product code', skeleton: <Skeleton className="h-4 w-20" /> },
       cell: ({ row }) => (
         <span className="block min-w-0 truncate">
@@ -635,7 +635,7 @@ function sparePartLineColumns({
       // G1: the requester's own description, else the product's name.
       accessorFn: (row) => row.line_description || row.product_name || '',
       header: ({ column }) => <DataGridColumnHeader title="Description" column={column} />,
-      size: 110,
+      size: 100,
       meta: { headerTitle: 'Description', skeleton: <Skeleton className="h-4 w-32" /> },
       cell: ({ row }) => {
         const description = row.original.line_description || row.original.product_name || '';
@@ -650,7 +650,7 @@ function sparePartLineColumns({
     {
       accessorKey: 'qty',
       header: ({ column }) => <DataGridColumnHeader title="Qty" column={column} />,
-      size: 92,
+      size: 88,
       meta: { headerTitle: 'Qty', skeleton: <Skeleton className="h-4 w-10" /> },
       cell: ({ row }) => {
         const primary = lineOf(row.original).primary;
@@ -711,7 +711,7 @@ function sparePartLineColumns({
       id: 'line_total',
       accessorFn: (row) => Number(lineOf(row).primary.line_total ?? 0),
       header: ({ column }) => <DataGridColumnHeader title="Total" column={column} />,
-      size: 96,
+      size: 90,
       meta: { headerTitle: 'Total', skeleton: <Skeleton className="h-4 w-16" /> },
       cell: ({ row }) => {
         const total = lineOf(row.original).primary.line_total;
@@ -730,7 +730,7 @@ function sparePartLineColumns({
         return <span className="tabular-nums font-medium">{formatMoneyExact(sum, currency)}</span>;
       },
     },
-    { ...poColumn(), size: 88 },
+    { ...poColumn(), size: 80 },
     {
       id: 'state',
       accessorFn: (row) => lineOf(row).state,

@@ -381,9 +381,9 @@ export function OrderInquiryHeadersList() {
       },
       {
         accessorKey: 'inquiry_no',
-        header: ({ column }) => <DataGridColumnHeader title="OI no" column={column} />,
+        header: ({ column }) => <DataGridColumnHeader title="Doc no" column={column} />,
         size: 140,
-        meta: { headerTitle: 'OI no', skeleton: <Skeleton className="h-4 w-20" /> },
+        meta: { headerTitle: 'Doc no', skeleton: <Skeleton className="h-4 w-20" /> },
         cell: ({ row }) => (
           <span className="block truncate tabular-nums font-medium" title={row.original.inquiry_no}>
             {row.original.inquiry_no}
