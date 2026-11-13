@@ -124,6 +124,7 @@ _COLUMN_WIDTHS: Dict[str, int] = {
     "QTY": 12,
     "UNIT RATE (RM)": 14,
     "COMPLETE SET": 14,
+    "REMARK": 16,
     "GRAND TOTAL": 16,
 }
 
@@ -670,6 +671,14 @@ def _write_scope(
         _put(
             sheet, row, positions["COMPLETE SET"], _text(line.complete_set), alignment=_WRAP_LEFT
         )
+        if "REMARK" in positions:
+            _put(
+                sheet,
+                row,
+                positions["REMARK"],
+                _text(quotation_columns.remark(line)),
+                alignment=_WRAP_LEFT,
+            )
         if line.is_rate_only:
             # The words, and NO number. A 0.00 here reads as free, and its rate would be pulled
             # into any total the reader sums (AC-C2 / AC-D3).
