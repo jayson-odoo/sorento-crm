@@ -431,3 +431,19 @@ def test_r6_a_letter_added_to_a_code_word_is_offered_never_answered(session_fact
 )
 def test_r7_punctuation_around_a_colour_word_is_still_said_in_words(typed, code, expected):
     assert corrects_or_completes(typed, code) is expected, (typed, code)
+
+
+# Crew ruling Q1 (a), 13 Nov: a letters-only code part typed in order as its own word plus extra letters is meant (answered); a changed, dropped or swapped letter is offered.
+@pytest.mark.parametrize(
+    "typed,code,expected",
+    [
+        ("SRTUB668-BACK INLLET", "SRTUB668-BACK INLET", False),
+        ("SRTUB668-BACK INLEAT", "SRTUB668-BACK INLET", False),
+        ("SRTUB668-BACK INLT", "SRTUB668-BACK INLET", True),
+        ("SRTUB668-BACK INELT", "SRTUB668-BACK INLET", True),
+        ("SRTUB668-BACK INXXT", "SRTUB668-BACK INLET", True),
+    ],
+    ids=["extra_L", "extra_A", "dropped_E", "swapped_EL", "changed_XX"],
+)
+def test_r8_q1_a_letter_added_to_a_separate_code_word_is_answered(typed, code, expected):
+    assert corrects_or_completes(typed, code) is expected, (typed, code)
