@@ -1066,3 +1066,19 @@ def test_change_naming_the_same_so_line_twice_is_refused_even_when_one_names_fro
     assert resp.status_code == 422
     assert "Name each sales order line once." in resp.text
     assert fake_ss.bodies(UNLINK) == [] and fake_ss.bodies(PO_LINKS) == []
+
+
+def test_po_candidates_say_which_lines_are_tied_to_another_so_line(scm_app, fake_ss):
+    """The CRM link popup (poLinesOnly) must not offer a PO line AutoCount ties to another SO line."""
+    w = _oi_world(scm_app, permissions=(VIEW, LINK, PROJECTS_VIEW, ACTION))
+    _p, elsewhere = _po_line(w["db"], w["product"], w["hq"], qty=20, so_ref=w["other"].source_ref,
+                             doc_key=12100, dtl_key=12101)
+    _p2, own = _po_line(w["db"], w["product"], w["hq"], qty=20, so_ref=w["so_line"].source_ref,
+                        doc_key=12200, dtl_key=12201)
+    w["db"].flush()
+    resp = w["c"].get(f"/api/v1/project-sales/order-inquiry-rows/{w['rows']['a'].id}/po-candidates")
+    assert resp.status_code == 200, resp.text
+    flags = {c["po_line_id"]: c.get("tied_elsewhere", "MISSING") for c in resp.json()["candidates"] if c["po_line_id"]}
+    assert flags.get(w["po_line"].id) is False
+    assert flags.get(elsewhere.id) is True
+    assert flags.get(own.id) is False
