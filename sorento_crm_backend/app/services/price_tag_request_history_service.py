@@ -28,7 +28,7 @@ from app.services.history_common import audit_actor, contact_names
 from app.services.history_common import history_event as _event
 from app.services.history_common import history_line as _entry
 from app.services.order_inquiry_history_service import AUTOMATIC
-from app.services.portal_revision_service import PortalRevisionService
+from app.services.portal_revision_service import PortalRevisionService, _format_display_date
 from app.services.price_tag_request_service import (
     PRINT_BY_OFFICE,
     PRINT_BY_SELF,
@@ -52,7 +52,8 @@ STATUS_LABEL = {
 _PRINT_BY_LABEL = {PRINT_BY_OFFICE: "Office prints", PRINT_BY_SELF: "Salesperson prints"}
 _PRICE_TYPE_LABEL = {"list": "List price", "selling": "Selling price"}
 _REVISION_KIND = {"original": "submitted", "revision": "revised", "resubmission": "resubmitted"}
-_ISO_DATE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
+#: A whole product line added or removed (`_diff_lines`): it keeps its one side.
+_WHOLE_LINE = re.compile(r"^products\[\d+\]$")
 
 
 def history_for_price_tag_request(db: Session, request_id: str) -> List[dict]:
@@ -79,24 +80,18 @@ def _status_label(code: Optional[str]) -> str:
     return STATUS_LABEL.get(code) or code.replace("_", " ").capitalize()
 
 
-def _text(value: Any) -> str:
-    """A snapshot value in words: lists joined, an ISO date as dd/mm/yyyy."""
-    if isinstance(value, (list, tuple)):
-        return ", ".join(_text(v) for v in value if v is not None)
-    if isinstance(value, bool):
-        return "Yes" if value else "No"
-    text = str(value)
-    match = _ISO_DATE.match(text)
-    return f"{match.group(3)}/{match.group(2)}/{match.group(1)}" if match else text
+def _side(value: Any) -> str:
+    """One side of a change in words: empty reads "-", a date dd/mm/yyyy."""
+    if value is None or value == "":
+        return "-"
+    return _format_display_date(value) or str(value)
 
 
 def _change_text(change: dict) -> str:
     label, before, after = change.get("label"), change.get("from"), change.get("to")
-    if before is None:
-        return f"{label}: {_text(after)}"
-    if after is None:
-        return f"{label}: {_text(before)}"
-    return f"{label}: {_text(before)} → {_text(after)}"
+    if _WHOLE_LINE.match(str(change.get("field") or "")):
+        return f"{label}: {_side(after if before is None else before)}"
+    return f"{label}: {_side(before)} → {_side(after)}"
 
 
 def _revisions(db: Session, request: PriceTagRequest) -> List[dict]:
@@ -105,12 +100,10 @@ def _revisions(db: Session, request: PriceTagRequest) -> List[dict]:
         kind = _REVISION_KIND.get(revision.get("kind"))
         if kind is None:
             continue
-        if kind == "revised":
-            title = f"Revised, revision {revision.get('revision_no')}"
-            if revision.get("reason"):
-                title += f": {revision['reason']}"
-        else:
-            title = "Submitted" if kind == "submitted" else "Resubmitted"
+        # `list_revisions`' own label ("Edit N", "Appealed"), so the portal and CRM tabs agree.
+        title = "Submitted" if kind == "submitted" else revision.get("label") or ""
+        if kind != "submitted" and revision.get("reason"):
+            title += f": {revision['reason']}"
         event_id = f"revision-{revision['id']}"
         lines = [
             _entry(i, event_id, None, None, None, _change_text(change))
@@ -264,20 +257,20 @@ def _design_saves(db: Session, request: PriceTagRequest) -> List[dict]:
 
 
 def _review_rounds(db: Session, request: PriceTagRequest) -> List[dict]:
+    """The salesperson's pins only (`author_contact_id`): a staff note a transition wrote rode on
+    a status change, which is its own event."""
     rounds: Dict[int, list] = {}
     for comment in price_tag_review_service.list_comments(db, request.id):
-        rounds.setdefault(comment.round, []).append(comment)
+        if comment.author_contact_id:
+            rounds.setdefault(comment.round, []).append(comment)
     if not rounds:
         return []
-    firsts = {n: comments[0] for n, comments in rounds.items()}
-    contacts = contact_names(db, {c.author_contact_id for c in firsts.values() if c.author_contact_id})
+    contacts = contact_names(db, {comments[0].author_contact_id for comments in rounds.values()})
     out = []
     for round_no, comments in rounds.items():
-        first = firsts[round_no]
+        first = comments[0]
         count = len(comments)
         title = f"Changes requested: {count} comment" + ("" if count == 1 else "s")
-        actor = contacts.get(str(first.author_contact_id)) if first.author_contact_id else None
-        out.append(_event(f"review-round-{round_no}", "changes_requested", first.created_at,
-                          None if actor else (str(first.author_user_id) if first.author_user_id else None),
-                          title, [], actor=actor))
+        out.append(_event(f"review-round-{round_no}", "changes_requested", first.created_at, None,
+                          title, [], actor=contacts.get(str(first.author_contact_id))))
     return out
