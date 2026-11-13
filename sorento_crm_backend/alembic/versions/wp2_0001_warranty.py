@@ -6,7 +6,6 @@ touched.
 - `warranty_product_kinds`, `warranty_kind_rules` (shared by every company), `warranty_policies`
   (company scoped) and `warranty_terms` (reached through its policy).
 - `service_job_products`: a job's product lines (kind, purchase date, defect). Cascades with the job.
-- The permissions `after_sales.warranty.view` and `.manage`, granted to the admin role only.
 - The v15 policy seed (kinds, defect set, rules) and each company's v15 policy, idempotent.
 
 Revision ID: wp2_0001_warranty
@@ -21,13 +20,6 @@ revision = "wp2_0001_warranty"
 down_revision = "fla_0001_last_activity_at"
 branch_labels = None
 depends_on = None
-
-_PERMS = (
-    ("after_sales.warranty.view", "View Warranty Configuration",
-     "See the warranty policies, terms, product kinds and kind rules."),
-    ("after_sales.warranty.manage", "Manage Warranty Configuration",
-     "Create, edit, supersede and delete warranty policies, terms, product kinds and kind rules."),
-)
 
 
 def upgrade() -> None:
@@ -130,31 +122,6 @@ def upgrade() -> None:
     op.execute("CREATE INDEX IF NOT EXISTS ix_service_job_products_kind_id ON service_job_products (kind_id)")
     op.execute("CREATE INDEX IF NOT EXISTS ix_service_job_products_company_id ON service_job_products (company_id)")
 
-    # ---- permissions: admin role only (admins also pass every check by role) ----
-    for slug, name, descr in _PERMS:
-        bind.execute(
-            sa.text(
-                """
-                INSERT INTO user_permissions (id, slug, name, description, created_at)
-                SELECT gen_random_uuid()::text, :slug, :name, :descr, now()
-                WHERE NOT EXISTS (SELECT 1 FROM user_permissions WHERE slug = :slug)
-                """
-            ),
-            {"slug": slug, "name": name, "descr": descr},
-        )
-        bind.execute(
-            sa.text(
-                """
-                INSERT INTO user_role_permissions (id, role_id, permission_id, assigned_at)
-                SELECT gen_random_uuid()::text, r.id, p.id, now()
-                  FROM user_roles r CROSS JOIN user_permissions p
-                 WHERE r.slug = 'admin' AND p.slug = :slug
-                ON CONFLICT DO NOTHING
-                """
-            ),
-            {"slug": slug},
-        )
-
     # ---- v15 seed: shared kinds / defect set / rules, and one policy per company ----
     from app.services.warranty_seed import seed_warranty_policy_v15
 
@@ -168,16 +135,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    bind = op.get_bind()
-    for slug, _name, _descr in _PERMS:
-        bind.execute(
-            sa.text(
-                "DELETE FROM user_role_permissions WHERE permission_id IN "
-                "(SELECT id FROM user_permissions WHERE slug = :slug)"
-            ),
-            {"slug": slug},
-        )
-        bind.execute(sa.text("DELETE FROM user_permissions WHERE slug = :slug"), {"slug": slug})
     op.execute("DROP TABLE IF EXISTS service_job_products")
     op.execute("DROP TABLE IF EXISTS warranty_terms")
     op.execute("DROP TABLE IF EXISTS warranty_policies")

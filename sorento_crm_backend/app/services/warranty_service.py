@@ -271,7 +271,7 @@ def resolve_lines(db: Session, lines: Sequence[Line], *, company_id: str) -> Lis
     out: List[List[WarrantyVerdict]] = []
     for kind_id, purchase, defect_id in lines:
         if not kind_id:
-            out.append([WarrantyVerdict(VERDICT_UNKNOWN, reason="Kind not set")])
+            out.append([WarrantyVerdict(VERDICT_UNKNOWN, reason="No warranty rule for this product yet")])
             continue
         if purchase is None:
             policy = _pick_policy(policies, today)

@@ -166,18 +166,6 @@ PERMISSION_REGISTRY.append({
     "description": "Create, edit, archive and delete technicians.",
 })
 
-# After-sales P2: the warranty policy, its terms, the product kinds and the kind rules.
-PERMISSION_REGISTRY.append({
-    "slug": "after_sales.warranty.view",
-    "name": "View Warranty Configuration",
-    "description": "See the warranty policies, terms, product kinds and kind rules.",
-})
-PERMISSION_REGISTRY.append({
-    "slug": "after_sales.warranty.manage",
-    "name": "Manage Warranty Configuration",
-    "description": "Create, edit, supersede and delete warranty policies, terms, product kinds and kind rules.",
-})
-
 # SLA Management
 PERMISSION_REGISTRY.extend(_crud("sla_management", "sla_policies", "SLA Policies"))
 PERMISSION_REGISTRY.extend(_crud("sla_management", "conversation_sla_tracking", "Conversation SLA Tracking"))
