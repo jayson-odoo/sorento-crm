@@ -503,8 +503,6 @@ function ItemPicker({
 }) {
   const requestValues = [...new Set(lines.map(itemValue).filter(Boolean))];
   const onRequestAtOpen = useRef<Set<string>>(new Set());
-  // The same snapshot as state, so opening re-renders the ticks it decides.
-  const [requestAtOpen, setRequestAtOpen] = useState<Set<string>>(() => new Set());
   /** Keys of the lines that already held an item when the list opened: never an untick's owner. */
   const heldAtOpen = useRef<Set<string>>(new Set());
   const ticked = useRef<Set<string>>(new Set());
@@ -534,7 +532,6 @@ function ItemPicker({
       ticked.current = new Set();
       if (open) {
         onRequestAtOpen.current = new Set(latest.current.requestValues);
-        setRequestAtOpen(onRequestAtOpen.current);
         heldAtOpen.current = new Set(latest.current.lines.filter((l) => itemValue(l)).map((l) => l.key));
         anchor.current = line.key;
       } else if (wasOpen.current) {
@@ -557,11 +554,9 @@ function ItemPicker({
     [fetchItemOptionsOf],
   );
 
-  // What the list shows ticked: a product that was on the request at open stays unticked until it is
-  // ticked again in this session, so a click on it adds another line.
-  const pickerValues = requestValues.filter(
-    (v) => isSetValue(v) || !requestAtOpen.has(v) || ticked.current.has(v),
-  );
+  // What the list shows ticked: the sets on the request, and what this session ticked. Any other
+  // product on the request is unticked, so a click on it adds another line.
+  const pickerValues = requestValues.filter((v) => isSetValue(v) || ticked.current.has(v));
 
   const handleChange = (next: string[]) => {
     const before = new Set(pickerValues);
