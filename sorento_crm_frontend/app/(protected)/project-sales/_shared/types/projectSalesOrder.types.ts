@@ -69,6 +69,12 @@ export interface ProjectSalesOrderRow {
   id: string;
   provisional_ref: string;
   autocount_doc_no?: string | null;
+  /** AC-QTSO-CRM: the order lives in AutoCount (the server holds its key; the UI never sees it). */
+  in_autocount?: boolean;
+  /** A done cancel in AutoCount; the Decide item greys. */
+  autocount_cancelled?: boolean;
+  /** Adopted from the AutoCount book rather than created by the CRM. */
+  autocount_adopted?: boolean;
   area_group?: string | null;
   status: SalesOrderStatus;
   grouping_origin: GroupingOrigin;
@@ -475,6 +481,8 @@ export interface AutocountChangeListRow {
   old_date?: string | null;
   new_date?: string | null;
   new_so_number?: string | null;
+  /** Whether Update in AutoCount sends this row; decided on the server. */
+  autocount_sendable?: boolean;
 }
 
 export interface AutocountChangeListResponse {

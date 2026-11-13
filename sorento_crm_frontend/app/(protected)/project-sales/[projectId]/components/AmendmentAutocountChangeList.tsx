@@ -13,6 +13,15 @@ import { formatDateInMalaysia } from '@/lib/helpers';
 import type { AutocountChangeListRow } from '../../_shared/types/projectSalesOrder.types';
 import { formatQty } from './SalesOrderMoney';
 import { distinctName } from '@/lib/product-display';
+import { AUTOCOUNT_WAITING_TEXT } from '@/lib/autocountWriteWording';
+
+/** "Update in AutoCount (N)": shown by the caller only when the switch, permission and order allow. */
+export interface AmendmentAutocountUpdate {
+  pending: boolean;
+  onUpdate: () => void;
+  /** Why the button is greyed (the capability feed's reason), else null. */
+  disabledReason?: string | null;
+}
 
 /**
  * The AutoCount change list (section 9.4): the accepted rows of an amendment, in the export's
@@ -25,13 +34,18 @@ export function AmendmentAutocountChangeList({
   isLoading,
   onExport,
   exporting,
+  update,
 }: {
   rows: AutocountChangeListRow[];
   declinedCount: number;
   isLoading: boolean;
   onExport: () => void;
   exporting: boolean;
+  update?: AmendmentAutocountUpdate;
 }) {
+  // The server decides which rows Update sends (verb, one-line items, core line known).
+  const sendable = rows.filter((row) => row.autocount_sendable).length;
+  const showAutocount = update !== undefined;
   const columns = React.useMemo<ColumnDef<AutocountChangeListRow>[]>(
     () => [
       {
@@ -143,8 +157,28 @@ export function AmendmentAutocountChangeList({
         size: 130,
         meta: { headerTitle: 'NEW S/O NO' },
       },
+      ...(showAutocount
+        ? [
+            {
+              id: 'autocount',
+              header: ({ column }) => <DataGridColumnHeader title="AUTOCOUNT" column={column} />,
+              cell: ({ row }) => {
+                const text = row.original.autocount_sendable
+                  ? 'Will be sent'
+                  : AUTOCOUNT_WAITING_TEXT;
+                return (
+                  <span className="block truncate text-muted-foreground" title={text}>
+                    {text}
+                  </span>
+                );
+              },
+              size: 170,
+              meta: { headerTitle: 'AUTOCOUNT' },
+            } as ColumnDef<AutocountChangeListRow>,
+          ]
+        : []),
     ],
-    [],
+    [showAutocount],
   );
 
   const table = useReactTable({
@@ -187,6 +221,17 @@ export function AmendmentAutocountChangeList({
               <Download className="size-4" aria-hidden />
               {exporting ? 'Exporting…' : 'Export for AutoCount'}
             </Button>
+            {update && (
+              <Button
+                type="button"
+                size="sm"
+                disabled={sendable === 0 || update.pending || Boolean(update.disabledReason)}
+                title={update.disabledReason ?? undefined}
+                onClick={update.onUpdate}
+              >
+                {update.pending ? 'Updating…' : `Update in AutoCount (${sendable})`}
+              </Button>
+            )}
           </CardToolbar>
         </CardHeader>
 
