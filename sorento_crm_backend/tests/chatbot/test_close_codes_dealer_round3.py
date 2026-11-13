@@ -433,6 +433,19 @@ def test_r7_punctuation_around_a_colour_word_is_still_said_in_words(typed, code,
     assert corrects_or_completes(typed, code) is expected, (typed, code)
 
 
+@pytest.mark.parametrize(
+    ("typed", "code", "expected"),
+    [
+        ("SRTWT8259 “gold”", "SRTWT8259-GLD", False),
+        ("SRTWT8259 gold…", "SRTWT8259-GLD", False),
+        ("SRTWT8259 ‘grey’", "SRTWT8259-GRY", False),
+        ("SRTWT8259 “GDL”", "SRTWT8259-GLD", True),  # a scrambled word is still offered
+    ],
+)
+def test_r9_phone_smart_punctuation_around_a_colour_word_is_still_said_in_words(typed, code, expected):
+    assert corrects_or_completes(typed, code) is expected, (typed, code)
+
+
 # Crew ruling Q1 (a), 13 Nov: a letters-only code part typed in order as its own word plus extra letters is meant (answered); a changed, dropped or swapped letter is offered.
 @pytest.mark.parametrize(
     "typed,code,expected",
