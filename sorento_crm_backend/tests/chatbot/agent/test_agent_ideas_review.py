@@ -638,7 +638,16 @@ def test_AC_RC_7_a_value_of_only_format_characters_counts_as_not_given(db, ss, f
     _, row = store(db, w, [(CREATE, args)])
     confirm(db, w, row)
     (call,) = posts(ss, CREATE_PATH)
-    assert not call["json"].get("title") if field == "title" else not call["json"].get("use_cases")
+    if field == "title":
+        # Round 13 (owner, 14 Nov: a title is always set): a title of only format characters is not given, so the
+        # shared builder falls back to the problem's own words; the format characters never reach ss.
+        from app.services.ideation_extractor import normalise_title
+
+        title = call["json"].get("title")
+        assert title == normalise_title("Plain problem")
+        assert "\u200b" not in title and "\u202e" not in title
+    else:
+        assert not call["json"].get("use_cases")
 
 
 def test_AC_RC_7_a_problem_of_only_format_characters_is_invalid(db, ss):
