@@ -5,7 +5,7 @@ ui_page_views table (90-day retention rides the daily `api_call_log_prune` task)
 `ui.v2.preview` permission, granted to no role. Additive and idempotent.
 
 Revision ID: uiv2_0001_version_theme_views
-Revises: plr_0001_primary_owner
+Revises: acpr_0001_project_ac_register
 """
 import uuid
 from datetime import datetime
@@ -14,7 +14,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "uiv2_0001_version_theme_views"
-down_revision = "plr_0001_primary_owner"
+down_revision = "acpr_0001_project_ac_register"
 branch_labels = None
 depends_on = None
 
