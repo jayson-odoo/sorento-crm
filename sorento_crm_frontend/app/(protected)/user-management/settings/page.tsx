@@ -1366,7 +1366,7 @@ export default function Page() {
                           onCheckedChange={field.onChange}
                         />
                         <Label htmlFor="stock-debt-po-link-enabled">
-                          AutoCount links from Stock Debt
+                          AutoCount PO links (Stock Debt, Order Inquiries)
                         </Label>
                       </div>
                     </FormControl>
