@@ -1,10 +1,10 @@
 /**
- * P2 / P3 on the lines table: Add part lists the combo's own missing rows first, and the package
- * warning shares one block with the line's red messages.
+ * P3 on the lines table: the package warning shares one block with the line's red messages.
+ * (P2, Add part's own combo rows, went with Add part itself: owner 13 Nov, PRICETAG-ALA-CARTE AC-18.)
  */
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 
 type Opt = { value: string; label: string; group?: string };
 
@@ -51,15 +51,10 @@ const combo = {
 } as never;
 
 function renderTable(keep: (role: string | null) => boolean, patch: Record<string, unknown> = {}) {
-  const restorePart = vi.fn();
-  const addPart = vi.fn();
   const editor = new Proxy(
     {
       linePricing: {},
-      restorePart,
-      addPart,
       fetchItemOptions: async () => [],
-      fetchPartOptions: async () => [{ value: 'product:zz', label: 'ZZ extra' }],
     },
     { get: (target, key) => (key in target ? (target as never)[key] : vi.fn()) },
   ) as never;
@@ -81,33 +76,7 @@ function renderTable(keep: (role: string | null) => boolean, patch: Record<strin
     ...patch,
   } as unknown as DraftLine;
   render(<PriceTagLinesTable lines={[line]} priceMode="list" isMobile={false} editor={editor} showNumberErrors={false} />);
-  return { restorePart, addPart };
 }
-
-describe('P2: Add part lists the combo rows first', () => {
-  it('offers the deleted Upgrade row alone, under "This package", then the catalogue', async () => {
-    const { restorePart, addPart } = renderTable((role) => role !== 'Upgrade');
-    const add = screen.getByLabelText('Add part');
-    await waitFor(() => expect(add.querySelectorAll('button').length).toBe(2));
-    const buttons = Array.from(add.querySelectorAll('button'));
-    expect(buttons.map((b) => b.textContent)).toEqual(['Upgrade', 'ZZ extra']);
-    expect(buttons[0].dataset.group).toBe('This package');
-
-    fireEvent.click(buttons[0]);
-    expect(restorePart).toHaveBeenCalledWith('l1', 'role:Upgrade');
-    expect(addPart).not.toHaveBeenCalled();
-
-    fireEvent.click(buttons[1]);
-    expect(addPart).toHaveBeenCalledTimes(1);
-  });
-
-  it('lists only the catalogue while the line holds every combo row', async () => {
-    renderTable(() => true);
-    const add = screen.getByLabelText('Add part');
-    await waitFor(() => expect(add.querySelectorAll('button').length).toBe(1));
-    expect(add.textContent).toBe('ZZ extra');
-  });
-});
 
 describe('P3: the package warning sits in the line message block', () => {
   it('shows the warning and a red error in ONE block, each in its own style', () => {
