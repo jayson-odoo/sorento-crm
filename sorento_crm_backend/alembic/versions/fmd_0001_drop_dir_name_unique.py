@@ -15,13 +15,13 @@ Downgrade recreates the index. It FAILS if the folder now holds same-name pairs 
 this revision); rename or move those first.
 
 Revision ID: fmd_0001_drop_dir_name_unique
-Revises: il_0002_integration_log_search
+Revises: spr_0001_spare_part_request
 """
 from alembic import op
 
 
 revision = "fmd_0001_drop_dir_name_unique"
-down_revision = "il_0002_integration_log_search"
+down_revision = "spr_0001_spare_part_request"
 branch_labels = None
 depends_on = None
 
