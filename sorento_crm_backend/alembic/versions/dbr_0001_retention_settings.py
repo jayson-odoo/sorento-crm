@@ -8,13 +8,13 @@ switched OFF (crew safety review): an admin turns each on from Scheduled Tasks, 
 runs nightly at 02:00 Malaysia time (18:00 UTC), in batches.
 
 Revision ID: dbr_0001_retention_settings
-Revises: agent_0001_proposal_insights
+Revises: plr_0001_primary_owner
 """
 import sqlalchemy as sa
 from alembic import op
 
 revision = "dbr_0001_retention_settings"
-down_revision = "agent_0001_proposal_insights"
+down_revision = "plr_0001_primary_owner"
 branch_labels = None
 depends_on = None
 
