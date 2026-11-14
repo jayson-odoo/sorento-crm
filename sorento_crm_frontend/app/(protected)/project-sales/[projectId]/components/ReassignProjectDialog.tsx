@@ -33,18 +33,25 @@ import { projectCodeLabel } from '../../_shared/lib/projectCode';
  *
  * People who registered interest come first, with their date (PROJECT-REGISTER-V2 E5);
  * picking one rules on that interest, picking anyone else is today's owner update.
+ *
+ * `initialUserId` seeds the pick: the Access card's "Reassign to <name>" opens the dialog with
+ * that person already chosen (PROJECT-LEADS-REASSIGN B5).
  */
 export function ReassignProjectDialog({
   project,
   onDone,
+  initialUserId,
 }: {
   project: Project;
   onDone: () => void;
+  initialUserId?: string;
 }) {
   const update = useUpdateProject(project.id);
   const { decide } = useTakeoverMutations(project.id);
   const requests = useTakeoverRequests(project.id);
-  const [ownerUserId, setOwnerUserId] = React.useState(project.owner_user_id ?? '');
+  const [ownerUserId, setOwnerUserId] = React.useState(
+    initialUserId ?? project.owner_user_id ?? '',
+  );
   const users = useQuery({
     queryKey: ['user-lookup', 'project-owner'],
     queryFn: () => getUserLookup(),
