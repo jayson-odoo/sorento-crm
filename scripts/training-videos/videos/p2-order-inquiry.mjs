@@ -1,24 +1,24 @@
-// Video 6 (Wed 18 Nov, Project CS): order inquiries, their states, and how purchasing answers.
-// Recorded as the purchasing user: Confirm and Reject on a row are purchasing's grant, never
-// CS's (sorento_crm_backend/app/api/v1/projects/order_inquiries.py, ACKNOWLEDGE).
-// Fake data only (seed_fake.py --part p2). Each step: en = on-screen caption, ms = Malay subtitle
-// (machine-written, needs a native read), say = voice line (defaults to en), run = action.
+// Video 6 (Wed 18 Nov, Project CS): order inquiries and their states, view only.
+// Recorded as CS (the menu entry needs projects.projects.view, config/menu.config.tsx Order
+// Inquiries). Confirm and Reject on a row are purchasing's grant, never CS's
+// (sorento_crm_backend/app/api/v1/projects/order_inquiries.py, ACKNOWLEDGE), so this video only
+// shows their result: seed_fake.py --part p2 rejects Tower B line 1 through the real route.
+// Each step: en = on-screen caption, ms = Malay subtitle (machine-written, needs a native read),
+// say = voice line (defaults to en), run = action.
 const menu = (page, name) =>
   page.getByRole('menu').first().getByRole('button', { name, exact: true })
     .or(page.getByRole('menu').first().getByRole('link', { name, exact: true })).last();
 
-// The first row still to order. Rejecting one rewrites that order's plan, so a re-run picks
-// whichever row is still open; a clean final take wants a freshly seeded --part p2 database.
-const rejectable = (page) => page.getByRole('checkbox', { name: /^Select .+ on SO-DM-2600[12]$/ }).first();
+const wcRow = (page) => page.getByRole('row', { name: /DM-WC-2002/ }).first();
 
 export default {
   id: 'p2-order-inquiry',
   title: 'Order inquiries',
   subtitle: 'Procurement > Supply Chain > Order Inquiries',
   titleMs: 'Pertanyaan pesanan',
-  intro: 'In this video you will see order inquiries and their states, and how purchasing confirms or rejects a line.',
-  user: { email: 'purchasing@example.com', password: 'Demo1234!' },
-  warm: ['/project-sales/order-inquiries'],
+  intro: 'In this video you will follow your order inquiries, read each line\'s state, and find a rejected line again.',
+  user: { email: 'cs@example.com', password: 'Demo1234!' },
+  warm: ['/project-sales/order-inquiries', '/project-sales/fulfilment-planning'],
   steps: [
     {
       en: 'Open Procurement, then Supply Chain, then Order Inquiries.',
@@ -32,13 +32,13 @@ export default {
       },
     },
     {
-      en: 'Each order inquiry asks purchasing to buy for one sales order. Outstanding ones are shown first.',
-      ms: 'Setiap pertanyaan pesanan meminta pembelian untuk satu pesanan jualan. Yang belum selesai ditunjukkan dahulu.',
+      en: 'Each order inquiry asks purchasing to buy for one sales order.',
+      ms: 'Setiap pertanyaan pesanan meminta bahagian pembelian membeli untuk satu pesanan jualan.',
       run: async ({ page, point }) => point(page.getByRole('row', { name: /OI-2611-0001/ }).first(), 1500),
     },
     {
-      en: 'Switch between All, Outstanding and Completed to see inquiries in each state.',
-      ms: 'Tukar antara All, Outstanding dan Completed untuk melihat pertanyaan dalam setiap keadaan.',
+      en: 'Switch between All, Outstanding and Completed to see them by state.',
+      ms: 'Tukar antara All, Outstanding dan Completed untuk melihatnya mengikut keadaan.',
       run: async ({ page, click, sleep }) => {
         await click(page.getByRole('radio', { name: 'Completed', exact: true }));
         await sleep(1200);
@@ -55,67 +55,56 @@ export default {
       },
     },
     {
-      en: 'Each line shows its quantity, delivery date and its own state, such as Done.',
-      ms: 'Setiap baris menunjukkan kuantiti, tarikh penghantaran dan keadaannya sendiri, seperti Done.',
+      en: 'Each line shows the product and the quantity asked for.',
+      ms: 'Setiap baris menunjukkan produk dan kuantiti yang diminta.',
+      run: async ({ page, point }) => {
+        await wcRow(page).waitFor({ timeout: 30000 });
+        await point(wcRow(page).getByRole('cell', { name: 'DM-WC-2002', exact: true }), 1200);
+        await point(wcRow(page).getByRole('cell', { name: '120', exact: true }).first(), 1200);
+      },
+    },
+    {
+      en: 'Further across is each line\'s state, such as Done or Rejected.',
+      ms: 'Di hujung kanan ialah keadaan setiap baris, seperti Done atau Rejected.',
       run: async ({ page, point }) => {
         await point(page.getByRole('cell', { name: /^Done/ }).first(), 1300);
-        await point(page.getByRole('cell', { name: /^Done/ }).last(), 1300);
+        await point(page.getByRole('cell', { name: /^Rejected/ }).first(), 1300);
       },
     },
     {
-      en: 'Use the arrows to move to the other inquiry.',
-      ms: 'Guna anak panah untuk beralih ke pertanyaan lain.',
-      run: async ({ page, click }) => {
-        await click(page.getByRole('button', { name: 'Previous order inquiry' }));
-        await page.getByRole('heading', { name: 'OI-2611-0001' }).waitFor({ timeout: 60000 });
-      },
-    },
-    {
-      en: 'To take a line on, tick it and click Confirm.',
-      ms: 'Untuk menerima satu baris, tandakan dan klik Confirm.',
-      run: async ({ page, click, sleep }) => {
-        await click(page.getByRole('checkbox', { name: 'Select DM-WC-2002' }));
-        await click(page.getByRole('button', { name: /^Confirm \(1\)/ }));
-        await sleep(2500);
-      },
-    },
-    {
-      en: 'To refuse a line, go back to the list and switch to Lines.',
-      ms: 'Untuk menolak satu baris, kembali ke senarai dan tukar ke Lines.',
-      run: async ({ page, click, sleep }) => {
-        await click(page.getByRole('link', { name: 'Back to order inquiries' }));
-        await click(page.getByRole('button', { name: 'Lines', exact: true }));
-        await rejectable(page).waitFor({ timeout: 60000 });
-        await sleep(800);
-      },
-    },
-    {
-      en: 'Tick the line, open Actions and choose Reject selected.',
-      ms: 'Tandakan baris itu, buka Actions dan pilih Reject selected.',
-      run: async ({ page, click }) => {
-        await click(rejectable(page));
-        await click(page.getByRole('button', { name: 'Actions', exact: true }));
-        await click(page.getByRole('menuitem', { name: /Reject selected/ }));
-        await page.getByRole('alertdialog').waitFor({ timeout: 30000 });
-      },
-    },
-    {
-      en: 'A reason is required, so CS knows why. Then click Reject row.',
-      ms: 'Sebab diperlukan, supaya CS tahu mengapa. Kemudian klik Reject row.',
-      run: async ({ page, type, click, sleep }) => {
-        const dlg = page.getByRole('alertdialog');
-        await type(dlg.getByRole('textbox'), 'Supplier has stopped this model.', { delay: 45 });
-        await click(dlg.getByRole('button', { name: 'Reject row', exact: true }));
-        await dlg.waitFor({ state: 'hidden', timeout: 30000 });
-        await sleep(1500);
-      },
-    },
-    {
-      en: 'The line is rejected, and CS decides it again on the planning board.',
-      ms: 'Baris itu ditolak, dan CS membuat keputusan semula di papan perancangan.',
+      en: 'Purchasing confirms or rejects each line, and a rejection always comes with their reason.',
+      ms: 'Bahagian pembelian mengesahkan atau menolak setiap baris, dan penolakan sentiasa disertakan sebab.',
       run: async ({ page, point, sleep }) => {
-        await point(page.getByRole('table').first(), 1500);
-        await sleep(800);
+        await point(page.getByRole('cell', { name: /^Rejected/ }).first(), 2500);
+        await sleep(500);
+      },
+    },
+    {
+      en: 'A rejected line comes back to you on the planning board. Open Fulfilment Planning.',
+      ms: 'Baris yang ditolak kembali kepada anda di papan perancangan. Buka Fulfilment Planning.',
+      run: async ({ page, click, sleep }) => {
+        await click(page.getByRole('menu').first().getByRole('button', { name: 'Supply Chain', exact: true }).first());
+        await click(menu(page, 'Project Demand'));
+        await click(menu(page, 'Fulfilment Planning'));
+        await page.getByRole('checkbox', { name: 'Select SO-DM-26002 for planning' }).waitFor({ timeout: 60000 });
+        await sleep(600);
+      },
+    },
+    {
+      en: 'Tick the order and click Plan.',
+      ms: 'Tandakan pesanan dan klik Plan.',
+      run: async ({ page, click }) => {
+        await click(page.getByRole('checkbox', { name: 'Select SO-DM-26002 for planning' }));
+        await click(page.getByRole('button', { name: /^Plan SO-DM-26002/ }));
+        await page.getByRole('row', { name: /SO-DM-26002 line 1/ }).first().waitFor({ timeout: 60000 });
+      },
+    },
+    {
+      en: 'The rejected line is here, waiting for you to decide how to supply it again.',
+      ms: 'Baris yang ditolak ada di sini, menunggu anda memutuskan cara membekalkannya semula.',
+      run: async ({ page, point, sleep }) => {
+        await point(page.getByRole('row', { name: /SO-DM-26002 line 1/ }).first(), 2000);
+        await sleep(1000);
       },
     },
   ],

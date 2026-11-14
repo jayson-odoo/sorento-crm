@@ -923,11 +923,25 @@ def reset_p2_video_rows(db):
     db.flush()
 
 
+REJECT_REASON = "Supplier has stopped this model."
+
+
+def _has_open_rejection(db, order_id) -> bool:
+    """A line of this order whose current inquiry row purchasing rejected (not yet re-decided)."""
+    from app.models.project_so import ACK_REJECTED, INQUIRY_CANCELLED, OrderInquiry, OrderInquiryRow
+
+    return db.query(OrderInquiryRow).join(OrderInquiry, OrderInquiry.id == OrderInquiryRow.order_inquiry_id).filter(
+        OrderInquiry.project_sales_order_id == order_id,
+        OrderInquiryRow.ack_state == ACK_REJECTED,
+        OrderInquiryRow.state != INQUIRY_CANCELLED,
+    ).first() is not None
+
+
 def seed_p2(db) -> dict:
     from app.models.inventory import Warehouse
     from app.models.product import Product
     from app.models.project_so import (
-        INQUIRY_ACTIONED, INQUIRY_CANCELLED, INQUIRY_RAISED, OrderInquiry, OrderInquiryRow,
+        ACK_AWAITING, INQUIRY_ACTIONED, INQUIRY_CANCELLED, INQUIRY_RAISED, OrderInquiry, OrderInquiryRow,
         ProjectSalesOrderLine, SOSupplyDecision,
     )
     from app.models.procurement import PurchaseOrderLine
@@ -957,7 +971,10 @@ def seed_p2(db) -> dict:
     # The Buy decision through the real CS confirmation route; refresh_for_decision runs inside it.
     cs_token = None
     for spec, order in orders:
-        if db.query(SOSupplyDecision).filter_by(project_sales_order_id=order.id).first():
+        decided = db.query(SOSupplyDecision).filter_by(project_sales_order_id=order.id).first()
+        # A take of the purchasing flow may have rejected a Tower A line; CS deciding it again
+        # (the same confirm) raises a fresh row, which is how the screen itself recovers.
+        if decided and not (spec is ORDERS[0] and _has_open_rejection(db, order.id)):
             continue
         cs_token = cs_token or login(CS["email"])
         lines = (db.query(ProjectSalesOrderLine).filter_by(project_sales_order_id=order.id)
@@ -981,7 +998,26 @@ def seed_p2(db) -> dict:
             .join(ProjectSalesOrderLine, ProjectSalesOrderLine.id == OrderInquiryRow.so_line_id)
             .filter(OrderInquiryRow.order_inquiry_id == inquiry.id)
             .order_by(ProjectSalesOrderLine.line_no).all())
-    by_line = {line_no: row for row, line_no in rows}
+    by_line = {}
+    for row, line_no in rows:  # a cancelled history row never hides the line's current one
+        if line_no not in by_line or by_line[line_no].state == INQUIRY_CANCELLED:
+            by_line[line_no] = row
+    # Line 1 is refused by purchasing with a reason, through the real reject route, so the
+    # order inquiry video can show a Rejected line. First: a reject rewrites the order's plan.
+    first = by_line.get(1)
+    if first is not None and first.state == INQUIRY_RAISED and first.ack_state == ACK_AWAITING:
+        http("POST", f"/project-sales/order-inquiries/{first.id}/reject", login(PURCHASING["email"]),
+             {"reason": REJECT_REASON})
+        say(f"{inquiry.inquiry_no} line 1: rejected by purchasing")
+        db.expire_all()
+        rows = (db.query(OrderInquiryRow, ProjectSalesOrderLine.line_no)
+                .join(ProjectSalesOrderLine, ProjectSalesOrderLine.id == OrderInquiryRow.so_line_id)
+                .filter(OrderInquiryRow.order_inquiry_id == inquiry.id)
+                .order_by(ProjectSalesOrderLine.line_no).all())
+        by_line = {}
+        for row, line_no in rows:
+            if line_no not in by_line or by_line[line_no].state == INQUIRY_CANCELLED:
+                by_line[line_no] = row
     admin_token = None
     plan = {2: INQUIRY_ACTIONED, 3: "placed", 4: INQUIRY_CANCELLED}
     for line_no, target in plan.items():
