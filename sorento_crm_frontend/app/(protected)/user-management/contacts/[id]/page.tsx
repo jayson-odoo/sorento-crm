@@ -6,8 +6,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { apiFetch } from '@/lib/api';
-import { useSession } from 'next-auth/react';
-import { isSuperadminUser } from '@/lib/is-superadmin';
+import { useEffectiveIsSuperadmin } from '@/hooks/useEffectiveIsSuperadmin';
 import { getContactCompanies } from './services/contactService';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -42,8 +41,8 @@ export default function ContactProfilePage() {
   // Company access is superadmin-only to read (PLAN-user-management-read-gates.md:138), so the
   // Companies field is shown to a superadmin only; it is the same list the contacts list's
   // Companies column shows (CONTACT-COMPANIES-COL).
-  const { data: session } = useSession();
-  const canReadCompanyAccess = isSuperadminUser(session?.user);
+  // Impersonation-aware: viewing as a non-admin, the backend answers for that user.
+  const canReadCompanyAccess = useEffectiveIsSuperadmin() === true;
   const { data: companies = [], isLoading: companiesLoading } = useQuery({
     queryKey: ['contact-companies', contactId],
     queryFn: () => getContactCompanies(contactId as string),

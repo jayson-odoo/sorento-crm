@@ -92,7 +92,6 @@ def _global_agent_daily_turns(db: Optional[Session]) -> Optional[int]:
     return int(row[0]) if row is not None else 50
 
 
-
 def can_read_company_access(redact_sections: frozenset) -> bool:
     """Company access is superadmin-only to read (PLAN-user-management-read-gates.md:138); the
     list already carries that verdict as the redacted ``companies`` tag-settings section
@@ -119,6 +118,7 @@ def company_access_by_contact(db: Session, contact_ids) -> dict[str, list[dict]]
     for contact_id, company_id, name, code in rows:
         out.setdefault(str(contact_id), []).append({"id": str(company_id), "name": name, "code": code})
     return out
+
 
 class ContactService:
     """Service for respond contact operations."""

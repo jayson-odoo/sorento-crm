@@ -3,8 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useSession } from 'next-auth/react';
-import { isSuperadminUser } from '@/lib/is-superadmin';
+import { useEffectiveIsSuperadmin } from '@/hooks/useEffectiveIsSuperadmin';
 import { extractApiError } from '@/lib/api-client';
 import { useHasPermission } from '@/hooks/usePermissions';
 
@@ -128,8 +127,8 @@ export default function ContactsList() {
   // CONTACT-COMPANIES-COL: the Companies column, its sort and the Company filter show the contact's
   // company access, the detail page's list, which only a superadmin may read
   // (PLAN-user-management-read-gates.md:138). Everyone else gets neither column nor filter.
-  const { data: session } = useSession();
-  const canReadCompanyAccess = isSuperadminUser(session?.user);
+  // Impersonation-aware: viewing as a non-admin, the backend answers for that user.
+  const canReadCompanyAccess = useEffectiveIsSuperadmin() === true;
   const [createUserContact, setCreateUserContact] =
     useState<RespondContact | null>(null);
   const [pagination, setPagination] = useState<PaginationState>({
