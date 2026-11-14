@@ -2,10 +2,11 @@
 
 The dashboard endpoints read the ``scm`` schema views, which only exist on the
 live Postgres DB - so these tests run against the local prod-copy (same source as
-the M0 view/golden tests). Every test runs inside a nested SAVEPOINT joined to an
-outer transaction: the route's own ``db.commit()`` releases the savepoint (a
-restart listener re-opens one), and the whole thing is rolled back on teardown so
-nothing (seeded users, created SOs/DOs) ever escapes to the shared DB.
+the M0 view/golden tests). Every test's session runs on SAVEPOINTs inside one outer
+connection transaction (``join_transaction_mode="create_savepoint"``): the route's own
+``db.commit()`` releases the session's savepoint and the next use opens a new one, and
+the outer transaction is rolled back on teardown so nothing (seeded users, created
+SOs/DOs) ever escapes to the shared DB.
 """
 from __future__ import annotations
 
@@ -14,7 +15,7 @@ import re
 import uuid
 
 import pytest
-from sqlalchemy import create_engine, event, text
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 
@@ -144,26 +145,35 @@ def scm_app():
     engine = create_engine(URL)
     connection = engine.connect()
     trans = connection.begin()
-    Session = sessionmaker(bind=connection)
+    # SQLAlchemy 2.0's own recipe: the session's outermost transaction is a SAVEPOINT on the
+    # joined connection, so `db.commit()` releases it and `db.rollback()` rolls back to it, and
+    # the next use opens a fresh one, exactly as a production session behaves over its own
+    # transaction. The 1.x "restart the savepoint after_transaction_end" listener this replaces
+    # broke on 2.0, where `Session.commit()` commits the OUTERMOST transaction: after the first
+    # route commit the session ran with no test savepoint at all, so the next app
+    # `begin_nested()` looked like the test's own savepoint to the listener, which re-opened one
+    # inside the app's context manager and failed it ("closed transaction inside context
+    # manager"), and a route `db.rollback()` rolled the joined connection back, test data and all.
+    Session = sessionmaker(bind=connection, join_transaction_mode="create_savepoint")
     db = Session()
-    db.begin_nested()
-
-    @event.listens_for(db, "after_transaction_end")
-    def _restart_savepoint(session, transaction):  # noqa: ANN001
-        if transaction.nested and not transaction._parent.nested:
-            session.begin_nested()
 
     ensure_reference_data(db)
 
     def _get_db():
+        # A real request opens its own session over what other requests have COMMITTED, so
+        # whatever the test seeded is committed state by the time a route runs (a release of
+        # the session's savepoint here; the outer transaction still rolls it all back). Without
+        # this a route's own `db.rollback()` after a refusal would wipe the test's world, which
+        # no production rollback can do.
+        db.commit()
         yield db
 
+    _get_db.session = db
     app.dependency_overrides[get_db] = _get_db
     try:
         yield app, db, get_current_user, get_current_user_or_api_key
     finally:
         app.dependency_overrides.clear()
-        event.remove(db, "after_transaction_end", _restart_savepoint)
         db.close()
         trans.rollback()
         connection.close()
@@ -314,6 +324,8 @@ def _sessions_for(app):
     override = app.dependency_overrides.get(get_db)
     if override is None:
         return []
+    if getattr(override, "session", None) is not None:
+        return [override.session]
     try:
         gen = override()
         db = next(gen)
