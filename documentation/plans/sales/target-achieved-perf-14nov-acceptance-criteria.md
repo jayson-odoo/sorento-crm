@@ -65,3 +65,11 @@ Plan: `PLAN-target-achieved-perf-14nov.md`.
         from those results the same way (no error footer or sentence). With NO tool result yet, today's
         behaviour stays (nothing to answer from).
     (c) Only when the final answer itself fails does the turn end in an error.
+
+## Fix round 2 (crew-pass on eef7f13a NOT READY, 14 Nov; owner D4: never a could-not-finish or limit ending)
+
+13. Crew pass trace, "this year" (06a33482): 5 rounds of 2.9-8.4 s under load 14-15; the UAC 12a guard sent no
+    new round with ~7 s of the 45 s left, but the forced final answer got only FINAL_GRACE = 10 s
+    (loop.py:77, used only by `forced_final`) and timed out after exactly 10 s (14:30:53 -> 14:31:03), so the
+    turn ended "I could not finish the answer" (12c). Same on "and last year?". The forced final answer gets a
+    real wait: a final answer that needs 20 s (a 50-row answer under load) completes and the turn is answered.
