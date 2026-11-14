@@ -24,6 +24,7 @@ from app.dependencies import (
 )
 
 from app.services.resources_service import AttachmentService, AttachmentTypeService, AttachmentDirectoryService
+from app.services.user_service import UserPermissionService
 from app.services.attachment_company_service import AttachmentCompanyService
 from app.services.attachment_entity_access import (
     PROJECT_ENTITY_TYPE,
@@ -57,6 +58,7 @@ from app.schemas.resources import (
     AttachmentResponse,
     AttachmentBulkDeleteRequest,
     AttachmentReorderRequest,
+    AttachmentsBulkRestoreRequest,
     AttachmentsBulkMoveRequest,
     AttachmentsBulkMoveResponse,
     BulkAccessLevelsPreviewRequest,
@@ -191,7 +193,19 @@ def _find_filename_collision(
                 Attachment.entity_type != PROJECT_ENTITY_TYPE,
             )
         )
-    return q.first()
+    # Several files may share a name now (FILES-MOVE-DUPLICATE): always the oldest one.
+    return q.order_by(Attachment.uploaded_at, Attachment.id).first()
+
+
+def _folder_name_collision(db: Session, directory_id: Optional[str], display_name: str):
+    """The active file in the folder showing ``display_name`` (any case), or None. The zip
+    import asks Skip / Copy / Replace off this; Replace itself only ever targets this record's
+    own row (``_find_filename_collision``)."""
+    if not directory_id:
+        return None
+    return AttachmentService(db)._folder_clash(
+        directory_id, sanitize_storage_filename(display_name), visible_name=display_name
+    )
 
 
 def _next_copy_name(
@@ -202,8 +216,17 @@ def _next_copy_name(
     entity_id: Optional[str] = None,
 ) -> str:
     """Loop _suffix_copy_name until the candidate display name is free in the directory."""
+    service = AttachmentService(db)
     candidate = _suffix_copy_name(display_name)
-    while _find_filename_collision(db, directory_id, candidate, entity_type, entity_id) is not None:
+    # Free on this record's names AND on every visible name in the folder, so a copy never
+    # lands beside another file of the same name.
+    while (
+        _find_filename_collision(db, directory_id, candidate, entity_type, entity_id) is not None
+        or service._folder_clash(
+            directory_id, sanitize_storage_filename(candidate), visible_name=candidate
+        )
+        is not None
+    ):
         candidate = _suffix_copy_name(candidate)
     return candidate
 
@@ -952,32 +975,56 @@ async def create_attachment(
         # 409 paths don't waste storage. Scoped to the user-facing display name.
         # ------------------------------------------------------------------
         on_conflict_clean = (on_conflict or "").strip().lower() or None
-        if on_conflict_clean not in (None, "copy", "replace"):
+        if on_conflict_clean not in (None, "keep", "copy", "replace"):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="on_conflict must be one of 'copy', 'replace', or omitted.",
+                detail="on_conflict must be one of 'keep', 'copy', 'replace', or omitted.",
             )
         # The project check runs before the collision lookup, so a 409 never tells a caller
         # who may not write that project which file names it holds.
         assert_can_write_target(db, entity_type, entity_id, current_user)
         collision = _find_filename_collision(db, directory_id, display_name, entity_type, entity_id)
+        # FILES-MOVE-DUPLICATE: a same-named file on ANOTHER record in this folder asks too
+        # (Keep both / Create copy), but is never offered for Replace: no id is handed out, and a
+        # private file's name stays hidden.
+        other = (
+            AttachmentService(db)._folder_clash(directory_id, display_name)
+            if collision is None and directory_id
+            else None
+        )
         existing_to_replace = None
-        if collision is not None:
+        if collision is not None or other is not None:
             if on_conflict_clean is None:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail={
-                        "code": "ATTACHMENT_FILENAME_COLLISION",
-                        "existing_attachment_id": str(collision.id),
-                        "existing_file_name": collision.stored_filename,
-                        "existing_target_entity_type": collision.target_entity_type,
-                        "existing_target_field_keys": collision.target_field_keys,
-                    },
+                    detail=(
+                        {
+                            "code": "ATTACHMENT_FILENAME_COLLISION",
+                            "existing_attachment_id": str(collision.id),
+                            "existing_file_name": collision.stored_filename,
+                            "existing_target_entity_type": collision.target_entity_type,
+                            "existing_target_field_keys": collision.target_field_keys,
+                        }
+                        if collision is not None
+                        else {
+                            "code": "ATTACHMENT_FILENAME_COLLISION",
+                            "existing_attachment_id": None,
+                            "existing_file_name": (
+                                None
+                                if is_private_to_others(other, str(current_user["id"]))
+                                else other.stored_filename
+                            ),
+                            "existing_target_entity_type": None,
+                            "existing_target_field_keys": None,
+                        }
+                    ),
                 )
             if on_conflict_clean == "copy":
                 display_name = _next_copy_name(db, directory_id, display_name, entity_type, entity_id)
-            else:  # "replace"
+            elif on_conflict_clean == "replace" and collision is not None:
                 existing_to_replace = collision
+            # "keep" (or "replace" of another record's file): same names are allowed (owner,
+            # 12 Nov), so the new file lands beside it.
 
         # Split the resolved display name into the two canonical columns:
         #   stored_filename   = user-facing label (editable later via rename)
@@ -1592,7 +1639,25 @@ def update_attachment(
                 requested.get("entity_id", current.entity_id),
                 current_user,
             )
-        attachment = service.update_attachment(attachment_id, attachment_data)
+        if requested.get("on_conflict") == "replace":
+            # Replace sends the file already in the target folder to Trash: the same slug as
+            # Archive, and the same per-record write check that file's own edit would take.
+            if not UserPermissionService(db).check_user_has_permission(
+                current_user["id"], "resource.attachments.delete"
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Replacing a file needs the permission to delete files.",
+                )
+        attachment = service.update_attachment(
+            attachment_id,
+            attachment_data,
+            actor_id=str(current_user["id"]),
+            # Run on the exact row Replace trashes (the service locks it first).
+            replace_guard=lambda row: assert_can_write_existing(
+                db, row.entity_type, row.entity_id, current_user
+            ),
+        )
         # The bare ORM row serializes company_name as None; stamp it so the write
         # echo matches what the list and detail reads return.
         data = AttachmentResponse.model_validate(attachment).model_dump()
@@ -1615,8 +1680,34 @@ def bulk_move_attachments(
         # A moved file is under that folder's delete / restore cascade from then on.
         assert_can_write_attachments(db, body.attachment_ids, current_user)
         service = AttachmentService(db)
-        updated = service.bulk_move(body.attachment_ids, body.directory_id)
-        return AttachmentsBulkMoveResponse(updated=updated)
+        resolutions = {k: v.model_dump() for k, v in body.resolutions.items()}
+        if any(r["action"] == "replace" for r in resolutions.values()) and not body.check_only:
+            # Replace sends the file already there to Trash: the Archive slug, plus the
+            # per-record write check run on each row it trashes.
+            if not UserPermissionService(db).check_user_has_permission(
+                current_user["id"], "resource.attachments.delete"
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Replacing a file needs the permission to delete files.",
+                )
+        result = service.bulk_move_report(
+            body.attachment_ids,
+            body.directory_id,
+            viewer_id=str(current_user["id"]),
+            check_only=body.check_only,
+            resolutions=resolutions,
+            actor_id=str(current_user["id"]),
+            replace_guard=lambda row: assert_can_write_existing(
+                db, row.entity_type, row.entity_id, current_user
+            ),
+        )
+        return AttachmentsBulkMoveResponse(
+            updated=result.updated,
+            not_moved=result.not_moved,
+            renamed=result.renamed,
+            replaced=result.replaced,
+        )
     except HTTPException:
         raise
     except Exception as e:
@@ -1751,16 +1842,62 @@ def archive_attachment(
 @router.put("/{attachment_id}/restore", status_code=status.HTTP_200_OK)
 def restore_attachment(
     attachment_id: str,
+    on_conflict: Optional[str] = Query(
+        None,
+        description="When the folder now shows a file of the same name: keep | rename | replace. "
+        "Omitted = 409 with what the clash window needs.",
+    ),
     current_user: dict = Depends(require_permission("resource.attachments.delete")),
     db: Session = Depends(get_db)
 ):
     """Restore an archived attachment. Takes the archive slug: restore undoes an archive."""
     try:
         validate_uuid_path(attachment_id, resource="Attachment")
+        if on_conflict not in (None, "keep", "rename", "replace"):
+            raise HTTPException(status_code=400, detail="on_conflict must be keep, rename or replace.")
         assert_can_write_attachments(db, [attachment_id], current_user)
         service = AttachmentService(db)
-        result = service.restore_attachment(attachment_id)
+        result = service.restore_attachment(
+            attachment_id,
+            on_conflict=on_conflict,
+            actor_id=str(current_user["id"]),
+            replace_guard=lambda row: assert_can_write_existing(db, row.entity_type, row.entity_id, current_user),
+        )
         return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/bulk-restore", response_model=AttachmentsBulkMoveResponse)
+def bulk_restore_attachments(
+    body: AttachmentsBulkRestoreRequest,
+    current_user: dict = Depends(require_permission("resource.attachments.delete")),
+    db: Session = Depends(get_db),
+):
+    """Restore many files from Trash with the move's rules (FILES-MOVE-DUPLICATE).
+
+    ``check_only`` writes nothing and lists every file whose folder now shows another file of
+    the same name; ``resolutions`` (keep / rename / replace / skip per file) then restore them in
+    one call. A clashing file without a resolution stays in Trash and is named.
+    """
+    try:
+        assert_can_write_attachments(db, body.attachment_ids, current_user)
+        result = AttachmentService(db).bulk_restore_report(
+            body.attachment_ids,
+            check_only=body.check_only,
+            resolutions={k: v.model_dump() for k, v in body.resolutions.items()},
+            viewer_id=str(current_user["id"]),
+            actor_id=str(current_user["id"]),
+            replace_guard=lambda row: assert_can_write_existing(db, row.entity_type, row.entity_id, current_user),
+        )
+        return AttachmentsBulkMoveResponse(
+            updated=result.updated,
+            not_moved=result.not_moved,
+            renamed=result.renamed,
+            replaced=result.replaced,
+        )
     except HTTPException:
         raise
     except Exception as e:

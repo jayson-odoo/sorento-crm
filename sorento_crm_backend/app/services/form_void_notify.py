@@ -9,7 +9,7 @@ failure must not roll back the committed void.
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Iterable, Optional
 
 from sqlalchemy.orm import Session
 
@@ -23,46 +23,58 @@ def notify_form_voided_in_app(
     source_entity_id: str,
     entity_number: Optional[str] = None,
     actor_user_id: Optional[str] = None,
+    user_ids: Optional[Iterable[str]] = None,
 ) -> set[str]:
     """Send in-app notifications to the active tracker's assignee + handling-lock
     holder. Returns the set of user ids actually notified (for telemetry/tests).
     Never raises.
+
+    ``user_ids`` names the recipients outright, for a form whose void already stopped its
+    stages in the same transaction (the order change notice): there is no open tracker left
+    to read, so the caller passes whoever held the stages it voided.
     """
     notified: set[str] = set()
     try:
-        from app.models.sla import ConversationSLATracking
-        from app.services.sla_scope import open_tracker_scope
-
-        tracker = (
-            db.query(ConversationSLATracking)
-            .filter(
-                ConversationSLATracking.source_entity_type == source_entity_type,
-                ConversationSLATracking.source_entity_id == str(source_entity_id),
-                # Whoever held a stage voided by an earlier revision was already told.
-                *open_tracker_scope(),
-            )
-            .order_by(ConversationSLATracking.initiated_at.desc())
-            .first()
-        )
-        if tracker is None:
-            return notified
-
-        assignee_id = getattr(tracker, "assigned_to_id", None)
-        handler_id = getattr(tracker, "handled_by_id", None)
-
         targets: list[str] = []
-        if assignee_id:
-            targets.append(str(assignee_id))
-        # NTF-2: handling-lock holder (skipped cleanly when unset or == assignee).
-        if handler_id and str(handler_id) not in targets:
-            targets.append(str(handler_id))
+        if user_ids is not None:
+            for uid in user_ids:
+                if uid and str(uid) not in targets and str(uid) != str(actor_user_id or ""):
+                    targets.append(str(uid))
+        else:
+            from app.models.sla import ConversationSLATracking
+            from app.services.sla_scope import open_tracker_scope
+
+            tracker = (
+                db.query(ConversationSLATracking)
+                .filter(
+                    ConversationSLATracking.source_entity_type == source_entity_type,
+                    ConversationSLATracking.source_entity_id == str(source_entity_id),
+                    # Whoever held a stage voided by an earlier revision was already told.
+                    *open_tracker_scope(),
+                )
+                .order_by(ConversationSLATracking.initiated_at.desc())
+                .first()
+            )
+            if tracker is None:
+                return notified
+
+            assignee_id = getattr(tracker, "assigned_to_id", None)
+            handler_id = getattr(tracker, "handled_by_id", None)
+
+            if assignee_id:
+                targets.append(str(assignee_id))
+            # NTF-2: handling-lock holder (skipped cleanly when unset or == assignee).
+            if handler_id and str(handler_id) not in targets:
+                targets.append(str(handler_id))
         if not targets:
             return notified
 
         from app.services.notification_service import NotificationService
 
         svc = NotificationService(db)
-        label = source_entity_type.replace("_", " ")
+        from app.services.form_sla_service import form_type_words
+
+        label = form_type_words(source_entity_type)
         title = f"Form voided: {entity_number}" if entity_number else "Form voided"
         body = f"A {label} you were handling has been voided."
         for uid in targets:

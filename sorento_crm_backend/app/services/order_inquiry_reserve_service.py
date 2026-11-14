@@ -34,7 +34,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Sequence
 
-from sqlalchemy import and_, event, func
+from sqlalchemy import and_, event, func, true
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -1498,7 +1498,7 @@ class OrderInquiryReserveService:
             "unresolved": self._unresolved_out(unresolved),
         }
 
-    def reserve_status_summary(self, *, actor_user_id: str) -> Dict[str, int]:
+    def reserve_status_summary(self, *, actor_user_id: str, visibility: Any = None) -> Dict[str, int]:
         """OI count per status (everyone's) and the OI count of the caller's own parked requests / notices."""
         pred = reserve_status_predicates()
         rr, req = OrderInquiryReserveRequestRow, OrderInquiryReserveRequest
@@ -1525,6 +1525,14 @@ class OrderInquiryReserveService:
             # OI-RESERVE-USED-ROW: counted on LIVE rows only, as Lines lists them.
             .join(OrderInquiryRow, OrderInquiryRow.id == rr.row_id)
             .filter(live_row_clause())
+            # SPARE-PART-ORDER-REQUEST (D1): a spare part requester's own requests only.
+            .filter(
+                req.order_inquiry_id.in_(
+                    self.db.query(OrderInquiry.id).filter(visibility).scalar_subquery()
+                )
+                if visibility is not None
+                else true()
+            )
             .one()
         )
         keys = (

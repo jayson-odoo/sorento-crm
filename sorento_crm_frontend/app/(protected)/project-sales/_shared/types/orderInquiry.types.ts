@@ -31,7 +31,9 @@ export type OrderInquiryVerb =
    * location, and this Buy is no longer for this line - it is now for the pool
    * (PLAN-so-book-diff-replanning.md section 6). Informational, like DELAY/ADVANCE.
    */
-  | 'RELEASE';
+  | 'RELEASE'
+  /** A spare part request's line (SPARE-PART-ORDER-REQUEST): bought, never demand. */
+  | 'REPLENISH';
 
 /**
  * `placed` reads "Linked" on every screen (AC-I1) and keeps its stored value: the row is
@@ -44,7 +46,21 @@ export type OrderInquiryState =
   | 'partly_linked'
   | 'actioned'
   | 'cancelled'
-  | 'placed';
+  | 'placed'
+  /** A spare part request's line before final approval (SPARE-PART-ORDER-REQUEST). */
+  | 'draft';
+
+/** What an order inquiry was raised from (SPARE-PART-ORDER-REQUEST). */
+export type OrderInquiryType = 'sales_order' | 'spare_part_request';
+
+/** A spare part request's header state: the three before approval, then the OI's own. */
+export type SparePartRequestState =
+  | 'draft'
+  | 'pending_approval'
+  | 'rejected'
+  | 'raised'
+  | 'actioned'
+  | 'cancelled';
 
 /**
  * A "supplied with" bundle (PLAN-scm-supplied-with-companions.md): this row's product
@@ -498,6 +514,16 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
    * inquiry raised since is stamped with one.
    */
   inquiry_no?: string | null;
+  /** SPARE-PART-ORDER-REQUEST: the inquiry's type, and a spare part request's unit
+   *  price, line total and the qty / unit price its requester SUBMITTED (the "was" mark).
+   *  `requested_qty` below is a different fact: the open reserve request's qty. */
+  inquiry_type?: OrderInquiryType | null;
+  unit_price?: string | null;
+  line_total?: string | null;
+  submitted_qty?: string | null;
+  submitted_unit_price?: string | null;
+  /** Photos added / removed on a spare part line since it was last submitted. */
+  photo_changes?: { added: number; removed: number } | null;
   /** The core sales order's order date. The date on the document, not the raise date. */
   so_date?: string | null;
   so_number?: string | null;
@@ -506,6 +532,8 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
    * book, so the stock grid (`OrderInquiryStockGrid`) keys on this, never `item_code`. */
   product_id?: string | null;
   product_name?: string | null;
+  /** Hand-test round G1: a spare part line's own description (null on a sales-order row). */
+  line_description?: string | null;
   qty: string;
   delivery_date?: string | null;
   /** `BUIMACO / TUJU RESIDENCE`, or the core order's customer when there is no project.
@@ -1477,6 +1505,10 @@ export interface OrderInquiryHeader {
   /** AC-CONSIGN-CRM: the core sales order's doc_type; null when there is no core order. */
   so_doc_type?: string | null;
   project_sales_order_id?: string | null;
+  /** `sales_order` when absent (a payload from before the type existed). */
+  inquiry_type?: OrderInquiryType | null;
+  /** The header's own state; a spare part request's approval state before it is raised. */
+  state?: SparePartRequestState | string | null;
   so_number?: string | null;
   so_date?: string | null;
   customer_name?: string | null;
@@ -1508,6 +1540,22 @@ export interface OrderInquiryHeaderDetail extends OrderInquiryHeader {
   /** The ERP document type, when the order carries one (General tab's Order card). */
   order_type?: string | null;
   raise_history: OrderInquiryHeaderRaiseEntry[];
+  /** SPARE-PART-ORDER-REQUEST: the request's own fields (null on a sales-order inquiry);
+   *  people by name only. `can_*` say what the viewer may do with it. */
+  currency?: string | null;
+  needed_by?: string | null;
+  default_location?: string | null;
+  reason?: string | null;
+  requested_by_name?: string | null;
+  submitted_at?: string | null;
+  approved_at?: string | null;
+  approved_by_name?: string | null;
+  reject_reason?: string | null;
+  can_decide?: boolean;
+  can_edit?: boolean;
+  can_revise?: boolean;
+  /** A spare part request's amount; null when the reader may not see its prices. */
+  total?: string | null;
 }
 
 export interface OrderInquiryHeaderListParams {
@@ -1524,6 +1572,8 @@ export interface OrderInquiryHeaderListParams {
   reserve?: 'parked' | 'needs_reserve' | 'notice_parked' | 'reserved';
   /** Exact OI numbers, comma-joined (the reserve emails' button). */
   inquiry_no?: string;
+  /** SPARE-PART-ORDER-REQUEST (P3): one type or several, OR-ed. */
+  inquiry_type?: OrderInquiryType[];
   page?: number;
   limit?: number;
   sort?: string;

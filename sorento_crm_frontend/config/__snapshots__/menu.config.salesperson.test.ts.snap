@@ -313,6 +313,10 @@ exports[`MENU_SIDEBAR for staff is unchanged > admin with every permission: filt
             "title": "Order Inquiries",
           },
           {
+            "path": "/procurement-management/spare-part-requests",
+            "title": "Order Requests",
+          },
+          {
             "path": "/scm/purchase-orders",
             "title": "Purchase Orders",
           },
@@ -612,6 +616,10 @@ exports[`MENU_SIDEBAR for staff is unchanged > admin with every permission: filt
       {
         "path": "/procurement-management/sponsorship-forms",
         "title": "Sponsorship Forms",
+      },
+      {
+        "path": "/procurement-management/order-change-notices",
+        "title": "Order Change Notices",
       },
       {
         "path": "/procurement-management/sponsorship-forms/report",
@@ -1022,6 +1030,18 @@ exports[`MENU_SIDEBAR for staff is unchanged > mixed user (salesperson plus staf
       },
     ],
     "title": "Inventory",
+  },
+  {
+    "heading": "OPERATIONS",
+  },
+  {
+    "children": [
+      {
+        "path": "/procurement-management/order-change-notices",
+        "title": "Order Change Notices",
+      },
+    ],
+    "title": "Project Sales Admin",
   },
 ]
 `;

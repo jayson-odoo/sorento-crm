@@ -2391,6 +2391,59 @@ register(
 )
 
 
+def _delete_spare_part_request(db: Session, payload: dict):
+    from app.services import spare_part_request_service
+
+    # The requester's own Draft / Rejected request; re-checked here because the state can
+    # change inside the window (a submit during the countdown keeps the request).
+    spare_part_request_service.delete_draft(
+        db, _entity_id(payload), str(payload.get("requested_by_id") or "")
+    )
+    return {"message": "Deleted"}
+
+
+register(
+    FormAction(
+        key="spare_part_request.delete",
+        entity_types=("spare_part_request",),
+        execute=_delete_spare_part_request,
+        # Destructive: a hard delete of the requester's request, its lines and their photos.
+        window=WINDOW_DESTRUCTIVE,
+        permission=OWN_RECORD,
+        label="Delete draft",
+    )
+)
+
+
+def _delete_order_inquiry_row_attachment(db: Session, payload: dict):
+    from app.services import so_line_attachments, spare_part_request_service
+
+    # SPARE-PART-ORDER-REQUEST: a spare part request line's photo. Authorised by the
+    # request's own rule (requester while draft / rejected, approver while pending),
+    # checked again here at commit, where the row's state is final.
+    row_id = str(payload.get("line_id") or "")
+    actor = payload.get("requested_by_id")
+    spare_part_request_service.assert_can_write_row_photos(db, row_id, actor)
+    return so_line_attachments.delete(
+        db, row_id, _entity_id(payload), actor, so_line_attachments.OI_ROW
+    )
+
+
+register(
+    FormAction(
+        key="order_inquiry_row_attachment.delete",
+        entity_types=("order_inquiry_row_attachment",),
+        execute=_delete_order_inquiry_row_attachment,
+        # Destructive, as the SO line attachment delete above. The grant is the request's
+        # own write rule (`spare_part_request_service.assert_can_write_row_photos`), not
+        # a role slug, so it is checked in the handler.
+        window=WINDOW_DESTRUCTIVE,
+        permission=OWN_RECORD,
+        label="Delete attachment",
+    )
+)
+
+
 def _delete_notification(db: Session, payload: dict):
     from app.services.error_handler import handle_not_found
     from app.services.notification_service import NotificationService
@@ -2533,6 +2586,28 @@ register(
         key="new_product_application_attachment.unlink",
         entity_types=("new_product_application_attachment",),
         execute=_unlink_new_product_application_attachment,
+        window=WINDOW_REVERSIBLE,
+        permission=OWN_RECORD,
+        label="Unlink attachment",
+    )
+)
+
+
+def _unlink_order_change_notice_attachment(db: Session, payload: dict):
+    from app.services import order_change_notice_service
+
+    # Re-checked here: the notice can leave draft inside the window. Only the link goes.
+    order_change_notice_service.unlink_attachment(
+        db, _entity_id(payload), str(payload.get("requested_by_id") or "")
+    )
+    return {"message": "Unlinked"}
+
+
+register(
+    FormAction(
+        key="order_change_notice_attachment.unlink",
+        entity_types=("order_change_notice_attachment",),
+        execute=_unlink_order_change_notice_attachment,
         window=WINDOW_REVERSIBLE,
         permission=OWN_RECORD,
         label="Unlink attachment",
