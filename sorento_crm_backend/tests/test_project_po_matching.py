@@ -47,6 +47,15 @@ from .test_project_po_intake import (
 MARKER = "zzt-po-match"
 BASE = "/api/v1/project-sales"
 
+# The REAL model call, captured at import (before the autouse fake replaces it), for the
+# fix-round tests that stub the PROVIDER instead and need the real payload and prompt.
+try:
+    from app.services import project_po_matching as _pm_at_import
+
+    _REAL_ASK_LINE_MATCHER = _pm_at_import.ask_line_matcher
+except ImportError:  # pragma: no cover - red phase only
+    _REAL_ASK_LINE_MATCHER = None
+
 
 def _uid() -> str:
     return str(uuid.uuid4())
@@ -1255,3 +1264,447 @@ def test_route_accept_one_refuses_a_line_id_that_is_not_an_id(api):
 
     assert response.status_code in (400, 404, 422), response.text
     assert response.status_code != 405
+
+
+# ======================================================== fix round 1 (review findings)
+
+
+class _FakeProvider:
+    """Stands in for the LLM provider ``ask_line_matcher`` builds; records every message."""
+
+    name = "stub"
+
+    def __init__(self, answer: Callable[[dict], dict]) -> None:
+        self.answer = answer
+        self.messages: List[List[dict]] = []
+        self.kwargs: List[dict] = []
+
+    def chat(self, messages, **kwargs):
+        import json
+
+        from app.services.llm_provider import ChatResult
+
+        self.messages.append(list(messages))
+        self.kwargs.append(kwargs)
+        user = next(m for m in messages if m["role"] == "user")["content"]
+        return ChatResult(
+            content=json.dumps(self.answer(json.loads(user))),
+            prompt_tokens=1,
+            completion_tokens=1,
+            total_tokens=2,
+        )
+
+    def system_text(self) -> str:
+        return "\n".join(m["content"] for m in self.messages[0] if m["role"] == "system")
+
+    def payload(self) -> dict:
+        import json
+
+        return json.loads(next(m for m in self.messages[0] if m["role"] == "user")["content"])
+
+
+@pytest.fixture()
+def provider(monkeypatch):
+    """The REAL ``ask_line_matcher`` over a fake provider: payload and prompt are real."""
+    from app.services import ai_prompt_registry, llm_provider, project_po_matching
+
+    assert _REAL_ASK_LINE_MATCHER is not None
+    monkeypatch.setattr(project_po_matching, "ask_line_matcher", _REAL_ASK_LINE_MATCHER)
+    fake = _FakeProvider(lambda payload: {"matches": []})
+    monkeypatch.setattr(llm_provider, "get_provider", lambda *a, **k: fake)
+    monkeypatch.setattr(llm_provider, "resolve_api_key", lambda *a, **k: "ZZT-key")
+    monkeypatch.setattr(
+        ai_prompt_registry, "agent_model", lambda *a, **k: ("openai", "zzt-model"), raising=False
+    )
+    return fake
+
+
+def _top_level_keys_holding(payload: dict, text: str) -> List[str]:
+    import json
+
+    return [key for key, value in payload.items() if text in json.dumps(value)]
+
+
+def test_fix1_a_one_line_batch_sends_every_candidate_under_a_key_the_prompt_names(
+    seeded, provider
+):
+    """(1a) quotation + customer_map + catalogue candidates all reach the model, and each one
+    sits under a top-level payload key that the system prompt actually describes."""
+    db, project, owner = seeded
+    _quote, quoted_version = _quotation(
+        db, project, owner, "House Units", [("SRTWC8518-SH", "100.00")]
+    )
+    ids = _products(db, project.company_id, "CKS903", "CB310-CR-L", "CB310-CR-PJ")
+    po, customer = _customer_po(
+        db, project, owner, "ZZT-F1A", quotation_version_id=quoted_version.id
+    )
+    _map_row(
+        db,
+        company_id=project.company_id,
+        customer_id=customer.id,
+        code="BBT-OTHER-1",
+        product_id=ids["CKS903"],
+    )
+    version = _version(db, po)
+    ProjectPOExtractionService(db).persist_pages(
+        version, [_page(1, lines=[_row(5, code="CB310-CR", description="CABANA CB310-CR")])]
+    )
+
+    assert len(provider.messages) == 1, "one unresolved line is one model call"
+    system = provider.system_text()
+    payload = provider.payload()
+    for code in ("SRTWC8518-SH", "CKS903", "CB310-CR-L", "CB310-CR-PJ"):
+        keys = _top_level_keys_holding(payload, f'"{code}"')
+        assert keys, f"{code} never reached the model: {payload!r}"
+        assert any(key in system for key in keys), (
+            f"{code} is sent under {keys}, which the system prompt never mentions"
+        )
+
+
+def test_fix1_b_the_system_prompt_describes_every_top_level_payload_key(seeded, provider):
+    """(1b) whatever the user payload's top-level keys are, the prompt names each one."""
+    db, project, owner = seeded
+    _quote, quoted_version = _quotation(
+        db, project, owner, "House Units", [("SRTWC8518-SH", "100.00")]
+    )
+    po, _c = _customer_po(db, project, owner, "ZZT-F1B", quotation_version_id=quoted_version.id)
+    version = _version(db, po)
+    ProjectPOExtractionService(db).persist_pages(
+        version,
+        [
+            _page(
+                1,
+                lines=[
+                    _row(1, code="BBT-A-1", description="ZZT ITEM A"),
+                    _row(2, code="CB310-CR", description="CABANA CB310-CR"),
+                ],
+            )
+        ],
+    )
+
+    assert provider.messages, "the unresolved lines must reach the model"
+    system = provider.system_text()
+    missing = [key for key in provider.payload() if key not in system]
+    assert not missing, f"payload keys the prompt never describes: {missing}"
+
+
+def test_fix1_c_a_pick_of_a_shared_quotation_product_is_kept(seeded, provider):
+    """(1c) the quotation product is offered to every line; picking it is not dropped."""
+    db, project, owner = seeded
+    _quote, quoted_version = _quotation(
+        db, project, owner, "House Units", [("SRTWC8518-SH", "100.00")]
+    )
+    ids = _products(db, project.company_id, "SRTWC8518-SH")
+    po, _c = _customer_po(db, project, owner, "ZZT-F1C", quotation_version_id=quoted_version.id)
+    provider.answer = lambda payload: {
+        "matches": [
+            {"line_no": 1, "product_code": "SRTWC8518-SH", "confidence": "high", "options": []},
+            {"line_no": 2, "product_code": "SRTWC8518-SH", "confidence": "medium", "options": []},
+        ]
+    }
+    version = _version(db, po)
+    service = ProjectPOExtractionService(db)
+    service.persist_pages(
+        version,
+        [
+            _page(
+                1,
+                lines=[
+                    _row(1, code="BBT-WC-1", description="WALL HUNG WC"),
+                    _row(2, code="BBT-WC-2", description="WALL HUNG WC RIGHT"),
+                ],
+            )
+        ],
+    )
+
+    lines = _lines(service, version)
+    for n in (1, 2):
+        assert lines[n].resolved_product_id == ids["SRTWC8518-SH"], f"line {n} pick dropped"
+        assert lines[n].resolution_source == "suggested"
+
+
+def test_fix2_a_description_only_line_is_remembered_by_its_description(seeded, matcher):
+    """(2) no stock code: accepting keys the map on the description, and the next PO from
+    the same customer with the same description resolves through the map."""
+    db, project, owner = seeded
+    _quote, quoted_version = _quotation(
+        db, project, owner, "House Units", [("SRTWC8518-SH", "100.00")]
+    )
+    ids = _products(db, project.company_id, "SRTWC8518-SH")
+    po, customer = _customer_po(db, project, owner, "ZZT-F2", quotation_version_id=quoted_version.id)
+    matcher.answers[1] = {"product_code": "SRTWC8518-SH", "confidence": "high", "options": []}
+    description = "ZZT WALL HUNG WC SET 77"
+    version = _version(db, po)
+    service = ProjectPOExtractionService(db)
+    service.persist_pages(version, [_page(1, lines=[_row(1, description=description)])])
+    line = _lines(service, version)[1]
+    assert line.resolution_source == "suggested"
+
+    service.accept_suggestion(version, line, actor_user_id=owner)
+
+    rows = _map_rows(db, customer.id, description)
+    assert len(rows) == 1, "a description-only line must be remembered by its description"
+    assert rows[0].product_id == ids["SRTWC8518-SH"]
+
+    matcher.calls.clear()
+    matcher.answers.clear()
+    second_po, _same = _customer_po(db, project, owner, "ZZT-F2-2", customer=customer)
+    second = _version(db, second_po)
+    service.persist_pages(second, [_page(1, lines=[_row(1, description=description)])])
+
+    again = _lines(service, second)[1]
+    assert again.resolved_product_id == ids["SRTWC8518-SH"]
+    assert again.resolution_source == "map"
+    assert 1 not in matcher.sent_line_nos()
+
+
+def _other_company(db, code_hint: str = "MCH") -> str:
+    from sqlalchemy import text
+
+    from app.models.company import Company
+
+    existing = db.execute(text("select id from companies where code = :c"), {"c": code_hint}).scalar()
+    if existing:
+        return str(existing)
+    company_id = _uid()
+    db.add(Company(id=company_id, name=f"{MARKER} {code_hint}", code=f"Z{_uid()[:7]}"))
+    db.flush()
+    return company_id
+
+
+def _named_product(db, company_id: str, code: str, name: str):
+    from app.models.product import Product, ProductCategory, UnitOfMeasure
+
+    uom = UnitOfMeasure(
+        id=_uid(), company_id=company_id, uom_code=f"ZZT{uuid.uuid4().hex}", uom_name="Piece"
+    )
+    category = ProductCategory(
+        id=_uid(), company_id=company_id, category_code=f"ZZT-{_uid()[:8]}", category_name=name
+    )
+    db.add_all([uom, category])
+    db.flush()
+    product = Product(
+        id=_uid(),
+        company_id=company_id,
+        product_code=code,
+        product_name=name,
+        category_id=category.id,
+        base_uom_id=uom.id,
+        list_price=Decimal("1.00"),
+        is_active=True,
+    )
+    db.add(product)
+    db.flush()
+    return product
+
+
+def test_fix3_a_manual_pick_of_another_companys_product_is_refused(seeded, matcher):
+    """(3) the line's company decides which products it may name; a refused pick maps nothing."""
+    db, project, owner = seeded
+    other = _named_product(db, _other_company(db), "ZZT-OTHERCO-1", f"{MARKER} other co item")
+    po, customer = _customer_po(db, project, owner, "ZZT-F3")
+    version = _version(db, po)
+    service = ProjectPOExtractionService(db)
+    service.persist_pages(version, [_page(1, lines=[_row(1, code="BBT-X-31")])])
+    line = _lines(service, version)[1]
+
+    with pytest.raises(AppException) as caught:
+        service.update_line(
+            version=version,
+            line=line,
+            payload={"resolved_product_id": other.id},
+            actor_user_id=owner,
+        )
+
+    assert caught.value.status_code in (404, 422)
+    assert line.resolved_product_id != other.id
+    assert _map_rows(db, customer.id, "BBT-X-31") == []
+
+
+def test_fix3_the_map_never_resolves_to_another_companys_product(seeded, matcher):
+    db, project, owner = seeded
+    other = _named_product(db, _other_company(db), "ZZT-OTHERCO-2", f"{MARKER} other co item")
+    po, customer = _customer_po(db, project, owner, "ZZT-F3B")
+    _map_row(
+        db,
+        company_id=project.company_id,
+        customer_id=customer.id,
+        code="BBT-X-32",
+        product_id=other.id,
+    )
+    version = _version(db, po)
+    service = ProjectPOExtractionService(db)
+
+    service.persist_pages(version, [_page(1, lines=[_row(1, code="BBT-X-32")])])
+
+    line = _lines(service, version)[1]
+    assert line.resolved_product_id != other.id
+    assert line.resolution_source != "map"
+
+
+def test_fix4_the_catalogue_shortlist_never_offers_the_same_code_from_another_company(
+    seeded, matcher
+):
+    """(4) the same code stocked by MCH and SRT: an SRT PO is only ever offered SRT's row."""
+    db, project, owner = seeded
+    ours = _named_product(db, project.company_id, "ZZT-SAME-5", f"{MARKER} SRT same five")
+    theirs = _named_product(db, _other_company(db), "ZZT-SAME-5", f"{MARKER} MCH same five")
+    po, _c = _customer_po(db, project, owner, "ZZT-F4")
+    matcher.answers[1] = {"product_code": "ZZT-SAME-5", "confidence": "high", "options": []}
+    version = _version(db, po)
+    service = ProjectPOExtractionService(db)
+
+    service.persist_pages(
+        version, [_page(1, lines=[_row(1, code="ZZTSAME5", description="ZZT SAME FIVE")])]
+    )
+
+    names = {c.get("name") for c in matcher.item_for(1)["candidates"]}
+    assert theirs.product_name not in names, names
+    assert ours.product_name in names, names
+    line = _lines(service, version)[1]
+    assert line.resolved_product_id == ours.id
+    assert line.resolved_product_id != theirs.id
+
+
+def test_fix5_a_catalogue_product_offered_only_to_another_line_is_dropped(seeded, matcher):
+    """(5) CKS903 is real and offered to line 1 (BBTCKS903), never to line 2. Line 2's pick
+    of it, and the option, are dropped."""
+    db, project, owner = seeded
+    ids = _products(db, project.company_id, "CKS903")
+    po, _c = _customer_po(db, project, owner, "ZZT-F5")
+    for n in (1, 2):
+        matcher.answers[n] = {"product_code": "CKS903", "confidence": "high", "options": ["CKS903"]}
+    version = _version(db, po)
+    service = ProjectPOExtractionService(db)
+
+    service.persist_pages(
+        version,
+        [
+            _page(
+                1,
+                lines=[
+                    _row(1, code="BBTCKS903", description="CABANA BBTCKS903"),
+                    _row(2, code="BBT-Q-2", description="ZZT PLAIN THING"),
+                ],
+            )
+        ],
+    )
+
+    offered_1 = {c["code"] for c in matcher.item_for(1)["candidates"]}
+    offered_2 = {c["code"] for c in matcher.item_for(2)["candidates"]}
+    assert "CKS903" in offered_1 and "CKS903" not in offered_2, (offered_1, offered_2)
+    lines = _lines(service, version)
+    assert lines[1].resolved_product_id == ids["CKS903"]
+    assert lines[2].resolved_product_id is None
+    assert lines[2].resolution_source is None
+    assert not (_match(version, 2).get("options") or [])
+
+
+@pytest.mark.parametrize(
+    "unit_price, amount",
+    [(-10.0, -30.0), (10.0, -30.0), (-10.0, 30.0), (0.0, 0.0), (10.0, 0.0), (0.0, 30.0)],
+    ids=["both-negative", "negative-amount", "negative-price", "both-zero", "zero-amount", "zero-price"],
+)
+def test_fix6_a_negative_or_zero_amount_or_price_never_suggests_a_qty(
+    seeded, matcher, unit_price, amount
+):
+    db, project, owner = seeded
+    _products(db, project.company_id, "CKS903")
+    po, _c = _customer_po(db, project, owner, "ZZT-F6")
+    version = _version(db, po)
+    service = ProjectPOExtractionService(db)
+
+    service.persist_pages(
+        version,
+        [_page(1, lines=[_row(1, code="CKS903", qty=None, unit_price=unit_price, amount=amount)])],
+    )
+
+    assert _lines(service, version)[1].qty is None
+    assert not _match(version, 1).get("qty_suggested")
+
+
+def test_fix6_confirm_treats_a_zero_qty_like_an_empty_one(seeded, matcher):
+    db, project, owner = seeded
+    _products(db, project.company_id, "CKS903")
+    po, _c = _customer_po(db, project, owner, "ZZT-F6B")
+    version = _version(db, po)
+    service = ProjectPOExtractionService(db)
+    service.persist_pages(
+        version,
+        [
+            _page(
+                1,
+                lines=[
+                    _row(1, code="CKS903", qty=2, unit_price=10.0),
+                    _row(6, code="CKS903", qty=0, unit_price=10.0, amount=0.0),
+                ],
+            )
+        ],
+    )
+
+    with pytest.raises(AppException) as caught:
+        service.confirm_version(version=version, actor_user_id=owner)
+
+    import re
+
+    assert caught.value.status_code == 422
+    assert _code(caught.value) == "po_version_lines_need_attention"
+    assert 6 in {int(n) for n in re.findall(r"\d+", _message(caught.value))}
+    assert version.confirmed_at is None
+
+
+def test_fix7_a_failing_quotation_lookup_never_fails_the_read(seeded, matcher, monkeypatch):
+    """(7) the quotation-version lookup raising leaves the read done, with its lines, and the
+    map and catalogue still suggest."""
+    db, project, owner = seeded
+    ids = _products(db, project.company_id, "CKS903", "CB310-CR-L", "SRT73-CR")
+    po, customer = _customer_po(db, project, owner, "ZZT-F7")
+    _map_row(
+        db,
+        company_id=project.company_id,
+        customer_id=customer.id,
+        code="BBT-TAP-7",
+        product_id=ids["CKS903"],
+    )
+
+    def boom(self, *args, **kwargs):
+        raise RuntimeError("ZZT quotation lookup failed")
+
+    monkeypatch.setattr(ProjectPOExtractionService, "_quotation_version_for", boom)
+    matcher.answers[2] = {"product_code": "SRT73-CR", "confidence": "high", "options": []}
+    version = _version(db, po)
+    service = ProjectPOExtractionService(db)
+
+    summary = service.persist_pages(
+        version,
+        [
+            _page(
+                1,
+                lines=[
+                    _row(1, code="BBT-TAP-7", description="ZZT TAP"),
+                    _row(2, code="BBTSRT73-CR", description="SORENTO BBTSRT73-CR"),
+                ],
+            )
+        ],
+    )
+
+    assert summary["status"] == STATE_DONE
+    assert version.extraction_state == STATE_DONE
+    lines = _lines(service, version)
+    assert set(lines) == {1, 2}
+    assert lines[1].resolution_source == "map"
+    assert lines[1].resolved_product_id == ids["CKS903"]
+    assert lines[2].resolution_source == "suggested"
+    assert lines[2].resolved_product_id == ids["SRT73-CR"]
+
+
+def test_fix8_the_schema_tells_the_model_what_printed_total_is():
+    """(8) the instruction travels with the schema, so a published `po_extractor` prompt
+    version that predates the field still gets it."""
+    from app.services.project_po_reading import PO_PAGE_SCHEMA
+
+    description = (PO_PAGE_SCHEMA["properties"]["printed_total"].get("description") or "").lower()
+    assert description.strip(), "printed_total carries no description for the model"
+    assert "total" in description
+    assert "printed" in description or "grand" in description
+
