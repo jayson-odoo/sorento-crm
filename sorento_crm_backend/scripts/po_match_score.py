@@ -5,7 +5,7 @@ project as a person would, let the worker read it, then run this against the ver
 
     venv/bin/python scripts/po_match_score.py --po-number <printed PO no> \
         --expected <expected-matches.csv> --po <value of the csv's `po` column> \
-        [--grand-total 601944.18] [--out score.csv]
+        [--grand-total 12345.67] [--out score.csv]
 
 The CSV has columns ``po,no,expected,qty_blank_propose_qty`` (an extra
 ``item_code_as_written`` column is ignored). ``expected`` is a product code, ``none``
@@ -39,11 +39,12 @@ def main() -> int:
     from app.models.project_so import ProjectPOLine, ProjectPOVersion
     from app.models.projects import ProjectPurchaseOrder
 
-    expected = {
-        int(row["no"]): row
-        for row in csv.DictReader(open(args.expected, newline=""))
-        if row["po"] == args.po
-    }
+    with open(args.expected, newline="") as handle:
+        expected = {
+            int(row["no"]): row
+            for row in csv.DictReader(handle)
+            if row["po"] == args.po
+        }
 
     db = SessionLocal()
     try:
@@ -89,10 +90,13 @@ def main() -> int:
         rows, ok, wrong, qty_ok, qty_total = [], 0, [], 0, 0
         for line in lines:
             exp = expected.get(line.line_no)
+            if exp is None:
+                print(f"line {line.line_no} not in the expected file, skipped")
+                continue
             meta = matches.get(str(line.line_no)) or {}
             got = codes.get(line.resolved_product_id) if line.resolved_product_id else None
             options = [codes.get(o, o) for o in meta.get("options") or []]
-            want = (exp or {}).get("expected", "")
+            want = exp.get("expected", "")
             if want == "none":
                 good = got is None
             elif want == "two options":
@@ -103,7 +107,7 @@ def main() -> int:
                 ok += 1
             elif got:
                 wrong.append(f"{line.line_no}:{got}!={want}")
-            proposed = (exp or {}).get("qty_blank_propose_qty") or ""
+            proposed = exp.get("qty_blank_propose_qty") or ""
             qty_good = ""
             if proposed:
                 qty_total += 1
