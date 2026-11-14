@@ -95,6 +95,10 @@ class Task:
     #: PR #1247 round 8 (review S1): the number "Is 10 for all 3 products, or for one of
     #: them?" asked about, kept for the ONE next turn so "2" or "all" can place it.
     asked_qty: int | None = None
+    #: CHATBOT-CLOSE-CODES owner F1: the lines a stock pick asked together (`with_owed`: the
+    #: picked code and the codes owed beside it), one question about the pick's ask, so one
+    #: number bound by position fills every owed line (`apply._one_number_for_every_line`).
+    from_pick: bool = False
 
 
 class TaskKind(Protocol):
@@ -479,6 +483,7 @@ def task_to_wire(task: Task) -> dict[str, Any]:
         ],
         "not_checked": list(task.not_checked),
         **({"asked_qty": task.asked_qty} if task.asked_qty is not None else {}),
+        **({"from_pick": True} if task.from_pick else {}),
     }
 
 
@@ -510,6 +515,7 @@ def task_from_wire(raw: Any) -> Task | None:
             str(name) for name in (raw.get("not_checked") or []) if name is not None
         ),
         asked_qty=_number(raw.get("asked_qty")),
+        from_pick=raw.get("from_pick") is True,
     )
 
 
@@ -1116,6 +1122,7 @@ def with_owed(
         opened_at_turn=turn_no,
         touched_at_turn=turn_no,
         slots=tuple(slots[:MAX_SLOTS]),
+        from_pick=True,
     )
     return others + (task,), StockQtyTask().question(task)
 

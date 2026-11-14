@@ -2725,8 +2725,10 @@ def _one_number_for_every_line(
     number the parser bound by CODE alone or by a code that names a different line than its
     position (the user named that part), quantities bound to two or more lines, a
     `demand_qty` that is a different number, a line already answered (a revision), and lines
-    that are not the parts of one set (R1: "5 for the 2nd one" answers that line). Reads the
-    open question's lines, the focus rows and the parser's fields only.
+    that are not the parts of one set (R1: "5 for the 2nd one" answers that line). Lines a
+    stock pick asked together (`Task.from_pick`, CHATBOT-CLOSE-CODES owner F1: the picked code
+    and the codes owed beside it) spread as a set's parts do. Reads the open question's lines,
+    the focus rows and the parser's fields only.
     """
     if asked is not None or state.pending is not None:
         return
@@ -2776,8 +2778,10 @@ def _one_number_for_every_line(
     if any(slots[index].value is not None for index in bound):
         # "make line 1 5": a revision of a line already answered, not the owed question's answer.
         return
-    if not _one_set_for_every_line(state.focus, slots):
-        # Lines that are separate products: one line filled is that line (STOCK-QTY-PARTIAL-FILL R1).
+    if not (task.from_pick or _one_set_for_every_line(state.focus, slots)):
+        # Lines that are separate products the user listed: one line filled is that line
+        # (STOCK-QTY-PARTIAL-FILL R1). The lines a stock pick asked together (`task.with_owed`,
+        # CHATBOT-CLOSE-CODES owner F1) are one question, as a set's parts are.
         return
     (qty,) = numbers
     demand = verdict.get("demand_qty")
