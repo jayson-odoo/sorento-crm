@@ -28,6 +28,9 @@ const STATUS_SUMMARY_KEYS = ['status', 'approval_status', 'order_status'];
 function summaryCovers(change: AuditFieldChange, entry: AuditLogEntry, summary: string): boolean {
   // The status-engine summary names the labels: "Status: Draft → Submitted".
   if (change.key === 'status_id') return /^Status(:| changed to)/.test(summary);
+  // So does a record whose status is a code the backend words for it (the order change notice:
+  // "Status: Approved → Done"), so the stored code never shows under it.
+  if (change.key === 'status' && /^Status: /.test(summary)) return true;
   // The backend names a project link move the same way: "Project: A → B" (PROJECT-RELATED-RECORDS).
   if (change.key === 'project_id') return /^Project(:| changed to)/.test(summary);
   if (!STATUS_SUMMARY_KEYS.includes(change.key)) return false;
@@ -64,7 +67,7 @@ function collectChangeLines(
   const resubmit = heading === 'Appealed' ? resubmittedSummary(summary) : summary;
   const shown = own && statusMove ? appealWording(resubmit) : resubmit;
   const lines: ChangeLine[] = summary ? [{ text: `${prefix}${shown}` }] : [];
-  for (const change of auditFieldChanges(entry.old_values, entry.new_values, entry.masked_fields)) {
+  for (const change of auditFieldChanges(entry.old_values, entry.new_values, entry.masked_fields, entry.entity_type)) {
     if (summary && summaryCovers(change, entry, summary)) continue;
     const statusLine = own && STATUS_SUMMARY_KEYS.includes(change.key);
     lines.push(
@@ -211,23 +214,26 @@ function AuditTrailEntries({
                       <p data-testid="audit-action" className="break-words text-sm font-medium">
                         {entry.title}
                       </p>
-                      <p className="mt-0.5 flex flex-wrap items-baseline gap-x-1.5 text-sm text-muted-foreground">
+                      {/* One value per element, no joining dots (owner standing rule). */}
+                      <p className="mt-0.5 flex flex-wrap items-baseline gap-x-3 text-sm text-muted-foreground">
                         <span>{when}</span>
-                        {who ? <span>· {who}</span> : null}
-                        {many ? (
+                        {who ? (
                           <>
-                            <span aria-hidden>·</span>
-                            <Button
-                              type="button"
-                              variant="link"
-                              size="sm"
-                              className="h-auto p-0"
-                              aria-expanded={isOpen}
-                              onClick={() => toggle(entry.id)}
-                            >
-                              {isOpen ? 'Hide' : `Show ${entry.lines.length} lines`}
-                            </Button>
+                            {' '}
+                            <span>{who}</span>
                           </>
+                        ) : null}
+                        {many ? (
+                          <Button
+                            type="button"
+                            variant="link"
+                            size="sm"
+                            className="h-auto p-0"
+                            aria-expanded={isOpen}
+                            onClick={() => toggle(entry.id)}
+                          >
+                            {isOpen ? 'Hide' : `Show ${entry.lines.length} lines`}
+                          </Button>
                         ) : null}
                       </p>
                       {shown.length > 0 ? (

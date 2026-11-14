@@ -198,6 +198,7 @@ def restore_directory(
             "message": "Directory restored",
             "directories_restored": result["directories_restored"],
             "attachments_restored": result["attachments_restored"],
+            "attachments_not_restored": result["attachments_not_restored"],
         }
     except HTTPException:
         raise

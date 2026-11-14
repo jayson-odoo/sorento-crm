@@ -391,15 +391,18 @@ QUOTATION_LINES_SCHEMA: dict[str, Any] = {
         "name": QUOTATION_LINES,
         "description": (
             "A project's quotation documents with their lines. Alone enough to compare them: do not call the "
-            "quotations list first. Per document and scope: version, total, lines (code, description, qty, uom, "
-            "list price, unit price, vs_list, line total, rate_only). vs_list is the unit price against the list "
-            "price in words (\"74.52% below list\", \"12% above list\", \"at list\"). A rate_only line is priced per unit and "
-            "is not in the scope total. refs narrows to a document number or an issued revision (document number, "
-            "a dash, its revision label: PRJQ-2026-0007-B, QT-2026-0003-R1); no match goes in not_found. "
-            "project_id is the open page's project or from crm_projects_find. Show a comparison as one compact "
-            "markdown table: a row per item code, a column per document with qty x unit price (vs_list as given) = line "
-            "total, a totals row, then one sentence on the differences. Never write a bare percent: always with its "
-            "words (below list / above list), and never compute a percent the tool did not give."
+            "quotations list first. Per document: prepared_by (the name of the user who created the document; "
+            "null when unknown), total, scopes, and facts computed by the tool: line_count, no_charge_lines (codes "
+            "at unit price 0), repeated_codes (a code on more than one line), rate_only_lines, empty (no scopes). "
+            "Per scope: version, total, lines (code, description, qty, uom, list price, unit price, vs_list, line "
+            "total, rate_only). A rate_only line is priced per unit and is not in the scope total. total_lines counts "
+            "every line returned or cut. With two or more documents, comparison is computed by the tool from every "
+            "line: totals ranked with gap_to_lowest, lowest and highest, only_in (codes only in some documents), "
+            "shared codes with the cheapest document and the unit price and line total gaps, scopes_only_in and "
+            "scope_totals. vs_list is the unit price against the list price in words, for when the user asks about "
+            "list price; never compute a percent the tool did not give. refs narrows to a document number or an "
+            "issued revision (document number, a dash, its revision label: PRJQ-2026-0007-B, QT-2026-0003-R1); no "
+            "match goes in not_found. project_id is the open page's project or from crm_projects_find."
         ),
         "parameters": {
             "type": "object",
@@ -463,7 +466,8 @@ ANSWER_SCHEMA: dict[str, Any] = {
         "name": ANSWER,
         "description": (
             "Finish the turn with the reply for the user. Every number in text must appear in a tool "
-            "result of this turn (list it in figures with the call_id when you can). Anything you could "
+            "result of this turn. Put in figures only the key numbers (totals, gaps) with the call_id that "
+            "shows each, never every table cell. Anything you could "
             "not find goes in not_found with the call_id that showed it, the parts of your plan you "
             "answered go in answered, and anything you did not check goes in not_checked."
         ),

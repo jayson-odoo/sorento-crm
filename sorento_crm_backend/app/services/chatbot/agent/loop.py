@@ -60,9 +60,10 @@ PROMPT_KEY = "chatbot_agent"
 FEATURE = "chatbot_agent"
 DEFAULT_PROVIDER = "gemini"
 DEFAULT_MODEL = "gemini-3.5-flash"
-# The effort the agent thinks at when its label sets none (owner, 31 Oct): without one a flash model gets a
-# one-token thinking budget, so it barely thinks and the console has no reasoning to show.
-DEFAULT_EFFORT = "low"
+# The effort the agent thinks at when its label sets none: without one a flash model gets a one-token thinking
+# budget, so it barely thinks and the console has no reasoning to show (owner, 31 Oct). Medium, not low, so a
+# comparison gets room to rank its findings (owner, 14 Nov, AGENT-PROPOSAL-INSIGHTS).
+DEFAULT_EFFORT = "medium"
 MCP_CALL_TIMEOUT = 10.0
 NOT_VERIFIED = "(not verified)"
 #: Per-call ceilings. Every call also counts against the turn's max_seconds.
@@ -2032,8 +2033,9 @@ def _run(
         final_args: dict | None = None
         forced_args: dict | None = None
         nudge = (
-            "Finish by calling the answer tool now: put your reply in text, list every number in "
-            "figures with the call_id that shows it, and anything you could not find in not_found."
+            "Finish by calling the answer tool now: put your reply in text, put in figures only the key "
+            "numbers (totals, gaps) with the call_id that shows each, never every table cell, and anything "
+            "you could not find in not_found."
         )
 
         def answer_of(result_obj: Any) -> dict:

@@ -401,36 +401,29 @@ class TestReviseValidatesLines:
         assert fresh.revision_no == 1
         assert [line.package_warning for line in fresh.lines] == ["No package defined"]
 
-    def test_duplicate_product_refuses_422_duplicate_line(self, db):
+    def test_repeated_product_is_accepted_as_two_lines(self, db):
+        """PRICETAG-ALA-CARTE AC-11: the same product any number of times is accepted
+        (it was a 422 DUPLICATE_LINE before), never a raw 500 from the table."""
         contact, product_id, row = _setup(db)
         token = _seed_token(contact)
 
-        with pytest.raises(HTTPException) as exc:
-            PortalRevisionService(db).revise(
-                token, "price_tag_request", str(row.id),
-                {
-                    "products": [
-                        {"product_id": product_id, "quantity": 1},
-                        {"product_id": product_id, "quantity": 2},
-                    ]
-                },
-                "Reason",
-                0,
-            )
-        assert exc.value.status_code == 422
-        # AC-R7: the code names the duplicate product, never a raw 500 from
-        # uq_ptag_line_request_product.
-        detail = getattr(exc.value, "detail", None)
-        code = detail.get("code") if isinstance(detail, dict) else None
-        assert code == "DUPLICATE_LINE"
-        # Review round 3: the duplicate check must run BEFORE any mutation -
-        # the original line has to survive a refused revision untouched, the
-        # same "before any mutation" ordering the zero-lines/set-guard cases
-        # above already pin.
+        PortalRevisionService(db).revise(
+            token, "price_tag_request", str(row.id),
+            {
+                "products": [
+                    {"product_id": product_id, "quantity": 1},
+                    {"product_id": product_id, "quantity": 2},
+                ]
+            },
+            "Reason",
+            0,
+        )
         db.expire_all()
         fresh = PriceTagRequestService.get_request(db, str(row.id))
-        assert len(fresh.lines) == 1
-        assert fresh.lines[0].product_id == product_id
+        assert [(line.product_id, line.quantity) for line in fresh.lines] == [
+            (product_id, 1),
+            (product_id, 2),
+        ]
 
     def test_override_survives_when_the_same_product_is_revised(self, db):
         """Marketing's own work is not in the form's payload, so a re-save must not wipe it.
@@ -467,11 +460,11 @@ class TestReviseValidatesLines:
 
 
 # =========================================================================== #
-# AC-R4: create / draft PUT with a duplicate product never 500s
+# AC-R4: create / draft PUT with a repeated product never 500s (accepted since PRICETAG-ALA-CARTE)
 # =========================================================================== #
 
 
-class TestCreateAndDraftPutRefuseDuplicateProduct:
+class TestCreateAndDraftPutAcceptRepeatedProduct:
     @pytest.fixture
     def http_client(self):
         from app.api.v1.public.portal import get_portal_token
@@ -494,7 +487,8 @@ class TestCreateAndDraftPutRefuseDuplicateProduct:
             finally:
                 app.dependency_overrides.clear()
 
-    def test_post_create_duplicate_product_422_not_500(self, http_client):
+    def test_post_create_repeated_product_201_not_500(self, http_client):
+        """PRICETAG-ALA-CARTE AC-11: a repeated product is accepted (was 422)."""
         c, db, _contact = http_client
         product_id = _seed_product(db)
 
@@ -508,10 +502,11 @@ class TestCreateAndDraftPutRefuseDuplicateProduct:
                 ],
             },
         )
-        assert res.status_code == 422, res.text
-        assert res.json()["code"] == "DUPLICATE_LINE"
+        assert res.status_code == 201, res.text
+        assert [line["quantity"] for line in res.json()["lines"]] == [1, 2]
 
-    def test_put_draft_duplicate_product_422_not_500(self, http_client):
+    def test_put_draft_repeated_product_200_not_500(self, http_client):
+        """PRICETAG-ALA-CARTE AC-11: a repeated product is accepted (was 422)."""
         c, db, _contact = http_client
         product_id = _seed_product(db)
         created = c.post(
@@ -528,8 +523,8 @@ class TestCreateAndDraftPutRefuseDuplicateProduct:
                 ]
             },
         )
-        assert res.status_code == 422, res.text
-        assert res.json()["code"] == "DUPLICATE_LINE"
+        assert res.status_code == 200, res.text
+        assert [line["quantity"] for line in res.json()["lines"]] == [1, 3]
 
 
 # =========================================================================== #

@@ -57,7 +57,9 @@ export function FormSection({
 }) {
   return (
     <Card className={cn('overflow-hidden', className)}>
-      <Collapsible open={open} onOpenChange={onOpenChange}>
+      {/* min-w-0: the Card lays out as flex, so a wide child (a lines table) must not
+          widen the card or the page. */}
+      <Collapsible open={open} onOpenChange={onOpenChange} className="min-w-0">
         <CollapsibleTrigger asChild>
           <button
             type="button"

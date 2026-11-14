@@ -5,7 +5,7 @@ from app.api.v1._request_own_scope import (
     purchase_request_own_scope,
     stock_inquiry_own_scope,
 )
-from app.api.v1.procurement import suppliers, product_suppliers, packing_lists, grn, spo_allocations, picking_lines, stock_inquiries, purchase_requests, purchase_orders, cost_price_changes, new_product_applications
+from app.api.v1.procurement import suppliers, product_suppliers, packing_lists, grn, spo_allocations, picking_lines, stock_inquiries, purchase_requests, purchase_orders, cost_price_changes, new_product_applications, order_change_notices
 
 router = APIRouter()
 
@@ -38,3 +38,7 @@ router.include_router(
     dependencies=[Depends(purchase_request_own_scope)],
 )
 router.include_router(purchase_orders.router, prefix="/purchase-orders", tags=["purchase-orders"])
+# OCN-ORDER-CHANGE-NOTICE: "only theirs" for a `.view_own` holder is the service's own reader rule.
+router.include_router(
+    order_change_notices.router, prefix="/order-change-notices", tags=["order-change-notices"]
+)
