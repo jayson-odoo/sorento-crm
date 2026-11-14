@@ -5710,9 +5710,16 @@ export function TagCanvasEditor({
             </div>
           </ContextMenuTrigger>
 
-          {/* Sized to its longest item (a shortcut is never cut), and kept inside the viewport at
-              375 px (collision padding, never wider than the screen). */}
-          <ContextMenuContent collisionPadding={8} className="w-max min-w-56 max-w-[calc(100vw-1rem)]">
+          {/* Radix opens a context menu right of the pointer or flips it left, never shifting it
+              sideways: below sm it is at most half the screen wide (less the padding), so one side
+              always fits on a phone, and it drops the keyboard shortcuts there (a menu that fits
+              neither side is the likely source of the placement loop seen at 375 px). From sm up
+              it sizes to its longest item. */}
+          <ContextMenuContent
+            collisionPadding={8}
+            avoidCollisions
+            className="w-[calc(50vw-8px)] max-sm:[&_[data-slot=context-menu-shortcut]]:hidden sm:w-max sm:min-w-56 sm:max-w-[calc(100vw-16px)]"
+          >
             {hasSelection && !menuOnEmpty ? (
               <>
                 {tableMenu && (
