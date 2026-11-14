@@ -62,8 +62,6 @@ const readStripped = (file: string) =>
 /** Every current file that renders a native date input, each with a one-line reason. Shrink-only. */
 const ALLOWLIST: Record<string, string> = {
   'app/(auth)/portal/components/LandingToolbar.tsx': REASON,
-  'app/(auth)/portal/components/SampleRequestForm.tsx': REASON,
-  'app/(auth)/portal/components/SubmissionForm.tsx': REASON,
   'app/(auth)/portal/sales_opportunity/components/SalesOpportunityPortalDetail.tsx':
     REASON,
   'app/(auth)/portal/sales_opportunity/components/SalesOpportunityPortalForm.tsx':
@@ -104,8 +102,6 @@ const ALLOWLIST: Record<string, string> = {
   'app/(protected)/project-sales/order-inquiries/components/OrderInquiriesClient.tsx':
     REASON,
   'app/(protected)/project-sales/sample-requests/components/SampleRequestDetail.tsx':
-    REASON,
-  'app/(protected)/project-sales/sample-requests/components/SampleRequestForm.tsx':
     REASON,
   'app/(protected)/resource-management/attachments/components/AttachmentBrowser.tsx':
     REASON,

@@ -1,6 +1,6 @@
 'use client';
 
-import { useLayoutEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { generateTheme } from '@/lib/theme/generate';
 import { themeInputHex, type PresetId } from '@/lib/theme/presets';
 
@@ -42,9 +42,12 @@ export function V2ThemeProvider({
   const effective = mode === 'system' ? (prefersDark ? 'dark' : 'light') : mode;
   const hex = themeInputHex(theme);
   const [applied, setApplied] = useState(false);
+  // next-themes owns the `dark` class in v1; remember its state so a switch back to v1 restores it.
+  const v1Dark = useRef<boolean | null>(null);
 
   useLayoutEffect(() => {
     const html = document.documentElement;
+    if (v1Dark.current === null) v1Dark.current = html.classList.contains('dark');
     const { tokens } = generateTheme(hex, effective);
     for (const name of THEME_VARIABLES) html.style.setProperty(name, tokens[name.slice(2) as keyof typeof tokens]);
     html.classList.toggle('dark', effective === 'dark');
@@ -55,6 +58,7 @@ export function V2ThemeProvider({
     () => () => {
       const html = document.documentElement;
       for (const name of THEME_VARIABLES) html.style.removeProperty(name);
+      if (v1Dark.current !== null) html.classList.toggle('dark', v1Dark.current);
     },
     [],
   );

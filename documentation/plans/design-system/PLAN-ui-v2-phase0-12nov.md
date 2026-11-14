@@ -1,7 +1,7 @@
 # PLAN: UI v2 phase 0 (foundations)
 
-Status: in progress. Full track (migration, a new permission, a new ingest route), so security-reviewer runs.
-Lane UI-V2-PLAN, branch `claude/ui-v2-design-plan-3cmy20`, PR #2323.
+Status: in progress (S0-S3 green 14 Nov; S4 in build). Full track (migration, a new permission, a new ingest route), so security-reviewer runs.
+Lane UI-V2-PLAN, PR #2323 (head branch `claude/ui-v2-design-plan-3cmy20`); since the 14 Nov relaunch the work is pushed to `claude/ui-v2-design-plan-qbqm9p`.
 
 - **UAC:** `documentation/plans/design-system/ui-v2-phase0-12nov-acceptance-criteria.md`.
 - **Program:** `documentation/uiux/UI-V2-PLAN.md` revision 3, approved by the owner 12 Nov 2026 17:32 ("ok"),

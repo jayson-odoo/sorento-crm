@@ -38,6 +38,8 @@ vi.mock('@/components/my-downloads/MyDownloadsDrawer', () => ({ MyDownloadsDrawe
 vi.mock('@/app/providers/CompanyProvider', () => ({ CompanyProvider: Pass }));
 vi.mock('@/components/pwa/PushPrompts', () => ({ default: () => null }));
 vi.mock('@/app/components/common/PermissionsLoadBanner', () => ({ default: () => null }));
+// UI v2: the version provider needs the react-query client this test does not mount; v1 is the default.
+vi.mock('@/components/v2/version/UiVersionProvider', () => ({ UiVersionProvider: Pass }));
 
 describe('ProtectedLayout when the NextAuth session is gone', () => {
   beforeEach(() => {

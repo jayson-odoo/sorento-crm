@@ -132,6 +132,7 @@
    components/v2/theme/V2ThemeProvider from lib/theme; the values below are the fallback soft tint and the
    selected-toggle pair (D9). The neutrals stay the v1 ones until a phase changes them. */
 :root[data-ui="v2"] {
+  --v2-sidebar-width: 280px;
   --primary-soft: var(--color-blue-50);
   --toggle-selected-bg: var(--primary-soft);
   --toggle-selected-fg: var(--primary);

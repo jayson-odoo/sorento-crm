@@ -31,7 +31,8 @@ import { PRESSED_CLASS } from '@/components/ui/primitive-classes';
 import { QuickAccessBlock } from './quick-access-block';
 import { MenuItemPinButton } from './menu-item-pin-button';
 
-export function SidebarMenu() {
+/** `menu` defaults to MENU_SIDEBAR; the v2 shell passes the same config explicitly. */
+export function SidebarMenu({ menu = MENU_SIDEBAR }: { menu?: MenuConfig } = {}) {
   const pathname = usePathname();
   const currentType = useSearchParams()?.get('type') ?? null;
   // The EFFECTIVE user's flag: the impersonation target's while viewing as, else the
@@ -59,8 +60,8 @@ export function SidebarMenu() {
   });
 
   const menuWithPublishedForms = useMemo(
-    () => injectPublishedWorkflowForms(MENU_SIDEBAR, publishedFormsRes?.data ?? []),
-    [publishedFormsRes?.data],
+    () => injectPublishedWorkflowForms(menu, publishedFormsRes?.data ?? []),
+    [menu, publishedFormsRes?.data],
   );
 
   const effectiveMenu = useMemo(() => {
