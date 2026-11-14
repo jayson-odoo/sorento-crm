@@ -398,9 +398,14 @@ class ProjectResponse(BaseModel):
 
     owner_user_id: Optional[str] = None
     owner_name: Optional[str] = None
+    owner_is_viewer: bool = False
+    quotation_document_count: int = 0
     # The owner's linked contact: Requested by on a sponsorship form written from the project.
     owner_contact_id: Optional[str] = None
     owner_contact_name: Optional[str] = None
+    # The primary lead: the first owner at registration, never moved by a reassignment.
+    primary_owner_user_id: Optional[str] = None
+    primary_owner_name: Optional[str] = None
 
     is_critical: bool = False
     critical_at: Optional[datetime] = None
@@ -1331,6 +1336,8 @@ class ProjectQuotationResponse(ProjectQuotationBase):
     document_id: Optional[str] = None
     document_no: Optional[str] = None
     document_kind: Optional[str] = None
+    # AGENT-PROPOSAL-INSIGHTS A4: the document creator's name (Prepared By), never the project owner.
+    prepared_by: Optional[str] = None
 
     version_count: int = 0
     # There is no `current_version_id` COLUMN (AC-E3a); this is computed as
@@ -2316,7 +2323,7 @@ class ProjectQuotationDocumentResponse(ProjectQuotationDocumentBase):
     document_no: str
     # What the customer quotes back: the number plus the revision they hold.
     our_ref: Optional[str] = None
-    # The project's salesperson (owner, else the creator), as the cover page prints it.
+    # Prepared By: the document's creator, never the project owner (owner, 11 Nov 2026).
     prepared_by: Optional[str] = None
 
     recipient_party_id: Optional[str] = None

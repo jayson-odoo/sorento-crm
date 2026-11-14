@@ -65,6 +65,8 @@ CHATBOT_BOOLS: dict[str, tuple[str, str]] = {
     "chatbot_eta_offset_applied": ("ETA buffer days", "or"),
     "chatbot_skip_period_questions": ("Skip date-range questions", "eq"),
     "chatbot_files_as_links": ("Files as links", "eq"),
+    # AGENT-MODE-TAG (owner 14 Nov): agent mode is set from a tag like every switch above.
+    "chatbot_agent_enabled": ("Agent mode", "or"),
 }
 MEMORY_LEVELS = ("off", "conversation", "episodes", "full")
 MEMORY_LABELS = {"off": "Off", "conversation": "Conversation", "episodes": "Past conversations", "full": "Full"}

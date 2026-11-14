@@ -25,7 +25,13 @@ export async function getDirectoryTree(deleted = false): Promise<AttachmentDirec
   return response.json();
 }
 
-export async function restoreDirectory(id: string): Promise<{ message: string; directories_restored: number; attachments_restored: number }> {
+export async function restoreDirectory(id: string): Promise<{
+  message: string;
+  directories_restored: number;
+  attachments_restored: number;
+  /** Files left in Trash because their folder holds their name again (plain reasons). */
+  attachments_not_restored?: string[];
+}> {
   const response = await apiFetch(`/api/v1/resource-management/directories/${id}/restore`, {
     method: 'POST',
   });

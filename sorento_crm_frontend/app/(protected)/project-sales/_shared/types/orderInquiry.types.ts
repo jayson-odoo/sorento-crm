@@ -514,6 +514,9 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
    * inquiry raised since is stamped with one.
    */
   inquiry_no?: string | null;
+  /** SPARE-PART-OR-B (U2.7): the row's header's OI- number, set once a spare part request
+   *  is approved (its `inquiry_no` is the OR- number); null otherwise. */
+  oi_no?: string | null;
   /** SPARE-PART-ORDER-REQUEST: the inquiry's type, and a spare part request's unit
    *  price, line total and the qty / unit price its requester SUBMITTED (the "was" mark).
    *  `requested_qty` below is a different fact: the open reserve request's qty. */
@@ -616,6 +619,10 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
    * on every row before this plan.
    */
   line_cancelled?: boolean;
+  /** The row's sales order line is in AutoCount, so Link to PO can act on it. */
+  in_autocount?: boolean;
+  /** A PO link of the row is tied to its AutoCount SO line: Unlink... goes through AutoCount. */
+  in_autocount_link?: boolean;
   /**
    * OI-WHOLE-SO-CANCEL v2: the row's SO line has a change CS has not confirmed yet
    * (AC-V2-2), the sales order itself is cancelled or deleted (AC-V2-5), and the line's
@@ -1115,6 +1122,8 @@ export interface OrderInquiryPoCandidate {
   /** The PO line's id, or the SPO allocation's. Exactly one of the two is set. */
   po_line_id?: string | null;
   spo_allocation_id?: string | null;
+  /** AutoCount ties this PO line to another sales order line than the row's own. */
+  tied_elsewhere?: boolean;
   po_number: string;
   /** `L3` when the book numbered the line. */
   line_label?: string | null;
@@ -1495,6 +1504,9 @@ export interface WaitingChange {
 export interface OrderInquiryHeader {
   id: string;
   inquiry_no: string;
+  /** SPARE-PART-OR-B (U3.4): a spare part request's OI- number once approved; purchasing
+   *  reads it in place of the OR- `inquiry_no`. Null on a sales-order inquiry. */
+  oi_no?: string | null;
   /** The pre-renumbering number (plan S1) - never shown, only ever matched by search. */
   legacy_inquiry_no?: string | null;
   /** The FIRST raise, fixed for life (owner ruling R5). */
@@ -1554,6 +1566,9 @@ export interface OrderInquiryHeaderDetail extends OrderInquiryHeader {
   can_decide?: boolean;
   can_edit?: boolean;
   can_revise?: boolean;
+  /** SPARE-PART-OR-B (U4.2): an open revision's state (draft / pending_approval /
+   *  rejected), else null. */
+  revision_state?: string | null;
   /** A spare part request's amount; null when the reader may not see its prices. */
   total?: string | null;
 }

@@ -117,7 +117,9 @@ class FakeRespondClient:
         self._n = 0
 
     def _record(self, method: str, ident: str, tail: str, body: dict | None) -> dict:
-        self.calls.append((method, f"https://api.respond.io/v2/contact/{ident}{tail}", body))
+        from app.services.integration_service import respond_endpoint  # the one Respond host source (#2272)
+
+        self.calls.append((method, respond_endpoint(f"/v2/contact/{ident}{tail}"), body))
         self._n += 1
         return {"messageId": 1_700_000_000_000_000 + self._n}
 

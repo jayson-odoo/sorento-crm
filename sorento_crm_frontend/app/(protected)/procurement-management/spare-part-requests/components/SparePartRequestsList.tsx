@@ -119,11 +119,15 @@ export function SparePartRequestsList() {
         accessorKey: 'state',
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
         size: 160,
-        cell: ({ row }) => (
-          <Badge variant={sparePartStateVariant(row.original.state)} appearance="light">
-            {sparePartRequestStatusLabel(row.original.state)}
-          </Badge>
-        ),
+        cell: ({ row }) => {
+          // SPARE-PART-OR-B (U4.6): an open revision's state, else the request's.
+          const state = row.original.effective_state ?? row.original.revision_state ?? row.original.state;
+          return (
+            <Badge variant={sparePartStateVariant(state)} appearance="light">
+              {sparePartRequestStatusLabel(state)}
+            </Badge>
+          );
+        },
         meta: { headerTitle: 'Status', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
