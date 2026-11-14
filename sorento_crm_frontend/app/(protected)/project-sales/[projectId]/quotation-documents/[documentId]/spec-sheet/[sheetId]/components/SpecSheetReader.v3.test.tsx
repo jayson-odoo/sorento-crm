@@ -597,3 +597,23 @@ describe('C7 keyboard Delete: the page holding the selection takes the keys', ()
     expect(screen.getByTestId('live-canvas-k1').getAttribute('data-active')).toBe('no');
   });
 });
+
+// ---- C6.1 (toolbar format row) ---------------------------------------------------------------------
+
+describe('C6.1 Manage fonts in the toolbar format row', () => {
+  it('the format row offers Manage fonts, which opens the one Brand fonts dialog', async () => {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    await selectOn('k1', 'logo');
+    const format = await within(row()).findByRole('group', { name: 'Text formatting' });
+    fireEvent.click(within(format).getByRole('button', { name: 'Manage fonts' }));
+    expect(await screen.findAllByRole('dialog', { name: 'Brand fonts' })).toHaveLength(1);
+  });
+
+  it('a table selection has no format row, so no Manage fonts in the toolbar', async () => {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    await selectOn('k1', 'tbl');
+    expect(within(row()).queryByRole('button', { name: 'Manage fonts' })).toBeNull();
+  });
+});
