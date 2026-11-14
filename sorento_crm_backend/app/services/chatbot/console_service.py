@@ -461,8 +461,8 @@ def prompt_base(template: Any) -> str:
     two bodies diverge inside their first 200 characters ("...last message to the user
     (may be" against "...last message (may be"), and every published version of either
     lineage is that body with rules appended or woven in further down, so the opening is
-    the lineage. Item 6 (8 Sep 2026): the console defaults to the newest "full" rather
-    than to the production label, which locally sits on the compact one."""
+    the lineage. Shown in the console's picker; the default is the version production
+    serves (CONSOLE-DEFAULT-PROMPT, 14 Nov 2026), not the newest "full"."""
     from app.services.chatbot_parser_prompt import SEMANTIC_PARSER_PROMPT
 
     head = template[:_BASE_PROBE_CHARS] if isinstance(template, str) else ""
