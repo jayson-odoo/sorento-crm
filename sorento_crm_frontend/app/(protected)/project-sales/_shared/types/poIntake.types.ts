@@ -265,6 +265,9 @@ export interface POIntakeController {
    */
   qtyOverProducts?: QtyOverProduct[] | null;
   clearQtyOver?: () => void;
+  /** The last confirm was refused for want of an issuer; the sentence goes under the picker. */
+  issuerError?: string | null;
+  clearIssuerError?: () => void;
   /** Accept one line's suggested product and/or qty (PO-UPLOAD-MATCHING AC-A1). */
   acceptSuggestion: (lineId: string) => Promise<void>;
   /** Accept every suggested product and qty on the version (AC-A2). */

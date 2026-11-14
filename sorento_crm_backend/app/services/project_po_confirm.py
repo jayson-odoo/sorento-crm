@@ -31,6 +31,7 @@ from app.models.projects import (
     ProjectQuotation,
     ProjectQuotationVersion,
 )
+from app.services import customer_code_map
 from app.services.error_handler import AppException
 from app.services.project_po_reading import (  # noqa: F401 - shared vocabulary
     STATE_QUEUED,
@@ -215,6 +216,18 @@ class POConfirmationMixin:
             )
 
         po = self.get_po(version.purchase_order_id)
+        # Whose codes this PO teaches: the issuer's customer, else the project lead's buyer.
+        # A confirm with neither would agree to lines and learn from nobody (crew pass 2).
+        customer_id = customer_code_map.customer_id_for_po(self.db, po)
+        if not customer_id:
+            raise AppException(
+                status_code=422,
+                message=(
+                    "Choose who issued this PO under Issued by, so its codes are remembered "
+                    "for that customer."
+                ),
+                code="po_version_issuer_required",
+            )
         header = (version.extracted_json or {}).get("header") or {}
 
         number = str(header.get("po_number") or "").strip()
@@ -291,6 +304,22 @@ class POConfirmationMixin:
                     },
                 )
             )
+
+        # Every product a person chose on this document (accepted or picked by hand) is
+        # remembered for the customer now that the customer is known. Exact-code and map
+        # lines already resolve by themselves and are left as they are.
+        for line in live:
+            if line.resolution_source in ("accepted", "manual") and line.resolved_product_id:
+                customer_code_map.remember_code(
+                    self.db,
+                    company_id=line.company_id,
+                    customer_id=customer_id,
+                    customer_code=customer_code_map.customer_code_for(
+                        line.stock_code_raw, line.description_raw
+                    ),
+                    product_id=line.resolved_product_id,
+                    actor_user_id=actor_user_id,
+                )
 
         totals = self.recompute_totals(version)
         po.po_amount = totals["lines_total"]

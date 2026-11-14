@@ -979,6 +979,8 @@ export const POIntakeLinesGrid = React.forwardRef<
                   type="single"
                   variant="outline"
                   size="sm"
+                  // 375px: the switch wraps inside its own box rather than widen the page.
+                  className="min-w-0 max-w-full flex-wrap"
                   value={view}
                   onValueChange={(next) => next && setView(next as LinesView)}
                 >

@@ -187,6 +187,7 @@ export function PurchaseOrderHeaderCard({
                 <POIssuerSelect
                   id="po-issuer"
                   value={po.issuing_party_id}
+                  issuerName={po.issuing_party_name}
                   onChange={(partyId) => onChange({ issuing_party_id: partyId })}
                 />
               </EditField>

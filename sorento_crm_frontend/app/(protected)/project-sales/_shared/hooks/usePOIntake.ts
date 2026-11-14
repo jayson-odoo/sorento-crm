@@ -30,6 +30,9 @@ import { resolveExtractionPhase } from '../types/poIntake.types';
 import { POS_KEY, projectKey, PROJECTS_KEY } from './useProjects';
 
 export const PO_VERSION_KEY = 'project-po-version';
+
+/** Confirm's refusal when the PO names no customer to remember its codes for. */
+const ISSUER_REQUIRED = 'po_version_issuer_required';
 export const PO_VERSIONS_KEY = 'project-po-versions';
 
 export const poVersionKey = (versionId: string) => [PO_VERSION_KEY, versionId];
@@ -101,6 +104,9 @@ export function usePOIntakeController(
   const queryClient = useQueryClient();
   const query = usePOVersion(versionId, enabled);
   const [qtyOverProducts, setQtyOverProducts] = React.useState<QtyOverProduct[] | null>(null);
+  // Crew pass 2: Confirm refused because nobody knows whose codes these are. Shown under the
+  // "Issued by" picker, where it is fixed.
+  const [issuerError, setIssuerError] = React.useState<string | null>(null);
   const version = query.data ?? null;
   const poId = version?.purchase_order_id;
 
@@ -293,15 +299,21 @@ export function usePOIntakeController(
     },
     updateLine,
     confirm: async (qtyOverReason?: string) => {
+      setIssuerError(null);
       try {
         await confirmMutation.mutateAsync(qtyOverReason);
         setQtyOverProducts(null);
         return true;
       } catch (error) {
         if (isQtyOver(error)) setQtyOverProducts(error.products);
+        if ((error as { code?: string | null })?.code === ISSUER_REQUIRED) {
+          setIssuerError(error instanceof Error ? error.message : null);
+        }
         return false;
       }
     },
+    issuerError,
+    clearIssuerError: () => setIssuerError(null),
     qtyOverProducts,
     clearQtyOver: () => setQtyOverProducts(null),
     refresh: () => {

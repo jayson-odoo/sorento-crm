@@ -258,28 +258,37 @@ export function POIntakeConfirmClient({
           {/* Crew pass item 2: accepted codes are remembered for the PO's customer, which
               comes from its issuer. Settable here while the version is To confirm. */}
           {!readOnly && (
-            <div className="flex items-center gap-2">
-              <label htmlFor="po-intake-issuer" className="text-sm text-muted-foreground">
-                Issued by
-              </label>
-              <div className="w-56 max-w-full">
-                <POIssuerSelect
-                  id="po-intake-issuer"
-                  value={issuer !== undefined ? issuer : version.purchase_order?.issuing_party_id}
-                  disabled={poMutations.update.isPending}
-                  onChange={(partyId) => {
-                    setIssuer(partyId);
-                    poMutations.update.mutate(
-                      { id: version.purchase_order_id, body: { issuing_party_id: partyId } },
-                      {
-                        // A refused save puts the previous issuer back on screen.
-                        onError: () => setIssuer(undefined),
-                        onSettled: () => intake.refresh?.(),
-                      },
-                    );
-                  }}
-                />
+            <div className="flex max-w-full flex-col gap-1">
+              <div className="flex items-center gap-2">
+                <label htmlFor="po-intake-issuer" className="text-sm text-muted-foreground">
+                  Issued by
+                </label>
+                <div className="w-56 max-w-full">
+                  <POIssuerSelect
+                    id="po-intake-issuer"
+                    value={issuer !== undefined ? issuer : version.purchase_order?.issuing_party_id}
+                    issuerName={version.purchase_order?.issuing_party_name}
+                    disabled={poMutations.update.isPending}
+                    onChange={(partyId) => {
+                      setIssuer(partyId);
+                      intake.clearIssuerError?.();
+                      poMutations.update.mutate(
+                        { id: version.purchase_order_id, body: { issuing_party_id: partyId } },
+                        {
+                          // A refused save puts the previous issuer back on screen.
+                          onError: () => setIssuer(undefined),
+                          onSettled: () => intake.refresh?.(),
+                        },
+                      );
+                    }}
+                  />
+                </div>
               </div>
+              {intake.issuerError && (
+                <p className="text-xs text-destructive" role="alert">
+                  {intake.issuerError}
+                </p>
+              )}
             </div>
           )}
         </div>
