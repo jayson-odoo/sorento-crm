@@ -190,6 +190,28 @@ describe('ComboTagPreview asks the staff preview service (R18)', () => {
   });
 });
 
+describe('ComboTagPreview draws the feature icons (SPEC-ICON-COMBINED follow-up F4)', () => {
+  it('FU-F4: hands the response feature_icons (with conditions) to the viewer', async () => {
+    const icons = [
+      { id: 'ic-s', name: 'S trap', spec_key: 'trap_type', values: ['s_trap'], conditions: [] },
+      {
+        id: 'ic-s150',
+        name: 'S trap 150mm',
+        spec_key: 'trap_length',
+        values: ['150'],
+        conditions: [{ spec_key: 'trap_type', value: 's_trap' }],
+      },
+    ];
+    const base = previewTags.getMockImplementation()!;
+    previewTags.mockImplementation(async (...args: unknown[]) => ({ ...(await base(...args)), feature_icons: icons }));
+    state.links = [link({ default_selling: true })];
+    draw('<p>x</p>');
+    await waitFor(() => expect(drawn()).toBeTruthy());
+
+    expect((drawn() as unknown as { featureIcons: unknown[] }).featureIcons).toEqual(icons);
+  });
+});
+
 describe('ComboTagPreview empty states (R18 keeps them)', () => {
   it('R18: no link at all says "No price tag template linked" and does not call the service', async () => {
     state.links = [];

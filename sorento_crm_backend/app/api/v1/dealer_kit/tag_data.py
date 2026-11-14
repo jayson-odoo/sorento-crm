@@ -296,4 +296,5 @@ def staff_tag_preview(
         assets=result["assets"],
         images=result["images"],
         fonts=result["fonts"],
+        feature_icons=result["feature_icons"],
     )
