@@ -23,7 +23,8 @@ if TYPE_CHECKING:
 #: How far up and down the variant graph a family is read (codes nest a few levels deep).
 MAX_DEPTH = 6
 
-_SPEC_HINTS = frozenset({"specification", "spec"})
+#: The hints the parser gives a spec word ("S trap").
+SPEC_HINTS = frozenset({"specification", "spec"})
 
 
 def _family_ids(db: "Session", held_ids: list[str]) -> set[str]:
@@ -134,7 +135,7 @@ def narrow_held_family(
     specs = [
         (str(e.get("spec_key")), e.get("spec_value"), [str(k) for k in e.get("spec_any_keys") or []])
         for e in said
-        if str(e.get("hint") or "").strip().lower() in _SPEC_HINTS
+        if str(e.get("hint") or "").strip().lower() in SPEC_HINTS
         and e.get("spec_key")
         and e.get("spec_value") is not None
         and str(e.get("spec_value")) != ""
