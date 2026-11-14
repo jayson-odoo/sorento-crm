@@ -282,8 +282,8 @@ import type { AccessoryTemplateRecord } from '../../services/accessoryTemplateSe
 import { QueryClientContext } from '@tanstack/react-query';
 import {
   CROP_HANDLE_ANCHORS,
-  cropOverlayLayout,
   cropRectFromDrag,
+  cropSessionLayout,
   panCropRect,
   resolvedCropRect,
   type CropRect,
@@ -2319,6 +2319,9 @@ export function TagCanvasEditor({
    * the layer's own `cropRect` on entry; nothing is written to the layer
    * until Enter/click-outside commits it. */
   const [cropDraft, setCropDraft] = useState<CropRect | null>(null);
+  /** The crop the session started from (PRICETAG-DESIGNER-FEEDBACK AC-9.1): the overlay lays the
+   * source picture out from this, once, so the picture never moves or rescales mid-session. */
+  const [cropSession, setCropSession] = useState<CropRect | null>(null);
   const cropDragRef = useRef<{
     anchor: { fx: number; fy: number } | null;
     base: CropRect;
@@ -2342,7 +2345,7 @@ export function TagCanvasEditor({
   }, [cropEditingLayerId, layers]);
 
   const cropImageUrl = cropEditingLayer
-    ? layerDisplay(cropEditingLayer, dataOf(cropEditingLayer), assetUrls)?.imageUrl
+    ? layerDisplay(cropEditingLayer, dataOf(cropEditingLayer), assetUrls, library.featureIcons)?.imageUrl
     : null;
   const cropImage = useHtmlImage(cropImageUrl ?? null);
 
@@ -2367,9 +2370,9 @@ export function TagCanvasEditor({
       const w = cropEditingLayer.width_mm * scale;
       const h = cropEditingLayer.height_mm * scale;
       if (w <= 0 || h <= 0) return null;
-      return cropOverlayLayout(rect, cropImage, cropEditingLayer.props.fit, w, h);
+      return cropSessionLayout(cropSession ?? rect, rect, cropImage, cropEditingLayer.props.fit, w, h);
     },
-    [cropEditingLayer, cropImage, scale],
+    [cropEditingLayer, cropImage, scale, cropSession],
   );
 
   const cropLayout = cropDraft ? layoutForCropRect(cropDraft) : null;
@@ -2380,6 +2383,7 @@ export function TagCanvasEditor({
     if (!layer || layer.props.kind !== 'image') return;
     setCropEditingLayerId(layer.id);
     setCropDraft(resolvedCropRect(layer.props.cropRect));
+    setCropSession(resolvedCropRect(layer.props.cropRect));
   }, [selectedIds, layers]);
 
   /** Writes the draft, one history entry, then leaves the mode. */
@@ -2388,6 +2392,7 @@ export function TagCanvasEditor({
     const draft = cropDraft;
     setCropEditingLayerId(null);
     setCropDraft(null);
+    setCropSession(null);
     cropDragRef.current = null;
     if (!layer || !draft) return;
     updateLayerProps(layer.id, { cropRect: draft });
@@ -2398,6 +2403,7 @@ export function TagCanvasEditor({
   const cancelCropMode = useCallback(() => {
     setCropEditingLayerId(null);
     setCropDraft(null);
+    setCropSession(null);
     cropDragRef.current = null;
   }, []);
 
@@ -2513,6 +2519,7 @@ export function TagCanvasEditor({
     if (cropEditingLayerId && !cropEditingLayer) {
       setCropEditingLayerId(null);
       setCropDraft(null);
+      setCropSession(null);
       cropDragRef.current = null;
     }
   }, [cropEditingLayerId, cropEditingLayer]);
@@ -4641,10 +4648,13 @@ export function TagCanvasEditor({
                           layer={{ ...drawnLayer(withPolygonPreview(layer)), id: `${layer.id}-ghost` }}
                           scale={scale}
                           display={displayFor(layer)}
-                          draggable={!handMode && accessoryEdit?.layerId !== layer.id}
+                          draggable={
+                            !handMode && accessoryEdit?.layerId !== layer.id && layer.id !== cropEditingLayerId
+                          }
                           listening={
                             !handMode &&
-                            !(layer.props.kind === 'group' && entered.has(layer.id))
+                            !(layer.props.kind === 'group' && entered.has(layer.id)) &&
+                            layer.id !== cropEditingLayerId
                           }
                           // Crop mode (S8, r6 S8 review, #723): same reason
                           // as the clipped copy below - its own overlay
@@ -4681,17 +4691,22 @@ export function TagCanvasEditor({
                           layer={drawnLayer(withPolygonPreview(layer))}
                           scale={scale}
                           display={displayFor(layer)}
-                          draggable={!handMode && accessoryEdit?.layerId !== layer.id}
+                          // Crop mode (AC-9.4): the hidden layer takes no click or drag, so a
+                          // click outside the crop window reaches the Stage and commits.
+                          draggable={
+                            !handMode && accessoryEdit?.layerId !== layer.id && layer.id !== cropEditingLayerId
+                          }
                           listening={
                             !handMode &&
-                            !(layer.props.kind === 'group' && entered.has(layer.id))
+                            !(layer.props.kind === 'group' && entered.has(layer.id)) &&
+                            layer.id !== cropEditingLayerId
                           }
                           // Crop mode (S8, r6 S8 review, #723) draws its own
                           // overlay for this SAME layer, at the correct
                           // transform - the layer's own render has to hide
                           // for as long as that is up, or the two show at
-                          // once and the picture looks doubled.
-                          opacity={layer.id === cropEditingLayerId ? 0 : undefined}
+                          // once and the picture looks doubled. 1, not undefined, after (AC-9.5).
+                          opacity={layer.id === cropEditingLayerId ? 0 : 1}
                           onSelect={handleCanvasSelect}
                           onDoubleClick={handleLayerDoubleClick}
                           onDragStart={handleDragStart}

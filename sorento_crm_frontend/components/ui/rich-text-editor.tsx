@@ -805,6 +805,8 @@ export function RichTextEditor({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     extensions: extensions as any[],
     content: toEditor(value || ''),
+    // Keep leading and repeated spaces (a description's indent) when HTML is loaded.
+    parseOptions: { preserveWhitespace: true },
     editable,
     editorProps: {
       transformPastedHTML: stripPastedStyles,
@@ -854,7 +856,7 @@ export function RichTextEditor({
       ? canonicalHtml(incoming) === canonicalHtml(current)
       : incoming === current;
     if (!same && !(incoming === '' && current === '<p></p>')) {
-      editor.commands.setContent(toEditor(incoming), { emitUpdate: false });
+      editor.commands.setContent(toEditor(incoming), { emitUpdate: false, parseOptions: { preserveWhitespace: true } });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value, editor]);
