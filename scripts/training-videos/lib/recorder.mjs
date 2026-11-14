@@ -72,12 +72,18 @@ if (!noVoice) {
 // Playwright's pinned Chromium build, else TV_CHROMIUM, else the newest headless shell already
 // in the browser cache (so a version bump in node_modules never forces a download).
 function cachedShell() {
-  const dir = path.join(process.env.HOME, 'Library/Caches/ms-playwright');
-  const builds = fs.existsSync(dir) ? fs.readdirSync(dir).filter((d) => d.startsWith('chromium_headless_shell-')) : [];
-  builds.sort((a, b) => Number(b.split('-')[1]) - Number(a.split('-')[1]));
-  for (const b of builds) {
-    const exe = path.join(dir, b, 'chrome-headless-shell-mac-arm64', 'chrome-headless-shell');
-    if (fs.existsSync(exe)) return exe;
+  // The macOS cache, else PLAYWRIGHT_BROWSERS_PATH (a Linux box with browsers preinstalled).
+  const dirs = [path.join(process.env.HOME, 'Library/Caches/ms-playwright'), process.env.PLAYWRIGHT_BROWSERS_PATH]
+    .filter((d) => d && fs.existsSync(d));
+  for (const dir of dirs) {
+    const builds = fs.readdirSync(dir).filter((d) => d.startsWith('chromium_headless_shell-'));
+    builds.sort((a, b) => Number(b.split('-')[1]) - Number(a.split('-')[1]));
+    for (const b of builds) {
+      for (const plat of ['chrome-headless-shell-mac-arm64', 'chrome-headless-shell-linux64']) {
+        const exe = path.join(dir, b, plat, 'chrome-headless-shell');
+        if (fs.existsSync(exe)) return exe;
+      }
+    }
   }
   return undefined;
 }
@@ -87,23 +93,34 @@ const browser = await chromium.launch(exe ? { executablePath: exe } : {});
 // Everything after launch runs inside try/finally, so a failed sign-in, warm-up or first page
 // load still closes the browser.
 try {
-  const user = spec.user;
-  const pre = await browser.newContext({ viewport: { width: W, height: H } });
-  const lp = await pre.newPage();
-  for (let attempt = 0; ; attempt++) {
-    await lp.goto(`${BASE}/signin`, { waitUntil: 'networkidle', timeout: 180000 });
-    await lp.waitForTimeout(1500);
-    await lp.getByPlaceholder('Your email').fill(user.email);
-    await lp.getByPlaceholder('Your password').fill(user.password);
-    await lp.locator('button[type="submit"]').first().click();
-    try {
-      await lp.waitForURL((u) => !u.pathname.startsWith('/signin'), { timeout: 60000 });
-      await lp.waitForLoadState('networkidle');
-      break;
-    } catch (e) {
-      if (attempt >= 2) throw e;
+  // A spec signs in as `user`; one that hands over to another person names them in `users`
+  // ({ key: { email, password } }) and its steps call `signInAs(key)`. Each is signed in here,
+  // off camera, and only their cookies are swapped during the recording.
+  async function signIn(lp, user) {
+    for (let attempt = 0; ; attempt++) {
+      await lp.goto(`${BASE}/signin`, { waitUntil: 'networkidle', timeout: 180000 });
+      await lp.waitForTimeout(1500);
+      await lp.getByPlaceholder('Your email').fill(user.email);
+      await lp.getByPlaceholder('Your password').fill(user.password);
+      await lp.locator('button[type="submit"]').first().click();
+      try {
+        await lp.waitForURL((u) => !u.pathname.startsWith('/signin'), { timeout: 60000 });
+        await lp.waitForLoadState('networkidle');
+        break;
+      } catch (e) {
+        if (attempt >= 2) throw e;
+      }
     }
   }
+  const pre = await browser.newContext({ viewport: { width: W, height: H } });
+  const lp = await pre.newPage();
+  const others = {};
+  for (const [key, other] of Object.entries(spec.users || {})) {
+    await signIn(lp, other);
+    others[key] = (await pre.storageState()).cookies;
+    await pre.clearCookies();
+  }
+  await signIn(lp, spec.user);
   const storageState = await pre.storageState();
   // Warm the dev server's compile of every route the video visits, so the recording never
   // waits on Turbopack compiling a page.
@@ -156,6 +173,15 @@ try {
       await loc.evaluate((el) => el.classList.add('tv-focus')).catch(() => {});
       await sleep(ms);
       await loc.evaluate((el) => el.classList.remove('tv-focus')).catch(() => {});
+    },
+    async signInAs(key) {
+      // Another person takes over: their session cookies replace this one's, then the app
+      // reloads at home, as after a fresh sign-in.
+      if (!others[key]) throw new Error(`spec.users has no ${key}`);
+      await ctx.clearCookies();
+      await ctx.addCookies(others[key]);
+      await page.goto(`${BASE}/`, { waitUntil: 'networkidle', timeout: 120000 });
+      await sleep(800);
     },
     async nav(text) {
       // Sidebar navigation from the menu, never a deep link (CLAUDE.md browser rule).

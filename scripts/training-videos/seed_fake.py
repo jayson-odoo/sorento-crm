@@ -1308,6 +1308,9 @@ def seed_p3(db) -> dict:
     customers = {code: _need(db, Customer, customer_code=code) for code, *_ in CUSTOMERS}
     products = {code: _need(db, Product, product_code=code) for code, *_ in PRODUCTS}
 
+    # The sidebar is empty without tenant module rows (seed_modules above); they went missing from
+    # this sandbox once between takes, so this part puts them back too.
+    seed_modules(db)
     mig = _ocn_migration()
     bind = db.connection()
     mig._seeds(bind, mig._schema(bind, "projects"))
