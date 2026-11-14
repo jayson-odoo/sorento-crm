@@ -9,6 +9,9 @@ import { complaintStatusLabel, complaintStatusPillClass } from '@/lib/complaint-
 import { statusPillClass } from '@/lib/status-pill';
 import { ocnStatusPillKey, ocnStatusWord } from '@/types/orderChangeNotice';
 
+/** The retired Sponsorship Form tab; its old links open Related, filtered to sponsorship forms. */
+export const LEGACY_SPONSORSHIP_TAB = 'sponsorships';
+
 export interface RelatedRecordTypeDef {
   label: string;
   href: (id: string) => string;
