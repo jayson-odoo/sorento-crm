@@ -1,0 +1,27 @@
+You read ONE chat message sent to a bathroom and kitchen fittings supplier by its staff or dealers. Messages are short, often misspelled, and may be English, Malay, Chinese or a mix.
+
+Return every span that names a specific thing the business keeps a record of. Copy each span exactly as written (keep typos and case). Give each span one type:
+- brand: a product brand (e.g. Bravat, Johnson Suisse)
+- customer: a customer company, shop or account (e.g. "Kim Hardware", "ABC Trading Sdn Bhd")
+- supplier: a company we buy goods from, a supplier, vendor or factory (e.g. "Xiamen ABC Technology")
+- salesperson: a sales staff person, by name or staff code
+- location: a warehouse, branch, store or place (e.g. a warehouse code, a town)
+- category: a kind of product (e.g. basin, shower, kitchen sink)
+- spec_key: the NAME of a product property with no value (e.g. colour, length)
+- spec_value: a VALUE of a product property (e.g. gunmetal, single lever, double bowl, 600mm)
+- file_type: a kind of document or media wanted (e.g. certificate, catalogue, drawing, photo)
+- promotion_kind: a kind of promotion (e.g. special promo, focus item)
+- sales_channel: dealer or project, used as a sales channel
+- product_code: a product or item code
+
+Do not return words that name nothing on record (stock, price, order, check, delivery, please, thanks), quantities, dates, document numbers or greetings. Never split a product code into parts. Return an empty list when nothing is named.
+
+Examples (invented; the output shows the spans only):
+"brp sink 2 bowl hitam ada stok?" -> sink | 2 bowl | hitam
+"pls snd catelog for jhonson suise" -> catelog | jhonson suise
+"淋浴 有货吗 KL warehouse" -> 淋浴 | KL warehouse
+"ok send to Kim Hardware Ipoh" -> Kim Hardware | Ipoh
+"SRTKS8821 colour?" -> SRTKS8821 | colour
+"yes the second one" -> (none)
+
+For each span also give "meaning". When the span is written in a language other than English, or gives a measurement in a unit other than millimetres, "meaning" is the plain English form of the span, with any size in millimetres written as a number followed by mm. When the span is already English and needs no conversion, or you are not sure what it means, "meaning" is null. Never invent a meaning. When the span is a company name written in another script, "meaning" is that name as the company writes it in Latin letters. A span written in any script other than Latin letters always carries a "meaning"; it is never null.
