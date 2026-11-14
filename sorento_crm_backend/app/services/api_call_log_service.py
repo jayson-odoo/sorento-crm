@@ -211,49 +211,39 @@ def classify_outcome(status_code: Optional[int]) -> str:
     return "success"
 
 
-def prune_api_call_log(db, *, payload_retention_days: int, row_retention_days: int) -> dict:
-    """Two-stage retention.
+def prune_api_call_log(
+    db,
+    *,
+    payload_retention_days: int,
+    row_retention_days: int,
+    dry_run: bool = False,
+    batch_size: int = 5000,
+    sleep_ms: int = 0,
+    max_seconds: Optional[float] = None,
+) -> dict:
+    """Two-stage retention (``data_retention_service.two_stage_prune``), batched.
 
     Payloads NULL first, rows DELETE later. Payloads are the bulk of the bytes and
     the shortest-lived value; the metadata row (endpoint, latency, outcome) stays
     useful for trend analysis long after the body does, so deleting whole rows at
     the payload window would throw away the volume history.
     """
-    from datetime import datetime, timedelta
-
     from app.models.api_call_log import ApiCallLog
+    from app.services.data_retention_service import two_stage_prune
 
-    now = datetime.utcnow()
-    payload_cutoff = now - timedelta(days=int(payload_retention_days))
-    row_cutoff = now - timedelta(days=int(row_retention_days))
-
-    # Delete BEFORE nulling, so the two counts describe disjoint sets. The other
-    # order counts a payload-clear for every row it is about to delete, and the
-    # task then reports more work than it did.
-    rows_deleted = (
-        db.query(ApiCallLog)
-        .filter(ApiCallLog.created_at < row_cutoff)
-        .delete(synchronize_session=False)
+    return two_stage_prune(
+        db,
+        ApiCallLog,
+        rule="api_call_log_prune",
+        created_column=ApiCallLog.created_at,
+        payload_columns=[ApiCallLog.request_payload, ApiCallLog.response_payload],
+        payload_retention_days=payload_retention_days,
+        row_retention_days=row_retention_days,
+        dry_run=dry_run,
+        batch_size=batch_size,
+        sleep_ms=sleep_ms,
+        max_seconds=max_seconds,
     )
-
-    # Guard on "not already NULL" so a re-run reports 0 rather than re-clearing
-    # the same rows forever - the task's own output would otherwise imply work
-    # that is not happening.
-    payloads_cleared = (
-        db.query(ApiCallLog)
-        .filter(
-            ApiCallLog.created_at < payload_cutoff,
-            (ApiCallLog.request_payload.isnot(None))
-            | (ApiCallLog.response_payload.isnot(None)),
-        )
-        .update(
-            {ApiCallLog.request_payload: None, ApiCallLog.response_payload: None},
-            synchronize_session=False,
-        )
-    )
-
-    db.commit()
-    return {"payloads_cleared": int(payloads_cleared), "rows_deleted": int(rows_deleted)}
 
 
 def write_call_log(db, **fields) -> None:
