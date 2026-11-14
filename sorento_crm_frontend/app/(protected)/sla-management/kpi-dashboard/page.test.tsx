@@ -1,5 +1,5 @@
 import React from 'react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
@@ -9,9 +9,9 @@ class ResizeObserverStub {
   unobserve() {}
   disconnect() {}
 }
-(globalThis as any).ResizeObserver = ResizeObserverStub;
+(globalThis as unknown as Record<string, unknown>).ResizeObserver = ResizeObserverStub;
 if (!window.matchMedia) {
-  (window as any).matchMedia = () => ({
+  (window as unknown as Record<string, unknown>).matchMedia = () => ({
     matches: false, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {},
   });
 }
@@ -88,9 +88,9 @@ describe('SLA KPI Dashboard (TCK-32 UX1)', () => {
   });
 
   it('renders stage/timeliness cards + tasks with data', async () => {
-    (getKpiSummary as any).mockResolvedValue(SUMMARY);
-    (getKpiTrend as any).mockResolvedValue([]);
-    (getKpiTasks as any).mockResolvedValue({
+    (getKpiSummary as unknown as Mock).mockResolvedValue(SUMMARY);
+    (getKpiTrend as unknown as Mock).mockResolvedValue([]);
+    (getKpiTasks as unknown as Mock).mockResolvedValue({
       total: 1,
       data: [{
         tracking_id: 't1', source_entity_type: 'complaint', source_entity_id: 'c1', current_tier: 2,
@@ -107,9 +107,9 @@ describe('SLA KPI Dashboard (TCK-32 UX1)', () => {
   });
 
   it('renders empty states', async () => {
-    (getKpiSummary as any).mockResolvedValue({ ...SUMMARY, opened: 0 });
-    (getKpiTrend as any).mockResolvedValue([]);
-    (getKpiTasks as any).mockResolvedValue({ total: 0, data: [] });
+    (getKpiSummary as unknown as Mock).mockResolvedValue({ ...SUMMARY, opened: 0 });
+    (getKpiTrend as unknown as Mock).mockResolvedValue([]);
+    (getKpiTasks as unknown as Mock).mockResolvedValue({ total: 0, data: [] });
     renderPage();
     expect(await screen.findByText('No tasks in this scope.')).toBeInTheDocument();
     expect(await screen.findByText('No trend data for this scope.')).toBeInTheDocument();
@@ -123,44 +123,69 @@ describe('SLA KPI Dashboard (TCK-32 UX1)', () => {
   });
 
   it('passes a bounded date window to all three queries when defaultWindowDays is set', async () => {
-    (getKpiSummary as any).mockResolvedValue(SUMMARY);
-    (getKpiTrend as any).mockResolvedValue([]);
-    (getKpiTasks as any).mockResolvedValue({ total: 0, data: [] });
+    (getKpiSummary as unknown as Mock).mockResolvedValue(SUMMARY);
+    (getKpiTrend as unknown as Mock).mockResolvedValue([]);
+    (getKpiTasks as unknown as Mock).mockResolvedValue({ total: 0, data: [] });
     renderContent({ defaultWindowDays: 30 });
 
     // Scoped label is surfaced so users know the embed is windowed.
     expect(await screen.findByText('Last 30 days')).toBeInTheDocument();
 
     await waitFor(() => expect(getKpiSummary).toHaveBeenCalled());
-    const summaryWindow = (getKpiSummary as any).mock.calls[0][1];
+    const summaryWindow = (getKpiSummary as unknown as Mock).mock.calls[0][1];
     expect(summaryWindow.date_from).toMatch(ISO_DATE);
     expect(summaryWindow.date_to).toMatch(ISO_DATE);
     // 30-day span (inclusive of today's date_to).
     expect(summaryWindow.date_from < summaryWindow.date_to).toBe(true);
 
     await waitFor(() => expect(getKpiTrend).toHaveBeenCalled());
-    expect((getKpiTrend as any).mock.calls[0][1]).toEqual(summaryWindow);
+    expect((getKpiTrend as unknown as Mock).mock.calls[0][1]).toEqual(summaryWindow);
 
     await waitFor(() => expect(getKpiTasks).toHaveBeenCalled());
     // getKpiTasks(scope, pagination, sorting, view, state, window) - window is arg 6.
-    expect((getKpiTasks as any).mock.calls[0][5]).toEqual(summaryWindow);
+    expect((getKpiTasks as unknown as Mock).mock.calls[0][5]).toEqual(summaryWindow);
   });
 
   it('omits the date window (all-time) when defaultWindowDays is unset', async () => {
-    (getKpiSummary as any).mockResolvedValue(SUMMARY);
-    (getKpiTrend as any).mockResolvedValue([]);
-    (getKpiTasks as any).mockResolvedValue({ total: 0, data: [] });
+    (getKpiSummary as unknown as Mock).mockResolvedValue(SUMMARY);
+    (getKpiTrend as unknown as Mock).mockResolvedValue([]);
+    (getKpiTasks as unknown as Mock).mockResolvedValue({ total: 0, data: [] });
     renderContent();
 
     expect(screen.queryByText(/Last \d+ days/)).not.toBeInTheDocument();
 
     await waitFor(() => expect(getKpiSummary).toHaveBeenCalled());
-    expect((getKpiSummary as any).mock.calls[0][1]).toBeUndefined();
+    expect((getKpiSummary as unknown as Mock).mock.calls[0][1]).toBeUndefined();
 
     await waitFor(() => expect(getKpiTrend).toHaveBeenCalled());
-    expect((getKpiTrend as any).mock.calls[0][1]).toBeUndefined();
+    expect((getKpiTrend as unknown as Mock).mock.calls[0][1]).toBeUndefined();
 
     await waitFor(() => expect(getKpiTasks).toHaveBeenCalled());
-    expect((getKpiTasks as any).mock.calls[0][5]).toBeUndefined();
+    expect((getKpiTasks as unknown as Mock).mock.calls[0][5]).toBeUndefined();
+  });
+});
+
+describe('crew pass 0f6da244: one name everywhere', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    hasPermission.mockReturnValue(true);
+  });
+
+  it('labels an order request task "Order Request", never the raw "spare part request" key', async () => {
+    (getKpiSummary as unknown as Mock).mockResolvedValue(SUMMARY);
+    (getKpiTrend as unknown as Mock).mockResolvedValue([]);
+    (getKpiTasks as unknown as Mock).mockResolvedValue({
+      total: 1,
+      data: [{
+        tracking_id: 't9', source_entity_type: 'spare_part_request', source_entity_id: 'r1', current_tier: 1,
+        current_tier_started_at: '2026-11-14T01:00:00', response_due: '2026-11-19T00:00:00', resolution_due: null,
+        assignee_id: 'u2', assignee_name: 'Approver B', response_time_hours: null, resolution_time_hours: null,
+        is_resolved: false, response_met: null, resolution_met: null, escalations_auto: 0, escalations_manual: 0,
+      }],
+    });
+    renderContent();
+    await waitFor(() => expect(screen.getAllByText('Approver B').length).toBeGreaterThanOrEqual(1));
+    expect(screen.getAllByText(/^order request$/i).length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText(/spare part request/i)).toBeNull();
   });
 });

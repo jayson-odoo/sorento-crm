@@ -24,7 +24,7 @@ by default. **Completed** means every line of that order inquiry has been confir
 line does not count against it); when CS changes or adds a line later, the order inquiry returns
 to **Outstanding**.
 
-Columns, in order: **Raised at**, **OI no**, **S/O no**, **Raised by**, **Lines**, **Qty**,
+Columns, in order: **Raised at**, **Doc no**, **S/O no**, **Raised by**, **Lines**, **Qty**,
 **Customer**, **Project**, **Agent**, **SO date**, **Status**.
 
 * **Status** shows as a badge, **Outstanding** or **Completed**.
