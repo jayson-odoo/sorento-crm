@@ -498,3 +498,72 @@ def test_an_own_scope_user_reads_a_level_only_where_the_contact_has_their_own_ac
     # Nor is Employee carried from Mocha over an owner tag the user cannot see (review round 2 S1): asked.
     assert "as at Mocha" not in result.reply_text, result.reply_text
     assert result.reply_text.strip() == f"Owner or employee for {c.name}?", result.reply_text
+
+
+# ------------------------------------------------------------------ crew pass 4 (live F14c on 4aa6eb98)
+
+
+FIND = "crm_contacts_find"
+UPDATE = "crm_contact_access_update"
+
+
+def _no_access(db, w, name):
+    """A contact with no dealer access: no access type, no company, no account, AI replies off."""
+    c = dealer(db, w, name=name, types=(), companies=())
+    return c
+
+
+def test_ai_replies_on_for_a_contact_without_dealer_access_routes_to_the_grant_question(db):
+    """Crew pass 4: the model read 'access to the chatbot' as the AI replies switch and proposed 'AI replies off ->
+    on' for people with no dealer access. The switch answers the model (never the user) that such a person is given
+    access through the grant, and the grant asks the company and role."""
+    w = make_world(db)
+    a, b = _no_access(db, w, "ZZT New One"), _no_access(db, w, "ZZT New Two")
+    phones = [local(a.phone_number), local(b.phone_number)]
+
+    def update_both(messages):
+        found = [m for m in messages if m.get("role") == "tool"][-1]["content"]
+        import json as _json
+
+        ids = [r["contact_id"] for r in _json.loads(found)["data"]]
+        return round_of(*[tc(UPDATE, {"contact_id": i, "chatbot_allowed": True}, f"u{n}") for n, i in enumerate(ids)])
+
+    def grant_after_guidance(messages):
+        tool_texts = " ".join(str(m.get("content")) for m in messages if m.get("role") == "tool")
+        assert "crm_contact_grant" in tool_texts, "the switch did not point the model at the grant"
+        rows = [_unsaid(c, n, companies=()) for n, c in enumerate((a, b), 1)]
+        return _batch(rows, "b9")
+
+    script = [round_of(tc(FIND, {"phones": phones}, "f1")), update_both, grant_after_guidance, answer_("Done.")]
+    result, _ = screenshot_turn(db, w, script, text_="Please grant them access to the chatbot")
+    assert_plain(result.reply_text)
+    assert result.pending_action is None, result.reply_text
+    assert "AI replies off -> on" not in result.reply_text, result.reply_text
+    assert result.reply_text.strip() == f"Sorento or Mocha, and owner or employee, for {a.name}, {b.name}?", result.reply_text
+
+
+def test_the_switch_guidance_is_never_the_users_reply(db):
+    """If the model stops after the switch's answer, the user gets a plain line, never the tool guidance."""
+    w = make_world(db)
+    a = _no_access(db, w, "ZZT Stops Here")
+
+    def update(messages):
+        import json as _json
+
+        found = [m for m in messages if m.get("role") == "tool"][-1]["content"]
+        cid = _json.loads(found)["data"][0]["contact_id"]
+        return round_of(tc(UPDATE, {"contact_id": cid, "chatbot_allowed": True}, "u1"))
+
+    script = [round_of(tc(FIND, {"phones": [local(a.phone_number)]}, "f1")), update, answer_("Done."), answer_("Done.")]
+    result, _ = screenshot_turn(db, w, script, text_="Please grant them access to the chatbot")
+    assert_plain(result.reply_text)
+    assert "crm_" not in result.reply_text, result.reply_text
+    assert result.pending_action is None
+
+
+def test_the_found_nudge_names_the_grant_as_the_way_to_give_access(db):
+    """After a lookup with no change yet, the nudge offers both paths: give access (the grant) or change someone who
+    has it (the switch); it no longer pushes only the switch."""
+    from app.services.chatbot.agent.loop import FOUND_NUDGE
+
+    assert "crm_contact_grant" in FOUND_NUDGE and "crm_contact_access_update" in FOUND_NUDGE
