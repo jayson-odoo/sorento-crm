@@ -516,8 +516,6 @@ export interface EmbeddedController {
   duplicateSelected: () => void;
   groupSelected: () => void;
   ungroupSelected: () => void;
-  /** v3 (AC-C1.4): the table cell last picked on this canvas, for the host's table actions. */
-  tableCell?: () => { layerId: string; row: number; col: number } | null;
   /** v3 (AC-C3.2): open this canvas's field picker for the selected table's picked cell. */
   insertField?: () => void;
   /** v3 review S2: a brand font was renamed; this page's layers follow it, as the designer's do. */
@@ -1669,8 +1667,6 @@ export function TagCanvasEditor({
   /** B4: the table cell last clicked, right-clicked (or picked in the Inspector): the menu and the cell
    *  section of the Inspector act on it. */
   const [tableCell, setTableCell] = useState<{ layerId: string; row: number; col: number } | null>(null);
-  const tableCellRef = useRef(tableCell);
-  tableCellRef.current = tableCell;
   // The host (a spec sheet page) hears the pick, so its Inspector shows the picked row / column.
   const onTableCellRef = useRef(embedded?.onTableCell);
   onTableCellRef.current = embedded?.onTableCell;
@@ -4326,7 +4322,6 @@ export function TagCanvasEditor({
         duplicateSelected: duplicateSelectedLayers,
         groupSelected: groupSelectedLayers,
         ungroupSelected: ungroupSelectedLayers,
-        tableCell: () => tableCellRef.current,
         insertField: () => setInsertFieldOpen(true),
         renameFontFamily: renameFontFamilyInOpenDoc,
       };

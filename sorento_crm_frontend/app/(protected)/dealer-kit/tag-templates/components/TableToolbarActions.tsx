@@ -21,14 +21,13 @@ export function TableToolbarActions({
   onInsertField,
 }: {
   props: TableLayerProps;
-  /** The picked cell (or how to read it when clicked); the first one when none is picked yet. */
-  cell: { row: number; col: number } | null | (() => { row: number; col: number } | null);
+  /** The picked cell; the first one when none is picked yet. */
+  cell: { row: number; col: number } | null;
   onChange: (next: TableLayerProps) => void;
   onInsertField?: () => void;
 }) {
   const at = () => {
-    const picked = typeof cell === 'function' ? cell() : cell;
-    const { row, col } = cellAnchor(props, picked?.row ?? 0, picked?.col ?? 0);
+    const { row, col } = cellAnchor(props, cell?.row ?? 0, cell?.col ?? 0);
     const anchor = props.cells[row]?.[col];
     return { row, col, rowSpan: Math.max(1, anchor?.rowSpan ?? 1), colSpan: Math.max(1, anchor?.colSpan ?? 1) };
   };

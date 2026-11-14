@@ -1,6 +1,6 @@
 /**
  * SPEC-SHEET-PARITY-B2 v3 fix round, review N3: Merge is disabled when the picked cell has nothing to
- * its right, whether the cell is given or read from the canvas. Written test-FIRST.
+ * its right, for the picked cell. Written test-FIRST.
  */
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
@@ -16,13 +16,13 @@ const props: TableLayerProps = {
 };
 
 describe('Merge with nothing to merge into (review N3)', () => {
-  it('disabled on the last column (cell read from the canvas)', () => {
-    render(<TableToolbarActions props={props} cell={() => ({ row: 0, col: 1 })} onChange={vi.fn()} />);
+  it('disabled on the last column', () => {
+    render(<TableToolbarActions props={props} cell={{ row: 0, col: 1 }} onChange={vi.fn()} />);
     expect(screen.getByRole('button', { name: /^merge/i })).toBeDisabled();
   });
 
-  it('enabled when there is a cell to the right (cell read from the canvas)', () => {
-    render(<TableToolbarActions props={props} cell={() => ({ row: 0, col: 0 })} onChange={vi.fn()} />);
+  it('enabled when there is a cell to the right', () => {
+    render(<TableToolbarActions props={props} cell={{ row: 0, col: 0 }} onChange={vi.fn()} />);
     expect(screen.getByRole('button', { name: /^merge/i })).toBeEnabled();
   });
 
