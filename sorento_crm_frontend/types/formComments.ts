@@ -4,7 +4,8 @@ export type FormCommentKind =
   | 'stock_inquiry'
   | 'purchase_request'
   | 'sponsorship_form'
-  | 'sample_request';
+  | 'sample_request'
+  | 'order_change_notice';
 
 export interface FormCommentAttachment {
   attachmentId: string;

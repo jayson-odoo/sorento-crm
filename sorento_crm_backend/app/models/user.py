@@ -585,6 +585,16 @@ class SystemSetting(Base):
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
+    # Order change notice (OCN-ORDER-CHANGE-NOTICE): the approval stage's default approver,
+    # and whether Submit needs a project.
+    order_change_notice_default_approver_user_id = Column(
+        String,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    order_change_notice_require_project = Column(
+        Boolean, default=False, nullable=False, server_default="false"
+    )
     # Who approves a project quotation carrying a line outside its series (PS-QUOTE-RULES R4.1).
     off_series_approver_user_id = Column(
         String,

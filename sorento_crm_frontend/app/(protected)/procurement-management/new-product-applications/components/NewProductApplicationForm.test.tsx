@@ -359,9 +359,9 @@ describe('attachments (Stock Inquiry flow)', () => {
     mock.existing = savedDraft();
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
     renderForm({ applicationId: 'npa-1' });
-    fireEvent.click(
-      await screen.findByRole('button', { name: /unlink sample-doc\.pdf/i }),
-    );
+    // Unlink lives in the file row's right-click menu (owner rule, round 5), not a row button.
+    fireEvent.contextMenu(await screen.findByText('sample-doc.pdf'));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Unlink' }));
     expect(screen.queryByRole('alertdialog')).toBeNull();
     expect(confirmSpy).not.toHaveBeenCalled();
     expect(mock.unlinkRun).toHaveBeenCalledWith(
