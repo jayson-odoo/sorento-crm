@@ -32,11 +32,11 @@ import type { RecordAction, RecordActionSet } from '@/components/common/recordAc
 import {
   useDownloadAttachment,
   useResubmitAttachmentWebhook,
-  useRestoreAttachment,
-  useUpdateAttachment,
 } from './hooks/useAttachments';
 import type { Attachment } from './types/attachment.types';
 import AttachmentDeleteDialog from './components/attachment-delete-dialog';
+import { useMoveFiles } from '../attachment-directories/components/useMoveFiles';
+import { summarizeMove } from '../attachment-directories/components/driveMoveSummary';
 
 export interface UseAttachmentActionsOptions {
   /** Where to go once the file is gone (the record page returns to the list). */
@@ -49,9 +49,7 @@ export function useAttachmentActions(
 ): RecordActionSet {
   const queryClient = useQueryClient();
   const downloadMutation = useDownloadAttachment();
-  const updateMutation = useUpdateAttachment();
   const resubmitMutation = useResubmitAttachmentWebhook();
-  const restoreMutation = useRestoreAttachment();
 
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
@@ -59,6 +57,10 @@ export function useAttachmentActions(
   // The server gates Move to trash, Restore and permanent delete on
   // `resource.attachments.delete`, so all three hide without it.
   const canDelete = useHasPermission('resource.attachments.delete');
+  // FILES-MOVE-DUPLICATE: Rename and Restore share the Files window when the folder already
+  // shows a file of that name (Keep both / Rename / Replace / Skip).
+  const { renameFile, restoreFiles, MoveClashDialog } = useMoveFiles();
+  const [busy, setBusy] = useState(false);
 
   if (!attachment) return { actions: [] };
 
@@ -90,17 +92,27 @@ export function useAttachmentActions(
       setRenameOpen(false);
       return;
     }
+    setRenameOpen(false);
+    setBusy(true);
     try {
-      await updateMutation.mutateAsync({
-        attachmentId: attachment.id,
-        data: { stored_filename: next },
-      });
-      toast.success('Renamed.');
-      setRenameOpen(false);
-      queryClient.invalidateQueries({ queryKey: ['attachments'] });
+      if (await renameFile(attachment.id, next)) toast.success('Renamed.');
       queryClient.invalidateQueries({ queryKey: ['attachment-metadata', attachment.id] });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Rename failed.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const restore = async () => {
+    setBusy(true);
+    try {
+      const summary = summarizeMove(await restoreFiles([attachment.id]), 'restored');
+      if (summary.ok) toast.success(summary.text);
+      else toast.error(summary.text);
+      queryClient.invalidateQueries({ queryKey: ['attachment-metadata', attachment.id] });
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -136,8 +148,8 @@ export function useAttachmentActions(
       key: 'attachment.restore',
       label: 'Restore',
       icon: RotateCcw,
-      disabled: restoreMutation.isPending,
-      run: () => restoreMutation.mutate(attachment.id),
+      disabled: busy,
+      run: () => void restore(),
     });
   }
 
@@ -155,6 +167,7 @@ export function useAttachmentActions(
 
   const dialogs = (
     <>
+      {MoveClashDialog}
       <AttachmentDeleteDialog
         open={deleteOpen}
         onOpenChange={setDeleteOpen}
@@ -179,7 +192,7 @@ export function useAttachmentActions(
               placeholder="new-filename.ext"
               autoFocus
               onKeyDown={(event) => {
-                if (event.key === 'Enter' && !updateMutation.isPending) {
+                if (event.key === 'Enter' && !busy) {
                   event.preventDefault();
                   void submitRename();
                 }
@@ -190,15 +203,15 @@ export function useAttachmentActions(
             <Button
               variant="outline"
               onClick={() => setRenameOpen(false)}
-              disabled={updateMutation.isPending}
+              disabled={busy}
             >
               Cancel
             </Button>
             <Button
               onClick={() => void submitRename()}
-              disabled={updateMutation.isPending || !renameValue.trim()}
+              disabled={busy || !renameValue.trim()}
             >
-              {updateMutation.isPending ? 'Saving…' : 'Rename'}
+              {busy ? 'Saving…' : 'Rename'}
             </Button>
           </DialogFooter>
         </DialogContent>
