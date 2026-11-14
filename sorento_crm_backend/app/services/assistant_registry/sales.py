@@ -58,12 +58,31 @@ def _narrowing(db, base, agent_ids=None, kinds=None, names=None) -> list:
     return clauses
 
 
-def _named_targets(db, targets, names) -> set[str]:
-    """The team and dealer targets whose own name `names(label, names)` matches, read as their rows print them: a
-    team as "Team X" or X (its names: X), a dealer as the Dealers tab's label or its family name (its names: every
-    counted account's code and name, and the family name), as `_summary_rows` and `_target_list_rows` do."""
-    from app.models.sales import SalesTeam
+def _team_names(name: str) -> tuple[str, list[str]]:
+    """A team target as its rows name it: ("Team X", its names). One function for the rows (`_summary_rows`) and
+    for the narrowing (`_named_targets`), so a label change reaches both."""
+    return f"Team {name}", [_norm(name)]
+
+
+def _dealer_names(db, customers) -> tuple[str, str, list[str]]:
+    """A dealer target as its rows name it: (the Dealers tab's label, the family name without a ledger marker, as
+    the chat target lines print it (`period_progress`), its names: every counted account's code and name, then the
+    family name). One function for the rows (`_target_rows`, `_summary_rows`) and for the narrowing."""
     from app.services.ledger_family import ledger_family_label
+    from app.services.sales import target_service as ts
+
+    tab = ts.dealer_label(db, customers)
+    family = ledger_family_label(tab)
+    names = [_norm(x) for c in customers for x in (c.customer_code, c.customer_name) if _norm(x)]
+    names.append(_norm(family))
+    return tab, family, names
+
+
+def _named_targets(db, targets, names) -> set[str]:
+    """The team and dealer targets whose own name `names(label, names)` matches, read as their rows print them
+    (`_team_names`, `_dealer_names`): a team as "Team X" or X, a dealer as the Dealers tab's label or its family
+    name, as `_summary_rows` and `_target_list_rows` do."""
+    from app.models.sales import SalesTeam
     from app.services.sales import target_service as ts
 
     team_ids = {t.sales_team_id for t in targets if t.subject_kind == "team"}
@@ -73,14 +92,11 @@ def _named_targets(db, targets, names) -> set[str]:
     for target in targets:
         if target.subject_kind == "team":
             name = teams.get(target.sales_team_id) or ""
-            labels, said = [f"Team {name}", name], [_norm(name)]
+            label, said = _team_names(name)
+            labels = [label, name]
         else:
-            customers = accounts.get(target.id, [])
-            tab = ts.dealer_label(db, customers)
-            family = ledger_family_label(tab)
+            tab, family, said = _dealer_names(db, accounts.get(target.id, []))
             labels = [tab, family]
-            said = [_norm(x) for c in customers for x in (c.customer_code, c.customer_name) if _norm(x)]
-            said.append(_norm(family))
         if any(names(label, said) for label in labels):
             kept.add(target.id)
     return kept
@@ -150,10 +166,7 @@ def _target_rows(
         else:
             team = None
             # As the chat target lines (`period_progress`): no ledger marker on a single account's name.
-            from app.services.ledger_family import ledger_family_label
-
-            tab_label = ts.dealer_label(db, dealer_accounts.get(target.id, []))
-            subject = ledger_family_label(tab_label)
+            tab_label, subject, _names = _dealer_names(db, dealer_accounts.get(target.id, []))
         # A points target with no ratio on file has no RM figure (the page flags it, `period_progress` blanks it).
         missing = fig["ratio_missing"]
         goal = None if missing else fig["target_value"]
@@ -193,7 +206,7 @@ def _target_rows(
                 "achieved_value": fig["achieved_value"],
                 "achieved_pct": pct,
                 "below_target": _below(pct),
-                "shortfall": None if goal is None else round(max(goal - fig["achieved_value"], 0.0), 2),
+                "shortfall": _remaining(goal, fig["achieved_value"]),
                 "ratio_missing": missing,
                 "tier_reached": fig["tier_reached"],
                 "commission": commission if has_commission else None,
@@ -261,16 +274,15 @@ def _summary_rows(
             names = [person[name]] if name in person else []
             return name, "agent", {"agent": row["agent"], "team": row["team"], "_names": {"owner": names, "agent": names}}
         if row["subject_kind"] == "team":
-            team = row["team"] or row["subject"]
-            return f"Team {team}", "team", {"agent": None, "team": None, "_names": {"owner": [_norm(team)]}}
+            label, names = _team_names(row["team"] or row["subject"])
+            return label, "team", {"agent": None, "team": None, "_names": {"owner": names}}
         customers = accounts.get(row["target_id"], [])
         owners = {c.sales_agent_id for c in customers}
         owner = (
             agent_label(agents[next(iter(owners))])
             if len(owners) == 1 and None not in owners and next(iter(owners)) in agents else None
         )
-        names = [_norm(x) for c in customers for x in (c.customer_code, c.customer_name) if _norm(x)]
-        names.append(_norm(row["subject"]))  # the family name without its ledger marker
+        _tab, _family, names = _dealer_names(db, customers)
         return row["_tab_label"] or row["subject"], "dealer", {
             "agent": owner, "team": None, "_names": {"owner": names, "agent": [person[owner]] if owner in person else []},
         }

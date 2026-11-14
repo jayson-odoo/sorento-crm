@@ -386,15 +386,18 @@ def run_computed(db, user_id: str, entity: EntityDef, own_only: bool, slugs: set
         out = _rows(entity, slugs, rows, sort, spec)
     out["period_display"] = period
     out["scope_note"] = " ".join(notes) or None
-    every = computed
     if not rows and narrow:
-        # "Nothing matched" lists the values that do exist in the whole window, as before the narrowing.
+        # "Nothing matched" lists the values that do exist in the whole window, as before the narrowing; when the
+        # whole window is refused (over the cap) it is still said, without the values.
         try:
             every = compute()
         except QueryRefused:
-            pass
-    if not rows and every:
-        out.update(_no_match(entity, rest, every))
+            out["instruction"] = _no_match(entity, rest, [])["instruction"]
+        else:
+            if every:
+                out.update(_no_match(entity, rest, every))
+    elif not rows and computed:
+        out.update(_no_match(entity, rest, computed))
     return out
 
 
