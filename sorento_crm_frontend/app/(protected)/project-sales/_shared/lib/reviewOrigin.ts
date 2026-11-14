@@ -5,7 +5,7 @@
  * Absent (deep link, bookmark) means stay, exactly as before this slice.
  */
 
-import { BACK_PARAM } from '@/components/common/BackToList';
+import { BACK_PARAM } from '@/lib/listNavQuery';
 
 const ORIGIN_PARAM = 'from';
 

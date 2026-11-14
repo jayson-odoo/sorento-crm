@@ -150,3 +150,6 @@ export function decodeAdvancedFilter<T = unknown>(raw: string | undefined): T | 
   }
   return null;
 }
+
+/** The query param a page that opens a record names itself in, so Back returns to it. */
+export const BACK_PARAM = 'back';

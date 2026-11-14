@@ -490,7 +490,7 @@ export function SalesOrdersPanel({
               `/project-sales/${project.id}/sales-orders/${row.id}`,
               purchaseOrderId
                 ? `/project-sales/${project.id}/pos/${purchaseOrderId}?tab=sales-orders`
-                : projectTabOriginHref(project.id, 'orders'),
+                : projectTabOriginHref(project.id, 'sales-orders'),
             ),
           )
         }

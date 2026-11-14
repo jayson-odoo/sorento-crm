@@ -6,7 +6,7 @@ import { useSearchParams } from 'next/navigation';
 import { MoveLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useRequestScope } from '@/hooks/useRequestScope';
-import { isDetailViewKey } from '@/lib/listNavQuery';
+import { BACK_PARAM, isDetailViewKey } from '@/lib/listNavQuery';
 
 export interface BackToListProps {
   /** The list route, e.g. `/order-management/orders`. */
@@ -32,8 +32,7 @@ export interface BackToListProps {
   originLabel?: string;
 }
 
-/** The query param a page that opens a record names itself in, so Back returns to it. */
-export const BACK_PARAM = 'back';
+export { BACK_PARAM } from '@/lib/listNavQuery';
 
 /**
  * A same-app relative path only: one leading slash, no `//host`, no backslash or control
