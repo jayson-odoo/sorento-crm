@@ -73,8 +73,9 @@ ROUND_CALL_CAP = 60.0
 # replaced by an "omitted" note, never stored in part).
 REASONING_CHARS = 4000
 SIDE_CALL_CAP = 30.0
-#: The final no-tools answer may overrun the turn by this much, so a limit still gets a reply.
-FINAL_GRACE = 10.0
+#: The final no-tools answer may overrun the turn by this much, so a limit still gets a reply. 30 s: a 50-row answer
+#: under load needed over 10 s (crew pass, 14 Nov; owner D4: wait within reason), so a turn ends by max_seconds + 30.
+FINAL_GRACE = 30.0
 #: Below this many seconds left, compaction and the repair round are skipped.
 SIDE_CALL_MIN = 10.0
 #: The least time a tool round needs: one measured 3 to 10 s with today's tool list (crew pass, 14 Nov), so 12 s.
