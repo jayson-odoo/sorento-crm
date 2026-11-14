@@ -66,6 +66,8 @@ const STAFF: Record<string, string> = {
   new_product_application: '/procurement-management/new-product-applications',
   price_tag_request: '/dealer-kit/price-tag-requests',
   sales_opportunity: '/sales/opportunities',
+  // OCN round 20 (UAC I4): the order change notice joins the staff-page map.
+  order_change_notice: '/procurement-management/order-change-notices',
 };
 const KINDS = Object.keys(STAFF);
 
