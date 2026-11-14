@@ -13,6 +13,7 @@ import {
   type SampleRequestWrite,
 } from '@/types/sampleRequest';
 import { codeWithName } from '@/lib/product-display';
+import { formatPhone } from '@/app/(protected)/project-sales/_shared/lib/phoneDisplay';
 import { numberFieldError } from '@/lib/number-field';
 
 /** The one rule for a line quantity and the loan period. */
@@ -47,6 +48,18 @@ export interface FormState {
   board_label: string;
   delivery_date: string;
   delivery_mode: SampleRequestDeliveryMode | '';
+  /** SAMPLE-REQUEST-V2 (staff form): the ship-to party, the role it is added in when it is not on
+   * the project yet, and the people picked at it. '' / [] when none. */
+  ship_to_party_id: string;
+  ship_to_role: string;
+  /** The picked party is not on the project yet, so its role must be picked. */
+  ship_to_needs_role: boolean;
+  /** The party was picked from a names-only list (no parties view grant): its address is not
+   * known here, so the server fills it (the party's, else the site address) on save. */
+  ship_to_address_pending: boolean;
+  ship_to_contact_ids: string[];
+  /** An old request's typed Ship To with no party behind it (card example E), shown as a hint. */
+  ship_to_typed_before: string;
   ship_to_name: string;
   ship_to_address: string;
   site_contact_name: string;
@@ -76,6 +89,12 @@ export const EMPTY_FORM: FormState = {
   board_label: '',
   delivery_date: '',
   delivery_mode: '',
+  ship_to_party_id: '',
+  ship_to_role: '',
+  ship_to_needs_role: false,
+  ship_to_address_pending: false,
+  ship_to_contact_ids: [],
+  ship_to_typed_before: '',
   ship_to_name: '',
   ship_to_address: '',
   site_contact_name: '',
@@ -128,6 +147,12 @@ export function stateFromDetail(d: SampleRequestDetail): FormState {
     board_label: d.board_label ?? '',
     delivery_date: d.delivery_date ?? '',
     delivery_mode: d.delivery_mode ?? '',
+    ship_to_party_id: d.ship_to_party_id ?? '',
+    ship_to_role: d.ship_to_role ?? '',
+    ship_to_needs_role: false,
+    ship_to_address_pending: false,
+    ship_to_contact_ids: [],
+    ship_to_typed_before: d.ship_to_party_id ? '' : (d.ship_to_name ?? ''),
     ship_to_name: d.ship_to_name ?? '',
     ship_to_address: d.ship_to_address ?? '',
     site_contact_name: d.site_contact_name ?? '',
@@ -287,4 +312,143 @@ export function productSearchQuery(q: string, source?: SampleRequestProductSourc
     if (source.quotation_issue_id) usp.set('quotation_issue_id', source.quotation_issue_id);
   }
   return usp.toString();
+}
+
+// ------------------------------------------------------------------ SAMPLE-REQUEST-V2 staff form
+
+/** A party picked as Ship to (null clears it). */
+export interface ShipToPick {
+  id: string;
+  name: string;
+  address?: string | null;
+  /** The role it plays on the project, or the role it would be added in. */
+  role: string | null;
+  /** The project's site address: the fallback for a party with none (card rule 2). */
+  siteAddress?: string | null;
+  /** Not on the project yet: the role must be picked before submit. */
+  needsRole?: boolean;
+  /** Picked from a names-only list: the address is unknown here (the server fills it). */
+  addressUnknown?: boolean;
+}
+
+/** Ship to = a party: its name, its address or else the project site address; the old contact
+ * person belonged to the old party, so it goes. */
+export function withShipToParty(s: FormState, party: ShipToPick | null): FormState {
+  const cleared = {
+    ...s,
+    ship_to_contact_ids: [],
+    site_contact_name: '',
+    site_contact_phone: '',
+  };
+  if (!party) {
+    return {
+      ...cleared,
+      ship_to_party_id: '',
+      ship_to_role: '',
+      ship_to_needs_role: false,
+      ship_to_address_pending: false,
+      ship_to_name: '',
+      ship_to_address: '',
+    };
+  }
+  return {
+    ...cleared,
+    ship_to_party_id: party.id,
+    ship_to_role: party.role ?? '',
+    ship_to_needs_role: Boolean(party.needsRole),
+    ship_to_address_pending: Boolean(party.addressUnknown),
+    ship_to_name: party.name,
+    ship_to_address: (party.address ?? '').trim() || (party.siteAddress ?? '').trim(),
+    ship_to_typed_before: '',
+  };
+}
+
+/**
+ * The phones of the chosen contacts, in the order of their names (owner hand test 12 Nov ~15:45:
+ * "I added 2 contacts but why got 1 phone only"). Every contact with a phone is listed. When each
+ * chosen contact has one, the phones read in the order of the names ("A & B" / "pA & pB"); when
+ * some have none, each phone carries its contact's name, so no phone reads as someone else's.
+ * The server builds the same text (`sample_request_service._contact_phones_text`).
+ */
+export function contactPhonesText(contacts: { name: string; phone?: string | null }[]): string {
+  const withPhone = contacts
+    .map((c) => ({ name: c.name, phone: (c.phone ? formatPhone(c.phone) || c.phone : '').trim() }))
+    .filter((c) => c.phone);
+  if (withPhone.length === 0) return '';
+  const text =
+    withPhone.length === contacts.length
+      ? withPhone.map((c) => c.phone).join(' & ')
+      : withPhone.map((c) => `${c.name} ${c.phone}`).join(' & ');
+  // The column holds 255 (srv2_0003); a longer list keeps its start (review S3).
+  return text.length > CONTACT_PHONE_MAX ? `${text.slice(0, CONTACT_PHONE_MAX - 3)}...` : text;
+}
+
+/** `projects.sample_requests.site_contact_phone` (srv2_0003). */
+export const CONTACT_PHONE_MAX = 255;
+
+/** The contact person = the party's people picked in the registration popup: "A & B", and every
+ * one's phone (`contactPhonesText`). */
+export function withShipToContacts(
+  s: FormState,
+  contacts: { id: string; name: string; phone?: string | null }[],
+): FormState {
+  return {
+    ...s,
+    ship_to_contact_ids: contacts.map((c) => c.id),
+    site_contact_name: contacts.map((c) => c.name).join(' & '),
+    site_contact_phone: contactPhonesText(contacts),
+  };
+}
+
+/** The staff submit refusals, the server's own (card rules 1-2), checked before the round trip. */
+export function validateStaff(
+  s: FormState,
+  opts: { requireProject?: boolean } = {},
+): Record<string, string> {
+  const errors: Record<string, string> = {};
+  if (!s.customer_id) errors.customer_id = 'Pick the customer';
+  if (opts.requireProject) {
+    if (!s.project_id) errors.project_id = 'Pick a registered project';
+  } else if (!s.project_id && !s.project_title.trim()) {
+    errors.project_id = 'Pick the project, or type its title';
+  }
+  if (!s.ship_to_party_id) errors.ship_to_party_id = 'Pick who the samples go to';
+  else if (s.ship_to_needs_role && !s.ship_to_role) errors.ship_to_role = 'Pick the role it plays';
+  if (s.ship_to_party_id && !s.ship_to_address_pending && !s.ship_to_address.trim()) {
+    errors.ship_to_address = 'Enter the shipping address';
+  }
+  if (!s.delivery_date) errors.delivery_date = 'Enter the Request Delivery Date';
+  if (!s.delivery_mode) errors.delivery_mode = 'Choose a delivery mode';
+  if (pickedLines(s).length === 0 && !s.board_mounting) errors.lines = 'Add at least one item';
+  if (s.board_mounting && !s.board_label.trim()) errors.board_label = 'Enter the board label';
+  return { ...errors, ...numberErrors(s) };
+}
+
+/**
+ * The staff form's write. Ship to is sent as the form shows it: the party (null when cleared), its
+ * role, the picked people, the printed name, the address and the contact person (null when
+ * cleared), so a cleared field is cleared on the server too. An address the form could not see
+ * (names-only pick, `ship_to_address_pending`) is left to the server. "For", the contact note and
+ * a typed customer are never sent: an old row keeps whatever it had (card rules 1, 3, 4).
+ */
+export function staffPayloadFromState(s: FormState): SampleRequestWrite {
+  const {
+    customer_name: _typedCustomer,
+    scope_note: _scope,
+    site_contact_note: _note,
+    ship_to_address: address,
+    ...rest
+  } = payloadFromState(s);
+  const body: SampleRequestWrite = { ...rest };
+  if (s.ship_to_party_id) {
+    body.ship_to_party_id = s.ship_to_party_id;
+    if (s.ship_to_role) body.ship_to_role = s.ship_to_role;
+    body.ship_to_contact_ids = s.ship_to_contact_ids;
+    if (address || !s.ship_to_address_pending) body.ship_to_address = address;
+  } else {
+    // Cleared, or a draft still on its typed Ship To (example E): no party on the server either.
+    body.ship_to_party_id = null;
+    body.ship_to_address = address;
+  }
+  return body;
 }

@@ -220,22 +220,21 @@ DEFAULT_QUOTATION_EDGES = (
     ("resubmitted", "rejected", "Reject", 1),
 )
 
-# Sample request flow (SR-CORE card rule 10). Cancelled is reachable from Draft, Submitted and
-# Processing; every other move is one rung forward.
+# Sample request flow (SR-CORE card rule 10, owner ruling 11 Nov ~19:55): Submitted ->
+# Processing -> Delivered. Cancelled is reachable from Draft, Submitted and Processing.
+# Delivered has no manual edge: only linking the AutoCount consignment sets it
+# (`sample_request_service.link_consignment`). Customer confirmed is gone.
 DEFAULT_SAMPLE_REQUEST_STATUSES = (
     # (key, label, initial, terminal)
     ("draft", "Draft", True, False),
     ("submitted", "Submitted", False, False),
     ("processing", "Processing", False, False),
-    ("customer_confirmed", "Customer confirmed", False, False),
     ("delivered", "Delivered", False, True),
     ("cancelled", "Cancelled", False, True),
 )
 DEFAULT_SAMPLE_REQUEST_EDGES = (
     ("draft", "submitted", "Submit"),
     ("submitted", "processing", "Start processing"),
-    ("processing", "customer_confirmed", "Customer confirmed"),
-    ("customer_confirmed", "delivered", "Delivered"),
     ("draft", "cancelled", "Cancel"),
     ("submitted", "cancelled", "Cancel"),
     ("processing", "cancelled", "Cancel"),

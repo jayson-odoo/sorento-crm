@@ -1589,8 +1589,12 @@ class GeminiProvider:
 
         if not self.api_key:
             raise RuntimeError("No Gemini API key is configured.")
+        from app.services import http_keepalive
+
         try:
-            response = httpx.request(
+            # CHATBOT-SPEED: one open connection per process (a new TLS handshake per call before).
+            response = http_keepalive.request(
+                "gemini",
                 method,
                 f"{GEMINI_API_BASE}/{path}",
                 headers={
