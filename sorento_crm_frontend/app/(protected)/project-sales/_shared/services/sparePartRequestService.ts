@@ -51,6 +51,8 @@ export interface SparePartRequestInput {
 export interface SparePartLine {
   id: string;
   product_id: string | null;
+  /** R2: the approved product; `product_id` is an open revision's while one swaps it. */
+  approved_product_id?: string | null;
   product_name?: string | null;
   item_code: string | null;
   description: string | null;

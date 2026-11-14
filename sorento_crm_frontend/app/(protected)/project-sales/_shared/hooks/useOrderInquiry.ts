@@ -178,10 +178,10 @@ export function useOrderInquiryHeaderDetail(id: string | undefined) {
  * `PLAN-oi-no-double-count-25sep.md` S2 (`include_history`) - the tab folds them into
  * their line's History. Reuses the cross-project worklist's own `inquiry_id` filter (see
  * `orderInquiryService.ts`'s header section). */
-export function useOrderInquiryHeaderLines(id: string | undefined) {
+export function useOrderInquiryHeaderLines(id: string | undefined, view?: 'request') {
   return useQuery({
-    queryKey: [ORDER_INQUIRY_HEADER_LINES_KEY, id],
-    queryFn: () => getOrderInquiryHeaderLines(id as string),
+    queryKey: [ORDER_INQUIRY_HEADER_LINES_KEY, id, view ?? 'inquiry'],
+    queryFn: () => getOrderInquiryHeaderLines(id as string, { view }),
     enabled: Boolean(id),
   });
 }

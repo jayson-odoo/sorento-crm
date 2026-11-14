@@ -46,7 +46,6 @@ import {
   RaisedCell,
   SupplierCell,
 } from '../../components/orderInquiryWorklistColumns';
-import { WorklistPill } from '../../components/orderInquiryDocumentPills';
 import type {
   OrderInquiryLineSplit,
   OrderInquiryWorklistRow,
@@ -630,6 +629,18 @@ function sparePartLineColumns({
   attachmentsByRow?: SoLineAttachmentsByLine;
   canEditAttachments: boolean;
 }): ColumnDef<OrderInquiryLineRow>[] {
+  // SPARE-PART-OR-B C (C3.2, R3): the OI page reads a spare part line as purchasing reads
+  // an SO line: Qty is the SO line's Qty cell, the date the SO line's Delivery date cell
+  // (Changed lives there), the History icon sits in State. Room for the date comes out of
+  // the other columns on this view only, so both views still sum to 950 px.
+  const oi = view === 'inquiry';
+  const deliveryDateColumn: ColumnDef<OrderInquiryLineRow> = {
+    accessorKey: 'delivery_date',
+    header: ({ column }) => <DataGridColumnHeader title="Delivery date" column={column} />,
+    size: 110,
+    meta: { headerTitle: 'Delivery date', skeleton: <Skeleton className="h-4 w-20" /> },
+    cell: ({ row }) => <DeliveryDateCell row={lineOf(row.original).primary} />,
+  };
   // U3.2: on the order request page each line links to its row on the order inquiry, once
   // the request is approved (its OI- number); the Sales Order Lines tab's own cell.
   const orderInquiryColumn: ColumnDef<OrderInquiryLineRow> = {
@@ -679,7 +690,7 @@ function sparePartLineColumns({
       // G1: the requester's own description, else the product's name.
       accessorFn: (row) => row.line_description || row.product_name || '',
       header: ({ column }) => <DataGridColumnHeader title="Description" column={column} />,
-      size: 96,
+      size: oi ? 70 : 96,
       meta: { headerTitle: 'Description', skeleton: <Skeleton className="h-4 w-32" /> },
       cell: ({ row }) => {
         const description = row.original.line_description || row.original.product_name || '';
@@ -694,24 +705,24 @@ function sparePartLineColumns({
     {
       accessorKey: 'qty',
       header: ({ column }) => <DataGridColumnHeader title="Qty" column={column} />,
-      // The approver's 72 px input plus the History icon (U1.2), one line.
-      size: 120,
+      // The approver's 72 px input plus the History icon (U1.2), one line; on the OI page
+      // the input or the SO line's Qty cell alone (the icon is in State).
+      size: oi ? 90 : 120,
       meta: { headerTitle: 'Qty', skeleton: <Skeleton className="h-4 w-10" /> },
       cell: ({ row }) => {
         const line = lineOf(row.original);
         const primary = line.primary;
-        if (view === 'inquiry' && !(qtyEditable && onEditLine)) {
-          // SPARE-PART-OR-B C (C3.1 / C3.2): purchasing reads the approved qty in the
-          // SO line's own Qty cell (Was N while it waits for CS, the (i) once a change
-          // settled, Changed as an SO line shows it); the History icon sits in State,
-          // as on an SO line.
-          return (
-            <span className="flex min-w-0 items-center gap-1">
-              <QtyCell row={primary} />
-              {primary.ack_state === 'changed' ? (
-                <WorklistPill testId={`qty-changed-${primary.id}`}>Changed</WorklistPill>
-              ) : null}
-            </span>
+        if (oi) {
+          // C3.1 / C3.2: the approved qty in the SO line's own Qty cell (Was N while it
+          // waits for CS, the (i) once a change settled), or the approver's input.
+          return qtyEditable && onEditLine ? (
+            <ApproverNumberCell
+              value={primary.qty}
+              label={`Qty for ${primary.item_code ?? 'this line'}`}
+              onCommit={(qty) => onEditLine(primary, { qty })}
+            />
+          ) : (
+            <QtyCell row={primary} />
           );
         }
         // U1.2 / U1.5: the value (or the input), then the line's one History icon, one line.
@@ -741,7 +752,7 @@ function sparePartLineColumns({
       id: 'unit_price',
       accessorFn: (row) => Number(lineOf(row).primary.unit_price ?? 0),
       header: ({ column }) => <DataGridColumnHeader title="Unit price" column={column} />,
-      size: 100,
+      size: oi ? 84 : 100,
       meta: { headerTitle: 'Unit price', skeleton: <Skeleton className="h-4 w-16" /> },
       cell: ({ row }) => {
         const primary = lineOf(row.original).primary;
@@ -766,7 +777,7 @@ function sparePartLineColumns({
       id: 'line_total',
       accessorFn: (row) => Number(lineOf(row).primary.line_total ?? 0),
       header: ({ column }) => <DataGridColumnHeader title="Total" column={column} />,
-      size: 90,
+      size: oi ? 80 : 90,
       meta: { headerTitle: 'Total', skeleton: <Skeleton className="h-4 w-16" /> },
       cell: ({ row }) => {
         const total = lineOf(row.original).primary.line_total;
@@ -785,15 +796,16 @@ function sparePartLineColumns({
         return <span className="tabular-nums font-medium">{formatMoneyExact(sum, currency)}</span>;
       },
     },
-    { ...poColumn(), size: 80 },
+    ...(oi ? [deliveryDateColumn] : []),
+    { ...poColumn(), size: oi ? 72 : 80 },
     {
       id: 'state',
       accessorFn: (row) => lineOf(row).state,
       header: ({ column }) => <DataGridColumnHeader title="State" column={column} />,
       // The History icon moved to Qty; on the order request page State also gives the OI
       // column its room (fix round 1), so both views sum to 950 px.
-      size: view === 'request' ? 142 : 162,
-      minSize: view === 'request' ? 142 : 162,
+      size: 142,
+      minSize: 142,
       meta: { headerTitle: 'State' },
       cell: ({ row }) => {
         const line = lineOf(row.original);
@@ -810,7 +822,7 @@ function sparePartLineColumns({
                 <OrderInquiryLineStatusPill line={line} rejectedTestId={`lines-rejected-${primary.id}`} />
               )}
             </span>
-            {view === 'inquiry' && !(qtyEditable && onEditLine) ? (
+            {oi ? (
               <LineHistoryButton
                 line={line}
                 onClick={onLineHistoryClick}

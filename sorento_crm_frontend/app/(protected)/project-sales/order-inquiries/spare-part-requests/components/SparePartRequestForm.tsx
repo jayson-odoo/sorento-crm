@@ -66,6 +66,9 @@ interface DraftLine {
   unitPrice: number | null;
   /** C5.1: the line's own delivery date (YYYY-MM-DD), starting on the header's. */
   deliveryDate: string | null;
+  /** The approved product of a saved line (R2: a revision may type a description only
+   *  for a line whose product it changes). */
+  approvedProductId?: string | null;
 }
 
 interface Problems {
@@ -127,6 +130,7 @@ function fromRequest(request: SparePartRequest): DraftLine[] {
     qty: l.qty == null ? null : Number(l.qty),
     unitPrice: l.unit_price == null ? null : Number(l.unit_price),
     deliveryDate: l.delivery_date ? l.delivery_date.slice(0, 10) : null,
+    approvedProductId: l.approved_product_id ?? l.product_id,
   }));
 }
 
@@ -636,7 +640,11 @@ export function SparePartRequestForm({ id }: { id?: string } = {}) {
                         <td className="px-3 py-2">
                           <Input
                             aria-label={`Description for line ${index + 1}`}
-                            disabled={revising && Boolean(line.id)}
+                            disabled={
+                              revising &&
+                              Boolean(line.id) &&
+                              line.product?.value === line.approvedProductId
+                            }
                             value={line.description}
                             onChange={(event) =>
                               updateLine(line.key, {

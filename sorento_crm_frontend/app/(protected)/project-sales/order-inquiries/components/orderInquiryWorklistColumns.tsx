@@ -834,13 +834,26 @@ export function QtyCell({ row }: { row: OrderInquiryWorklistRow }) {
  */
 export function DeliveryDateCell({ row }: { row: OrderInquiryWorklistRow }) {
   const changed = ackStateOf(row) === 'changed';
-  if (!row.delivery_date) return <Muted>No date</Muted>;
+  const changedPill = changed ? (
+    <WorklistPill testId={`delivery-date-changed-${row.id}`}>Changed</WorklistPill>
+  ) : null;
+  if (!row.delivery_date) {
+    // A row that changed is flagged even with no date to print (SPARE-PART-OR-B C, R3).
+    return changedPill ? (
+      <span className="flex min-w-0 items-center gap-1 whitespace-nowrap">
+        <Muted>No date</Muted>
+        {changedPill}
+      </span>
+    ) : (
+      <Muted>No date</Muted>
+    );
+  }
   const dateChange = orderInquiryDateChange(row);
   return (
     <span className="flex min-w-0 items-center gap-1 whitespace-nowrap">
       {formatDateInMalaysia(row.delivery_date)}
       {dateChange ? <BoardChangeTable annotation={dateChange} compact /> : null}
-      {changed ? <WorklistPill testId={`delivery-date-changed-${row.id}`}>Changed</WorklistPill> : null}
+      {changedPill}
     </span>
   );
 }

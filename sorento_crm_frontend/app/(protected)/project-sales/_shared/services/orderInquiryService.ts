@@ -653,6 +653,7 @@ export function worklistParams(params: OrderInquiryWorklistParams, limit: number
       inquiry_id: params.inquiry_id,
       // S2 (`PLAN-oi-no-double-count-25sep.md`, AC-ND-20): the Lines tab's cancelled rows.
       include_history: params.include_history ? 'true' : undefined,
+      view: params.view,
       delivery_month: params.delivery_month,
       raised_date: params.raised_date,
       state: params.state,
@@ -953,6 +954,7 @@ export async function getOrderInquiryHeader(
  */
 export async function getOrderInquiryHeaderLines(
   id: string,
+  options: { view?: 'request' } = {},
 ): Promise<OrderInquiryWorklistRow[]> {
   const limit = 1000;
   let page = 1;
@@ -962,6 +964,7 @@ export async function getOrderInquiryHeaderLines(
     const envelope = await listOrderInquiryWorklist({
       inquiry_id: id,
       include_history: true,
+      view: options.view,
       limit,
       page,
     });

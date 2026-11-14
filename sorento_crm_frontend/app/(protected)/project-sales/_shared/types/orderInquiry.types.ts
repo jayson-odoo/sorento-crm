@@ -766,6 +766,9 @@ export interface OrderInquiryWorklistParams {
   /** `PLAN-oi-no-double-count-25sep.md` S2 (AC-ND-20): cancelled rows too, for the OI
    * detail's Lines tab and its History dialog. */
   include_history?: boolean;
+  /** SPARE-PART-OR-B C (R1): `request` is the order request page's read, the one that lists
+   *  a revision's added (still draft) line; every other read leaves it out. */
+  view?: 'request';
   /** `YYYY-MM`, the delivery month, which is the sheet tab. */
   delivery_month?: string;
   /** `YYYY-MM-DD`, the day the rows were raised, which is the per-day tab. */

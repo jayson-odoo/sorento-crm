@@ -52,7 +52,8 @@ const NO_ROWS: OrderInquiryWorklistRow[] = [];
  */
 export function SparePartRequestRecord({ id }: { id: string }) {
   const requestQuery = useSparePartRequest(id);
-  const linesQuery = useOrderInquiryHeaderLines(id);
+  // R1: the order request page also reads a revision's added (draft) line.
+  const linesQuery = useOrderInquiryHeaderLines(id, 'request');
   const editLine = useEditSparePartLine(id);
   const [tab, setTab] = useState('lines');
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
