@@ -209,14 +209,18 @@ def _free_pdf_name(db: Session, root: AttachmentDirectory, file_name: str) -> st
     """
     from app.services import storage_router
 
-    taken = {
-        (row[0] or "").lower()
-        for row in db.query(Attachment.original_filename).filter(
-            Attachment.directory_id == root.id, Attachment.is_deleted.is_(False)
-        )
-    }
+    # Both names count, as in the drive's one folder check (FILES-MOVE-DUPLICATE): a file
+    # renamed to this name, or still holding it as its original name, takes it.
+    taken: set[str] = set()
+    for original, visible in db.query(Attachment.original_filename, Attachment.stored_filename).filter(
+        Attachment.directory_id == root.id, Attachment.is_deleted.is_(False)
+    ):
+        taken.add((original or "").lower())
+        taken.add((visible or "").lower())
     name = file_name
-    while storage_router.sanitize_storage_filename(name).lower() in taken:
+    while (
+        storage_router.sanitize_storage_filename(name).lower() in taken or name.lower() in taken
+    ):
         name = suffix_copy_name(name)
     return name
 

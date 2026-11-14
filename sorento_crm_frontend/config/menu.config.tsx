@@ -526,6 +526,13 @@ const STAFF_SIDEBAR: MenuConfig = [
             permission: 'projects.projects.view',
           },
           {
+            // SPARE-PART-ORDER-REQUEST (hand-test round G3): the requests' own list, for approvers
+            // and purchasing (as Purchase Requests); a salesperson's entry is under MY REQUESTS.
+            title: 'Order Requests',
+            path: '/procurement-management/spare-part-requests',
+            permission: 'procurement.spare_part_requests.view',
+          },
+          {
             title: 'Purchase Orders',
             path: '/scm/purchase-orders',
             permission: 'scm.dashboard.view',
@@ -1630,6 +1637,14 @@ export const MENU_SIDEBAR: MenuConfig = [
   },
   { heading: 'MY REQUESTS', audience: 'salesperson' },
   ...MY_REQUEST_ITEMS,
+  {
+    // SPARE-PART-ORDER-REQUEST (crew ruling): the requester's own requests. Not a portal kind.
+    title: 'Order Requests',
+    icon: Wrench,
+    path: '/procurement-management/spare-part-requests',
+    permission: 'procurement.spare_part_requests.create',
+    audience: 'salesperson',
+  },
 ];
 
 export const MENU_SIDEBAR_CUSTOM: MenuConfig = [
@@ -2435,6 +2450,12 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         title: 'Order Inquiries',
         path: '/project-sales/order-inquiries',
         permission: 'projects.projects.view',
+      },
+      {
+        // SPARE-PART-ORDER-REQUEST: as the sidebar entry above.
+        title: 'Order Requests',
+        path: '/procurement-management/spare-part-requests',
+        permission: 'procurement.spare_part_requests.view',
       },
       {
         // Where the re-uploaded book's reaction to a planned line is reviewed and
