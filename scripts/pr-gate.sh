@@ -53,17 +53,23 @@ if [ -n "${CREW_CHANGED_FILES+x}" ]; then
   files="$CREW_CHANGED_FILES"
 else
   # --no-renames: a rename is its deleted and its added path, both judged.
-  files="$(git diff --name-only --no-renames "$BASE_SHA" HEAD)"
+  # quotePath=false: a non-ASCII name prints as itself and matches its area below.
+  files="$(git -c core.quotePath=false diff --name-only --no-renames "$BASE_SHA" HEAD)"
 fi
 files="$(printf '%s\n' "$files" | sed '/^$/d' | sort -u)"
 
 # Here-strings, not `printf | grep -q` (CI-SCM-FILTER-RACE, see deploy.yml `changes`).
 has() { grep -Eq "$1" <<< "$files"; }
 
+# A name git still prints quoted (a control character in it) matches no area: fail closed,
+# every area counts as changed.
+all=false
+has '^"' && all=true
+area() { [ "$all" = "true" ] || has "$1"; }
 checks=(alembic-heads pii ai-coverage outline-guides gitleaks)
-has '^(sorento_crm_backend/|\.github/workflows/deploy\.yml$)' && checks+=(backend-imports backend-collect)
-has '^(sorento_crm_mcp/|\.github/workflows/deploy\.yml$)' && checks+=(mcp-imports)
-has '^(sorento_crm_frontend/|\.github/workflows/deploy\.yml$)' && checks+=(frontend-tsc frontend-eslint)
+area '^(sorento_crm_backend/|\.github/workflows/deploy\.yml$)' && checks+=(backend-imports backend-collect)
+area '^(sorento_crm_mcp/|\.github/workflows/deploy\.yml$)' && checks+=(mcp-imports)
+area '^(sorento_crm_frontend/|\.github/workflows/deploy\.yml$)' && checks+=(frontend-tsc frontend-eslint)
 
 if [ "$PLAN" = "1" ]; then
   printf 'plan.checks=%s\nplan.main=%s\n' "${checks[*]}" "$BASE_SHA"
@@ -71,8 +77,12 @@ if [ "$PLAN" = "1" ]; then
 fi
 
 # --- run ------------------------------------------------------------------------------------
+# The result must describe the head sha: uncommitted changes to tracked files refuse the run.
+# Untracked files (venv, env files) are normal in a sandbox and allowed.
 if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
-  echo "warning: the working tree has uncommitted changes, so the result is not exactly $HEAD_SHA" >&2
+  echo "the working tree has uncommitted changes to tracked files: commit or stash them first" >&2
+  echo "pr-gate: $HEAD_SHA FAIL main=$BASE_SHA reason=dirty-tree"
+  exit 1
 fi
 PY=python3
 [ -x "$ROOT/$BACKEND/venv/bin/python" ] && PY="$ROOT/$BACKEND/venv/bin/python"
