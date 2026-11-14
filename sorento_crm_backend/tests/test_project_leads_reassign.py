@@ -7,8 +7,9 @@ Contract names the coder matches (captain's brief, 14 Nov):
   `primary_owner_user_id` + `primary_owner_name`.
 - `project_service.reassign_project_owner(db, *, project, to_user_id, actor_user_id)`, called by
   BOTH the dispute approve and the `update_project` owner branch.
-- `project_service.backfill_primary_owner(db)`: earliest owner_reassigned from_user_id, else the
-  current owner; fills NULLs only.
+- `project_service.backfill_primary_owner(db)` (UAC A6): (1) earliest owner_reassigned
+  from_user_id, else (2) the linked lead's owner_user_id, else (3) the current owner; never
+  created_by; fills NULLs only; idempotent.
 
 Notifications are asserted as real `notifications` rows (the v2 world runs the real service).
 Every user, project and activity row is seeded here.
@@ -227,10 +228,12 @@ def test_a2_a_third_reassign_to_the_same_person_is_not_swallowed_by_dedup(v2):
 def test_a3_a_non_manager_owner_change_is_403_and_changes_nothing(v2):
     """Guard: the rule is unchanged (UAC A3), so this may already be green."""
     row = approved_project(v2)
-    for actor in (v2.owner, v2.sales_b):
-        res = _put_owner(v2, actor, row.id, v2.sales_c)
-        assert res.status_code == 403, (actor, res.text)
-        assert res.json()["code"] == "project_owner_reassign_forbidden"
+    # Committed (onto the fixture's savepoint) so the route's rollback on 403 keeps the seed.
+    v2.db.commit()
+    # The owner (edit rights, no manage) trying to hand their own project away.
+    res = _put_owner(v2, v2.owner, row.id, v2.sales_c)
+    assert res.status_code == 403, res.text
+    assert res.json()["code"] == "project_owner_reassign_forbidden"
     assert _project_row(v2, row.id).owner_user_id == v2.owner
     assert _reassign_rows(v2, row.id) == []
     assert _collaborators(v2, row.id) == set()
@@ -365,40 +368,71 @@ def _seed_reassign_row(w, project_id: str, frm: str, to: str, at: datetime):
     w.db.flush()
 
 
-def test_a6_backfill_takes_earliest_reassign_else_current_owner_and_keeps_set_values(v2):
+def _backfilled(w, *project_ids: str) -> list:
+    """Run the backfill twice (idempotent) and return each project's primary."""
     from app.services import project_service
 
-    t0 = datetime(2026, 9, 1, 9, 0, 0)
+    project_service.backfill_primary_owner(w.db)
+    w.db.flush()
+    first = [_primary(w, pid) for pid in project_ids]
+    project_service.backfill_primary_owner(w.db)
+    w.db.flush()
+    assert [_primary(w, pid) for pid in project_ids] == first, "second run changed a value"
+    return first
+
+
+T0 = datetime(2026, 9, 1, 9, 0, 0)
+
+
+def test_a6_rule1_earliest_owner_reassigned_row_wins(v2):
+    from ._project_register_v2_support import seed_lead
 
     # Two reassignments, the LATER one inserted first: earliest by time wins, not by insert.
+    # A lead whose owner differs is linked too: rule 1 outranks rule 2.
+    lead = seed_lead(v2, v2.approver)
     moved = project(v2.db, v2.company_id, title("Moved"), owner=v2.sales_c)
     moved.created_by = v2.manager
-    _seed_reassign_row(v2, moved.id, v2.sales_b, v2.sales_c, t0 + timedelta(days=3))
-    _seed_reassign_row(v2, moved.id, v2.owner, v2.sales_b, t0)
+    moved.lead_id = lead.id
+    _seed_reassign_row(v2, moved.id, v2.sales_b, v2.sales_c, T0 + timedelta(days=3))
+    _seed_reassign_row(v2, moved.id, v2.owner, v2.sales_b, T0)
+    # Another entity's owner_reassigned row, older still, must not leak in.
+    _seed_reassign_row(v2, uid(), v2.approver, v2.sales_b, T0 - timedelta(days=30))
+    v2.db.flush()
 
-    # No reassignment, bulk-imported: created_by is the importer, the owner is the primary.
+    assert _backfilled(v2, moved.id) == [v2.owner]
+
+
+def test_a6_rule2_no_reassign_row_but_a_lead_takes_the_lead_owner(v2):
+    from ._project_register_v2_support import seed_lead
+
+    lead = seed_lead(v2, v2.sales_b)
+    from_lead = project(v2.db, v2.company_id, title("FromLead"), owner=v2.sales_c)
+    from_lead.created_by = v2.manager
+    from_lead.lead_id = lead.id
+    v2.db.flush()
+
+    assert _backfilled(v2, from_lead.id) == [v2.sales_b]
+
+
+def test_a6_rule3_no_reassign_row_no_lead_takes_the_current_owner_never_created_by(v2):
+    # Bulk-imported shape: created_by is the importer, not the salesperson.
     imported = project(v2.db, v2.company_id, title("Imported"), owner=v2.sales_b)
     imported.created_by = v2.manager
+    # Dev shape: creator Salesperson B, owner Salesperson A, no lead.
+    handed = project(v2.db, v2.company_id, title("Handed"), owner=v2.owner)
+    handed.created_by = v2.sales_b
+    v2.db.flush()
 
-    # Already set: untouched even though its activity says otherwise.
+    assert _backfilled(v2, imported.id, handed.id) == [v2.sales_b, v2.owner]
+
+
+def test_a6_an_already_set_primary_is_untouched(v2):
+    from ._project_register_v2_support import seed_lead
+
     kept = project(v2.db, v2.company_id, title("Kept"), owner=v2.sales_b)
+    kept.lead_id = seed_lead(v2, v2.approver).id
     kept.primary_owner_user_id = v2.sales_c
-    _seed_reassign_row(v2, kept.id, v2.owner, v2.sales_b, t0)
-
-    # Another entity's owner_reassigned row must not leak in.
-    _seed_reassign_row(v2, uid(), v2.approver, v2.sales_b, t0 - timedelta(days=30))
+    _seed_reassign_row(v2, kept.id, v2.owner, v2.sales_b, T0)
     v2.db.flush()
 
-    project_service.backfill_primary_owner(v2.db)
-    v2.db.flush()
-
-    assert _primary(v2, moved.id) == v2.owner
-    assert _primary(v2, imported.id) == v2.sales_b
-    assert _primary(v2, kept.id) == v2.sales_c
-
-    # Idempotent: a second run changes nothing.
-    project_service.backfill_primary_owner(v2.db)
-    v2.db.flush()
-    assert _primary(v2, moved.id) == v2.owner
-    assert _primary(v2, imported.id) == v2.sales_b
-    assert _primary(v2, kept.id) == v2.sales_c
+    assert _backfilled(v2, kept.id) == [v2.sales_c]
