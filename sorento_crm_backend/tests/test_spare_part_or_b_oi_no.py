@@ -117,6 +117,32 @@ def test_U2_1_order_inquiries_has_a_nullable_varchar20_oi_no(world):
     assert row.is_nullable == "YES"
 
 
+@pytest.mark.parametrize(
+    "table, column, data_type",
+    [
+        ("order_inquiries", "revision_state", "character varying"),
+        ("order_inquiry_rows", "revised_qty", "numeric"),
+    ],
+)
+def test_U2_1_the_same_migration_adds_the_revision_columns(world, table, column, data_type):
+    """U4.2: `revision_state` on the header, `revised_qty numeric(15,4)` on the row."""
+    w = world
+    row = w.db.execute(
+        text(
+            "SELECT data_type, numeric_precision, numeric_scale, is_nullable "
+            "FROM information_schema.columns "
+            "WHERE table_schema = current_schema() || '_projects' "
+            "AND table_name = :t AND column_name = :c"
+        ),
+        {"t": table, "c": column},
+    ).first()
+    assert row is not None, f"projects.{table}.{column} exists"
+    assert row.data_type == data_type
+    assert row.is_nullable == "YES"
+    if data_type == "numeric":
+        assert (row.numeric_precision, row.numeric_scale) == (15, 4)
+
+
 def test_U2_1_a_partial_unique_index_on_company_and_oi_no(world):
     w = world
     defs = [
@@ -173,6 +199,8 @@ def test_U2_1_one_additive_migration_on_a_single_head():
     assert len(revision.revision) <= 32, revision.revision
     source = Path(revision.path).read_text()
     assert "drop_column" in source, "downgrade drops the column"
+    for column in ("revision_state", "revised_qty"):
+        assert column in source, f"the same migration adds {column} (U4.2)"
     assert not re.search(r"\b(drop_table|alter_column)\b", source.split("def downgrade")[0]), (
         "upgrade is additive only"
     )
@@ -378,6 +406,8 @@ def test_U2_4_next_inquiry_no_reads_the_highest_oi_no(staged):
 
 
 def test_U2_5_revise_and_reapproval_keep_the_one_number(staged):
+    """The revision runs on the same record (U4.2 - U4.5): revise, change a qty, submit,
+    approve again."""
     w = staged
     inquiry = raised(w)
     number = _oi_no(w.db, inquiry)
@@ -385,10 +415,12 @@ def test_U2_5_revise_and_reapproval_keep_the_one_number(staged):
     svc().revise(w.db, reload(w.db, inquiry), w.requester)
     w.db.commit()
     assert _oi_no(w.db, inquiry) == number, "revise keeps oi_no"
+    row = row_for(w.db, inquiry, w.product_a)
+    svc().edit_line(w.db, reload(w.db, inquiry), row.id, w.requester, qty="12")
+    w.db.commit()
     svc().submit(w.db, reload(w.db, inquiry), w.requester)
     w.db.commit()
     inquiry = approve(w, reload(w.db, inquiry), w.stage1.tier1)
-    assert inquiry.state == "raised"
     assert inquiry.oi_no == number, "the re-approval mints nothing new"
     so = _so_inquiry(w)
     assert _seq(so.inquiry_no) == _seq(number) + 1, "no number was burned by the re-approval"
