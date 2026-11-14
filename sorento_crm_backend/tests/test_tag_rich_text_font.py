@@ -102,3 +102,12 @@ def test_drops_a_font_size_that_is_not_pt_in_range(size: str):
 def test_font_props_only_on_span_not_on_a_paragraph():
     out = sanitise_tag_html('<p style="font-family: Arial; font-size: 14pt">B</p>')
     assert out == "<p>B</p>"
+
+
+@pytest.mark.parametrize("size", ["١٤pt", "١٤.٥pt", "１４pt"])
+def test_drops_a_font_size_in_non_ascii_digits(size: str):
+    """Python's `\\d` and `float()` accept Arabic-Indic and full-width digits; the browser does not."""
+    out = sanitise_tag_html(f'<p><span style="font-size: {size}">B</span></p>')
+    assert out is not None
+    assert "font-size" not in out
+    assert "B" in out

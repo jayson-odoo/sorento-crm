@@ -55,3 +55,12 @@ describe('parseRichText: font per word (AC-1.1)', () => {
     ]);
   });
 });
+
+describe('parseRichText: font only on a span (AC-1.1 review)', () => {
+  it('a mark carrying font-family and font-size gives a run with no font fields', () => {
+    const runs = runsOf('<p><mark style="font-family: Montserrat; font-size: 14pt">B</mark></p>');
+    expect(runs.map((run) => run.text)).toEqual(['B']);
+    expect(runs[0].fontFamily ?? null).toBeNull();
+    expect(runs[0].fontSize ?? null).toBeNull();
+  });
+});

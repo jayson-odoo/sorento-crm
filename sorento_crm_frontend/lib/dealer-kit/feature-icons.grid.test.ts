@@ -161,3 +161,15 @@ describe('featureIconRow keeps its behaviour (AC-7.5)', () => {
     expect(featureIconRow(3, { ...base, align: 'right' }, 100)).toEqual([66, 78, 90]);
   });
 });
+
+describe('featureIconGrid: a zero or negative icon size still hides nothing (AC-7.3 review)', () => {
+  it.each([0, -5])('iconSize_mm %s: every icon gets a position, at a positive size', (size) => {
+    const g = grid(5, { ...base, iconSize_mm: size }, 50, 20);
+    expect(g.positions).toHaveLength(5);
+    expect(g.iconSize_mm).toBeGreaterThan(0);
+    for (const p of g.positions) {
+      expect(Number.isFinite(p.x_mm)).toBe(true);
+      expect(Number.isFinite(p.y_mm)).toBe(true);
+    }
+  });
+});
