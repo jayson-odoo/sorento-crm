@@ -785,7 +785,8 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   return (
     <div className="space-y-4">
       <RecordHeaderCard
-        title={header.inquiry_no}
+        // SPARE-PART-OR-B (U3.4): an order request reads by its OI- number here.
+        title={header.oi_no ?? header.inquiry_no}
         badges={
           <>
             {isSparePartInquiry(header) && isPreApproval(header.state) ? (

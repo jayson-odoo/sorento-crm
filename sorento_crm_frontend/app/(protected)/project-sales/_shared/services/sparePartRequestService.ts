@@ -67,8 +67,13 @@ export interface SparePartLine {
 export interface SparePartRequest {
   id: string;
   inquiry_no: string | null;
+  /** SPARE-PART-OR-B (U2.6): the OI- number from final approval; null before it. */
+  oi_no?: string | null;
   inquiry_type: 'spare_part_request';
   state: string;
+  /** U4.2: an open revision's state (draft / pending_approval / rejected), else null.
+   *  While one is open `lines[].qty` is the revision's qty. */
+  revision_state?: string | null;
   currency: string | null;
   needed_by: string | null;
   default_location: string | null;
@@ -89,7 +94,9 @@ export interface SparePartRequest {
 export interface SparePartRequestListItem {
   id: string;
   inquiry_no: string | null;
+  oi_no?: string | null;
   state: string;
+  revision_state?: string | null;
   currency: string | null;
   requested_by?: string | null;
   requested_by_name: string | null;

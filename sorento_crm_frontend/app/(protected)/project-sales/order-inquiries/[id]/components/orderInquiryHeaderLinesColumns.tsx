@@ -50,6 +50,7 @@ import type {
   OrderInquiryWorklistRow,
 } from '../../../_shared/types/orderInquiry.types';
 import { SoLineAttachmentsButton } from '../../../_shared/components/SoLineAttachmentsButton';
+import { OrderInquiryLinkCell } from '../../../_shared/components/OrderInquiryLinkCell';
 import {
   LineSplitInfo,
   splitCount,
@@ -59,7 +60,7 @@ import type { SoLineAttachmentsByLine } from '../../../_shared/services/soLineAt
 import { NumberInput } from '@/components/ui/number-input';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { formatMoneyExact } from '../../../_shared/lib/money';
-import { changedFrom } from '../../../_shared/lib/sparePartRequest';
+import { SPARE_PART_REQUESTS_PATH, changedFrom } from '../../../_shared/lib/sparePartRequest';
 import type { OrderInquiryType } from '../../../_shared/types/orderInquiry.types';
 import type { LineSplitsPayload } from '../../../_shared/types/lineSplit.types';
 
@@ -500,23 +501,29 @@ function poColumn(): ColumnDef<OrderInquiryLineRow> {
   };
 }
 
-/** AC-ND-13 (owner ruling 26 Sep, G3): the line's ONE History icon. */
+/** AC-ND-13 (owner ruling 26 Sep, G3): the line's ONE History icon. SPARE-PART-OR-B (U1.3,
+ *  U4.7): a spare part line passes `changed`, which colours the icon when the line moved and
+ *  mutes it otherwise; a sales-order line passes none and keeps its own look. */
 function LineHistoryButton({
   line,
   onClick,
+  changed,
 }: {
   line: OrderInquiryLine;
   onClick?: (line: OrderInquiryLine) => void;
+  changed?: boolean;
 }) {
+  const tone = changed == null ? '' : changed ? ' text-primary' : ' text-muted-foreground';
   return (
     <Button
       type="button"
       mode="icon"
       variant="ghost"
       size="sm"
-      className="size-6 shrink-0"
+      className={`size-6 shrink-0${tone}`}
       aria-label="History"
       title="History"
+      data-changed={changed == null ? undefined : String(changed)}
       onClick={(event) => {
         event.stopPropagation();
         onClick?.(line);
@@ -533,24 +540,23 @@ export interface SparePartLineEdit {
   unit_price?: string;
 }
 
-/** "was 10" (a qty) or "was RM 35.00" (money, in the request's currency) beside a value the
- *  approver moved off what the requester submitted. */
-function WasMark({
-  current,
-  submitted,
-  money,
-  currency,
-}: {
-  current?: string | null;
-  submitted?: string | null;
-  money?: boolean;
-  currency?: string | null;
-}) {
-  if (!changedFrom(current, submitted)) return null;
+/** Which page a spare part request's lines are read on: its own order request record
+ *  ('request') or the order inquiry purchasing works it on ('inquiry'). */
+export type SparePartView = 'request' | 'inquiry';
+
+/**
+ * SPARE-PART-OR-B: did this spare part line change? On the order request page (U1.3): its
+ * qty or unit price moved off what was submitted, or a photo was added or removed. On the
+ * order inquiry page (U4.7): only a change after approval, which restated the row
+ * (`previous_qty`).
+ */
+export function sparePartLineChanged(row: OrderInquiryWorklistRow, view: SparePartView): boolean {
+  if (view === 'inquiry') return row.previous_qty != null && row.previous_qty !== '';
+  const photos = (row.photo_changes?.added ?? 0) + (row.photo_changes?.removed ?? 0);
   return (
-    <span className="ms-1.5 whitespace-nowrap text-xs text-muted-foreground">
-      was {money ? formatMoneyExact(submitted, currency) : formatInquiryQty(submitted)}
-    </span>
+    changedFrom(row.qty, row.submitted_qty) ||
+    changedFrom(row.unit_price, row.submitted_unit_price) ||
+    photos > 0
   );
 }
 
@@ -600,25 +606,83 @@ function ApproverNumberCell({
  * below leave the approver's 72 px Qty / Unit price inputs their room inside 950 px.
  */
 function sparePartLineColumns({
-  editable,
+  view,
+  qtyEditable,
+  priceEditable,
   currency,
   onEditLine,
   onLineHistoryClick,
   attachmentsByRow,
   canEditAttachments,
 }: {
-  editable: boolean;
+  view: SparePartView;
+  qtyEditable: boolean;
+  priceEditable: boolean;
   currency?: string | null;
   onEditLine?: (row: OrderInquiryWorklistRow, edit: SparePartLineEdit) => void;
   onLineHistoryClick?: (line: OrderInquiryLine) => void;
   attachmentsByRow?: SoLineAttachmentsByLine;
   canEditAttachments: boolean;
 }): ColumnDef<OrderInquiryLineRow>[] {
+  // U3.3: on the order inquiry page the line's order request comes first, the mirror of a
+  // sales-order line's No. link.
+  const orderRequestColumn: ColumnDef<OrderInquiryLineRow> = {
+    id: 'order_request',
+    accessorFn: (row) => row.inquiry_no ?? '',
+    header: ({ column }) => <DataGridColumnHeader title="Order request" column={column} />,
+    size: 116,
+    meta: { headerTitle: 'Order request', skeleton: <Skeleton className="h-4 w-20" /> },
+    cell: ({ row }) => {
+      const primary = lineOf(row.original).primary;
+      const number = primary.inquiry_no;
+      if (!number) return <span className="text-muted-foreground">-</span>;
+      if (!primary.order_inquiry_id) {
+        return (
+          <span className="block min-w-0 truncate tabular-nums" title={number}>
+            {number}
+          </span>
+        );
+      }
+      return (
+        <Link
+          href={`${SPARE_PART_REQUESTS_PATH}/${primary.order_inquiry_id}?line=${primary.id}`}
+          onClick={(event) => event.stopPropagation()}
+          className="block min-w-0 truncate tabular-nums font-medium text-primary hover:underline"
+          title={number}
+        >
+          {number}
+        </Link>
+      );
+    },
+  };
+  // U3.2: on the order request page each line links to its row on the order inquiry, once
+  // the request is approved (its OI- number); the Sales Order Lines tab's own cell.
+  const orderInquiryColumn: ColumnDef<OrderInquiryLineRow> = {
+    id: 'order_inquiry',
+    accessorFn: (row) => row.oi_no ?? '',
+    header: ({ column }) => <DataGridColumnHeader title="OI" column={column} />,
+    size: 150,
+    meta: { headerTitle: 'OI', skeleton: <Skeleton className="h-4 w-20" /> },
+    cell: ({ row }) => {
+      const line = lineOf(row.original);
+      return (
+        // A click on the link (or its pill) leaves the row's selection alone.
+        // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions
+        <div className="min-w-0 truncate" onClick={(event) => event.stopPropagation()}>
+          <OrderInquiryLinkCell
+            rows={line.rows.filter((r) => Boolean(r.oi_no))}
+            lineId={line.primary.id}
+          />
+        </div>
+      );
+    },
+  };
   return [
     stockExpandColumn(),
     buildSelectColumn<OrderInquiryLineRow>({
       rowLabel: (row) => `Select ${row.original.item_code ?? 'line'}`,
     }),
+    ...(view === 'inquiry' ? [orderRequestColumn] : []),
     {
       accessorKey: 'item_code',
       header: ({ column }) => <DataGridColumnHeader title="Product code" column={column} />,
@@ -650,24 +714,31 @@ function sparePartLineColumns({
     {
       accessorKey: 'qty',
       header: ({ column }) => <DataGridColumnHeader title="Qty" column={column} />,
-      size: 92,
+      size: 108,
       meta: { headerTitle: 'Qty', skeleton: <Skeleton className="h-4 w-10" /> },
       cell: ({ row }) => {
-        const primary = lineOf(row.original).primary;
+        const line = lineOf(row.original);
+        const primary = line.primary;
+        // U1.2 / U1.5: the value (or the input), then the line's one History icon, one line.
         return (
-          // The "was" mark wraps under the value, as Unit price's does.
-          <span className="flex min-w-0 flex-col items-start">
-            {editable && onEditLine ? (
+          <div className="flex min-w-0 items-center gap-1">
+            {qtyEditable && onEditLine ? (
               <ApproverNumberCell
                 value={primary.qty}
                 label={`Qty for ${primary.item_code ?? 'this line'}`}
                 onCommit={(qty) => onEditLine(primary, { qty })}
               />
             ) : (
-              <span className="tabular-nums">{formatInquiryQty(primary.qty)}</span>
+              <span className="min-w-0 truncate tabular-nums" title={formatInquiryQty(primary.qty)}>
+                {formatInquiryQty(primary.qty)}
+              </span>
             )}
-            <WasMark current={primary.qty} submitted={primary.submitted_qty} />
-          </span>
+            <LineHistoryButton
+              line={line}
+              onClick={onLineHistoryClick}
+              changed={sparePartLineChanged(primary, view)}
+            />
+          </div>
         );
       },
     },
@@ -675,34 +746,23 @@ function sparePartLineColumns({
       id: 'unit_price',
       accessorFn: (row) => Number(lineOf(row).primary.unit_price ?? 0),
       header: ({ column }) => <DataGridColumnHeader title="Unit price" column={column} />,
-      // D7: the value with its "was RM 35.00" mark wrapped under it.
       size: 100,
       meta: { headerTitle: 'Unit price', skeleton: <Skeleton className="h-4 w-16" /> },
       cell: ({ row }) => {
         const primary = lineOf(row.original).primary;
-        return (
-          // D7: the "was" mark wraps under the value, never clipped beside it.
-          <span className="flex min-w-0 flex-col items-start">
-            {editable && onEditLine ? (
-              <ApproverNumberCell
-                value={primary.unit_price}
-                label={`Unit price for ${primary.item_code ?? 'this line'}`}
-                onCommit={(unit_price) => onEditLine(primary, { unit_price })}
-              />
-            ) : (
-              <span
-                className="block max-w-full truncate tabular-nums"
-                title={formatMoneyExact(primary.unit_price, currency)}
-              >
-                {formatMoneyExact(primary.unit_price, currency)}
-              </span>
-            )}
-            <WasMark
-              current={primary.unit_price}
-              submitted={primary.submitted_unit_price}
-              money
-              currency={currency}
-            />
+        // U1.1: the value only; what it was before lives in the line's History.
+        return priceEditable && onEditLine ? (
+          <ApproverNumberCell
+            value={primary.unit_price}
+            label={`Unit price for ${primary.item_code ?? 'this line'}`}
+            onCommit={(unit_price) => onEditLine(primary, { unit_price })}
+          />
+        ) : (
+          <span
+            className="block max-w-full truncate tabular-nums"
+            title={formatMoneyExact(primary.unit_price, currency)}
+          >
+            {formatMoneyExact(primary.unit_price, currency)}
           </span>
         );
       },
@@ -735,8 +795,8 @@ function sparePartLineColumns({
       id: 'state',
       accessorFn: (row) => lineOf(row).state,
       header: ({ column }) => <DataGridColumnHeader title="State" column={column} />,
-      size: 190,
-      minSize: 190,
+      size: 166,
+      minSize: 166,
       meta: { headerTitle: 'State' },
       cell: ({ row }) => {
         const line = lineOf(row.original);
@@ -753,7 +813,6 @@ function sparePartLineColumns({
                 <OrderInquiryLineStatusPill line={line} rejectedTestId={`lines-rejected-${primary.id}`} />
               )}
             </span>
-            <LineHistoryButton line={line} onClick={onLineHistoryClick} />
             <SoLineAttachmentsButton
               lineId={primary.id}
               target={{ kind: 'order_inquiry_row', id: primary.id }}
@@ -765,6 +824,7 @@ function sparePartLineColumns({
         );
       },
     },
+    ...(view === 'request' ? [orderInquiryColumn] : []),
   ];
 }
 
@@ -781,7 +841,10 @@ export function useOrderInquiryHeaderLinesColumns({
   canEditAttachments = false,
   splitSheet,
   inquiryType = 'sales_order',
+  sparePartView = 'inquiry',
   headerState,
+  revisionState = null,
+  canEditRevision = false,
   canDecide = false,
   onEditLine,
   currency,
@@ -828,8 +891,17 @@ export function useOrderInquiryHeaderLinesColumns({
   };
   /** SPARE-PART-ORDER-REQUEST: the inquiry's type; a spare part request gets its own set. */
   inquiryType?: OrderInquiryType;
+  /** SPARE-PART-OR-B: a spare part request read on its own order request page ('request':
+   *  the OI column) or on the order inquiry ('inquiry', the default: the Order request
+   *  column, approved figures only). */
+  sparePartView?: SparePartView;
   /** The header's state: a decider edits Qty / Unit price only while `pending_approval`. */
   headerState?: string | null;
+  /** U4.3, order request page only: an open revision's state. While one is open only Qty
+   *  changes, by the requester (draft / rejected) or a decider (pending_approval). */
+  revisionState?: string | null;
+  /** The viewer is the requester and may change the revision's qtys (server `can_edit`). */
+  canEditRevision?: boolean;
   /** The viewer is the current approver (server's `can_decide`). */
   canDecide?: boolean;
   /** The approver changed a line's qty or unit price (blur). */
@@ -841,8 +913,16 @@ export function useOrderInquiryHeaderLinesColumns({
 } = {}): ColumnDef<OrderInquiryLineRow>[] {
   return React.useMemo<ColumnDef<OrderInquiryLineRow>[]>(() => {
     if (inquiryType === 'spare_part_request') {
+      const revising = sparePartView === 'request' && revisionState != null;
+      const deciding = canDecide && headerState === 'pending_approval';
       return sparePartLineColumns({
-        editable: canDecide && headerState === 'pending_approval',
+        view: sparePartView,
+        qtyEditable: revising
+          ? revisionState === 'pending_approval'
+            ? canDecide
+            : canEditRevision
+          : deciding,
+        priceEditable: !revising && deciding,
         currency,
         onEditLine,
         onLineHistoryClick,
@@ -1098,7 +1178,10 @@ export function useOrderInquiryHeaderLinesColumns({
     canEditAttachments,
     splitSheet,
     inquiryType,
+    sparePartView,
     headerState,
+    revisionState,
+    canEditRevision,
     canDecide,
     onEditLine,
     currency,
