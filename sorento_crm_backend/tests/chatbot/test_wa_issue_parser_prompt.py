@@ -44,7 +44,7 @@ CANDIDATE_PATH = _PLANS / "prompt-wa-issue-ideate.txt"
 BASE_MD5 = "d29c19830b22aa47403a88ddcb8e817d"  # production v72 (crew, 5 Nov)
 # The lead fills this in once the coder has committed prompt-wa-issue-ideate.txt (md5 of that exact file).
 # Until then this test is red on purpose.
-CANDIDATE_MD5 = "4d85612ef9ba531b8dfa7550feb4976d"
+CANDIDATE_MD5 = "46e16236f8906644ef35d68f87ce5187"
 
 PROMPT_NAME = "chatbot_semantic_parser"
 MIGRATION_FILE = "wa_0002_parser_issue_ideate.py"
