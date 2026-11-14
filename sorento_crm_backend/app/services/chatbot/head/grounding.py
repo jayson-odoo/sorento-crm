@@ -487,7 +487,7 @@ _CODE_MATCH_OFFERS = frozenset({"guessed"})
 ANSWER, OFFER = "answer", "offer"
 
 
-def picked_code_verdict(entity: Any, name: str | None = None) -> str:
+def picked_code_verdict(entity: Any, name: str | None = None, *, name_ask: bool = False) -> str:
     """CHATBOT-CLOSE-CODES AC-36/37 (owner ruling 14 Nov 2026: the model judges answer vs offer):
     `ANSWER` or `OFFER` for a product entity's parser `canonical_code`, the ONE decision the
     grounding (`ground`, stock and incoming asks) and `code_sizes._named_codes` read.
@@ -496,9 +496,11 @@ def picked_code_verdict(entity: Any, name: str | None = None) -> str:
     offers. With no known value (prod prompt today), the code is answered only when it IS what
     was typed: its `turn_state.token_key` equals the raw's, or that of a run of the raw's
     adjacent words (`_types_the_code_whole`), or the whole raw is the picked product's whole
-    catalogue `name` (when the caller read it); any other code is offered. An
-    exact compare of folded keys, nothing else: no spelling, distance or word rule
-    second-guesses the model."""
+    catalogue `name` (when the caller read it); any other code is offered. `name_ask` (the raw
+    resolved to no catalogue code at all) also answers a raw equal to a run of the name's
+    words, because a raw that reaches no code is a product's name said in part, never a typed
+    code, so main's name-ask answer stands. An exact compare of folded keys against catalogue
+    data, nothing else: no spelling, distance or word rule second-guesses the model."""
     from app.services.chatbot.turn.state import token_key
 
     if not isinstance(entity, dict):
@@ -513,7 +515,7 @@ def picked_code_verdict(entity: Any, name: str | None = None) -> str:
         return OFFER
     if token_key(raw) == token_key(canonical) or _types_the_code_whole(raw, canonical):
         return ANSWER
-    if raw and name and token_key(raw) == token_key(name):
+    if raw and name and (token_key(raw) == token_key(name) or (name_ask and _types_the_code_whole(name, raw))):
         return ANSWER
     return OFFER
 
@@ -579,6 +581,8 @@ def _pick_as_trgm_neighbour(
             and token_key(str(row.get("canonical_code") or "")) == wanted
         ):
             return dict(row)
+    # A raw that reached no catalogue code at all (no match, no near code) is a name ask.
+    name_ask = not (resolution.get("resolved") is True or resolution.get("matches") or resolution.get("alternatives"))
     if resolution.get("resolved") is True or resolution.get("matches"):
         if offered is None:
             return None
@@ -610,7 +614,7 @@ def _pick_as_trgm_neighbour(
     for row in own.get("matches") or []:
         if isinstance(row, dict) and token_key(str(row.get("canonical_code") or "")) == wanted:
             name = str((row.get("display") or {}).get("product_name") or "")
-            if offered is not None and picked_code_verdict(offered, name) == ANSWER:
+            if offered is not None and picked_code_verdict(offered, name, name_ask=name_ask) == ANSWER:
                 return None
             # Owner Q3 / AC-20: a pick the chat may not offer (inactive or discontinued) is set
             # aside but never offered (`resolve_gate.pick_near_code_first` reads the flag).
