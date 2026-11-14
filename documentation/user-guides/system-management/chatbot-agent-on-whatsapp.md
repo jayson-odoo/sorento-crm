@@ -16,6 +16,20 @@ question the bot just asked (its offer to pass a question to a team included), a
 after the daily cap still go to the bot. A reply to a request the agent is waiting on (see below)
 goes to the agent. Switching **Agent mode (auto)** off returns the contact to the bot.
 
+## Many contacts at once
+
+* **From a tag:** open **Users & Access > Access > Contact Tags**, the tag, **Edit**, switch on the **Chatbot** group and set
+  **Agent mode** to On. Every contact with the tag gets agent mode, the same way AI replies is set
+  from a tag: one tag set to On is enough. The tag does not switch AI replies on; set **AI replies**
+  on the same tag if the contacts need it.
+* **From the contacts list:** tick the contacts, then **Actions**, **Copy access from contact** and
+  pick a contact whose agent mode is already set. Agent mode is copied with AI replies and the other
+  chatbot switches. **Apply tag settings** brings ticked contacts back to what their tags say.
+
+When a tag sets agent mode, the contact's **Chatbot** card shows **From tag** and the tag's name
+under **Agent mode (auto)**. If two tags set it differently, it shows **Tags disagree** and their
+names.
+
 ## What the agent can do for a contact
 
 * **A contact with no linked CRM user** (most dealers and end users) is answered as that contact.
