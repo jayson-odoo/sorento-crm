@@ -158,6 +158,15 @@ def _same_answer(narrowed, baseline):
     assert narrowed.get("totals") == baseline.get("totals")
 
 
+def _same_note(out, baseline):
+    """Lead sign-off (N2, N4, N9): an empty narrowed answer carries today's "Nothing matched" note, listing the
+    whole window's values (the un-narrowed compute runs once for it)."""
+    assert out["rows"] == [] and baseline["rows"] == []
+    for key in ("instruction", "values_in_window", "scope_note"):
+        assert out.get(key) == baseline.get(key), key
+    assert out.get("instruction"), "the note says nothing matched"
+
+
 # ------------------------------------------------------------------ UAC 5: agent_target_summary
 
 
@@ -175,6 +184,8 @@ def test_N1_summary_for_agent_a_computes_only_what_a_can_be_credited_on(credit, 
     computed.reset()
     out = run(db, spec)
     narrowed = set(computed.figures)
+    # Lead sign-off: the spy is read before the baseline, which computes everything itself.
+    achieved = set(computed.achieved)
     baseline = _everything_then_filtered(db, SUMMARY, spec)
     _same_answer(out, baseline)
     assert out["rows"], "agent A has targets: the answer is not empty"
@@ -182,7 +193,7 @@ def test_N1_summary_for_agent_a_computes_only_what_a_can_be_credited_on(credit, 
     # A dealer target with ANY account of A is computed, the two-agent dealer included; A's own target too.
     assert {ids["ta"], ids["split"], ids["solo"]} <= narrowed
     assert narrowed <= t["allowed"]["a"], f"computed targets A cannot be credited on: {narrowed - t['allowed']['a']}"
-    assert computed.achieved <= t["allowed"]["a"]
+    assert achieved <= t["allowed"]["a"]
 
 
 def test_N2_the_two_agent_dealer_is_computed_for_each_of_its_agents(credit, computed):
@@ -195,7 +206,13 @@ def test_N2_the_two_agent_dealer_is_computed_for_each_of_its_agents(credit, comp
         computed.reset()
         out = run(db, spec)
         narrowed = set(computed.figures)
-        _same_answer(out, _everything_then_filtered(db, SUMMARY, spec))
+        baseline = _everything_then_filtered(db, SUMMARY, spec)
+        _same_answer(out, baseline)
+        if key == "b":
+            # B owns no dealer outright (the split one has two agents): empty, today's note (lead sign-off).
+            _same_note(out, baseline)
+            continue
+        assert out["rows"], name
         assert ids["split"] in narrowed, name
         assert narrowed <= t["allowed"][key], f"{name}: {narrowed - t['allowed'][key]}"
         assert ids["w2"] not in narrowed and ids["south"] not in narrowed
@@ -220,8 +237,7 @@ def test_N4_an_agent_with_no_targets_computes_nothing_and_answers_empty(credit, 
             "filters": [{"field": "agent", "op": "eq", "value": "Agent E"}]}
     computed.reset()
     out = run(db, spec)
-    assert out["rows"] == []
-    assert computed.figures == set() and computed.achieved == set()
+    _same_note(out, _everything_then_filtered(db, SUMMARY, spec))
 
 
 def test_N5_agent_d_in_another_team_computes_only_that_teams_target(credit, computed):
@@ -230,8 +246,11 @@ def test_N5_agent_d_in_another_team_computes_only_that_teams_target(credit, comp
             "filters": [{"field": "agent", "op": "eq", "value": "Agent D"}]}
     computed.reset()
     out = run(db, spec)
+    # Lead sign-off: the spy is read before the baseline, which computes everything itself.
+    narrowed = set(computed.figures)
     _same_answer(out, _everything_then_filtered(db, SUMMARY, spec))
-    assert set(computed.figures) <= t["allowed"]["d"]
+    assert out["rows"]
+    assert narrowed <= t["allowed"]["d"]
 
 
 @pytest.mark.parametrize("kind", ["dealer", "team", "agent"])
@@ -278,8 +297,7 @@ def test_N9_target_list_for_an_agent_with_no_targets_computes_nothing(credit, co
     spec = {"entity": TARGET_LIST, "period": YEAR, "agent": "Agent E", "fields": LIST_FIELDS}
     computed.reset()
     out = run(db, spec)
-    assert out["rows"] == []
-    assert computed.achieved == set()
+    _same_note(out, _everything_then_filtered(db, TARGET_LIST, spec))
 
 
 @pytest.mark.parametrize("kind", ["dealer", "team", "agent"])
@@ -294,6 +312,27 @@ def test_N10_target_list_subject_kind_computes_only_that_kind(credit, computed, 
     _same_answer(out, _everything_then_filtered(db, TARGET_LIST, spec))
     assert out["rows"]
     assert achieved <= of_kind, f"other kinds computed: {achieved - of_kind}"
+
+
+@pytest.mark.parametrize("key,field", [(SUMMARY, "owner"), (TARGET_LIST, "subject")])
+def test_N11_a_value_naming_an_agent_and_another_dealer_keeps_the_dealer(credit, computed, key, field):
+    """Lead ruling: on a field holding agents, teams and dealers, a `contains` value that matches an agent's name
+    AND the name of a dealer that agent has no account in still returns the dealer's row, as computing everything
+    and filtering after does; the narrowing still leaves out what neither can be credited on."""
+    from tests.test_sales_targets_s1 import _agent
+
+    db, t = credit
+    _agent(db, "Q", "Dealer W2 Rep")
+    spec = {"entity": key, "period": YEAR, "limit": 50,
+            "fields": SUMMARY_FIELDS if key == SUMMARY else LIST_FIELDS,
+            "filters": [{"field": field, "op": "contains", "value": "dealer w2"}]}
+    computed.reset()
+    out = run(db, spec)
+    seen = set(computed.achieved)
+    _same_answer(out, _everything_then_filtered(db, key, spec))
+    assert any("ZZT DEALER W2" in r["label"] for r in out["rows"]), out["rows"]
+    assert t["ids"]["w2"] in seen
+    assert t["ids"]["ta"] not in seen, "narrowed: agent A's target is not computed"
 
 
 # ------------------------------------------------------------------ UAC 6: remaining_value
