@@ -52,3 +52,24 @@ real AutoCount run, done by lane AC-E2E-DB3).
 - AC-15 "Link selected" reads "Recheck in AutoCount"; "Unlink selected" reads "Remove link in CRM"; behaviour
   unchanged.
 - AC-16 Usable at 375 px and 1280 px; one line per row in the popup grid; no ids shown.
+
+## Owner hand test round (14 Nov, head 5cfcc2776)
+Supersedes AC-5's one-product refusal for Order Inquiry (owner, 14 Nov: "why i cannot link two different products
+together"; standing rule 12 Nov: a multi action is the same function as the single one).
+- AC-HT1-a `.../po-link/options` with ticked OI rows of two or more products answers 200: `lines` has one entry per
+  AutoCount SO line of every product; `po_lines` holds the open PO lines (free qty > 0) of every ticked product, each
+  carrying its `product_id`; `so_products` maps each `sales_order_line_id` to its product id (like `so_books`).
+- AC-HT1-b `.../po-link/link` (and `/change`) with lines of two products links each SO line to a PO line of ITS OWN
+  product in one request. A PO line whose product differs from its SO line's product is refused (422, plain words
+  naming the PO, e.g. "PO <no> line is a different product.") before anything is sent to AutoCount.
+- AC-HT1-c Stock Debt is unchanged: its scope is one snapshot row, one product (its tests stay green, no assertion edit).
+- AC-HT1-d Screen: on the OI lines list and on the OI document (gear), "Link PO... (n)" is enabled for ticked rows of
+  different products; there is no "Tick rows of one product." / "Tick lines of one product." reason any more.
+- AC-HT1-e In the Link PO popup each new row's PO picker offers only PO lines of that row's product; a row whose product
+  has no PO line with free qty shows "No PO line has stock free for this product." in that row, and the other rows
+  stay usable (Save links them).
+- AC-HT2a In the Link PO popup the qty box of a new row sits under a column headed "Qty"; the Keep / Unlink / Change to
+  picker of a linked row sits under a column headed "Action". No column headed "Action" holds a qty box.
+- AC-HT2b A link line AutoCount skips or refuses names the plain reason: SS's own `message` for that line when it gives
+  one; a PO-row-not-found code (PO_ROW_NOT_FOUND, PO_NOT_FOUND, PO_LINE_NOT_FOUND, DOC_NOT_FOUND) reads
+  "PO <po no> is not in AutoCount"; never a raw code. "AutoCount did not accept it" only when neither is known.
