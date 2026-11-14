@@ -432,6 +432,9 @@ def _revoke(db, user_id, slug):
         UserRolePermission.role_id.in_(roles), UserRolePermission.permission_id == perm.id
     ).delete(synchronize_session=False)
     db.commit()
+    from app.services.user_service import invalidate_rbac_cache
+
+    invalidate_rbac_cache(user_id)  # as every RBAC write does
 
 
 def test_t9b_a_tool_whose_permission_was_revoked_after_the_first_turn_is_neither_preloaded_nor_listed(db):
