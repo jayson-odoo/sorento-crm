@@ -94,11 +94,13 @@ export async function checkAttachmentCollision(
   return response.json();
 }
 
-export type AttachmentConflictResolution = 'replace' | 'copy';
+export type AttachmentConflictResolution = 'replace' | 'copy' | 'keep';
 
 export interface AttachmentFilenameCollision {
-  existing_attachment_id: string;
-  existing_file_name: string;
+  /** Null when the same-named file belongs to another record (its id is not handed out). */
+  existing_attachment_id: string | null;
+  /** Null when that file is private to another user. */
+  existing_file_name: string | null;
   existing_target_entity_type?: string | null;
   existing_target_field_keys?: string[] | null;
 }
@@ -370,6 +372,27 @@ export async function getJobStatus(jobId: string): Promise<JobStatusResponse> {
   return response.json();
 }
 
+/** A file a move left where it was (FILES-MOVE-DUPLICATE): plain reason + what the
+ *  Replace / Rename / Skip dialog needs. */
+export interface AttachmentNotMoved {
+  attachment_id: string;
+  file_name: string;
+  folder_name: string;
+  message: string;
+  existing_file_name?: string | null;
+  suggested_name?: string | null;
+}
+
+/** 409 from a single move: the target folder already holds this file's name. */
+export class AttachmentMoveClashError extends Error {
+  detail: Omit<AttachmentNotMoved, 'attachment_id' | 'message'>;
+  constructor(message: string, detail: Omit<AttachmentNotMoved, 'attachment_id' | 'message'>) {
+    super(message);
+    this.name = 'AttachmentMoveClashError';
+    this.detail = detail;
+  }
+}
+
 export async function updateAttachment(
   attachmentId: string,
   data: {
@@ -379,6 +402,9 @@ export async function updateAttachment(
     /** User-facing display name (rename). The object key is uuid-segregated + immutable;
      *  only the UI label + Content-Disposition + n8n webhook filename change. */
     stored_filename?: string;
+    /** A same-name file is already in the folder: 'keep' goes ahead (same names are allowed),
+     *  'rename' moves under `stored_filename`, 'replace' sends the other file to Trash. */
+    on_conflict?: 'keep' | 'rename' | 'replace';
   }
 ): Promise<Attachment> {
   const response = await apiFetch(`/api/v1/resource-management/attachments/${attachmentId}`, {
@@ -388,25 +414,43 @@ export async function updateAttachment(
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: 'Failed to update attachment' }));
+    if (response.status === 409 && error?.code === 'ATTACHMENT_MOVE_NAME_CLASH' && error.details) {
+      throw new AttachmentMoveClashError(error.message, error.details);
+    }
     const message = typeof error.detail === 'string' ? error.detail : error.message ?? 'Failed to update attachment';
     throw new Error(message);
   }
   return response.json();
 }
 
+export type AttachmentMoveResolution =
+  | { action: 'keep' }
+  | { action: 'skip' }
+  | { action: 'replace' }
+  | { action: 'rename'; name?: string };
+
+/**
+ * Move many files into one folder. `checkOnly` writes nothing and returns every name
+ * conflict (FILES-MOVE-DUPLICATE: decided before anything moves). `resolutions` says what to
+ * do with each file that clashes; a clashing file without one is skipped and listed.
+ */
 export async function bulkMoveAttachments(
   attachmentIds: string[],
   directoryId: string | null,
-): Promise<{ updated: number }> {
+  options: { checkOnly?: boolean; resolutions?: Record<string, AttachmentMoveResolution> } = {}
+): Promise<{ updated: number; not_moved: AttachmentNotMoved[]; renamed?: number; replaced?: number }> {
   const response = await apiFetch('/api/v1/resource-management/attachments/bulk-move', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ attachment_ids: attachmentIds, directory_id: directoryId }),
+    body: JSON.stringify({
+      attachment_ids: attachmentIds,
+      directory_id: directoryId,
+      check_only: options.checkOnly ?? false,
+      resolutions: options.resolutions ?? {},
+    }),
   });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Failed to move attachments' }));
-    const message = typeof error.detail === 'string' ? error.detail : error.message ?? 'Failed to move attachments';
-    throw new Error(message);
+    throw new Error(await extractApiError(response, 'Failed to move attachments'));
   }
   return response.json();
 }
@@ -527,18 +571,43 @@ export async function bulkDeleteAttachments(ids: string[]): Promise<{ message: s
   return response.json();
 }
 
-export async function restoreAttachment(id: string): Promise<void> {
-  const response = await apiFetch(`/api/v1/resource-management/attachments/${id}/restore`, { method: 'PUT' });
+export async function restoreAttachment(
+  id: string,
+  onConflict?: 'keep' | 'rename' | 'replace'
+): Promise<void> {
+  const query = onConflict ? `?on_conflict=${onConflict}` : '';
+  const response = await apiFetch(`/api/v1/resource-management/attachments/${id}/restore${query}`, { method: 'PUT' });
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Failed to restore attachment' }));
+    if (response.status === 409 && error?.code === 'ATTACHMENT_MOVE_NAME_CLASH' && error.details) {
+      throw new AttachmentMoveClashError(error.message, error.details);
+    }
     throw new Error(error.message);
   }
 }
 
-export async function bulkRestoreAttachments(ids: string[]): Promise<{ restored_count: number }> {
-  const results = await Promise.allSettled(ids.map((id) => restoreAttachment(id)));
-  const restored = results.filter((r) => r.status === 'fulfilled').length;
-  return { restored_count: restored };
+/**
+ * Restore many files from Trash (FILES-MOVE-DUPLICATE): `checkOnly` writes nothing and lists
+ * every file whose folder now shows a file of the same name; `resolutions` then restores them
+ * in one call. Same shape as `bulkMoveAttachments`.
+ */
+export async function bulkRestoreAttachments(
+  attachmentIds: string[],
+  options: { checkOnly?: boolean; resolutions?: Record<string, AttachmentMoveResolution> } = {}
+): Promise<{ updated: number; not_moved: AttachmentNotMoved[]; renamed?: number; replaced?: number }> {
+  const response = await apiFetch('/api/v1/resource-management/attachments/bulk-restore', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      attachment_ids: attachmentIds,
+      check_only: options.checkOnly ?? false,
+      resolutions: options.resolutions ?? {},
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to restore attachments'));
+  }
+  return response.json();
 }
 
 export async function downloadAttachment(id: string): Promise<Blob> {
