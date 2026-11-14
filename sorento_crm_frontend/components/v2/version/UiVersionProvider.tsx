@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { useAccountProfileForHeader } from '@/hooks/useAccountProfileForHeader';
 import { UiVersionContext, type ThemeMode, type UiVersion, type UiVersionState } from './context';
 import { putThemeMode, putUiVersion } from './uiVersionService';
