@@ -2,15 +2,7 @@
 
 import * as React from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import {
-  ChevronDown,
-  ChevronUp,
-  FileDown,
-  LayoutTemplate,
-  Minus,
-  Plus,
-  Trash2,
-} from 'lucide-react';
+import { FileDown, LayoutTemplate, Trash2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -45,6 +37,7 @@ import type {
   EmbeddedController,
 } from '@/app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor';
 import { CanvasToolbar } from '@/app/(protected)/dealer-kit/tag-templates/components/CanvasToolbar';
+import { TableToolbarActions } from '@/app/(protected)/dealer-kit/tag-templates/components/TableToolbarActions';
 import {
   CollapsiblePanel,
   FocusShell,
@@ -196,7 +189,6 @@ export function SpecSheetReader({
       if (page.key === COVER || !page.hidden) map.set(page.key, ++printed);
     return map;
   }, [pages]);
-  const printedCount = numbers.size;
 
   // ---- editing: selection, per-page autosave and undo (F4) -----------------------------------
 
@@ -533,11 +525,12 @@ export function SpecSheetReader({
     pinned.current = key;
     setCurrentKey(key);
   };
-  const step = (delta: number) => {
-    const at = pages.findIndex((p) => p.key === activeKey);
-    const target = pages[Math.min(pages.length - 1, Math.max(0, at + delta))];
-    if (target) scrollTo(target.key);
-  };
+  // v3 (AC-C2.2/C2.3): Remove page / Put back from the Pages side bar: the page's left-out flag,
+  // the same save the old Leave out button made.
+  const removePage = React.useCallback(
+    (key: string, removed: boolean) => patch(key, { hidden: removed }),
+    [patch],
+  );
 
   // An old Edit page link opens the reader at that page.
   const wantedPage = searchParams?.get('page') ?? null;
@@ -831,7 +824,6 @@ export function SpecSheetReader({
       ]
     : [];
 
-  const activeNumber = activeKey ? numbers.get(activeKey) : undefined;
   // Outside full screen the app chrome and the page header sit above the editor; in full screen
   // only the overlay's padding and the toolbar do. The side panels lose their title row too.
   const stackHeight = focus
@@ -952,120 +944,86 @@ export function SpecSheetReader({
         // keepMounted: toggling full screen must not remount the live canvases (their selection,
         // undo and any edit on its way stay put).
         <FocusShell active={focus} onExit={exitFocus} keepMounted>
-          <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-lg border border-border bg-background px-3 py-2">
-            <Button
-              size="icon"
-              variant="outline"
-              aria-label="Previous page"
-              onClick={() => step(-1)}
-            >
-              <ChevronUp className="size-4" />
-            </Button>
-            <Button
-              size="icon"
-              variant="outline"
-              aria-label="Next page"
-              onClick={() => step(1)}
-            >
-              <ChevronDown className="size-4" />
-            </Button>
-            <span
-              className="text-sm tabular-nums"
-              data-testid="spec-sheet-page-of"
-            >
-              <b>{activeNumber ?? '-'}</b> of {printedCount}
-            </span>
-            <span className="mx-1 h-5 w-px bg-border" aria-hidden />
-            <Button
-              size="icon"
-              variant="outline"
-              aria-label="Zoom out"
-              onClick={() => zoomTo(clampZoom(scale / ZOOM_STEP))}
-            >
-              <Minus className="size-4" />
-            </Button>
-            <span className="min-w-[3rem] text-center text-sm tabular-nums">
-              {Math.round(scale * 100)}%
-            </span>
-            <Button
-              size="icon"
-              variant="outline"
-              aria-label="Zoom in"
-              onClick={() => zoomTo(clampZoom(scale * ZOOM_STEP))}
-            >
-              <Plus className="size-4" />
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => zoomTo(null)}>
-              Fit width
-            </Button>
-            {/* Icon only: the toolbar keeps one row even with the format bar showing. */}
-            <FocusToggle
-              active={focus}
-              onToggle={setFocus}
-              label="spec sheet"
-              iconOnly
+          {/* v3 (AC-C1.1-C1.5): ONE toolbar row, the shared CanvasToolbar: add tools, Undo / Redo,
+              what the selection brings (text format or table actions), zoom, Fit width, then full
+              screen and the save state. Delete / Duplicate / Group / Ungroup sit in its More menu.
+              The row scrolls sideways on its own at 375 px; inline-size containment keeps the
+              tools' width from widening the page. */}
+          <div
+            data-testid="spec-sheet-toolbar-row"
+            className="min-w-0 max-w-full overflow-x-auto rounded-lg border border-border [contain:inline-size]"
+          >
+            <CanvasToolbar
+              viewOnly={!canEdit}
+              foldEdits
+              onAddText={() => addToPage('text')}
+              onAddShape={() => addToPage('shape')}
+              onAddImage={() => addToPage('image')}
+              onAddBadge={() => addToPage('badge')}
+              onAddTable={() => addToPage('table')}
+              onAddAccessories={() => addToPage('accessories')}
+              addDisabled={!toolbarLive}
+              onGroupSelected={() => inputKey && controllerRefFor(inputKey).current?.groupSelected()}
+              onUngroupSelected={() => inputKey && controllerRefFor(inputKey).current?.ungroupSelected()}
+              hasMultiSelection={toolbarLive}
+              selectionIsGroup={toolbarLive}
+              onUndo={() => targetKey && editing.undo(targetKey)}
+              onRedo={() => targetKey && editing.redo(targetKey)}
+              canUndo={editing.canUndo(targetKey)}
+              canRedo={editing.canRedo(targetKey)}
+              onDeleteSelected={() => inputKey && controllerRefFor(inputKey).current?.deleteSelected()}
+              onDuplicateSelected={() => inputKey && controllerRefFor(inputKey).current?.duplicateSelected()}
+              hasSelection={Boolean(selection && selection.pageKey === inputKey)}
+              zoom={scale}
+              onZoomOut={() => zoomTo(clampZoom(scale / ZOOM_STEP))}
+              onZoomIn={() => zoomTo(clampZoom(scale * ZOOM_STEP))}
+              onZoomReset={() => zoomTo(1)}
+              onFit={() => zoomTo(null)}
+              fitLabel="Fit width"
+              contextual={
+                canEdit && selectedLayer ? (
+                  selectedLayer.props.kind === 'table' ? (
+                    <TableToolbarActions
+                      props={selectedLayer.props}
+                      // Read when clicked: the canvas holds the cell last picked on the page.
+                      cell={() => {
+                        const picked = selection
+                          ? controllerRefFor(selection.pageKey).current?.tableCell?.()
+                          : null;
+                        return picked && picked.layerId === selectedLayer.id ? picked : null;
+                      }}
+                      onChange={(next) => changeSelectedProps(selectedLayer.id, next)}
+                      onInsertField={
+                        selection ? () => controllerRefFor(selection.pageKey).current?.insertField?.() : undefined
+                      }
+                    />
+                  ) : (
+                    <FormatBar layer={selectedLayer} onProps={changeSelectedProps} />
+                  )
+                ) : null
+              }
+              fullScreen={<FocusToggle active={focus} onToggle={setFocus} label="spec sheet" iconOnly />}
+              saveState={
+                canEdit ? (
+                  <span
+                    // Fixed width, one line: "Saving..." is wider than "Saved", and a row that
+                    // rewraps on every autosave moves every page down and back.
+                    className="w-14 shrink-0 whitespace-nowrap text-end text-xs text-muted-foreground"
+                    aria-live="polite"
+                    data-testid="spec-sheet-save-state"
+                  >
+                    {editing.status === 'saving'
+                      ? 'Saving...'
+                      : editing.status === 'saved'
+                        ? 'Saved'
+                        : editing.status === 'error'
+                          ? 'Not saved'
+                          : ''}
+                  </span>
+                ) : null
+              }
             />
-            {canEdit && (
-              <>
-                <span className="mx-1 h-5 w-px bg-border" aria-hidden />
-                {/* Always the same bar (hidden unless a text layer is picked): the toolbar keeps
-                    one height whatever is selected, so the pages never slide under the pointer. */}
-                {/* Not on a phone: the hidden bar wraps into blank toolbar rows there, and the
-                    Properties sheet carries the same text formatting. */}
-                {!isMobile && (
-                  <FormatBar
-                    layer={selectedLayer}
-                    onProps={changeSelectedProps}
-                  />
-                )}
-                <span
-                  // Fixed width, one line: "Saving..." is wider than "Saved", and a toolbar that
-                  // rewraps on every autosave moves every page down and back.
-                  className="ms-auto w-14 shrink-0 whitespace-nowrap text-end text-xs text-muted-foreground"
-                  aria-live="polite"
-                  data-testid="spec-sheet-save-state"
-                >
-                  {editing.status === 'saving'
-                    ? 'Saving...'
-                    : editing.status === 'saved'
-                      ? 'Saved'
-                      : editing.status === 'error'
-                        ? 'Not saved'
-                        : ''}
-                </span>
-              </>
-            )}
           </div>
-
-          {canEdit && (
-            // The row scrolls sideways on its own at 375 px; inline-size containment keeps the
-            // tools' width from widening the page, which is what clipped Delete to Ungroup.
-            <div
-              data-testid="spec-sheet-toolbar-row"
-              className="min-w-0 max-w-full overflow-x-auto [contain:inline-size]"
-            >
-              <CanvasToolbar
-                onAddText={() => addToPage('text')}
-                onAddShape={() => addToPage('shape')}
-                onAddImage={() => addToPage('image')}
-                onAddBadge={() => addToPage('badge')}
-                onAddTable={() => addToPage('table')}
-                onAddAccessories={() => addToPage('accessories')}
-                addDisabled={!toolbarLive}
-                onGroupSelected={() => inputKey && controllerRefFor(inputKey).current?.groupSelected()}
-                onUngroupSelected={() => inputKey && controllerRefFor(inputKey).current?.ungroupSelected()}
-                hasMultiSelection={toolbarLive}
-                selectionIsGroup={toolbarLive}
-                onUndo={() => targetKey && editing.undo(targetKey)}
-                onRedo={() => targetKey && editing.redo(targetKey)}
-                canUndo={editing.canUndo(targetKey)}
-                canRedo={editing.canRedo(targetKey)}
-                onDeleteSelected={() => inputKey && controllerRefFor(inputKey).current?.deleteSelected()}
-                onDuplicateSelected={() => inputKey && controllerRefFor(inputKey).current?.duplicateSelected()}
-                hasSelection={Boolean(selection && selection.pageKey === inputKey)}
-              />
-            </div>
-          )}
 
           {isMobile && (
             <PageRail
@@ -1081,6 +1039,7 @@ export function SpecSheetReader({
                 commit([...pages.filter((p) => p.key === COVER), ...items])
               }
               onVisibleChange={setRailVisible}
+              onRemove={removePage}
             />
           )}
           <div className="relative flex min-w-0 gap-3">
@@ -1132,6 +1091,7 @@ export function SpecSheetReader({
                             commit([...pages.filter((p) => p.key === COVER), ...items])
                           }
                           onVisibleChange={setRailVisible}
+                          onRemove={removePage}
                           className={cn('w-full', panelHeight)}
                         />
                       </CollapsiblePanel>
@@ -1157,7 +1117,8 @@ export function SpecSheetReader({
                       className="flex min-w-fit flex-col items-center gap-6 py-4"
                       style={{ paddingLeft: STACK_PAD, paddingRight: STACK_PAD }}
                     >
-                      {pages.map((page) => (
+                      {/* A removed page leaves the stack (v3 AC-C2.2); the side bar lists it. */}
+                      {pages.filter((page) => !page.hidden).map((page) => (
                         <ReaderPage
                           key={page.key}
                           page={page}

@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import dynamic from 'next/dynamic';
-import { EyeOff, RotateCcw, Undo2 } from 'lucide-react';
+import { Undo2 } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -266,8 +266,8 @@ function boundWithMedium(
 
 /**
  * One page of the stack: a fixed-size box and, on hover or when it is the page being read, its
- * actions (Reset to template, Add accessory, Leave out / Put back). The box is a placeholder until
- * the page is near the viewport; then a still `ScaledSheet` / `TagSheetRenderer` picture, or, for
+ * actions (Reset to template, Add accessory; Remove page is on the Pages side bar). The box is a
+ * placeholder until the page is near the viewport; then a still `ScaledSheet` / `TagSheetRenderer` picture, or, for
  * the few pages nearest the reader, the live designer canvas (F4). AREA, COMMENT and the marker
  * are clicked and typed on the page itself; bound product fields stay data.
  */
@@ -522,21 +522,6 @@ export const ReaderPage = React.memo(function ReaderPage({
                   placeholder="Add accessory"
                 />
               </div>
-            )}
-            {!isCover && (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => onPatch(page.key, { hidden: !page.hidden })}
-                data-testid={`spec-sheet-leave-out-${page.key}`}
-              >
-                {page.hidden ? (
-                  <RotateCcw className="size-4" aria-hidden />
-                ) : (
-                  <EyeOff className="size-4" aria-hidden />
-                )}
-                {page.hidden ? 'Put back' : 'Leave out'}
-              </Button>
             )}
           </span>
         )}
