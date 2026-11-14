@@ -559,6 +559,9 @@ def test_the_switch_guidance_is_never_the_users_reply(db):
     assert_plain(result.reply_text)
     assert "crm_" not in result.reply_text, result.reply_text
     assert result.pending_action is None
+    from app.services.chatbot.agent.loop import TELL_ME_REPLY
+
+    assert result.reply_text.strip() == TELL_ME_REPLY, result.reply_text  # review nit: the plain line, exactly
 
 
 def test_the_found_nudge_names_the_grant_as_the_way_to_give_access(db):
@@ -597,3 +600,116 @@ def test_an_existing_contact_shows_its_record_name_not_a_misread_from_the_pictur
     result, _ = screenshot_turn(db, w, [_batch([row]), answer_("Done.")])
     assert result.pending_action is not None, result.reply_text
     assert c.name in result.reply_text and "ZZT Misread Name" not in result.reply_text, result.reply_text
+
+
+# ------------------------------------------------------------------ code review of crew pass 4 fixes
+
+
+def test_a_role_the_user_stated_for_a_held_row_survives_the_answer(db):
+    """Review B1(1): 'make X a business owner' held X while Y was asked; the answer 'employee' (the model re-sending
+    employee for everyone) never turns X into Employee."""
+    w = make_world(db)
+    x = dealer(db, w, name="ZZT Said Owner", customers=[w.cust_b])
+    y = dealer(db, w, name="ZZT Asked Y")
+    rows = [{**_unsaid(x, 1), "role": "owner", "access_as_written": "business owner"}, _unsaid(y, 2)]
+    first, _ = screenshot_turn(db, w, [_batch(rows), answer_("Done.")], text_="make them mocha, the first a business owner")
+    assert first.reply_text.strip() == f"Owner or employee for {y.name}?", first.reply_text
+    again = [{**r, "role": "employee", "access_as_written": "employee"} for r in rows]
+    second, _ = screenshot_turn(db, w, [_batch(again, "b2"), answer_("Done.")], text_="employee", images=False)
+    assert second.pending_action is not None, second.reply_text
+    text = " | ".join(second.pending_action["lines"])
+    assert "Business owner (Mocha)" in next(line for line in second.pending_action["lines"] if x.name in line), text
+
+
+def test_a_stated_role_of_a_new_person_is_not_asked_again(db):
+    """Review B1(2): A stated employee (no role on record), B asked; the answer 'owner' gives the card, A stays
+    Employee and is never asked again."""
+    w = make_world(db)
+    a = dealer(db, w, name="ZZT Said Employee")
+    b = dealer(db, w, name="ZZT Asked B")
+    rows = [{**_unsaid(a, 1), "role": "employee", "access_as_written": "employee"}, _unsaid(b, 2)]
+    first, _ = screenshot_turn(db, w, [_batch(rows), answer_("Done.")], text_="mocha, the first is an employee")
+    assert first.reply_text.strip() == f"Owner or employee for {b.name}?", first.reply_text
+    again = [{**r, "role": "owner", "access_as_written": "owner"} for r in rows]
+    second, _ = screenshot_turn(db, w, [_batch(again, "b2"), answer_("Done.")], text_="owner", images=False)
+    assert second.pending_action is not None, second.reply_text
+    lines = second.pending_action["lines"]
+    assert "Employee (Mocha)" in next(line for line in lines if a.name in line), lines
+    assert "Business owner (Mocha)" in next(line for line in lines if b.name in line), lines
+
+
+def test_a_held_person_the_answer_names_gets_the_stated_role(db):
+    """Review B1(3): the answer names the held person by phone with a role: that role applies."""
+    w = make_world(db)
+    x = dealer(db, w, name="ZZT Named Later", customers=[w.cust_b])
+    y = dealer(db, w, name="ZZT Asked Z")
+    rows = [_unsaid(x, 1), _unsaid(y, 2)]
+    screenshot_turn(db, w, [_batch(rows), answer_("Done.")])
+    again = [{**rows[0], "role": "owner", "access_as_written": "business owner"},
+             {**rows[1], "role": "employee", "access_as_written": "employee"}]
+    second, _ = screenshot_turn(
+        db, w, [_batch(again, "b2"), answer_("Done.")],
+        text_=f"employee, and make {local(x.phone_number)} a business owner at mocha", images=False,
+    )
+    assert second.pending_action is not None, second.reply_text
+    assert "Business owner (Mocha)" in next(line for line in second.pending_action["lines"] if x.name in line)
+
+
+def test_a_misread_name_from_the_picture_never_reaches_the_answer_turns_card(db):
+    """Review B2: the card comes on the answer turn (no picture); record names still win for picture rows."""
+    w = make_world(db)
+    kept = dealer(db, w, name="ZZT Record Kept", customers=[w.cust_b])
+    fresh = dealer(db, w, name="ZZT Record Fresh")
+    rows = [{**_unsaid(kept, 1), "name": "ZZT Misread Kept"}, {**_unsaid(fresh, 2), "name": "ZZT Misread Fresh"}]
+    first, _ = screenshot_turn(db, w, [_batch(rows), answer_("Done.")])
+    assert first.reply_text.strip() == f"Owner or employee for {fresh.name}?", first.reply_text
+    again = [{**r, "role": "employee"} for r in rows]
+    second, _ = screenshot_turn(db, w, [_batch(again, "b2"), answer_("Done.")], text_="employee", images=False)
+    assert second.pending_action is not None, second.reply_text
+    assert "Misread" not in second.reply_text, second.reply_text
+    assert kept.name in second.reply_text and fresh.name in second.reply_text
+
+
+def test_the_switch_guidance_never_shows_when_a_confirm_finds_the_person_lost_access(db):
+    """Review S2: a confirm that re-plans an AI replies change after the last link went shows a plain line, never
+    the model's guidance."""
+    from app.models.access import RespondContactCustomer
+    from app.services.chatbot.agent import actions
+
+    w = make_world(db)
+    c = dealer(db, w, name="ZZT Lost Link", types=(), companies=(), customers=[w.cust_b])
+
+    def update(messages):
+        import json as _json
+
+        cid = _json.loads([m for m in messages if m.get("role") == "tool"][-1]["content"])["data"][0]["contact_id"]
+        return round_of(tc(UPDATE, {"contact_id": cid, "chatbot_allowed": True}, "u1"))
+
+    script = [round_of(tc(FIND, {"phones": [local(c.phone_number)]}, "f1")), update, answer_("Done.")]
+    result, _ = screenshot_turn(db, w, script, text_="turn on AI replies for them", images=False)
+    assert result.pending_action is not None, result.reply_text
+    db.query(RespondContactCustomer).filter(RespondContactCustomer.contact_id == c.id).delete()
+    db.commit()
+    outcome = actions.confirm(db, w.respond_id, result.pending_action["id"], via="console")
+    assert "crm_" not in (outcome.reply_text or "") and "crm_" not in str(outcome.steps), outcome
+
+
+def test_an_own_scope_user_on_a_picture_turn_never_sees_a_strangers_record_name(db):
+    """Security should-fix: out-of-scope contact on an attachment turn: typed name (or phone), never contact.name."""
+    from tests.chatbot.agent.test_dealer_access_agent import own_world
+
+    o = own_world(db)
+    c = dealer(db, o.w, name="ZZT Stranger Record", customers=[o.theirs_m])
+    row = {**_unsaid(c, 1), "name": "ZZT Typed Here", "customer_codes": [o.w.cust_b.customer_code]}
+    result, _ = screenshot_turn(db, o.w, [_batch([row]), answer_("Done.")], text_="grant them mocha access")
+    assert c.name not in result.reply_text, result.reply_text
+
+
+def test_the_model_cannot_set_the_picture_flag(db):
+    """Security should-fix: `_from_attachment` is the loop's; a model row carrying it is refused as unknown."""
+    from app.services.chatbot.agent import writes
+
+    problem = writes._args_problem(
+        writes.WRITES[GRANT], {"phone": "0190000000", "role": "unknown", "companies": [], "_from_attachment": True}
+    )
+    assert problem and "_from_attachment" in problem
