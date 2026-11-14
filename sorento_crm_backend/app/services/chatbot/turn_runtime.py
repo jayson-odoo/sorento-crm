@@ -5957,6 +5957,7 @@ def predicate_rides(spec: FetchSpec, compatible: list[dict[str, Any]]) -> bool:
     fetch lists the product, not the browse."""
     return not (scoped_to_a_resolved_product(spec) and not _spec_is_the_set(spec, compatible))
 
+
 def _spec_is_the_set(spec: FetchSpec, compatible: list[dict[str, Any]]) -> bool:
     """Are the spec's products exactly the product rows the RESOLVER placed this turn?
 
