@@ -495,3 +495,6 @@ def test_an_own_scope_user_reads_a_level_only_where_the_contact_has_their_own_ac
     row = {**_unsaid(c, 1, companies=("SRT",)), "customer_codes": [o.w.cust_a.customer_code]}
     result, _ = screenshot_turn(db, o.w, [_batch([row]), answer_("Done.")], text_="grant them sorento access")
     assert "Business owner" not in result.reply_text, result.reply_text
+    # Nor is Employee carried from Mocha over an owner tag the user cannot see (review round 2 S1): asked.
+    assert "as at Mocha" not in result.reply_text, result.reply_text
+    assert result.reply_text.strip() == f"Owner or employee for {c.name}?", result.reply_text

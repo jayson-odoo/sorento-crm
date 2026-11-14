@@ -311,7 +311,9 @@ def question(needs: list[str], labels: list[str]) -> str:
     return f"{ask} for {', '.join(labels)}?"
 
 
-def held_role(db, contact_id: str, companies: list[str], allowed: set[str]) -> tuple[str | None, str | None]:
+def held_role(
+    db, contact_id: str, companies: list[str], allowed: set[str], carry_across: bool = True
+) -> tuple[str | None, str | None]:
     """(level, company code it was read from) for the contact, as the Dealer access screen reads it: Business owner
     where it holds a company's owner tag, else Employee where it is linked to one of that company's accounts. Only
     the companies the user is granted (`allowed`) are read (security review S1). A requested company it holds
@@ -333,7 +335,9 @@ def held_role(db, contact_id: str, companies: list[str], allowed: set[str]) -> t
     held = {code: "owner" if code in owned else "employee" for code in (linked | owned) & set(codes)}
     # Another company's level carries only as Employee: Business owner is that company's own tag, so carrying it
     # would be a promotion nobody asked for (review B1). Owner elsewhere, or both levels: no carry.
-    carry = "employee" if held and set(held.values()) == {"employee"} else None
+    # Own scope carries nothing (`carry_across` False): an owner tag in a company it cannot read could sit under a
+    # carried Employee (review round 2 S1); only a requested company's own visible level decides.
+    carry = "employee" if carry_across and held and set(held.values()) == {"employee"} else None
     # Each requested company on its own: its own level, else the carried Employee. One level for all of them, or
     # asked (a Sorento owner given Sorento and Mocha is asked, never made Mocha owner: review round 2).
     per = [held.get(code) or carry for code in companies] or [carry]
@@ -471,7 +475,7 @@ def plan(db, user: dict, args: dict) -> dict:
                         code for (code,) in db.query(Company.code).join(Customer, Customer.company_id == Company.id)
                         .filter(Customer.id.in_(own))
                     } if own else set()
-            role, kept_from = held_role(db, str(contact.id), companies, allowed)
+            role, kept_from = held_role(db, str(contact.id), companies, allowed, carry_across=own_agents is None)
         if role is None:
             needs.append("role")
     if needs:
