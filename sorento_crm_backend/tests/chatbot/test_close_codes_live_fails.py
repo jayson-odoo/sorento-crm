@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from tests.chatbot._r9_engine_console import product, reply, stock
+from tests.chatbot._r9_engine_console import answer, product, reply, stock
 from tests.chatbot._turn_helpers import entity
 from tests.chatbot.test_close_codes_dealer_round3 import (
     CLOSE3,
@@ -173,3 +173,72 @@ def test_f4_a_letter_added_to_a_spaced_code_with_a_quantity_names_the_typed_code
         after = c.say("1", _pick_positions(1))
         assert f"{INLET} x 2" in after, f"'1' did not answer {INLET} at 2: {after!r}"
         assert R not in after, after
+
+
+# --------------------------------------------------------------------------- owner hand test on 820f71cb (F1, live shape)
+#
+# Turn 1 "<found> and <miss> stock": the how-many for the found code and the offer of three close codes in one reply.
+# Turn 2 a pick: "How many units for each? 1. <picked> - 2. <found> -". Turn 3 a number in the LIVE parser shape
+# (entities [], no demand_qty, a one-item fill echoing a position and/or a code): the number answers BOTH lines, as
+# the owner's "3" did not. Locks, as #2395's t2b/t2f locks in `test_set_codes_owner_fail.py`: a number bound by a
+# code the user typed fills only that line; a position and code naming different lines fills only the code's line.
+
+#: (picked position, the number typed): Run 1 picks "2" then "3", Run 2 picks "1" then "4".
+RUNS = pytest.mark.parametrize(("pick", "n"), [(2, 3), (1, 4)], ids=["run1_pick2_then_3", "run2_pick1_then_4"])
+WITH_DEMAND = pytest.mark.parametrize("with_demand", [False, True], ids=["no_demand_qty", "demand_qty"])
+
+
+def _owner_turns_1_and_2(session_factory, monkeypatch, stub_access, pick: int) -> tuple[Console, str]:  # noqa: F811
+    c = _console(session_factory, monkeypatch, stub_access, CLOSE3, **_facts(HOW_MANY, *CLOSE3))
+    first = c.say(f"{HOW_MANY} and {TYPO3} stock", stock(product(HOW_MANY), product(TYPO3)))
+    assert f"How many units of {HOW_MANY}?" in first, first
+    assert f"Couldn't find {TYPO3}. Did you mean:" in first, first
+    offered = [_code_at(c, p) for p in (1, 2, 3)]
+    assert set(offered) <= set(CLOSE3), (offered, c.stored_question)
+    for p, code in enumerate(offered, 1):
+        assert f"{p}. {code}" in first, first
+    picked = offered[pick - 1]
+    asked = c.say(str(pick), _pick_positions(pick))
+    assert "How many units for each?" in asked, asked
+    assert f"1. {picked}" in asked and f"2. {HOW_MANY}" in asked, f"not '1. {picked} 2. {HOW_MANY}': {asked!r}"
+    return c, picked
+
+
+def _fill(items: list[tuple[Any, Any, int]], n: int, with_demand: bool) -> dict[str, Any]:
+    v = reply(entities=[], demand_qty=n if with_demand else None, open_question_answer=answer("fill", items=items))
+    v["open_question_answer"]["qty_for_all"] = None
+    return v
+
+
+@RUNS
+@WITH_DEMAND
+@pytest.mark.parametrize("shape", ["pos1_picked_code", "pos1_no_code", "pos2_no_code", "pos2_found_code"])
+def test_owner_f1_a_number_after_the_pick_answers_both_lines(session_factory, monkeypatch, stub_access, pick, n, with_demand, shape):  # noqa: F811
+    c, picked = _owner_turns_1_and_2(session_factory, monkeypatch, stub_access, pick)
+    items = {
+        "pos1_picked_code": [(1, picked, n)],  # the live shape: position 1 and the picked code echoed
+        "pos1_no_code": [(1, None, n)],
+        "pos2_no_code": [(2, None, n)],
+        "pos2_found_code": [(2, HOW_MANY, n)],
+    }[shape]
+    text = c.say(str(n), _fill(items, n, with_demand))
+    assert f"{picked} x {n}:" in text, f"the picked code was not answered at {n}: {text!r}"
+    assert f"{HOW_MANY} x {n}:" in text, f"the found code was not answered at {n}: {text!r}"
+    assert "How many units for each?" not in text, f"asked again: {text!r}"
+    assert R not in text, text
+
+
+@WITH_DEMAND
+def test_owner_f1_lock_a_number_bound_by_a_typed_code_fills_only_that_line(session_factory, monkeypatch, stub_access, with_demand):  # noqa: F811
+    c, picked = _owner_turns_1_and_2(session_factory, monkeypatch, stub_access, 2)
+    text = c.say(f"{HOW_MANY} 3", _fill([(None, HOW_MANY, 3)], 3, with_demand))
+    assert f"{picked} x 3" not in text, ("the number spread to the other line", text)
+    assert f"{HOW_MANY} x 3: {TICK} Got stock." in text, text
+
+
+@WITH_DEMAND
+def test_owner_f1_lock_a_position_and_code_naming_different_lines_fills_only_the_codes_line(session_factory, monkeypatch, stub_access, with_demand):  # noqa: F811
+    c, picked = _owner_turns_1_and_2(session_factory, monkeypatch, stub_access, 2)
+    text = c.say("3", _fill([(1, HOW_MANY, 3)], 3, with_demand))
+    assert f"{picked} x 3" not in text, ("the number spread to the other line", text)
+    assert f"{HOW_MANY} x 3: {TICK} Got stock." in text, text
