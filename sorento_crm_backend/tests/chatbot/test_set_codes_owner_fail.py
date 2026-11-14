@@ -79,3 +79,44 @@ def test_t3_a_part_without_a_description_has_no_trailing_dash(session_factory, m
     text = c.say("QWC604-S-RL stock", stock(product(S_RL)))
     assert "How many units for each?" in text or who == "staff", text
     assert not [line for line in text.splitlines() if re.search(r"\s-\s*$", line)], text
+
+
+# --------------------------------------------------------------------------- T2b / T2c: one number bound to the last part
+
+
+def _shape_fill_code():
+    return reply(demand_qty=4, open_question_answer=answer("fill", items=[(None, CISTERN, 4)]))
+
+
+def _shape_fill_position():
+    return reply(demand_qty=4, open_question_answer=answer("fill", items=[(2, None, 4)]))
+
+
+def _shape_entity():
+    return reply(demand_qty=4, entities=[product(CISTERN, 4)])
+
+
+def _shape_stock_demand():
+    return stock(product(CISTERN), demand_qty=4)
+
+
+@pytest.mark.parametrize(
+    "shape",
+    [_shape_fill_code, _shape_fill_position, _shape_entity, _shape_stock_demand],
+    ids=["fill_by_code", "fill_by_position", "entity_with_qty", "stock_with_demand_qty"],
+)
+def test_t2b_a_number_the_parser_binds_to_the_last_part_still_applies_to_every_part(session_factory, monkeypatch, stub_access, shape):  # noqa: F811
+    c = _owner_world(session_factory, monkeypatch, stub_access)
+    asked = c.say("QWC604-S-RL stock", stock(product(S_RL)))
+    assert "How many units for each?" in asked, asked
+    text = c.say("4", shape())
+    for code in (S_PAN, CISTERN):
+        assert f"{code} x 4: {TICK} Got stock." in _lines(text), (code, text)
+
+
+def test_t2c_lock_a_number_named_for_one_part_without_demand_qty_fills_only_that_line(session_factory, monkeypatch, stub_access):  # noqa: F811
+    c = _owner_world(session_factory, monkeypatch, stub_access)
+    c.say("QWC604-S-RL stock", stock(product(S_RL)))
+    text = c.say("8 for QWCY604", reply(open_question_answer=answer("fill", items=[(None, CISTERN, 8)])))
+    assert f"{S_PAN} x 8" not in text, ("the number spread to the other part", text)
+    assert any(CISTERN in line and "8" in line for line in _lines(text)), text
