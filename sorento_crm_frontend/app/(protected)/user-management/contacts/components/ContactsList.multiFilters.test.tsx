@@ -109,7 +109,7 @@ const BASE = {
   created_at: '2026-01-05T02:00:00', updated_at: '2026-01-05T02:00:00', linked_user_id: null, linked_user_name: null,
 };
 const ROW = { ...BASE, id: 'contact-1', name: 'ZZT One', last_name: 'One', phone_number: '+60100000031',
-  customer_codes: [], customer_companies: [] };
+  customer_codes: [], companies: [] };
 
 const getContactsMock = vi.fn();
 vi.mock('../[id]/services/contactService', () => ({
