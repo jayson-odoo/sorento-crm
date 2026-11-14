@@ -16,12 +16,12 @@ import uuid
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from sqlalchemy import asc, desc, false, func, or_, text
+from sqlalchemy import asc, desc, exists, false, func, or_, text
 from sqlalchemy.orm import Session
 
 from app.models.base import get_company_scope
 from app.models.complaints import Complaint
-from app.models.service_jobs import ServiceJob, Technician
+from app.models.service_jobs import ServiceJob, ServiceJobProduct, Technician
 from app.models.status import Status
 from app.services.error_handler import AppException, handle_not_found
 from app.services.project_party_contact_service import clean_phone, display_phone
@@ -146,8 +146,13 @@ def get_row(db: Session, job_id: str):
 
 
 def get_job(db: Session, job_id: str) -> Dict[str, Any]:
+    from app.services.service_job_product_service import warranty_for_job
+
     db.expire_all()
-    return serialize(get_row(db, job_id))
+    row = get_row(db, job_id)
+    data = serialize(row)
+    data["warranty"] = warranty_for_job(db, row[0].id)  # computed now, never stored
+    return data
 
 
 def _text(column):
@@ -178,7 +183,10 @@ def list_jobs(
     technician_ids: Optional[Sequence[str]],
     date_from: Optional[date],
     date_to: Optional[date],
+    warranty_summaries: Optional[Sequence[str]] = None,
 ) -> Dict[str, Any]:
+    from app.services.service_job_product_service import SUMMARY_ORDER, summaries_for_jobs
+
     q = _base_query(db)
     if query and query.strip():
         like = f"%{query.strip()}%"
@@ -200,14 +208,41 @@ def list_jobs(
     if date_to:
         q = q.filter(ServiceJob.scheduled_from < myt_day_bounds(date_to)[1])
 
-    total = q.count()
-    column = SORTS.get(sort or "", SORTS["job_number"])()
-    order = asc(column) if (direction or "desc").lower() == "asc" else desc(column)
-    if not sort:
-        order = desc(ServiceJob.created_at)
-    rows = q.order_by(order.nulls_last(), ServiceJob.id).offset((page - 1) * limit).limit(limit).all()
+    if warranty_summaries or sort == "warranty_summary":
+        # The summary is computed, not stored: resolve it for the jobs that have product lines only
+        # (a job without lines has no summary), in one batch.
+        with_lines = exists().where(ServiceJobProduct.service_job_id == ServiceJob.id)
+        ids = [str(i) for (i,) in q.with_entities(ServiceJob.id).filter(with_lines).order_by(ServiceJob.id).all()]
+        summaries = summaries_for_jobs(db, ids)
+        if warranty_summaries:
+            keep = [i for i in ids if summaries.get(i) in warranty_summaries]
+            q = q.filter(ServiceJob.id.in_(keep)) if keep else q.filter(false())
+    else:
+        summaries = {}
+    if sort == "warranty_summary":
+        all_ids = [str(i) for (i,) in q.with_entities(ServiceJob.id).order_by(ServiceJob.id).all()]
+        rank = {key: n for n, key in enumerate(SUMMARY_ORDER)}
+        sign = 1 if (direction or "desc").lower() == "asc" else -1
+        all_ids.sort(key=lambda i: sign * rank.get(summaries.get(i), len(rank)))  # stable: ties stay by id
+        total = len(all_ids)
+        page_ids = all_ids[(page - 1) * limit : page * limit]
+        found = {str(r[0].id): r for r in _base_query(db).filter(ServiceJob.id.in_(page_ids)).all()}
+        rows = [found[i] for i in page_ids if i in found]
+    else:
+        total = q.count()
+        column = SORTS.get(sort or "", SORTS["job_number"])()
+        order = asc(column) if (direction or "desc").lower() == "asc" else desc(column)
+        if not sort:
+            order = desc(ServiceJob.created_at)
+        rows = q.order_by(order.nulls_last(), ServiceJob.id).offset((page - 1) * limit).limit(limit).all()
+    summaries = {**summaries, **summaries_for_jobs(db, [str(r[0].id) for r in rows if str(r[0].id) not in summaries])}
+    data = []
+    for r in rows:
+        item = serialize(r)
+        item["warranty_summary"] = summaries.get(str(r[0].id))
+        data.append(item)
     return {
-        "data": [serialize(r) for r in rows],
+        "data": data,
         "pagination": {"total": total, "page": page, "limit": limit},
         "empty": total == 0,
     }

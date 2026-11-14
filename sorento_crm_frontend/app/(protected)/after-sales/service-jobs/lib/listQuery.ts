@@ -16,6 +16,7 @@ export function serviceJobsListQueryKey(params: ServiceJobsListParams): QueryKey
     params.searchQuery,
     params.status?.join(',') ?? '',
     params.technician_id?.join(',') ?? '',
+    params.warranty_summary?.join(',') ?? '',
     params.date_from ?? '',
     params.date_to ?? '',
   ];
@@ -30,6 +31,7 @@ export function serviceJobsListParamsFromUrl(params: ListPagerParams): ServiceJo
     searchQuery: params.searchQuery,
     status: f.status ? splitMulti(f.status) : undefined,
     technician_id: f.technician_id ? splitMulti(f.technician_id) : undefined,
+    warranty_summary: f.warranty_summary ? splitMulti(f.warranty_summary) : undefined,
     date_from: f.date_from || undefined,
     date_to: f.date_to || undefined,
   };

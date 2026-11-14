@@ -1159,6 +1159,18 @@ exports[`MENU_SIDEBAR for staff is unchanged > role without projects.projects.vi
 exports[`MENU_SIDEBAR for staff is unchanged > superadmin: filtered menu matches the pre-change snapshot > superadmin 1`] = `
 [
   {
+    "heading": "OPERATIONS",
+  },
+  {
+    "children": [
+      {
+        "path": "/after-sales/warranty",
+        "title": "Warranty Configuration",
+      },
+    ],
+    "title": "After-Sales Service",
+  },
+  {
     "heading": "ADMINISTRATION",
   },
   {

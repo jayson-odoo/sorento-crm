@@ -664,7 +664,10 @@ def test_every_company_id_table_is_registered():
     #   a later file of the same company reuses them, never another company's = 191.
     # + 1 (NON-CANCELLABLE-ITEMS, #2339): `non_cancellable_rules`, one company's default list of
     #   Non-cancellable products / categories, owned exactly as `price_floor_rules` = 192.
-    expected_owned = 192
+    # + 2 (AFTER-SALES-P2: warranty_policies, service_job_products): one company's warranty
+    #   policy versions and a job's product lines; kinds, kind rules and terms are shared or
+    #   reached through the policy = 194.
+    expected_owned = 194
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )

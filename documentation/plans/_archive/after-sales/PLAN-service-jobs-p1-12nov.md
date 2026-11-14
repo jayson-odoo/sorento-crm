@@ -1,6 +1,6 @@
 # PLAN: After-sales P1, service jobs (send a technician to the site)
 
-Status: in build. Track: L (new tables, migration, new screens, new permissions). Lane AFTER-SALES-REVIVE,
+Status: implemented (merged to main fc9c5a2977 as #2365, 13 Nov 2026; owner hand test PASS 13 Nov).
 PR #2365, retitled to "AFTER-SALES-P1: service jobs". Slices P2 to P4 each go on a new branch and PR.
 Owner go: 12 Nov 14:20 MYT ("let's do this and bring the copy for me to test").
 UAC: `service-jobs-p1-acceptance-criteria.md` (alongside).

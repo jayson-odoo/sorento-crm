@@ -26,7 +26,7 @@ They are replaced by:
   Technicians), behind the `after_sales` module and permissions `after_sales.service_jobs.view` /
   `.dispatch` and `after_sales.technicians.manage`.
 
-Status: in build (lane AFTER-SALES-REVIVE, PR #2365). Plan: `PLAN-service-jobs-p1-12nov.md`.
+Status: implemented (#2365 merged 13 Nov 2026).
 Dates in examples are dd/mm/yyyy. Times are MYT.
 
 ## A. Site on the complaint

@@ -38,6 +38,55 @@ export interface ServiceJob {
   completed_at?: string | null;
   verified_at?: string | null;
   created_at?: string | null;
+  /** List rows only: covered | partly_covered | not_covered | unknown, null with no products. */
+  warranty_summary?: string | null;
+  /** The job page only: per product line, with the verdict of each policy term. */
+  warranty?: WarrantyLine[];
+}
+
+export interface WarrantyVerdict {
+  part_name: string | null;
+  verdict: string;
+  expiry: string | null;
+  reason: string;
+  is_lifetime: boolean;
+  installation_included: boolean;
+  policy_version: string | null;
+}
+
+export interface WarrantyLine {
+  id: string;
+  product_code: string | null;
+  product_name: string | null;
+  kind_name: string | null;
+  purchase_date: string | null;
+  defect_label: string | null;
+  verdicts: WarrantyVerdict[];
+}
+
+export interface ServiceJobProduct {
+  id: string;
+  product_id: string;
+  product_code: string | null;
+  product_name: string | null;
+  kind_id: string | null;
+  kind_name: string | null;
+  purchase_date: string | null;
+  defect_type_id: string | null;
+  defect_label: string | null;
+}
+
+export interface ServiceJobProductValues {
+  product_id: string;
+  kind_id: string | null;
+  purchase_date: string | null;
+  defect_type_id: string | null;
+}
+
+export interface CatalogueProduct {
+  id: string;
+  product_code: string;
+  product_name: string;
 }
 
 /** What the Create / Edit dialog sends (E.164 phone). */

@@ -38,7 +38,8 @@ from app.models.workflow_forms import (
 )
 from app.models.complaints import Complaint, ComplaintAttachment, ComplaintManualAttachment, ComplaintFulfilmentOrder
 from app.models.complaint_master_data import ComplaintRootCause, ComplaintResolution
-from app.models.service_jobs import ServiceJob, Technician
+from app.models.service_jobs import ServiceJob, ServiceJobProduct, Technician
+from app.models.warranty import WarrantyKindRule, WarrantyPolicy, WarrantyProductKind, WarrantyTerm
 from app.models.entity_attachment import EntityAttachmentLink
 from app.models.attachment_field_link import AttachmentFieldLink
 from app.models.sla import SLAPolicy, SLAPolicyTier, ConversationSLATracking, ConversationSLAEventLog, FormSLAConfig
