@@ -19,8 +19,18 @@ answer each item rests on.
 - A5. The project payload carries the primary lead: `primary_owner_user_id` +
   `primary_owner_name` [Q1]. The primary is the first owner at registration. It never changes on
   reassign.
-- A6. Backfill [Q1]: for an existing project, the primary is the `from_user_id` of its earliest
-  `owner_reassigned` Activity row, else its current owner.
+- A6. Backfill [Q1, crew 12:10]: only NULLs are filled, idempotent, and the migration logs a count
+  per rule. For an existing project the primary is, in order:
+  1. the `from_user_id` (in `system_payload`) of its EARLIEST `owner_reassigned` row in
+     `public.activity_events` (`system_template`), else
+  2. when the project came from a lead: that lead's `owner_user_id` (the salesperson the lead
+     belonged to when it was qualified), else
+  3. the project's CURRENT owner.
+  `created_by` is never used. Projects carry no import marker (`app/models/projects.py`, no
+  import column; `project_import/service.py` writes none), so "created by an importer" cannot be
+  told apart from "created by a salesperson". Dev shapes: 560 bulk-imported projects with
+  creator != owner, and 3 with creator Salesperson B / owner Salesperson A and no lead. All of
+  them resolve to rule 3, the current owner. A test covers each rule.
 
 ## B. Access card leads list (frontend)
 
