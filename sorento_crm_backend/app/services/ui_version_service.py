@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
-from app.models.user import SystemSetting
+from app.models.user import SystemSetting, UserPermission, UserRolePermission
 from app.services.user_service import UserPermissionService
 
 PREVIEW_SLUG = "ui.v2.preview"
@@ -21,10 +21,25 @@ def kill_switch_on(db: Session) -> bool:
 
 
 def v2_available(db: Session, user) -> bool:
-    """The user holds `ui.v2.preview` AND the company kill switch is on."""
+    """The user holds `ui.v2.preview` AND the company kill switch is on.
+
+    The preview is for the owner alone (UAC journey step 1), so the admin/superadmin shortcut of
+    `check_user_has_permission` does not open it: an admin needs the slug granted to a role too.
+    """
     if not kill_switch_on(db):
         return False
-    return UserPermissionService(db).check_user_has_permission(str(user.id), PREVIEW_SLUG)
+    svc = UserPermissionService(db)
+    uid = str(user.id)
+    if svc.get_user_role_slugs(uid) & {svc.SUPERADMIN_ROLE_SLUG, "admin"}:
+        role_ids = svc.get_user_role_ids(uid)
+        return bool(role_ids) and (
+            db.query(UserPermission.id)
+            .join(UserRolePermission, UserRolePermission.permission_id == UserPermission.id)
+            .filter(UserRolePermission.role_id.in_(role_ids), UserPermission.slug == PREVIEW_SLUG)
+            .first()
+            is not None
+        )
+    return svc.check_user_has_permission(uid, PREVIEW_SLUG)
 
 
 def ui_version_fields(db: Session, user) -> dict:

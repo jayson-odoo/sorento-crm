@@ -30,7 +30,7 @@ from app.services.error_handler import AppException, handle_internal_error
 from app.services.notification_service import NotificationService
 from app.services.product_discontinued_scope_service import serialize_scopes
 from app.services.user_service import UserService, UserPermissionService
-from app.services.ui_version_service import PREVIEW_SLUG, kill_switch_on, ui_version_fields
+from app.services.ui_version_service import ui_version_fields, v2_available
 from app.services.user_avatar_url import resolve_avatar_url_for_client
 from app.utils.multi_value import multi_uuids, multi_values
 
@@ -1050,9 +1050,7 @@ def update_my_ui_version(
         service = UserService(db)
         user_id = current_user["id"]
         if body.ui_version == "v2":
-            if not kill_switch_on(db) or not UserPermissionService(db).check_user_has_permission(
-                user_id, PREVIEW_SLUG
-            ):
+            if not v2_available(db, service.get_user(user_id)):
                 raise AppException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     message="The new version is not available to you",

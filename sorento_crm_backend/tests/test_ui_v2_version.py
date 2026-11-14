@@ -272,3 +272,47 @@ def test_permission_slug_seeded_ungranted(db):
         ).scalar()
         == 1
     )
+
+
+# --------------------------------------------------------------------------- #
+# Journey step 1: only an explicit holder of ui.v2.preview gets v2. The admin   #
+# and superadmin shortcut of check_user_has_permission must NOT open it.        #
+# --------------------------------------------------------------------------- #
+
+
+def _role_user(db, role_slug: str, *, grant_preview: bool) -> str:
+    from app.models.user import UserPermission, UserRoleAssignment
+    db.add(SystemSetting(id=str(uuid.uuid4()), name=f"{TEST_PREFIX} UiV2 Co"))
+    role = db.query(UserRole).filter(UserRole.slug == role_slug).first()
+    if role is None:
+        role = UserRole(slug=role_slug, name=f"{TEST_PREFIX} {role_slug} {uuid.uuid4().hex[:6]}")
+        db.add(role)
+    uid = str(uuid.uuid4())
+    db.add(User(id=uid, email=f"{uid[:8]}@example.com", name=f"{TEST_PREFIX} {role_slug}", status="ACTIVE"))
+    db.flush()
+    db.add(UserRoleAssignment(user_id=uid, role_id=role.id))
+    if grant_preview:
+        perm = db.query(UserPermission).filter(UserPermission.slug == PREVIEW).first()
+        if perm is None:
+            perm = UserPermission(slug=PREVIEW, name="Preview UI v2")
+            db.add(perm)
+            db.flush()
+        db.add(UserRolePermission(role_id=role.id, permission_id=perm.id))
+    db.commit()
+    return uid
+
+
+@pytest.mark.parametrize("role_slug", ["admin", "superadmin"])
+def test_admin_without_explicit_preview_grant_gets_no_v2(db, role_slug):
+    from app.services.ui_version_service import v2_available
+
+    uid = _role_user(db, role_slug, grant_preview=False)
+    assert v2_available(db, db.get(User, uid)) is False
+
+
+@pytest.mark.parametrize("role_slug", ["admin", "superadmin"])
+def test_admin_with_explicit_preview_grant_gets_v2(db, role_slug):
+    from app.services.ui_version_service import v2_available
+
+    uid = _role_user(db, role_slug, grant_preview=True)
+    assert v2_available(db, db.get(User, uid)) is True
