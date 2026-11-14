@@ -74,7 +74,7 @@ export function approverChanges(
 export type SparePartActionsHeader = Pick<
   OrderInquiryHeaderDetail,
   'id' | 'state' | 'currency' | 'can_decide' | 'can_edit' | 'can_revise' | 'submitted_at'
-> & { inquiry_no?: string | null };
+> & { inquiry_no?: string | null; revision_state?: string | null };
 
 /**
  * SPARE-PART-ORDER-REQUEST: the request's moves, in the header card (one main button). The
@@ -82,6 +82,10 @@ export type SparePartActionsHeader = Pick<
  * pending approval (saving restarts approval, G5), Revise on a raised one purchasing has not
  * started on. The current approver: Approve (a popup that lists their changes) and Reject (a
  * reason is required). Nobody else gets a button.
+ *
+ * SPARE-PART-OR-B (U4.2 - U4.4): Revise opens a revision on any approved request. While it is
+ * a draft or rejected the requester changes qtys in the Lines tab and Submits it (no Edit, no
+ * Delete: only qtys change); while it is pending the decider gets Approve and Reject.
  */
 export function SparePartRequestActions({
   header,
@@ -236,6 +240,21 @@ export function SparePartRequestActions({
     );
   }
 
+  const submitButton = (
+    <Button
+      size="sm"
+      onClick={() => submit.mutate(id, { onError: (e: Error) => toast.error(e.message) })}
+      disabled={submit.isPending}
+    >
+      {submit.isPending ? <LoaderCircle className="size-4 animate-spin" /> : null}
+      Submit
+    </Button>
+  );
+
+  if (header.can_edit && header.revision_state) {
+    return <div className="flex items-center gap-2">{submitButton}</div>;
+  }
+
   if (header.can_edit) {
     if (deletion.countdown) return <div className="flex items-center gap-2">{deletion.countdown}</div>;
     const editLink = (
@@ -258,10 +277,7 @@ export function SparePartRequestActions({
           Delete draft
         </Button>
         {editLink}
-        <Button size="sm" onClick={() => submit.mutate(id, { onError: (e: Error) => toast.error(e.message) })} disabled={submit.isPending}>
-          {submit.isPending ? <LoaderCircle className="size-4 animate-spin" /> : null}
-          Submit
-        </Button>
+        {submitButton}
       </div>
     );
   }
