@@ -84,6 +84,8 @@ export default function AppearancePage() {
     onSuccess: () => {
       toast.success('Brand colour saved');
       void queryClient.invalidateQueries({ queryKey: ['system-settings'] });
+      // The v2 shell reads the brand from app-config (components/v2/theme/useCompanyTheme).
+      void queryClient.invalidateQueries({ queryKey: ['system-app-config'] });
     },
     onError: (error: Error) => {
       toast.error(error.message || 'Could not save the brand colour');
