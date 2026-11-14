@@ -17,6 +17,7 @@ from app.services.assistant_registry.query import MAX_GROUPS, MAX_ROWS, QueryRef
 from app.services.chatbot import principal as staff_principal
 from app.services.chatbot.agent import writes
 from app.services.chatbot.agent.tools import TOOL_LABELS, ToolResult, cap_result
+from app.services.chatbot.composers.sets import more_line, next_count
 
 QUERY = "crm_query"
 DESCRIBE = "crm_describe"
@@ -100,6 +101,15 @@ CARD_INSTRUCTION = (
     "The full table is shown to the user under your reply by the system. Write ONE short line (the headline "
     "figure from totals), do not list or repeat the rows, and do not repeat the period or note."
 )
+#: What the model writes under a next-tier table (crew pass 6882082161, L51 / L82: on a typo and a Malay question the
+#: model wrote its own paragraph repeating the figures, with an en-dash range and raw `*`). The reply stays the
+#: model's (owner 14 Nov): the tool says what it is.
+DISTANCE_INSTRUCTION = (
+    "The table and its next-tier lines are shown to the user under your reply by the system: they ARE the answer. "
+    "Write at most ONE short line before them, in the user's language, and do not repeat any figure, name, tier, "
+    "period or date from them. Plain text, no markdown (no *, no #, no bullets). Any date range you write reads "
+    "dd/mm/yyyy - dd/mm/yyyy. If the user asked something the table does not answer, say that in one more line."
+)
 
 
 def _cell(value: Any) -> str:
@@ -145,15 +155,31 @@ def render_card(data: dict, *, title: str, panel: bool) -> str:
             lines.append(f"- {_cell(item.get(first['key']))}: {values}" if values else f"- {_cell(item.get(first['key']))}")
         if totals:
             lines.append("Total: " + ", ".join(f"{c['label']} {_cell(totals[c['key']])}" for c in columns if c["key"] in totals))
-    shown, whole = len(items), data.get("total_groups", data.get("total"))
-    if data.get("truncated") and whole:
+    shown, whole, skip = len(items), data.get("total_groups", data.get("total")), int(data.get("offset") or 0)
+    if skip and shown and whole:
+        # A later page ("more"): which rows it shows.
+        lines.append(f"Showing {skip + 1:,} to {skip + shown:,} of {int(whole):,}.")
+    elif data.get("truncated") and whole:
         if data.get("ranked_by"):
             lines.append(f"Top {shown:,} of {int(whole):,} by {str(data['ranked_by']).lower()}.")
         else:
             lines.append(f"Showing {shown:,} of {int(whole):,}.")
     if data.get("scope_note"):
         lines.append(data["scope_note"])
+    left = _left(data)
+    if left:
+        # The standard last line of a cut list (owner L85); "more" pages on (`offset`).
+        lines.append(more_line(left))
     return "\n".join(lines)
+
+
+def _left(data: dict) -> int:
+    """How many rows (or groups) the next page shows: what is left after this page, never past this page's size."""
+    items = data.get("groups") if "groups" in data else data.get("rows")
+    shown, whole = len(items or []), data.get("total_groups", data.get("total"))
+    if not data.get("truncated") or not whole or not shown:
+        return 0
+    return next_count(int(whole), int(data.get("offset") or 0), shown, shown)
 
 
 def as_card(data: dict, *, panel: bool) -> ToolResult | None:
@@ -175,15 +201,19 @@ def as_card(data: dict, *, panel: bool) -> ToolResult | None:
     summary = {
         "entity": data.get("entity"),
         "shown_to_user": True,
-        "instruction": CARD_INSTRUCTION,
+        "instruction": DISTANCE_INSTRUCTION if distance else CARD_INSTRUCTION,
         "period_display": data.get("period_display"),
         "scope_note": data.get("scope_note"),
         "truncated": data.get("truncated"),
         "sample": items[:SAMPLE_ROWS],
     }
-    for key in ("total", "total_groups", "totals", "restricted", "ranked_by"):
+    for key in ("total", "total_groups", "totals", "restricted", "ranked_by", "offset"):
         if key in data:
             summary[key] = data[key]
+    # Paging for "more" (`offset`): what the next page would show, and the offset that asks for it.
+    summary["more"] = _left(data)
+    if summary["more"]:
+        summary["next_offset"] = int(data.get("offset") or 0) + len(items)
     return ToolResult("ok", data=summary, display=render_card(data, title=title, panel=panel))
 
 
@@ -310,6 +340,13 @@ QUERY_SCHEMA = {
                     "type": "object", "properties": {"field": _TEXT, "dir": _TEXT}, "required": ["field"],
                 }},
                 "limit": {"type": "integer"},
+                "offset": {
+                    "type": "integer",
+                    "description": "The next page of a cut list. When the user asks for more of the list you last "
+                    "showed (more, next, the rest, in any language), make the same crm_query call again with "
+                    "offset = the rows already shown (the earlier offset plus its rows; a cut result gives it as "
+                    "`next_offset`). Leave it out otherwise.",
+                },
                 "about_self": {
                     "type": "boolean",
                     "description": "true when the user asks about their own figures: they say my / mine / me, "

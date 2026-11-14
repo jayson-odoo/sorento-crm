@@ -28,6 +28,7 @@ from app.services.assistant_registry.query import (
     _display_date,
     _limit,
     _list,
+    _offset,
     _plain,
     _scalar,
     _sort_dir,
@@ -568,9 +569,9 @@ def _rows(entity: EntityDef, slugs: set[str], rows: list[dict], sort: list[dict]
     if ranked:
         order = [(entity.rank_by, "desc")]
     rows = _sorted(list(rows), order) if order else rows
-    limit = _limit(spec, MAX_ROWS, entity.default_limit or DEFAULT_ROWS)
+    limit, skip = _limit(spec, MAX_ROWS, entity.default_limit or DEFAULT_ROWS), _offset(spec)
     out_rows = []
-    for row in rows[:limit]:
+    for row in rows[skip:skip + limit]:
         item = {"id": str(row.get("id"))}
         if entity.screen_path:
             item["link"] = entity.screen_path.format(**row)
@@ -588,12 +589,12 @@ def _rows(entity: EntityDef, slugs: set[str], rows: list[dict], sort: list[dict]
         {"key": f, "label": entity.fields[f].label} for f in shown if f not in entity.name_by
     ]
     out = {
-        "entity": entity.key, "rows": out_rows, "total": len(rows), "truncated": len(rows) > len(out_rows),
-        "restricted": restricted, "columns": columns,
+        "entity": entity.key, "rows": out_rows, "total": len(rows), "truncated": len(rows) > skip + len(out_rows),
+        "restricted": restricted, "columns": columns, "offset": skip,
     }
     if dropped:
         out["columns_dropped"] = dropped
-    if ranked and out["truncated"]:
+    if ranked and (out["truncated"] or skip):
         out["ranked_by"] = entity.fields[entity.rank_by].label
     shown_keys = {c["key"] for c in columns}
     totals = {}
@@ -637,8 +638,9 @@ def _groups(entity: EntityDef, rows: list[dict], key_rows, agg_rows, sort: list[
     groups = _sorted(groups, order)
     total_groups = len(groups)
     every = groups
-    groups = groups[: _limit(spec, MAX_GROUPS, MAX_GROUPS)]
-    truncated = total_groups > len(groups)
+    skip = _offset(spec)
+    groups = groups[skip:skip + _limit(spec, MAX_GROUPS, MAX_GROUPS)]
+    truncated = total_groups > skip + len(groups)
     totals = {}
     # Over every group, shown or not (crew live x3: a cut list had no totals row at all).
     if key_rows:
@@ -655,10 +657,11 @@ def _groups(entity: EntityDef, rows: list[dict], key_rows, agg_rows, sort: list[
         "groups": [{k: _plain(v) for k, v in g.items()} for g in groups],
         "total_groups": total_groups,
         "truncated": truncated,
+        "offset": skip,
         "columns": [{"key": name, "label": label, "group": True} for name, _fn, label in key_rows]
         + [{"key": alias, "label": label} for alias, _fn, label in agg_rows],
         "totals": totals,
     }
-    if ranked and truncated:
+    if ranked and (truncated or skip):
         out["ranked_by"] = next(label for alias, _fn, label in agg_rows if alias == rank)
     return out

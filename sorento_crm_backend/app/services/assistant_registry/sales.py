@@ -84,6 +84,10 @@ def _next_tier_spec(spec: dict) -> dict:
         )
     out = {k: v for k, v in spec.items() if k not in ("group_by", "aggregates", "fields", "sort")}
     out["fields"] = list(NEXT_TIER_COLUMNS)
+    # One page is NEXT_LINES rows, each with its own next-tier sentence; "more" pages on (`offset`, owner L85).
+    raw = spec.get("limit")
+    if raw is None or (isinstance(raw, int) and not isinstance(raw, bool) and raw >= 1):
+        out["limit"] = min(raw or NEXT_LINES, NEXT_LINES)
     out["sort"] = [{"field": "to_next_tier", "dir": "desc" if kind == "furthest" else "asc"}]
     if subjects in ("agent", "dealer", "team"):
         filters = [
@@ -492,7 +496,7 @@ def _live(periods: list[dict]) -> dict:
     return started[-1] if started else periods[0]
 
 
-#: The most next-tier lines one answer carries.
+#: The rows of one next-tier page, each with its next-tier lines ("more" pages on).
 NEXT_LINES = 10
 
 
@@ -551,9 +555,9 @@ def _summary_note(rows: list[dict], used: set[str] = frozenset()) -> str | None:
         who = "agent target" if all(r["owner_kind"] == "agent" for r in rows) else "target"
         parts.insert(0, f"No {who} has a commission ladder this period.")
     if lines:
-        parts.append("Next tier: " + " ".join(lines[:NEXT_LINES]))
-        if len(lines) > NEXT_LINES:
-            parts.append(f"And {len(lines) - NEXT_LINES} more targets: ask for one agent, team or dealer.")
+        # Every row shown has its lines: a next-tier page is at most NEXT_LINES rows (`_next_tier_spec`), and the
+        # rest come with "more" (owner L85), never an "ask for one" line.
+        parts.append("Next tier: " + " ".join(lines))
     return " ".join(parts) or None
 
 
