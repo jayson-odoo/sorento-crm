@@ -842,7 +842,9 @@ describe('POIntakeLinesGrid numeric cells: no remount, stable format, live amoun
     expect(onUpdateLine).not.toHaveBeenCalled();
   });
 
-  it('fills Amount live from qty x unit price when the paper printed none, and commits both on blur', async () => {
+  // Contract change (qty-edit review item B, lead sign-off): the server owns the computed
+  // amount, so the blur commits the typed figure only.
+  it('fills Amount live from qty x unit price when the paper printed none, and commits only the qty on blur', async () => {
     renderGrid([
       line({
         id: 'l1',
@@ -866,7 +868,7 @@ describe('POIntakeLinesGrid numeric cells: no remount, stable format, live amoun
 
     fireEvent.blur(qty);
     expect(onUpdateLine).toHaveBeenCalledTimes(1);
-    expect(onUpdateLine).toHaveBeenCalledWith('l1', { qty: '3', amount: '375.00' });
+    expect(onUpdateLine).toHaveBeenCalledWith('l1', { qty: '3' });
   });
 
   it('never touches a printed Amount, but clears the Flag live once the line multiplies out', async () => {
@@ -920,7 +922,7 @@ describe('POIntakeLinesGrid numeric cells: no remount, stable format, live amoun
     expect(onUpdateLine).toHaveBeenCalledWith('l1', { qty: '920' });
   });
 
-  it('fills Amount live from a typed Unit price when the paper printed none', async () => {
+  it('fills Amount live from a typed Unit price when the paper printed none, committing only the price', async () => {
     renderGrid([
       line({
         id: 'l1',
@@ -940,7 +942,7 @@ describe('POIntakeLinesGrid numeric cells: no remount, stable format, live amoun
 
     fireEvent.blur(price);
     expect(onUpdateLine).toHaveBeenCalledTimes(1);
-    expect(onUpdateLine).toHaveBeenCalledWith('l1', { unit_price: '125', amount: '375.00' });
+    expect(onUpdateLine).toHaveBeenCalledWith('l1', { unit_price: '125' });
   });
 
   it('keeps the Flag cell on one line, so a badge change cannot change the row height', async () => {
@@ -1025,6 +1027,158 @@ describe('POIntakeLinesGrid suggestion tooltip', () => {
     expect(title).toMatch(/unit price/i);
     expect(title).toMatch(/divided|worked out/i);
     expect(title).not.toMatch(INTERNAL);
+  });
+});
+
+/**
+ * PO-UPLOAD-MATCHING qty-edit review items A-D (reviewer on 2d0dc953).
+ *
+ * A: a unit price is read at 5 decimals and the amount rounds half-even to the cent, like the
+ *    server's Decimal quantize, so a 3+ decimal price never raises a false "Should be".
+ * B: the server owns a computed amount (`amount_computed` per line); the grid previews
+ *    qty x price live on such a line and sends only the typed figure.
+ * C: a second edit typed while the first save is in flight is kept and committed.
+ * D: what was typed survives the server's 4-decimal echo.
+ */
+describe('POIntakeLinesGrid qty-edit review items', () => {
+  const box = (label: string) => screen.getByLabelText(label) as HTMLInputElement;
+
+  function computedLine(overrides: Partial<POVersionLine> = {}): POVersionLine {
+    return line({
+      id: 'l1',
+      line_no: 1,
+      qty: '1.0000',
+      unit_price: '10.00000',
+      amount: '10.00',
+      arithmetic_ok: true,
+      amount_computed: true,
+      ...overrides,
+    } as Partial<POVersionLine>);
+  }
+
+  it('A: 100 x 1.25500 previews 125.50 on a line with no printed amount', async () => {
+    renderGrid([
+      line({
+        id: 'l1',
+        line_no: 1,
+        qty: '',
+        unit_price: '1.25500',
+        amount: null as unknown as string,
+        arithmetic_ok: false,
+        amount_computed: true,
+      } as Partial<POVersionLine>),
+    ]);
+
+    const qty = (await screen.findByLabelText('Quantity on line 1')) as HTMLInputElement;
+    fireEvent.change(qty, { target: { value: '100' } });
+
+    expect(box('Amount on line 1').value).toBe('125.50');
+    expect(screen.queryByText(/^Should be RM/)).toBeNull();
+    expect(screen.queryByText('Does not multiply out')).toBeNull();
+  });
+
+  it('A: rounds half-even to the cent like the server (1 x 1.24500 is 1.24)', async () => {
+    renderGrid([
+      computedLine({ qty: '', unit_price: '1.24500', amount: null as unknown as string }),
+    ]);
+
+    const qty = (await screen.findByLabelText('Quantity on line 1')) as HTMLInputElement;
+    fireEvent.change(qty, { target: { value: '1' } });
+
+    expect(box('Amount on line 1').value).toBe('1.24');
+  });
+
+  it('A: a printed amount that matches a 3+ decimal price raises no false "Should be"', async () => {
+    renderGrid([
+      line({
+        id: 'l1',
+        line_no: 1,
+        qty: '100.0000',
+        unit_price: '1.25500',
+        amount: '125.50',
+        arithmetic_ok: true,
+      }),
+    ]);
+
+    const qty = (await screen.findByLabelText('Quantity on line 1')) as HTMLInputElement;
+    expect(screen.queryByText(/^Should be RM/)).toBeNull();
+
+    fireEvent.change(qty, { target: { value: '100' } });
+    expect(screen.queryByText(/^Should be RM/)).toBeNull();
+
+    fireEvent.change(qty, { target: { value: '200' } });
+    expect(screen.getByText('Should be RM 251.00')).toBeInTheDocument();
+    expect(box('Amount on line 1').value).toBe('125.50');
+  });
+
+  it('B: on an amount_computed line the Amount follows the qty and only the qty is sent', async () => {
+    renderGrid([computedLine()]);
+
+    const qty = (await screen.findByLabelText('Quantity on line 1')) as HTMLInputElement;
+    fireEvent.change(qty, { target: { value: '2' } });
+
+    expect(box('Amount on line 1').value).toBe('20.00');
+    expect(screen.queryByText(/^Should be RM/)).toBeNull();
+
+    fireEvent.blur(qty);
+    expect(onUpdateLine).toHaveBeenCalledTimes(1);
+    expect(onUpdateLine).toHaveBeenCalledWith('l1', { qty: '2' });
+  });
+
+  it('B: on an amount_computed line a price edit sends only the price', async () => {
+    renderGrid([computedLine({ qty: '3.0000', amount: '30.00' })]);
+
+    const price = (await screen.findByLabelText('Unit price on line 1')) as HTMLInputElement;
+    fireEvent.change(price, { target: { value: '12.5' } });
+
+    expect(box('Amount on line 1').value).toBe('37.50');
+    fireEvent.blur(price);
+    expect(onUpdateLine).toHaveBeenCalledTimes(1);
+    expect(onUpdateLine).toHaveBeenCalledWith('l1', { unit_price: '12.5' });
+  });
+
+  it('C: a second edit typed while the first save is in flight is kept, then committed', async () => {
+    let resolveFirst: () => void = () => {};
+    onUpdateLine.mockImplementationOnce(
+      () => new Promise<void>((resolve) => (resolveFirst = resolve)),
+    );
+    const { rerenderWith } = renderGrid([line({ id: 'l1', line_no: 1 })]);
+
+    const qty = (await screen.findByLabelText('Quantity on line 1')) as HTMLInputElement;
+    fireEvent.change(qty, { target: { value: '2' } });
+    fireEvent.blur(qty);
+    expect(onUpdateLine).toHaveBeenCalledTimes(1);
+    expect(onUpdateLine).toHaveBeenLastCalledWith('l1', { qty: '2' });
+
+    fireEvent.focus(qty);
+    fireEvent.change(qty, { target: { value: '3' } });
+
+    await act(async () => {
+      resolveFirst();
+    });
+    // The parent applies the first save and hands back the server's echo of "2".
+    rerenderWith([line({ id: 'l1', line_no: 1, qty: '2.0000', arithmetic_ok: false })]);
+
+    expect(box('Quantity on line 1')).toBe(qty);
+    expect(qty.value).toBe('3');
+
+    fireEvent.blur(qty);
+    expect(onUpdateLine).toHaveBeenCalledTimes(2);
+    expect(onUpdateLine).toHaveBeenLastCalledWith('l1', { qty: '3' });
+  });
+
+  it('D: a typed "1.50" survives the server echo "1.5000" in the same box', async () => {
+    const { rerenderWith } = renderGrid([line({ id: 'l1', line_no: 1 })]);
+
+    const qty = (await screen.findByLabelText('Quantity on line 1')) as HTMLInputElement;
+    fireEvent.change(qty, { target: { value: '1.50' } });
+    fireEvent.blur(qty);
+    expect(onUpdateLine).toHaveBeenCalledTimes(1);
+
+    rerenderWith([line({ id: 'l1', line_no: 1, qty: '1.5000', arithmetic_ok: false })]);
+
+    expect(box('Quantity on line 1')).toBe(qty);
+    expect(qty.value).toBe('1.50');
   });
 });
 

@@ -322,6 +322,9 @@ describe('POIntakeConfirmClient', () => {
     expect(await screen.findByText('PO HQ/26/01/041 v1')).toBeInTheDocument();
     expect(screen.queryByLabelText('PO number')).toBeNull();
     expect(screen.getByLabelText('Quantity on line 1')).toHaveValue(927);
+    // Qty-edit review item E: the characters on screen, not a 4-decimal server echo.
+    expect(screen.getByLabelText('Quantity on line 1')).toHaveDisplayValue('927');
+    expect(screen.getByLabelText('Quantity on line 1')).not.toHaveDisplayValue('927.0000');
     // The note names line 1, so its compact indicator shows there, on the Lines tab -
     // owner hand test 25 Sep 2026, item 2: the text itself is one click away in a popover,
     // not always open under the row.

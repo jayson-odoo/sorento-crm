@@ -2004,3 +2004,139 @@ def test_crew5_the_matcher_prompt_says_a_variant_only_one_code_carries_is_not_a_
     assert re.search(r"(do not|don't|must not|never) pick", lowered), text
     assert "options" in lowered, text
 
+
+
+# ======================================================== qty-edit review items (A, B)
+
+
+def _amt(value) -> Optional[Decimal]:
+    return None if value is None else Decimal(str(value))
+
+
+def _amount_version(db, project, owner, number: str, *rows):
+    _products(db, project.company_id, "CKS903")
+    po, _c = _customer_po(db, project, owner, number)
+    version = _version(db, po)
+    service = ProjectPOExtractionService(db)
+    service.persist_pages(version, [_page(1, lines=list(rows))])
+    return service, version, _lines(service, version)
+
+
+def test_qe_b_an_unprinted_amount_is_marked_computed_and_a_printed_one_is_not(seeded, matcher):
+    db, project, owner = seeded
+    service, version, _l = _amount_version(
+        db, project, owner, "ZZT-QE-B1",
+        {"no": 1, "stock_code": "CKS903", "qty": 1, "unit_price": 10.0, "amount": None},
+        {"no": 2, "stock_code": "CKS903", "qty": 1, "unit_price": 10.0, "amount": 10.0},
+    )
+
+    assert _match(version, 1).get("amount_computed") is True
+    assert not _match(version, 2).get("amount_computed")
+    body = service.serialize_version(version)
+    serialized = {line["line_no"]: line for line in body["lines"]}
+    assert serialized[1]["amount_computed"] is True
+    assert serialized[2]["amount_computed"] is False
+    assert body["suggestion_count"] == 0, "a computed amount is not a suggestion to accept"
+
+
+def test_qe_b_a_qty_edit_moves_a_computed_amount(seeded, matcher):
+    db, project, owner = seeded
+    service, version, lines = _amount_version(
+        db, project, owner, "ZZT-QE-B2",
+        {"no": 1, "stock_code": "CKS903", "qty": None, "unit_price": 10.0, "amount": None},
+    )
+
+    service.update_line(
+        version=version, line=lines[1], payload={"qty": Decimal("1")}, actor_user_id=owner
+    )
+    assert _amt(lines[1].amount) == Decimal("10.00")
+
+    service.update_line(
+        version=version, line=lines[1], payload={"qty": Decimal("2")}, actor_user_id=owner
+    )
+
+    assert _amt(lines[1].amount) == Decimal("20.00")
+    assert lines[1].arithmetic_ok is True
+    assert _match(version, 1).get("amount_computed") is True
+
+
+def test_qe_b_a_price_edit_moves_a_computed_amount(seeded, matcher):
+    db, project, owner = seeded
+    service, version, lines = _amount_version(
+        db, project, owner, "ZZT-QE-B3",
+        {"no": 1, "stock_code": "CKS903", "qty": 3, "unit_price": None, "amount": None},
+    )
+
+    service.update_line(
+        version=version,
+        line=lines[1],
+        payload={"unit_price": Decimal("12.5")},
+        actor_user_id=owner,
+    )
+
+    assert _amt(lines[1].amount) == Decimal("37.50")
+    assert lines[1].arithmetic_ok is True
+
+
+@pytest.mark.parametrize(
+    "price, qty, expected",
+    [("1.25500", "100", "125.50"), ("1.24500", "1", "1.24"), ("1.25500", "1", "1.26")],
+    ids=["five-decimal-price", "half-even-down", "half-even-up"],
+)
+def test_qe_a_a_computed_amount_rounds_half_even_from_a_five_decimal_price(
+    seeded, matcher, price, qty, expected
+):
+    db, project, owner = seeded
+    service, version, lines = _amount_version(
+        db, project, owner, f"ZZT-QE-A-{price}-{qty}",
+        {"no": 1, "stock_code": "CKS903", "qty": None, "unit_price": float(price), "amount": None},
+    )
+
+    service.update_line(
+        version=version, line=lines[1], payload={"qty": Decimal(qty)}, actor_user_id=owner
+    )
+
+    assert _amt(lines[1].amount) == Decimal(expected)
+    assert lines[1].arithmetic_ok is True
+
+
+def test_qe_b_typing_an_amount_clears_computed_and_it_never_moves_again(seeded, matcher):
+    db, project, owner = seeded
+    service, version, lines = _amount_version(
+        db, project, owner, "ZZT-QE-B4",
+        {"no": 1, "stock_code": "CKS903", "qty": 1, "unit_price": 10.0, "amount": None},
+    )
+
+    service.update_line(
+        version=version, line=lines[1], payload={"amount": Decimal("12.00")}, actor_user_id=owner
+    )
+    assert not _match(version, 1).get("amount_computed")
+
+    service.update_line(
+        version=version, line=lines[1], payload={"qty": Decimal("2")}, actor_user_id=owner
+    )
+
+    assert _amt(lines[1].amount) == Decimal("12.00")
+    assert lines[1].arithmetic_ok is False
+    assert _serialized(service, version)[1]["amount_computed"] is False
+
+
+def test_qe_b_a_printed_amount_is_never_moved_by_a_qty_or_price_edit(seeded, matcher):
+    db, project, owner = seeded
+    service, version, lines = _amount_version(
+        db, project, owner, "ZZT-QE-B5",
+        {"no": 1, "stock_code": "CKS903", "qty": 1, "unit_price": 10.0, "amount": 10.0},
+    )
+
+    service.update_line(
+        version=version, line=lines[1], payload={"qty": Decimal("2")}, actor_user_id=owner
+    )
+    service.update_line(
+        version=version,
+        line=lines[1],
+        payload={"unit_price": Decimal("11")},
+        actor_user_id=owner,
+    )
+
+    assert _amt(lines[1].amount) == Decimal("10.00")
+    assert lines[1].arithmetic_ok is False
