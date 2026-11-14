@@ -20,7 +20,7 @@ chose (D1): a short core set always, plus a step to load the rest when needed, a
 | Permission filter for the list | `access.py:244-248` `permitted_tools`, `writes.py:487-512` | reused as is: the directory is built only from what these return |
 | Call-time permission check | `tools.py:1489-1521` (`dispatch`), contact guard `loop.py:2316-2323` | unchanged: a call is checked by name against the permitted lists, never against what was sent |
 | Narrowing after a query / quotation lines / agent resolve | `loop.py:88-145` `narrow_after_query`, `loop.py:2481` | retired: with a short core set there is nothing to narrow, and a list that only grows keeps the provider cache prefix stable |
-| Tool label per name (plain words) | `TOOL_LABELS` (`loop.py`, used at `:1398`) | first source of a directory line when present |
+| Tool label per name (plain words) | `TOOL_LABELS` (`services/chatbot/agent/tools.py:225`, used at `loop.py:1398`) | first source of a directory line when present |
 | Dealer flow list | `loop.py:1697` `dealer_schemas` | unchanged |
 | Confirm removed from step 2 on | `loop.py:2224-2227` | unchanged (safety rule) |
 | Trace per step | `loop.py:1991-2007` (`tools_offered`, `tool_schema_chars`) and `_context_record` `loop.py:1320` | add the loaded tool names; used to check the targets |
