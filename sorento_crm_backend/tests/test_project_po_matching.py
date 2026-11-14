@@ -1278,6 +1278,7 @@ class _FakeProvider:
         self.answer = answer
         self.messages: List[List[dict]] = []
         self.kwargs: List[dict] = []
+        self.tokens = (1, 1)
 
     def chat(self, messages, **kwargs):
         import json
@@ -1289,9 +1290,9 @@ class _FakeProvider:
         user = next(m for m in messages if m["role"] == "user")["content"]
         return ChatResult(
             content=json.dumps(self.answer(json.loads(user))),
-            prompt_tokens=1,
-            completion_tokens=1,
-            total_tokens=2,
+            prompt_tokens=self.tokens[0],
+            completion_tokens=self.tokens[1],
+            total_tokens=self.tokens[0] + self.tokens[1],
         )
 
     def system_text(self) -> str:
@@ -1707,4 +1708,299 @@ def test_fix8_the_schema_tells_the_model_what_printed_total_is():
     assert description.strip(), "printed_total carries no description for the model"
     assert "total" in description
     assert "printed" in description or "grand" in description
+
+
+# ======================================================== crew pass items 1-5
+
+
+@pytest.mark.parametrize(
+    "later",
+    ["SORENTO BBTSRTWT9121 -GM **", "SORENTO BBTSRTWT9121GM", "sorento bbtsrtwt9121-gm"],
+    ids=["spaced-dash-and-marks", "no-dash", "lower-case"],
+)
+def test_crew1_a_remembered_code_matches_its_spacing_and_dash_variants(seeded, matcher, later):
+    """Owner ruling 13 Nov: dash and space variants of a code are the SAME code."""
+    db, project, owner = seeded
+    ids = _products(db, project.company_id, "SRTWT9121-GM")
+    po, customer = _customer_po(db, project, owner, "ZZT-C1")
+    version = _version(db, po)
+    service = ProjectPOExtractionService(db)
+    service.persist_pages(version, [_page(1, lines=[_row(1, code="SORENTO BBTSRTWT9121-GM")])])
+    service.update_line(
+        version=version,
+        line=_lines(service, version)[1],
+        payload={"resolved_product_id": ids["SRTWT9121-GM"]},
+        actor_user_id=owner,
+    )
+
+    second_po, _same = _customer_po(db, project, owner, "ZZT-C1-2", customer=customer)
+    second = _version(db, second_po)
+    service.persist_pages(second, [_page(1, lines=[_row(1, code=later)])])
+
+    line = _lines(service, second)[1]
+    assert line.resolution_source == "map", f"{later!r} did not match the remembered code"
+    assert line.resolved_product_id == ids["SRTWT9121-GM"]
+    assert 1 not in matcher.sent_line_nos()
+
+
+def test_crew1_remembering_a_spacing_variant_updates_the_one_row(seeded):
+    from app.services import customer_code_map
+
+    db, project, owner = seeded
+    ids = _products(db, project.company_id, "CKS903", "SRT73-CR")
+    customer = _customer(db, project.company_id)
+    for code, product in (("X 1-BL", "CKS903"), ("X1BL", "SRT73-CR")):
+        customer_code_map.remember_code(
+            db,
+            company_id=project.company_id,
+            customer_id=customer.id,
+            customer_code=code,
+            product_id=ids[product],
+            actor_user_id=owner,
+        )
+    db.flush()
+
+    rows = (
+        db.query(CustomerItemCodeMap)
+        .filter(CustomerItemCodeMap.customer_id == customer.id)
+        .all()
+    )
+    assert len(rows) == 1, [row.customer_code for row in rows]
+    assert rows[0].product_id == ids["SRT73-CR"]
+
+
+def test_crew1_normalising_never_merges_genuinely_different_codes(seeded, matcher):
+    """`CB310-CR-L` remembered says nothing about `CB310-CR`."""
+    from app.services import customer_code_map
+
+    db, project, owner = seeded
+    ids = _products(db, project.company_id, "CB310-CR-L")
+    po, customer = _customer_po(db, project, owner, "ZZT-C1C")
+    customer_code_map.remember_code(
+        db,
+        company_id=project.company_id,
+        customer_id=customer.id,
+        customer_code="CB310-CR-L",
+        product_id=ids["CB310-CR-L"],
+        actor_user_id=owner,
+    )
+    version = _version(db, po)
+    service = ProjectPOExtractionService(db)
+
+    service.persist_pages(version, [_page(1, lines=[_row(1, code="CB310-CR")])])
+
+    line = _lines(service, version)[1]
+    assert line.resolution_source != "map"
+    assert line.resolved_product_id is None
+
+
+def test_crew1_a_description_key_matches_its_spacing_and_dash_variants(seeded, matcher):
+    db, project, owner = seeded
+    ids = _products(db, project.company_id, "CKS903")
+    po, customer = _customer_po(db, project, owner, "ZZT-C1D")
+    version = _version(db, po)
+    service = ProjectPOExtractionService(db)
+    service.persist_pages(version, [_page(1, lines=[_row(1, description="ZZT WALL-HUNG WC 77")])])
+    service.update_line(
+        version=version,
+        line=_lines(service, version)[1],
+        payload={"resolved_product_id": ids["CKS903"]},
+        actor_user_id=owner,
+    )
+
+    second_po, _same = _customer_po(db, project, owner, "ZZT-C1D-2", customer=customer)
+    second = _version(db, second_po)
+    service.persist_pages(second, [_page(1, lines=[_row(1, description="ZZT WALL HUNG WC-77")])])
+
+    line = _lines(service, second)[1]
+    assert line.resolution_source == "map"
+    assert line.resolved_product_id == ids["CKS903"]
+
+
+def test_crew1_the_schedule_matcher_honours_the_same_comparison(seeded):
+    """The delivery-schedule column lookup goes through the shared helper too."""
+    from app.services import customer_code_map
+    from app.services.project_schedule_service import ProjectScheduleService
+
+    from .test_project_schedule_intake import _page as _schedule_page
+    from .test_project_schedule_intake import _po_with_version, _schedule_version
+    from .test_project_schedule_intake import _product as _schedule_product
+
+    db, project, owner = seeded
+    customer = _customer(db, project.company_id)
+    product = _schedule_product(db, "ZZT-WC-91", "ZZT wall hung")
+    po, po_version = _po_with_version(db, project, owner, customer, [(product, "10")])
+    version = _schedule_version(db, project, po, po_version)
+    customer_code_map.remember_code(
+        db,
+        company_id=project.company_id,
+        customer_id=customer.id,
+        customer_code="BUI-HB XX-9931",
+        product_id=product.id,
+        actor_user_id=owner,
+    )
+    page = _schedule_page(
+        products=[{"col": 1, "customer_code": "BUI-HB-XX9931", "code": None, "name": "Mystery"}],
+        phases=[{"row": 1, "area_group": "TOWER", "label": "Level 2", "delivery_date": "2026-07-01"}],
+        cells=[{"row": 1, "col": 1, "qty": 10}],
+        totals=[{"col": 1, "qty": 10}],
+    )
+    service = ProjectScheduleService(db)
+
+    service.persist_pages(version, [(1, page)])
+    db.flush()
+
+    column = service.get_version_detail(version.id)["products"][0]
+    assert column["resolution_source"] == "map"
+    assert column["product_id"] == product.id
+
+
+def test_crew2_setting_the_issuer_later_lets_an_accept_teach_that_customer(seeded, matcher):
+    """No issuer and no lead buyer: nothing is learned. Set the issuer through the existing
+    PO update path, and the next accept remembers the code for that customer."""
+    from app.services import project_po_service as po_svc
+
+    from .test_project_po_intake import _po
+
+    db, project, owner = seeded
+    ids = _products(db, project.company_id, "CKS903", "SRT73-CR")
+    po = _po(db, project, owner, "ZZT-C2")
+    assert po.issuing_party_id is None
+    matcher.answers[1] = {"product_code": "CKS903", "confidence": "high", "options": []}
+    matcher.answers[2] = {"product_code": "SRT73-CR", "confidence": "high", "options": []}
+    version = _version(db, po)
+    service = ProjectPOExtractionService(db)
+    service.persist_pages(
+        version,
+        [
+            _page(
+                1,
+                lines=[
+                    _row(1, code="BBTCKS903", description="CABANA BBTCKS903"),
+                    _row(2, code="BBTSRT73-CR", description="SORENTO BBTSRT73-CR"),
+                ],
+            )
+        ],
+    )
+    lines = _lines(service, version)
+    assert lines[1].resolution_source == "suggested"
+    assert lines[2].resolution_source == "suggested"
+
+    service.accept_suggestion(version, lines[1], actor_user_id=owner)
+    assert (
+        db.query(CustomerItemCodeMap)
+        .filter(func.upper(CustomerItemCodeMap.customer_code) == "BBTCKS903")
+        .count()
+        == 0
+    ), "with no customer there is nobody to remember the code for"
+
+    customer = _customer(db, project.company_id)
+    party = ProjectParty(
+        id=_uid(),
+        company_id=project.company_id,
+        party_type="main_contractor",
+        name=f"{MARKER} issuer later",
+        customer_id=customer.id,
+    )
+    db.add(party)
+    db.flush()
+    po_svc.update_po(db, po=po, payload={"issuing_party_id": party.id})
+
+    service.accept_suggestion(version, lines[2], actor_user_id=owner)
+
+    rows = _map_rows(db, customer.id, "BBTSRT73-CR")
+    assert len(rows) == 1
+    assert rows[0].product_id == ids["SRT73-CR"]
+
+
+def _usage_rows(db):
+    from app.models.ai_assistant import AIAssistantUsageLog
+
+    return (
+        db.query(AIAssistantUsageLog)
+        .filter(AIAssistantUsageLog.form_key == "po_line_matcher")
+        .all()
+    )
+
+
+def test_crew3_the_line_matcher_call_writes_one_usage_row(seeded, provider):
+    db, project, owner = seeded
+    _quote, quoted_version = _quotation(
+        db, project, owner, "House Units", [("SRTWC8518-SH", "100.00")]
+    )
+    po, _c = _customer_po(db, project, owner, "ZZT-C3", quotation_version_id=quoted_version.id)
+    provider.tokens = (11, 7)
+    provider.answer = lambda payload: {
+        "matches": [
+            {"line_no": 1, "product_code": "SRTWC8518-SH", "confidence": "high", "options": []}
+        ]
+    }
+    version = _version(db, po)
+
+    ProjectPOExtractionService(db).persist_pages(
+        version, [_page(1, lines=[_row(1, code="BBT-WC-1", description="WALL HUNG WC")])]
+    )
+
+    rows = _usage_rows(db)
+    assert len(rows) == 1, "one model call, one usage row"
+    row = rows[0]
+    assert row.feature, "the usage row names a feature"
+    assert row.model == "zzt-model"
+    assert row.provider in {"openai", "stub"}
+    assert (row.prompt_tokens, row.completion_tokens, row.total_tokens) == (11, 7, 18)
+
+
+def test_crew3_a_failing_usage_write_never_fails_the_match(seeded, provider, monkeypatch):
+    from app.models.ai_assistant import AIAssistantUsageLog
+
+    db, project, owner = seeded
+    _quote, quoted_version = _quotation(
+        db, project, owner, "House Units", [("SRTWC8518-SH", "100.00")]
+    )
+    ids = _products(db, project.company_id, "SRTWC8518-SH")
+    po, _c = _customer_po(db, project, owner, "ZZT-C3B", quotation_version_id=quoted_version.id)
+    provider.answer = lambda payload: {
+        "matches": [
+            {"line_no": 1, "product_code": "SRTWC8518-SH", "confidence": "high", "options": []}
+        ]
+    }
+    real_add = db.add
+    refused: List[Any] = []
+
+    def add(instance, *args, **kwargs):
+        if isinstance(instance, AIAssistantUsageLog):
+            refused.append(instance)
+            raise RuntimeError("ZZT usage write failed")
+        return real_add(instance, *args, **kwargs)
+
+    monkeypatch.setattr(db, "add", add)
+    version = _version(db, po)
+    service = ProjectPOExtractionService(db)
+
+    summary = service.persist_pages(
+        version, [_page(1, lines=[_row(1, code="BBT-WC-1", description="WALL HUNG WC")])]
+    )
+
+    assert refused, "the matcher never tried to write its usage row"
+    assert summary["status"] == STATE_DONE
+    line = _lines(service, version)[1]
+    assert line.resolution_source == "suggested"
+    assert line.resolved_product_id == ids["SRTWC8518-SH"]
+
+
+def test_crew5_the_matcher_prompt_says_a_variant_only_one_code_carries_is_not_a_pick():
+    """The model judges; we instruct it. A description naming a variant (size or finish,
+    e.g. 35MM) that only one candidate carries, beside a candidate equal to the bare code,
+    is two options and no pick."""
+    import re
+
+    from app.services.ai_prompt_registry import PROMPT_KEYS
+
+    text = PROMPT_KEYS["po_line_matcher"].fallback()
+    lowered = text.lower()
+    assert "variant" in lowered, text
+    assert "35mm" in lowered, text
+    assert "bare" in lowered, text
+    assert re.search(r"(do not|don't|must not|never) pick", lowered), text
+    assert "options" in lowered, text
 

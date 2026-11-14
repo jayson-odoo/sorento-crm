@@ -974,3 +974,57 @@ describe('POIntakeLinesGrid numeric cells: no remount, stable format, live amoun
     expect(box('Code on line 1')).not.toHaveAttribute('type', 'number');
   });
 });
+
+/**
+ * PO-UPLOAD-MATCHING crew pass item 4: the Suggested pill says WHY on hover, in plain words.
+ */
+describe('POIntakeLinesGrid suggestion tooltip', () => {
+  const INTERNAL = /\b(resolution|source|model)\b/i;
+
+  function pillTitles(): string[] {
+    return screen
+      .getAllByText('Suggested')
+      .map((el) => el.closest('[title]')?.getAttribute('title') ?? '')
+      .filter(Boolean);
+  }
+
+  it('explains a suggested product: the code did not exactly match ours, accept it', async () => {
+    renderGrid([
+      line({
+        id: 'l2',
+        line_no: 2,
+        resolution_source: 'suggested',
+        match_confidence: 'high',
+        match_options: [],
+        qty_suggested: false,
+      } as Partial<POVersionLine>),
+    ]);
+    await screen.findAllByText('Suggested');
+
+    const titles = pillTitles();
+    expect(titles.length).toBeGreaterThan(0);
+    const title = titles.join(' ');
+    expect(title).toMatch(/did not (exactly )?match/i);
+    expect(title).toMatch(/accept/i);
+    expect(title).not.toMatch(INTERNAL);
+  });
+
+  it('explains a suggested qty: worked out from amount divided by unit price', async () => {
+    renderGrid([
+      line({
+        id: 'l2',
+        line_no: 2,
+        resolution_source: 'code',
+        qty_suggested: true,
+      } as Partial<POVersionLine>),
+    ]);
+    await screen.findAllByText('Suggested');
+
+    const title = pillTitles().join(' ');
+    expect(title).toMatch(/amount/i);
+    expect(title).toMatch(/unit price/i);
+    expect(title).toMatch(/divided|worked out/i);
+    expect(title).not.toMatch(INTERNAL);
+  });
+});
+

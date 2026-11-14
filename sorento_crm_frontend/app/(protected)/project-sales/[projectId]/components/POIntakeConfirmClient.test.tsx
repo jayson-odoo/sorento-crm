@@ -59,10 +59,30 @@ const getProject = vi.fn(async () => ({
   can_edit: true,
 }));
 
+// Crew pass item 2: the issuer is set from this screen through the EXISTING PO update.
+const listParties = vi.fn(async (..._args: unknown[]) => ({
+  data: [
+    { id: 'pty1', name: 'ZZT Contractor Sdn Bhd', party_type: 'main_contractor' },
+    { id: 'pty2', name: 'ZZT Developer Bhd', party_type: 'developer' },
+  ],
+  total: 2,
+  page: 1,
+  limit: 50,
+}));
+const updatePurchaseOrder = vi.fn(async (poId: string, body: unknown) => ({
+  id: poId,
+  ...(body as object),
+}));
+
 vi.mock('../../_shared/services/projectService', async (importOriginal) => {
   const actual =
     await importOriginal<typeof import('../../_shared/services/projectService')>();
-  return { ...actual, getProject: () => getProject() };
+  return {
+    ...actual,
+    getProject: () => getProject(),
+    listParties: (...args: unknown[]) => listParties(...args),
+    updatePurchaseOrder: (poId: string, body: unknown) => updatePurchaseOrder(poId, body),
+  };
 });
 
 import { POIntakeConfirmClient } from './POIntakeConfirmClient';
@@ -793,6 +813,39 @@ describe('POIntakeConfirmClient totals wording', () => {
     expect(
       screen.getByRole('button', { name: /below the total printed on the document/i }),
     ).toBeInTheDocument();
+  });
+});
+
+/**
+ * PO-UPLOAD-MATCHING crew pass item 2: a PO read with no issuer (and a project lead with no
+ * buyer) has no customer to remember accepted codes for. While the version is To confirm,
+ * the screen offers "Issued by" (the same searchable, clearable party select as the PO
+ * header card), and choosing one saves it through the existing purchase order update.
+ */
+describe('POIntakeConfirmClient issuer', () => {
+  it('offers "Issued by" while the version is To confirm and saves the pick on the PO', async () => {
+    getPOVersion.mockResolvedValue(version());
+
+    renderConfirm();
+
+    fireEvent.click(await screen.findByRole('combobox', { name: /Issued by/i }));
+    fireEvent.click(await screen.findByRole('option', { name: /ZZT Contractor Sdn Bhd/ }));
+
+    await waitFor(() =>
+      expect(updatePurchaseOrder).toHaveBeenCalledWith(
+        'po1',
+        expect.objectContaining({ issuing_party_id: 'pty1' }),
+      ),
+    );
+  });
+
+  it('does not offer "Issued by" once the version is confirmed', async () => {
+    getPOVersion.mockResolvedValue(version({ confirmed_at: '2026-11-14T08:00:00Z' }));
+
+    renderConfirm();
+
+    await screen.findAllByText(/HQ\/26\/01\/041/);
+    expect(screen.queryByRole('combobox', { name: /Issued by/i })).toBeNull();
   });
 });
 
