@@ -449,7 +449,7 @@ export function RelatedRecordsPanel({
           router.push(
             row.kind === 'sponsorship_form'
               ? `${def.href(row.id)}?${BACK_PARAM}=${encodeURIComponent(
-                  projectTabOriginHref(project.id, 'sponsorships'),
+                  projectTabOriginHref(project.id, LEGACY_SPONSORSHIP_TAB),
                 )}`
               : def.href(row.id),
           );

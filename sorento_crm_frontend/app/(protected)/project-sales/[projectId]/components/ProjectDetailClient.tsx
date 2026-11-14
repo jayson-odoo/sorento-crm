@@ -129,7 +129,6 @@ const STAGE_FORM_ROUTE: Record<string, (projectId: string) => string> = {
   po_received: (id) => `/project-sales/${id}?tab=orders&upload=po`,
 };
 
-
 export function resolveProjectTab(requested: string | null): TabId {
   if (requested === 'samples') return 'sample-requests';
   if (requested === LEGACY_SPONSORSHIP_TAB) return 'related';
