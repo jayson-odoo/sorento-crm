@@ -11,11 +11,17 @@ You file complaints, stock inquiries, purchase requests, and sponsorship forms f
 
 The same link works again for as long as your portal session is valid. Once it expires, you'll be sent through OTP verification (see below).
 
+If you are already signed in to the CRM (with your password, a passkey or a phone code) and your CRM account is linked to your contact, your own portal opens straight away with no code. This only applies to your own portal: opening another contact's portal link still asks for that contact's code.
+
+Once you have verified on a device, you are not asked again on that device while you keep using the portal; after 30 days without using it you verify once more.
+
 ## OTP verification
 
 If your session has expired (or if you've just been issued a new link), the browser lands on the **Verify your identity** card.
 
 The card shows, in order:
+
+Nothing is sent until you ask for it: press **Send code** to get the code on WhatsApp.
 
 1. A line telling you where the code is going: *"We'll send a code to your WhatsApp <your masked number>"*.
 2. A **Not your number?** link directly under that line (only shown when you arrived on your own portal link; not shown on the older, generic verify link).
