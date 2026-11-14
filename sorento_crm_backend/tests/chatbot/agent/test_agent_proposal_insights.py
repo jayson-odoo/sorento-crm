@@ -111,7 +111,7 @@ class Builder:
             assert row.created_by == created_by, "a listener rewrote created_by: the seed is wrong, not the code"
         return row
 
-    def scope(self, doc, label, lines, version_total=None):
+    def scope(self, doc, label, lines, version_total=None, describe=None):
         """`lines`: (code, qty, list_price, unit, total, uom, rate_only). Version 1, total = sum of line totals."""
         from app.models.projects import ProjectQuotation, ProjectQuotationLine, ProjectQuotationVersion
 
@@ -132,7 +132,7 @@ class Builder:
                 self._line_seq += 1
                 self.db.add(ProjectQuotationLine(
                     company_id=self.company_id, version_id=v.id, product_code_snapshot=code,
-                    description_snapshot=f"{code} item", quantity=Decimal(qty),
+                    description_snapshot=describe(code) if describe else f"{code} item", quantity=Decimal(qty),
                     list_price_snapshot=None if listed is None else Decimal(listed), unit_price=Decimal(unit),
                     line_total=Decimal(line_total), uom=uom, sort_order=self._line_seq, is_rate_only=rate_only,
                 ))
@@ -340,6 +340,19 @@ def test_AC_A4_user_names_are_read_in_one_query_per_call(db):
     assert len(selects) == 1, selects
 
 
+def test_AC_A1_R5_the_lines_tool_reads_creator_names_in_one_users_query_per_call(db):
+    """3 documents from 2 creators. Counted on the tool's own read (`project_quotation_lines`), not on dispatch,
+    whose permission check loads the acting user from the same table."""
+    from app.services.project_quotation_template_service import prepared_by_of
+
+    w = _owner_case(db)
+    with w.b.scoped():
+        assert prepared_by_of(db, w.d1_row) == "ZZT Quoter One"  # existing behaviour stays
+    (data, _more), selects = _users_selects(db, lambda: _direct(db, w, [w.d1, w.d2, w.d3], 10**9))
+    assert [d["prepared_by"] for d in data["documents"]] == ["ZZT Quoter One", "ZZT Quoter One", "ZZT Quoter Two"]
+    assert len(selects) == 1, selects
+
+
 # ================================================================== B. per document facts
 
 
@@ -405,13 +418,20 @@ def _totals(cmp):
     return [(t["ref"], _f(t["total"]), _f(t["gap_to_lowest"])) for t in cmp["totals"]]
 
 
-def test_AC_C1_totals_ranked_with_gap_to_lowest_across_all_four_documents(db):
+def test_AC_C1_R1_an_empty_document_has_no_totals_entry_and_is_listed_in_empty_documents(db):
+    """R1: the comparison covers only non-empty documents; D4 (no scopes) is named in empty_documents."""
     w = _owner_case(db)
     cmp = _cmp(_call(db, w))
-    assert _totals(cmp) == [
-        (w.d4, 0.0, 0.0), (w.d3, 246.40, 246.40), (w.d1, 251.85, 251.85), (w.d2, 2417.45, 2417.45),
-    ]
-    assert cmp["lowest"] == w.d4 and cmp["highest"] == w.d2
+    assert cmp.get("empty_documents") == [w.d4], cmp.get("empty_documents")
+    assert _totals(cmp) == [(w.d3, 246.40, 0.0), (w.d1, 251.85, 5.45), (w.d2, 2417.45, 2171.05)]
+    assert cmp["lowest"] == w.d3 and cmp["highest"] == w.d2
+
+
+def test_AC_C1_R1_one_non_empty_document_beside_an_empty_one_gives_no_comparison(db):
+    w = _owner_case(db)
+    out = _call(db, w, [w.d1, w.d4])
+    assert [d["ref"] for d in out.data["documents"]] == [w.d1, w.d4]
+    assert "comparison" not in out.data, out.data.get("comparison")
 
 
 def test_AC_C1_totals_for_three_referenced_documents(db):
@@ -485,14 +505,18 @@ def test_AC_C4_C5_scopes_only_in_and_scope_totals(db):
     assert totals == [("UNIT", [(w.d1, 251.85), (w.d2, 2267.45), (w.d3, 246.40)])]
 
 
-def test_AC_C4_a_document_with_no_scopes_makes_every_scope_only_in_some(db):
+def test_AC_C4_R1_an_empty_document_never_makes_a_scope_or_a_code_only_in_some(db):
+    """R1: D4 (no scopes) beside D1 to D3 changes nothing in only_in / scopes_only_in / scope_totals."""
     w = _owner_case(db)
     cmp = _cmp(_call(db, w))
+    without = _cmp(_call(db, w, [w.d1, w.d2, w.d3]))
     assert cmp["scopes_only_in"] == [
-        {"scope": "UNIT", "refs": [w.d1, w.d2, w.d3]},
         {"scope": "LEVEL 9", "refs": [w.d2]},
         {"scope": "Guard House", "refs": [w.d2]},
     ]
+    assert "SRTWC8518-SH" not in [e["code"] for e in cmp["only_in"]]
+    for name in ("only_in", "shared", "scopes_only_in", "scope_totals"):
+        assert cmp[name] == without[name], name
 
 
 def _uom_world(db):
@@ -516,11 +540,12 @@ def test_AC_C3_a_shared_code_in_different_units_has_no_cheapest_and_no_unit_gap(
     }]
 
 
-def test_AC_C1_tied_totals_keep_document_order(db):
+def test_AC_C1_R2_tied_totals_keep_document_order_and_highest_is_the_first_highest(db):
+    """R2: on a tie, lowest is the first doc with the lowest total and highest the first doc with the highest."""
     w = _uom_world(db)
     cmp = _cmp(_call(db, w))
     assert _totals(cmp) == [(w.p, 100.0, 0.0), (w.q, 100.0, 0.0)]
-    assert cmp["lowest"] == w.p and cmp["highest"] == w.q
+    assert cmp["lowest"] == w.p and cmp["highest"] == w.p
 
 
 def test_AC_C6_each_list_holds_at_most_20_and_counts_the_rest(db):
@@ -563,6 +588,86 @@ def test_AC_C7_the_comparison_and_document_facts_are_built_before_the_size_cut(d
     for d_cut in cut["documents"]:
         d_whole = next(d for d in whole["documents"] if d["ref"] == d_cut["ref"])
         assert {k: d_cut.get(k) for k in facts} == {k: d_whole.get(k) for k in facts}, d_cut["ref"]
+
+
+# ---- R3: the size cap holds for the whole payload, comparison included
+
+
+def _long_description(code):
+    return (
+        f"{code} wall hung basin with concealed fixing kit, chrome bottle trap, angle valve and flexible hose, "
+        "matt white glaze, 600 x 450 mm, ceramic body"
+    )
+
+
+def _ten_proposals(db):
+    """10 documents, each UNIT with 40 lines (SH-01..30 in every document at a price of its own, 10 codes only
+    in that document) and an empty scope "Block NN" of its own. Every line has a long description."""
+    b = Builder(db)
+    quoter = b.user("ZZT Quoter One")
+    refs = []
+    for i in range(1, 11):
+        doc = b.doc(f"PRJQ-R{i:02d}", quoter)
+        refs.append(doc.document_no)
+        shared = [L(f"SH-{j:02d}", "2", "99.00", f"{10 + i + j}.00", f"{2 * (10 + i + j)}.00") for j in range(1, 31)]
+        own = [L(f"U{i:02d}-{j:02d}", "1", None, "5.00", "5.00") for j in range(1, 11)]
+        b.scope(doc, "UNIT", shared + own, describe=_long_description)
+        b.scope(doc, f"Block {i:02d}", [])
+    return SimpleNamespace(b=b, company_id=b.company_id, project_id=b.project_id, refs=refs)
+
+
+def _named_refs(cmp):
+    named = {t["ref"] for t in cmp.get("totals", [])} | {cmp.get("lowest"), cmp.get("highest")} - {None}
+    named |= set(cmp.get("empty_documents", []))
+    for e in cmp.get("only_in", []) + cmp.get("scopes_only_in", []):
+        named |= set(e["refs"])
+    for e in cmp.get("shared", []):
+        named |= {d["ref"] for d in e["docs"]}
+    for e in cmp.get("scope_totals", []):
+        named |= {t["ref"] for t in e["totals"]}
+    return named
+
+
+def _assert_capped(data, cap, whole):
+    size = len(json.dumps(data, default=str))
+    assert size <= cap, f"payload is {size} chars, over the cap of {cap}"
+    if data.get("documents_not_shown"):
+        assert "comparison" not in data, "documents were dropped but the comparison block stayed"
+    if "comparison" in data:
+        cmp, full = data["comparison"], whole["comparison"]
+        assert _named_refs(cmp) <= {d["ref"] for d in data["documents"]}
+        for name in ("only_in", "shared", "scopes_only_in", "scope_totals"):
+            kept = len(cmp.get(name, [])) + cmp.get(f"{name}_not_shown", 0)
+            assert kept == len(full[name]) + full.get(f"{name}_not_shown", 0), name
+
+
+def test_AC_C6_R3_ten_long_proposals_at_the_tools_own_cap_stay_under_it(db):
+    from app.services.chatbot.agent.tools import RESULT_CHAR_CAP
+
+    w = _ten_proposals(db)
+    whole, _ = _direct(db, w, [], 10**9)
+    assert "comparison" in whole and len(whole["documents"]) == 10
+    out = _call(db, w)
+    _assert_capped(out.data, RESULT_CHAR_CAP, whole)
+
+
+def test_AC_C6_R3_ten_long_proposals_at_the_tools_own_cap_direct(db):
+    from app.services.chatbot.agent.tools import RESULT_CHAR_CAP
+
+    w = _ten_proposals(db)
+    whole, _ = _direct(db, w, [], 10**9)
+    data, more = _direct(db, w, [], RESULT_CHAR_CAP)
+    assert more > 0
+    _assert_capped(data, RESULT_CHAR_CAP, whole)
+
+
+@pytest.mark.parametrize("cap", [1500, 4000])
+def test_AC_C6_R3_a_small_cap_keeps_the_whole_payload_under_it(db, cap):
+    w = _owner_case(db)
+    whole, _ = _direct(db, w, [], 10**9)
+    data, more = _direct(db, w, [], cap)
+    assert more > 0
+    _assert_capped(data, cap, whole)
 
 
 # ================================================================== D. below-list text
@@ -649,6 +754,12 @@ def test_AC_E3_the_prompt_allows_analysis_and_keeps_the_no_arithmetic_rules():
     concise = [s for s in re.split(r"(?<=[.!?])\s+", text) if "concise" in s.lower()]
     assert concise, "the concise rule for simple lookups is gone"
     assert all("lookup" in s.lower() for s in concise), concise
+
+
+def test_AC_E1_R4_the_table_rule_names_a_markdown_table_and_lines_not_shown():
+    text = _prompt()
+    assert "markdown table" in text
+    assert "lines_not_shown" in text
 
 
 def test_AC_E4_the_prompt_has_no_em_or_en_dash():
