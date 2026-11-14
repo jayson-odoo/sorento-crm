@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 TOOL_NAME = "crm_ideation_turn"
 #: The words today's panel answers an idea with (`ai_assistant_service._serve_ideate_redirect`).
-PANEL_IDEAS_REPLY = "Love the idea! You can capture and track product ideas on the Ideas board - open it here: /ideas"
+PANEL_IDEAS_REPLY = "Thanks! You can log and track feedback on the Ideas board - open it here: /ideas"
 
 ASK_NAME = "ideation"
 ASK_QUESTION = "What is the idea? Tell me the problem or what you would like built."

@@ -35,11 +35,18 @@ SUBMISSION_TYPES: dict[str, SubmissionType] = {
         ask_copy="ask_idea", complete_copy="complete", give_up_copy="give_up",
     ),
     "issue": SubmissionType(
-        label="Issue", required_field="problem", ss_type="issue",
+        label="Problem report", required_field="problem", ss_type="issue",
         ask_copy="ask_issue", complete_copy="complete_issue", give_up_copy="give_up_issue",
     ),
 }
 DEFAULT_TYPE = "idea"
+
+
+def display_number(value: Any) -> Any:
+    """The record number as a user reads it, the ONE place every reply, note and message shows it (round 15,
+    COPY-wa-feedback-rename.md "The record number"). Unchanged until crew decides how to show it; empty stays
+    empty."""
+    return value
 
 
 def known_type(value: Any) -> str | None:

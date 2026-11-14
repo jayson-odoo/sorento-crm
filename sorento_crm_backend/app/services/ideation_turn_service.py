@@ -321,8 +321,8 @@ def _ideation_reminder_text(title: str | None) -> str:
     """Fixed wording (plan S4) - not the LLM: nobody's message to take a
     language from, and a template has fixed wording anyway."""
     if title:
-        return f'Your idea "{title}" is still open. Reply to finish it, or say cancel.'
-    return "Your idea is still open. Reply to finish it, or say cancel."
+        return f'Your feedback "{title}" is still open. Reply to finish it, or say cancel.'
+    return "Your feedback is still open. Reply to finish it, or say cancel."
 
 
 def _send_ideation_reminder(db: Session, *, respond_io_id: str, title: str | None) -> None:

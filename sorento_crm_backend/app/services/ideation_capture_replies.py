@@ -20,7 +20,7 @@ from app.services.chatbot_reply_copy import (
     FALLBACK_LANGUAGES,
     language_suffix,
 )
-from app.services.submission_types import SUBMISSION_TYPES, normalise_type
+from app.services.submission_types import SUBMISSION_TYPES, display_number, normalise_type
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +62,9 @@ def render_reply(
     used only to read the registry's live wording.
     """
     lang = language if language in FALLBACK_LANGUAGES else "en"
+    if facts.get("idea_number"):
+        # Every number a user reads goes through the one display seam (round 15).
+        facts = {**facts, "idea_number": display_number(facts["idea_number"])}
 
     if kind == "similar_offered":
         lines = [_template("similar_offered", lang, db)]

@@ -44,6 +44,7 @@ from app.models.access import RespondContact
 from app.models.ideation_status_event import IdeationStatusEventCursor
 from app.models.integration import IntegrationLog
 from app.services.ideation_turn_service import _resolve_ideation_config
+from app.services.submission_types import display_number
 from app.utils.phone_normalize import normalize_phone
 
 logger = logging.getLogger(__name__)
@@ -160,8 +161,9 @@ def _already_seen(db: Session, event_uuid: str) -> bool:
 
 def _idea_ref(ref: Any) -> str:
     if isinstance(ref, dict):
-        return str(ref.get("idea_number") or ref.get("title") or "").strip() or "another idea"
-    return "another idea"
+        number = display_number(str(ref.get("idea_number") or "").strip())
+        return number or str(ref.get("title") or "").strip() or "other feedback"
+    return "other feedback"
 
 
 def _idea_label(event: dict[str, Any]) -> str:
@@ -193,9 +195,10 @@ def build_context_vars(event: dict[str, Any], *, contact_name: str | None = None
     elif kind == "unmerged":
         separated = f"handled separately again from {_idea_ref(event.get('separated_from'))}"
         status = f"{separated}, now {status}" if status else separated
-    idea = _idea_label(event)
+    # The number a user reads goes through the one display seam (round 15).
+    idea = display_number(_idea_label(event))
     track_url = str(event.get("track_url") or "").strip()
-    message = f"Update on your idea {idea}: it is now {status}."
+    message = f"Update on your feedback {idea}: it is now {status}."
     if track_url:
         message += f" Track it here: {track_url}"
     out = {

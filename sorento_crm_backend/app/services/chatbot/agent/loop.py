@@ -1093,7 +1093,7 @@ def _decide(db, ctx, name: str, args: Any, turn_id: str, notes: list[str], waiti
         message = (
             "The ticket link is added to your reply automatically. Do not write it."
             if tools == {writes.CREATE_TICKET}
-            else "The idea's number and link are added to your reply automatically. Do not write them."
+            else "The feedback's number and link are added to your reply automatically. Do not write them."
         )
     return ToolResult(
         "ok", data={"status": outcome.status, "reply_text": reply_text, "steps": outcome.steps}, message=message

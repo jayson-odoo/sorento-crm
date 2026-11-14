@@ -1669,8 +1669,7 @@ class AIAssistantChatService:
         Zero answer-LLM (the parser call already ran); mirrors the capability
         short-circuit's persist / usage-log / trace-finalize (AC-06)."""
         redirect_text = (
-            "Love the idea! You can capture and track product ideas on the "
-            "Ideas board - open it here: /ideas"
+            "Thanks! You can log and track feedback on the Ideas board - open it here: /ideas"
         )
         if self._turn_trace is not None:
             self._turn_trace.add_span(
