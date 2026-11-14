@@ -1,6 +1,6 @@
 /**
  * AutoCount pull + review - shared FE shapes.
- * See `documentation/plans/autocount/PLAN-autocount-pull-review.md` ("Routes" and the pull job
+ * See `documentation/plans/_archive/autocount/PLAN-autocount-pull-review.md` ("Routes" and the pull job
  * metadata shape) and its UAC for the contract these mirror.
  */
 

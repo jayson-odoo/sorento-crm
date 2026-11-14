@@ -3,8 +3,8 @@
 Covers: AC-SP-1..5, AC-SC-1..4, AC-CM-3 (stock compare), plus the stock halves
 of AC-RV-3 and AC-RV-5.
 
-Plan: documentation/plans/autocount/PLAN-autocount-pull-review.md
-UAC:  documentation/plans/autocount/autocount-pull-review-acceptance-criteria.md
+Plan: documentation/plans/_archive/autocount/PLAN-autocount-pull-review.md
+UAC:  documentation/plans/_archive/autocount/autocount-pull-review-acceptance-criteria.md
 
 Nothing under test here exists yet - `classify_stock_rows` (autocount_pull_
 service.py), `compare_stock` (autocount_pull_compare.py), the stock branches of

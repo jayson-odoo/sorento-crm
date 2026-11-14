@@ -7,7 +7,7 @@
  * `lib/api-client` sits on top of - per repo convention (see `outstandingImportService.test.ts`,
  * `useDemandSeries.test.tsx`).
  *
- * Contract pinned from `documentation/plans/autocount/PLAN-autocount-pull-review.md` ("Routes")
+ * Contract pinned from `documentation/plans/_archive/autocount/PLAN-autocount-pull-review.md` ("Routes")
  * and the captain's SR2 brief: every pull route answers
  * `{job_id, phase, progress, header, counts, confirm_blocked_reason, compare, apply_job_id,
  * warnings}`, `header` null or the FoundryX ready header in camelCase

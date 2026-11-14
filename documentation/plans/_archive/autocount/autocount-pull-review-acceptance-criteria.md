@@ -1,6 +1,6 @@
 # UAC - AutoCount pull + review (products and stock balance)
 
-Plan: `documentation/plans/autocount/PLAN-autocount-pull-review.md`
+Plan: `documentation/plans/_archive/autocount/PLAN-autocount-pull-review.md`
 Slices SR1 to SR4 of the AutoCount pull + review work. SR0 (contract 2.4, #1041) is its own PR.
 Owner rulings R1 to R11 confirmed 2026-09-20. Plan review rulings the same day: P11 (three tabs,
 compare is advisory), P12 (the same person pulls and confirms), P13 (the new permissions go to every

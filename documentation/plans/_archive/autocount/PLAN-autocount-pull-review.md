@@ -1,7 +1,7 @@
 # PLAN - AutoCount pull + review (products and stock balance)
 
-Status: in progress (2026-09-20: SR1 to SR4 built, reviewer + security-reviewer READY, browser pass AC-PC-6 / AC-SC-5 pending the owner's login ruling on the e2e clone)
-UAC: `documentation/plans/autocount/autocount-pull-review-acceptance-criteria.md`
+Status: merged (2026-09-20, PR #1051 deployed; e2e on a prod-copy clone found and fixed a shared spec-listener savepoint hang, progress while preparing, rows refresh, filters, list-click id; follow-ups #1042 stale inactive-warehouse stock, #1053 order inquiry dispatch on savepoint release, #1058 rows grid listingKey)
+UAC: `documentation/plans/_archive/autocount/autocount-pull-review-acceptance-criteria.md`
 Branch: `feat/autocount-pull-review` (one lane, one PR; SR0 #1041 merges first)
 Cross-repo contract: FoundryX plan 10 Appendix A1 to A10; fixtures `10-fixtures/` (commit 3deac4f7 in
 `foundryx-shared-service`, branch `sprint-5/10-autocount-pull-review`)

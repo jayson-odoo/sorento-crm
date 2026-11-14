@@ -2,8 +2,8 @@
 (issues #1045 #1046 #1047 #1048) - the reviewer's and security-reviewer's findings against
 `4bbc3a431`.
 
-Plan: documentation/plans/autocount/PLAN-autocount-pull-review.md
-UAC:  documentation/plans/autocount/autocount-pull-review-acceptance-criteria.md
+Plan: documentation/plans/_archive/autocount/PLAN-autocount-pull-review.md
+UAC:  documentation/plans/_archive/autocount/autocount-pull-review-acceptance-criteria.md
 
 Every test below traces to one bullet of the captain's fix-round brief (F-1..F-12), never
 new scope. Substrate is reused BY IMPORT from `tests/test_autocount_pull_sr1.py`
