@@ -54,7 +54,8 @@ export type FormSLASourceType =
   | 'workflow_submission'
   | 'price_tag_request'
   | 'sample_request'
-  | 'new_product_application';
+  | 'new_product_application'
+  | 'order_change_notice';
 
 export async function getFormSLATrackers(
   sourceEntityType: FormSLASourceType,
@@ -384,7 +385,33 @@ export const FORM_SLA_EVENT_OPTIONS: Record<FormSLASourceType, readonly string[]
     'purchasing_respond',
     'completed',
   ],
+  // OCN-ORDER-CHANGE-NOTICE: the purchase request chain's events (a void stops the stages itself).
+  order_change_notice: [
+    'submit',
+    'send_for_approval',
+    'reject_submitted',
+    'approved',
+    'approval_rejected',
+    'resolved',
+  ],
 };
+
+/**
+ * A stage's name on a form's SLA tab, by its team set code, where the form names its stages
+ * (the order change notice's mock). A form missing here shows the code as before.
+ */
+export const FORM_SLA_STAGE_LABELS: Partial<Record<FormSLASourceType, Record<string, string>>> = {
+  order_change_notice: {
+    project_sales: 'Admin check',
+    project_sales_manager: 'Management approval',
+    customer_service: 'Customer service action',
+  },
+};
+
+export function formSlaStageLabel(type: FormSLASourceType, teamSetCode: string | null | undefined): string {
+  if (!teamSetCode) return '-';
+  return FORM_SLA_STAGE_LABELS[type]?.[teamSetCode] ?? teamSetCode;
+}
 
 export const FORM_SLA_TYPE_LABELS: Record<FormSLASourceType, string> = {
   stock_inquiry: 'Stock Inquiry',
@@ -396,4 +423,5 @@ export const FORM_SLA_TYPE_LABELS: Record<FormSLASourceType, string> = {
   price_tag_request: 'Price Tag Request',
   sample_request: 'Sample Request',
   new_product_application: 'New Product Application',
+  order_change_notice: 'Order Change Notice',
 };

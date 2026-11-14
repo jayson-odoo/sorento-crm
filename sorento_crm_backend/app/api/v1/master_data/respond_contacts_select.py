@@ -16,6 +16,7 @@ from app.services.error_handler import handle_internal_error
 from app.services.requestor_options_service import (
     DEFAULT_LIMIT,
     filter_form_referenced_ids,
+    linked_contact_id,
     list_requestor_options,
 )
 
@@ -40,6 +41,12 @@ def get_requestor_select(
     try:
         raw_ids = [v.strip() for v in include_ids.split(",") if v.strip()] if include_ids else None
         ids = filter_form_referenced_ids(db, raw_ids) if raw_ids else None
+        # The caller's OWN linked contact (users.respond_contact_id) stays too: it is the default
+        # "Requested by" of a notice they raise (OCN UAC I8), and naming their own contact exposes
+        # nothing from the directory.
+        own = linked_contact_id(db, (current_user or {}).get("id"))
+        if raw_ids and own and own in raw_ids and own not in (ids or []):
+            ids = [*(ids or []), own]
         items, has_more = list_requestor_options(
             db, q=q, limit=DEFAULT_LIMIT, include_ids=ids
         )

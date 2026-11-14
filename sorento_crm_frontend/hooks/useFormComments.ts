@@ -18,6 +18,7 @@ const FORM_QUERY_KEYS: Record<FormCommentKind, [string, string]> = {
   purchase_request: ['purchase-requests', 'purchase-request'],
   sponsorship_form: ['purchase-requests', 'purchase-request'],
   sample_request: ['sample-requests', 'sample-request'],
+  order_change_notice: ['order-change-notices', 'order-change-notice'],
 };
 
 export function useFormCommentsQuery(kind: FormCommentKind, id: string) {

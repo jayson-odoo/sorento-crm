@@ -49,6 +49,15 @@ CONVERSATIONS_VIEW = "sla_management.conversations.view"
 CONVERSATIONS_VIEW_OWN = "sla_management.conversations.view_own"
 PRICE_TAG_VIEW = "dealer_kit.price_tag_requests.view"
 PRICE_TAG_VIEW_OWN = "dealer_kit.price_tag_requests.view_own"
+OCN_VIEW = "procurement.order_change_notices.view"
+OCN_VIEW_OWN = "procurement.order_change_notices.view_own"
+#: The order change notice's acting grants, which see every notice besides `.view`
+#: (`order_change_notice_service.VIEW_ALL_SLUGS`; a test pins the two together).
+OCN_VIEW_ALL_ALSO = (
+    "procurement.order_change_notices.edit",
+    "procurement.order_change_notices.approve",
+    "procurement.order_change_notices.process",
+)
 
 #: Request form kind -> (view, view_own). Purchase requests and sponsorship forms share one
 #: table and one staff router; the row's ``request_type`` is its kind.
@@ -78,11 +87,18 @@ MODULE_REQUEST_KINDS = {
     "new_product_application": (NPA_VIEW, NPA_VIEW_OWN),
     "sales_opportunity": (OPPORTUNITIES_VIEW, OPPORTUNITIES_VIEW_OWN),
     "price_tag_request": (PRICE_TAG_VIEW, PRICE_TAG_VIEW_OWN),
+    # The order change notice joins for `request_access` (the project's Related tab,
+    # PROJECT-RELATED-RECORDS section 6); its CRM MY REQUESTS item opens its own list (OCN UAC I4).
+    # Its own rows are `order_change_notice_service.own_clause`.
+    "order_change_notice": (OCN_VIEW, OCN_VIEW_OWN),
 }
 
 #: Grants that see every row of a kind besides its ``view``: a new product application's
 #: approvers and purchasing (``new_product_application_service.actor_from_slugs``).
-VIEW_ALL_ALSO = {"new_product_application": (NPA_APPROVE, NPA_OPEN_CODE)}
+VIEW_ALL_ALSO = {
+    "new_product_application": (NPA_APPROVE, NPA_OPEN_CODE),
+    "order_change_notice": OCN_VIEW_ALL_ALSO,
+}
 
 
 def is_limited(perms: Iterable[str], view: str, view_own: str) -> bool:
@@ -277,8 +293,16 @@ def module_row_in_scope(db: Session, kind: str, row_id: Optional[str], m: Me) ->
         model, clause = NewProductApplication, npa_clause(m)
     elif kind == "price_tag_request":
         model, clause = PriceTagRequest, price_tag_clause(m)
-    else:
+    elif kind == "sales_opportunity":
         model, clause = SalesOpportunity, opportunity_clause(m)
+    elif kind == "order_change_notice":
+        from app.models.project_so import OrderChangeNotice
+        from app.services.order_change_notice_service import own_clause
+
+        model, clause = OrderChangeNotice, own_clause(m.user_id)
+    else:
+        # An unknown kind is never theirs: no fall-through to another module's rule.
+        return False
     return db.query(model.id).filter(model.id == str(row_id), clause).first() is not None
 
 
