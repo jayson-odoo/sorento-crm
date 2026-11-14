@@ -1337,3 +1337,50 @@ def test_a_skipped_line_with_an_unknown_code_and_no_message_keeps_the_generic_wo
     second = resp.json()["results"][1]
     assert "AutoCount did not accept it" in second["message"]
     assert "WEIRD_CODE" not in json.dumps(second)
+
+
+# --------------------------------------------------------------------------- owner finding 3 (crew 12:35, 14 Nov)
+
+#: The real Shared Service answer of the owner's refused press on db3 (op c05543d8): the WHOLE
+#: operation refused, errorCode DOC_NOT_FOUND, and an empty message.
+_DOC_NOT_FOUND = (422, {
+    "operationId": "op-dnf", "actionId": None, "outcome": "refused", "errorCode": "DOC_NOT_FOUND",
+    "message": "", "warnings": [], "links": [], "freeLine": None, "skipped": [], "document": None,
+})
+
+
+@pytest.mark.parametrize("route", ["oi", "stock_debt"])
+def test_a_whole_refusal_doc_not_found_names_the_po_in_plain_words(scm_app, fake_ss, route):
+    w = _oi_world(scm_app, snapshot=(route == "stock_debt"))
+    fake_ss.answers[BATCH] = _DOC_NOT_FOUND
+    line = _item(w, "so_line", 4)
+    resp = _oi_link(w, [line]) if route == "oi" else _snap_link(w, [line])
+    assert resp.status_code == 200, resp.text
+    (result,) = resp.json()["results"]
+    assert result["outcome"] == "refused"
+    assert result["message"] == f"PO {w['po'].po_number} was not found in AutoCount. Nothing was changed."
+    assert "DOC_NOT_FOUND" not in result["message"]
+
+
+def test_a_per_line_refusal_doc_not_found_names_the_po_in_plain_words(scm_app, fake_ss):
+    """The same answer on the per-line route (an SS without the batch route)."""
+    w = _oi_world(scm_app)
+    fake_ss.answers[PO_LINKS] = _DOC_NOT_FOUND
+    resp = _oi_link(w, [_item(w, "so_line", 4)])
+    assert resp.status_code == 200, resp.text
+    (result,) = resp.json()["results"]
+    assert result["message"] == f"PO {w['po'].po_number} was not found in AutoCount. Nothing was changed."
+
+
+def test_a_whole_refusal_with_its_own_message_keeps_that_message(scm_app, fake_ss):
+    w = _oi_world(scm_app)
+    fake_ss.answers[BATCH] = (422, {**_DOC_NOT_FOUND[1], "message": "PurchaseAgent is required."})
+    (result,) = _oi_link(w, [_item(w, "so_line", 4)]).json()["results"]
+    assert result["message"] == "PurchaseAgent is required."
+
+
+def test_a_whole_refusal_with_an_unknown_code_and_no_message_stays_empty_for_the_screen_default(scm_app, fake_ss):
+    w = _oi_world(scm_app)
+    fake_ss.answers[BATCH] = (422, {**_DOC_NOT_FOUND[1], "errorCode": "SOMETHING_NEW"})
+    (result,) = _oi_link(w, [_item(w, "so_line", 4)]).json()["results"]
+    assert result["message"] == ""
