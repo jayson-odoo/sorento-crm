@@ -38,6 +38,7 @@ import {
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridTable } from '@/components/ui/data-grid-table';
+import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { Input } from '@/components/ui/input';
 import {
   Popover,
@@ -506,9 +507,10 @@ export const POIntakeLinesGrid = React.forwardRef<
     [],
   );
 
+  /** One line's save; a refusal is said here, as the server's own sentence. */
   const commit = React.useCallback(
     (line: POVersionLine, body: POLineUpdateBody) => {
-      void onUpdateLine(line.id, body);
+      onUpdateLine(line.id, body).catch(sayRefusal);
     },
     [onUpdateLine],
   );
@@ -567,11 +569,13 @@ export const POIntakeLinesGrid = React.forwardRef<
       }
       // Only the typed figure: the server moves a computed amount itself (`amount_computed`).
       const body: POLineUpdateBody = { [field]: next };
-      void onUpdateLine(line.id, body).finally(() =>
-        // A second edit typed while this save was in flight is kept: the draft is dropped
-        // only if it still holds exactly what was sent.
-        clearIfUnchanged(line.id, field, typed),
-      );
+      onUpdateLine(line.id, body)
+        .catch(sayRefusal)
+        .finally(() =>
+          // A second edit typed while this save was in flight is kept: the draft is dropped
+          // only if it still holds exactly what was sent.
+          clearIfUnchanged(line.id, field, typed),
+        );
     },
     [drafts, onUpdateLine, setDraft, clearIfUnchanged],
   );
@@ -599,6 +603,15 @@ export const POIntakeLinesGrid = React.forwardRef<
     );
 
     return [
+      // PO-UPLOAD-MATCHING B: the shared tick column (shift-click range, header box), not on
+      // a read-only version. Rows first, then the one toolbar action.
+      ...(readOnly
+        ? []
+        : [
+            buildSelectColumn<POVersionLine>({
+              rowLabel: (row) => `Select line ${row.original.line_no}`,
+            }),
+          ]),
       {
         accessorKey: 'line_no',
         header: ({ column }) => (
@@ -946,8 +959,10 @@ export const POIntakeLinesGrid = React.forwardRef<
   // The table gets one stable set whose cells render the CURRENT definitions from context.
   const columns = React.useMemo<ColumnDef<POVersionLine>[]>(
     () => liveColumns.map((column) => ({ ...column, cell: LiveCell })),
+    // Rebuilt only when the column SET changes (the tick column comes and goes with
+    // readOnly), never on a save.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [],
+    [readOnly],
   );
 
   // Typing and saving reach the cells through context too, so a keystroke never rebuilds
@@ -963,7 +978,62 @@ export const POIntakeLinesGrid = React.forwardRef<
     getRowId: (row) => row.id,
     getCoreRowModel: getCoreRowModel(),
     columnResizeMode: 'onChange',
+    enableRowSelection: !readOnly,
   });
+
+  // A view switch clears the ticks, so the bulk button never acts on lines the reader can
+  // no longer see (PO-UPLOAD-MATCHING B review).
+  React.useEffect(() => {
+    table.resetRowSelection();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view]);
+
+  // Bulk cancel / put back (PO-UPLOAD-MATCHING B): the ticked lines, in line order.
+  const rowSelection = table.getState().rowSelection;
+  const ticked = React.useMemo(
+    () =>
+      lines
+        .filter((line) => rowSelection[line.id])
+        .sort((a, b) => a.line_no - b.line_no),
+    [lines, rowSelection],
+  );
+  const toCancel = ticked.filter((line) => !line.is_cancelled);
+  const bulkPutBack = ticked.length > 0 && toCancel.length === 0;
+  const bulkTargets = bulkPutBack ? ticked : toCancel;
+  const [bulkRunning, setBulkRunning] = React.useState(false);
+
+  /**
+   * Each ticked line goes through the SAME single-line update as the per-line cancel, one
+   * at a time in line order. One refused line never stops the rest; one summary says what
+   * was done and names every line skipped, with its reason.
+   */
+  const runBulk = React.useCallback(async () => {
+    const cancel = !bulkPutBack;
+    const done: number[] = [];
+    const skipped: string[] = [];
+    setBulkRunning(true);
+    for (const line of bulkTargets) {
+      try {
+        await onUpdateLine(line.id, { is_cancelled: cancel });
+        done.push(line.line_no);
+      } catch (error) {
+        const reason =
+          error instanceof Error ? error.message : 'it was refused';
+        skipped.push(
+          `Line ${line.line_no} was not ${cancel ? 'cancelled' : 'put back'}: ${reason}`,
+        );
+      }
+    }
+    setBulkRunning(false);
+    table.resetRowSelection();
+    const verb = cancel ? 'cancelled' : 'put back';
+    const summary = [
+      `${done.length} line${done.length === 1 ? '' : 's'} ${verb}.`,
+      ...skipped.map((text) => `${text}.`),
+    ].join(' ');
+    if (skipped.length > 0) toast.warning(summary);
+    else toast.success(summary);
+  }, [bulkPutBack, bulkTargets, onUpdateLine, table]);
 
   const showAcceptAll =
     !readOnly && suggestionCount > 0 && Boolean(onAcceptAllSuggestions);
@@ -972,7 +1042,7 @@ export const POIntakeLinesGrid = React.forwardRef<
     <LiveColumnsContext.Provider value={liveColumns}>
       <LiveRowsContext.Provider value={liveRows}>
         <div className="min-w-0 space-y-2">
-          {(showFilterToggle || showAcceptAll) && (
+          {(showFilterToggle || showAcceptAll || ticked.length > 0) && (
             <div className="flex flex-wrap items-center justify-between gap-2">
               {showFilterToggle ? (
                 <ToggleGroup
@@ -999,20 +1069,38 @@ export const POIntakeLinesGrid = React.forwardRef<
               ) : (
                 <span />
               )}
-              {showAcceptAll && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={isAcceptingSuggestions}
-                  onClick={() => void onAcceptAllSuggestions?.()}
-                >
-                  {isAcceptingSuggestions && (
-                    <Loader2 className="size-3.5 animate-spin" aria-hidden />
-                  )}
-                  {`Accept all suggestions (${suggestionCount})`}
-                </Button>
-              )}
+              <div className="flex flex-wrap items-center gap-2">
+                {ticked.length > 0 && !readOnly && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={bulkRunning}
+                    onClick={() => void runBulk()}
+                  >
+                    {bulkRunning && (
+                      <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                    )}
+                    {bulkPutBack
+                      ? `Put back (${bulkTargets.length})`
+                      : `Cancel lines (${bulkTargets.length})`}
+                  </Button>
+                )}
+                {showAcceptAll && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={isAcceptingSuggestions}
+                    onClick={() => void onAcceptAllSuggestions?.()}
+                  >
+                    {isAcceptingSuggestions && (
+                      <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                    )}
+                    {`Accept all suggestions (${suggestionCount})`}
+                  </Button>
+                )}
+              </div>
             </div>
           )}
 
@@ -1257,6 +1345,12 @@ export const POIntakeLinesGrid = React.forwardRef<
     </LiveColumnsContext.Provider>
   );
 });
+
+function sayRefusal(error: unknown) {
+  toast.error(
+    error instanceof Error ? error.message : 'Could not save this line',
+  );
+}
 
 /** Why the Suggested pill is there, in plain words (crew pass item 4). */
 function suggestionTitle(line: POVersionLine): string {

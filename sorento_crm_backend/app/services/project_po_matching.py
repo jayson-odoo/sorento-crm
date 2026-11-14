@@ -300,6 +300,58 @@ def _catalogue_shortlist(
     return out
 
 
+def _like_escaped(code: str) -> str:
+    return code.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def variant_family(
+    db: Session, codes: Iterable[str], *, company_id: Optional[str]
+) -> Dict[str, List[Product]]:
+    """UPPER code -> the company's product of that exact code plus its variant siblings
+    (`<code>-<suffix>`), one query for all the codes. PLAN-po-upload-matching-b section 2."""
+    from sqlalchemy import func, or_
+
+    wanted = sorted({(code or "").strip().upper() for code in codes if (code or "").strip()})
+    if not wanted:
+        return {}
+    upper = func.upper(Product.product_code)
+    query = db.query(Product).filter(
+        or_(
+            upper.in_(wanted),
+            *[upper.like(f"{_like_escaped(code)}-%", escape="\\") for code in wanted],
+        )
+    )
+    if company_id:
+        query = query.filter(Product.company_id == company_id)
+    out: Dict[str, List[Product]] = {}
+    for product in query.all():
+        product_code = str(product.product_code or "").upper()
+        for code in wanted:
+            if product_code == code or product_code.startswith(f"{code}-"):
+                out.setdefault(code, []).append(product)
+    return out
+
+
+def named_variant_siblings(
+    family: Iterable[Product], code: str, description: Optional[str]
+) -> List[Product]:
+    """The siblings of `code` whose variant suffix the description names as a whole token
+    (case-insensitive): `SRTWB243-35MM` for "WALL HUNG BASIN 35MM"."""
+    code = (code or "").strip().upper()
+    text = (description or "").upper()
+    named: List[Product] = []
+    for product in family:
+        product_code = str(product.product_code or "").upper()
+        if not product_code.startswith(f"{code}-"):
+            continue
+        suffix = product_code[len(code) + 1 :]
+        # A one-character suffix ("-S", "-W") is not a variant a description names: "S TRAP"
+        # and "W/O COVER" would otherwise hold back a perfectly exact code.
+        if len(suffix) > 1 and re.search(rf"(?<![A-Z0-9]){re.escape(suffix)}(?![A-Z0-9])", text):
+            named.append(product)
+    return named
+
+
 def _merge(*groups: Iterable[dict]) -> List[dict]:
     """One candidate per product, first source wins (quotation, map, catalogue)."""
     seen: set = set()
@@ -351,11 +403,20 @@ def suggest_matches(
     for batch in _batches(sorted(pending, key=lambda l: l.line_no), MATCH_BATCH_SIZE):
         token_lists = [line_tokens(line.stock_code_raw, line.description_raw) for line in batch]
         shortlist = _catalogue_shortlist(db, token_lists, company_id=version.company_id)
+        # The bare code and its variant siblings, offered explicitly: the resolver's exact
+        # tier answers the bare code alone and offers no alternatives for a token it found.
+        families = variant_family(
+            db, (line.stock_code_raw for line in batch), company_id=version.company_id
+        )
         items: List[dict] = []
         offered: Dict[int, Dict[str, str]] = {}
         for line, tokens in zip(batch, token_lists):
+            family = _candidates_for(
+                families.get((line.stock_code_raw or "").strip().upper()) or [],
+                SOURCE_CATALOGUE,
+            )
             candidates = _merge(
-                shared, *(shortlist.get(token) or [] for token in tokens)
+                shared, family, *(shortlist.get(token) or [] for token in tokens)
             )
             offered[line.line_no] = {c["code"].upper(): c["product_id"] for c in candidates}
             items.append(
@@ -403,7 +464,10 @@ def suggest_matches(
             confidence = answer.get("confidence")
             entry = dict(matches.get(str(line_no)) or {})
             entry["confidence"] = confidence if confidence in CONFIDENCES else "low"
-            entry["options"] = options
+            # Options already recorded (a held-back exact code: bare code, named variant) stay
+            # first; the model's own options follow.
+            recorded = [o for o in entry.get("options") or [] if o]
+            entry["options"] = recorded + [o for o in options if o not in recorded]
             matches[str(line_no)] = entry
             if picked is not None:
                 line.resolved_product_id = picked

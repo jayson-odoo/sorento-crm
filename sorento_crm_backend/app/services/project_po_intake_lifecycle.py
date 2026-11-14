@@ -972,7 +972,9 @@ class POIntakeLifecycleMixin:
             if company_id:
                 query = query.filter(Product.company_id == company_id)
             product = query.first()
-            if product is not None:
+            if product is not None and not self._names_a_variant_sibling(
+                product, code, description, company_id
+            ):
                 return product.id, "code"
         product_id = customer_code_map.lookup(
             remembered or {}, customer_code_map.customer_code_for(stock_code, description)
@@ -980,6 +982,59 @@ class POIntakeLifecycleMixin:
         if product_id and self._product_in_company(product_id, company_id) is not None:
             return product_id, "map"
         return None, None
+
+    def _names_a_variant_sibling(
+        self, product, code: str, description: Optional[str], company_id: Optional[str]
+    ) -> bool:
+        """An exact code is settled only when no same-company sibling `<code>-<suffix>` has a
+        suffix the description names (PLAN-po-upload-matching-b section 2, line 46:
+        "SRTWB243" described "WALL HUNG BASIN 35MM" beside SRTWB243-35MM). Otherwise the line
+        goes to the matcher, which is offered the bare code and the siblings."""
+        return bool(self._held_back_options(code, description, company_id or product.company_id))
+
+    def _held_back_options(
+        self, stock_code: Optional[str], description: Optional[str], company_id: Optional[str]
+    ) -> List[str]:
+        """Product ids, bare code first then each named sibling, when an exact code is held
+        back for a named variant; empty otherwise. Recorded as the line's options so the
+        picker offers both whether or not the model answers."""
+        from app.services import project_po_matching
+
+        code = (stock_code or "").strip().upper()
+        if not code or not description:
+            return []
+        family = self._variant_family(code, company_id)
+        named = project_po_matching.named_variant_siblings(family, code, description)
+        if not named:
+            return []
+        bare = [p for p in family if str(p.product_code or "").upper() == code]
+        return [str(p.id) for p in bare[:1] + named]
+
+    def _variant_family(self, code: str, company_id: Optional[str]) -> List[Any]:
+        """The code's product and its `<code>-...` siblings, memoised per company and code for
+        the life of this service instance (one document), so a long PO does not run one
+        LIKE query per exact-code line more than once per code."""
+        from app.services import project_po_matching
+
+        cache: Dict[Tuple[str, str], List[Any]] = getattr(self, "_variant_families", None) or {}
+        key = (company_id or "", code)
+        if key not in cache:
+            cache[key] = project_po_matching.variant_family(
+                self.db, [code], company_id=company_id
+            ).get(code, [])
+            self._variant_families = cache
+        return cache[key]
+
+    def _record_held_back(self, version: ProjectPOVersion, line: ProjectPOLine) -> None:
+        """An unmatched line whose exact code was held back keeps the bare code and the named
+        variant as its options (bare first)."""
+        if line.resolved_product_id is not None:
+            return
+        options = self._held_back_options(
+            line.stock_code_raw, line.description_raw, line.company_id
+        )
+        if options:
+            self._set_line_match(version, line, options=options)
 
     def _product_in_company(self, product_id: Optional[str], company_id: Optional[str]):
         """The product, only when it belongs to ``company_id`` (the line's company)."""
@@ -1047,6 +1102,7 @@ class POIntakeLifecycleMixin:
                 remembered=remembered,
                 description=line.description_raw,
             )
+            self._record_held_back(version, line)
         self.db.flush()
 
         # The quotation only adds candidates. A lookup that fails must not fail the read:
@@ -1358,6 +1414,7 @@ class POIntakeLifecycleMixin:
             )
             line.resolved_product_id = product_id
             line.resolution_source = source
+            self._record_held_back(version, line)
 
         if "qty" in payload and self._line_match(version, line).get("qty_suggested"):
             self._set_line_match(version, line, qty_suggested=False)

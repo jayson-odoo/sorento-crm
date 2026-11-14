@@ -266,6 +266,7 @@ class POAnnotationReviewMixin:
                         ),
                         description=line.description_raw,
                     )
+                    self._record_held_back(self.get_version(line.po_version_id), line)
                 applied["amended_line_nos"].append(line.line_no)
         elif interpretation == INTERP_AMEND_DESCRIPTION:
             description = str(_payload_value(payload, KEY_DESCRIPTION) or "").strip()

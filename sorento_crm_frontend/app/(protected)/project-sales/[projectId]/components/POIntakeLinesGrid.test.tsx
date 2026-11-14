@@ -7,7 +7,7 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { POAnnotation, POVersionLine } from '../../_shared/types/poIntake.types';
@@ -32,12 +32,19 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
 }));
 
 const toastError = vi.fn();
+// PO-UPLOAD-MATCHING B: the bulk-cancel summary is asserted on every toast kind.
+const toastAny = vi.fn();
 vi.mock('@/lib/toast', () => ({
-  toast: {
-    error: (...args: unknown[]) => toastError(...args),
-    success: vi.fn(),
-    warning: vi.fn(),
-  },
+  toast: Object.assign((...args: unknown[]) => toastAny('default', ...args), {
+    error: (...args: unknown[]) => {
+      toastAny('error', ...args);
+      return toastError(...args);
+    },
+    success: (...args: unknown[]) => toastAny('success', ...args),
+    warning: (...args: unknown[]) => toastAny('warning', ...args),
+    info: (...args: unknown[]) => toastAny('info', ...args),
+    message: (...args: unknown[]) => toastAny('message', ...args),
+  }),
 }));
 
 import {
@@ -1216,6 +1223,136 @@ describe('POIntakeLinesGrid view switch at 375px', () => {
     // And it may shrink below its content width rather than push its row wider.
     const shrinkable = ['min-w-0', 'max-w-full', 'w-full'].some((c) => own.includes(c)) || Boolean(scroller);
     expect(shrinkable).toBe(true);
+  });
+});
+
+/**
+ * PO-UPLOAD-MATCHING B (PLAN-po-upload-matching-b-14nov.md section 1): bulk cancel.
+ * Rows first, then ONE action. The shared tick column (`buildSelectColumn`, shift-click
+ * range) ticks lines; the toolbar shows "Cancel lines (N)", or "Put back (N)" when every
+ * ticked line is cancelled. Each ticked line goes through the same single-line update
+ * (`onUpdateLine`), one call per line, in line order; one bad line never stops the rest,
+ * and one summary toast names the count and each skipped line.
+ */
+describe('POIntakeLinesGrid bulk cancel', () => {
+  const fiveLines = () =>
+    [1, 2, 3, 4, 5].map((n) => line({ id: `l${n}`, line_no: n, stock_code_raw: `ZZT-${n}` }));
+  const tick = async (n: number, init: { shiftKey?: boolean } = {}) =>
+    fireEvent.click(await screen.findByRole('checkbox', { name: `Select line ${n}` }), init);
+  const toastTexts = () => toastAny.mock.calls.map((call) => String(call[1] ?? ''));
+
+  it('ticking lines 2 and 4 offers ONE "Cancel lines (2)" that cancels each, in line order', async () => {
+    renderGrid(fiveLines());
+
+    await tick(4);
+    await tick(2);
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel lines (2)' }));
+
+    await waitFor(() => expect(onUpdateLine).toHaveBeenCalledTimes(2));
+    expect(onUpdateLine.mock.calls).toEqual([
+      ['l2', { is_cancelled: true }],
+      ['l4', { is_cancelled: true }],
+    ]);
+    await waitFor(() => expect(toastTexts().some((t) => /2 lines cancelled/.test(t))).toBe(true));
+  });
+
+  it('shift-click ticks the range (line 2, then shift line 5, is four lines)', async () => {
+    renderGrid(fiveLines());
+
+    await tick(2);
+    await tick(5, { shiftKey: true });
+
+    expect(screen.getByRole('button', { name: 'Cancel lines (4)' })).toBeInTheDocument();
+  });
+
+  it('offers "Put back (N)" when every ticked line is cancelled, and sends is_cancelled false', async () => {
+    renderGrid([
+      line({ id: 'l1', line_no: 1 }),
+      line({ id: 'l2', line_no: 2, is_cancelled: true }),
+      line({ id: 'l3', line_no: 3, is_cancelled: true }),
+    ]);
+
+    await tick(2);
+    await tick(3);
+    expect(screen.queryByRole('button', { name: /^Cancel lines/ })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Put back (2)' }));
+
+    await waitFor(() => expect(onUpdateLine).toHaveBeenCalledTimes(2));
+    expect(onUpdateLine.mock.calls).toEqual([
+      ['l2', { is_cancelled: false }],
+      ['l3', { is_cancelled: false }],
+    ]);
+  });
+
+  it('one refused line never stops the rest, and the summary names it with its reason', async () => {
+    onUpdateLine.mockImplementation(async (lineId: string) => {
+      if (lineId === 'l4') throw new Error('This line is on a confirmed PO');
+    });
+    renderGrid(fiveLines());
+
+    await tick(2);
+    await tick(4);
+    await tick(5);
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel lines (3)' }));
+
+    await waitFor(() => expect(onUpdateLine).toHaveBeenCalledTimes(3));
+    expect(onUpdateLine.mock.calls.map((call) => call[0])).toEqual(['l2', 'l4', 'l5']);
+    await waitFor(() =>
+      expect(
+        toastTexts().some(
+          (t) => /Line 4 was not cancelled: This line is on a confirmed PO/.test(t),
+        ),
+      ).toBe(true),
+    );
+    expect(toastTexts().some((t) => /2 lines cancelled/.test(t))).toBe(true);
+    onUpdateLine.mockImplementation(async () => {});
+  });
+
+  it('clears the ticks once the batch is done', async () => {
+    renderGrid(fiveLines());
+
+    await tick(2);
+    await tick(4);
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel lines (2)' }));
+
+    await waitFor(() => expect(onUpdateLine).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(screen.getByRole('checkbox', { name: 'Select line 2' })).not.toBeChecked(),
+    );
+    expect(screen.getByRole('checkbox', { name: 'Select line 4' })).not.toBeChecked();
+    expect(screen.queryByRole('button', { name: /^Cancel lines/ })).toBeNull();
+  });
+
+  it('shows no tick column on a read-only (confirmed) version', async () => {
+    renderGrid(fiveLines(), true);
+
+    await screen.findByText('ZZT-1');
+    expect(screen.queryByRole('checkbox', { name: /^Select line/ })).toBeNull();
+  });
+});
+
+/** PO-UPLOAD-MATCHING B review item 3: a view switch clears the ticks, so the bulk button
+ * never acts on lines the reader can no longer see. */
+describe('POIntakeLinesGrid bulk cancel and the view switch', () => {
+  it('clears the ticks when the view switch changes', async () => {
+    renderGrid([
+      line({ id: 'l1', line_no: 1 }),
+      line({ id: 'l2', line_no: 2, amount: '1.00', arithmetic_ok: false }),
+      line({ id: 'l3', line_no: 3 }),
+    ]);
+
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Select line 1' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select line 3' }));
+    expect(screen.getByRole('button', { name: 'Cancel lines (2)' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('radio', { name: /Need attention/ }));
+    expect(screen.queryByRole('button', { name: /^Cancel lines/ })).toBeNull();
+
+    fireEvent.click(screen.getByRole('radio', { name: /All lines/ }));
+    expect(screen.getByRole('checkbox', { name: 'Select line 1' })).not.toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'Select line 3' })).not.toBeChecked();
+    expect(screen.queryByRole('button', { name: /^Cancel lines/ })).toBeNull();
+    expect(onUpdateLine).not.toHaveBeenCalled();
   });
 });
 
