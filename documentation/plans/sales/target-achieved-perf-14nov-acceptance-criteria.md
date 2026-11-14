@@ -44,9 +44,10 @@ Plan: `PLAN-target-achieved-perf-14nov.md`.
 
 10. A target's achieved on `agent_target_summary` counts every period of the target in the window,
     including periods whose target is 0 (they add 0 to the target and nothing to the payout), so
-    each row equals the Targets tab for the same periods (owner rule: same total everywhere). The
-    note may still name targets with periods that have no target set, but never says their sales
-    are left out.
+    each row equals the Targets tab for the same periods when the window covers the whole target
+    (owner rule: same total everywhere). The note never says the sales of a period of 0 inside a
+    target above 0 are left out; a target that is 0 over the whole window keeps the owner's 8 Nov
+    rule (no target or achieved shown, named in the note).
 11. The crm_query result totals for `agent_target_summary` carry target, achieved and remaining
     sums over all matching rows next to the payout (never summed across amount and quantity), so
     one query answers "sales vs target" (live diagnostic: with payout-only totals the model ran
