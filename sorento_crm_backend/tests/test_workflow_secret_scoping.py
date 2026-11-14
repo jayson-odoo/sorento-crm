@@ -76,9 +76,39 @@ def _jobs():
             yield path.name, events, job_id, job
 
 
-def _secrets(job: dict) -> set[str]:
-    text = yaml.safe_dump(job)
-    return set(re.findall(r"secrets\.([A-Za-z0-9_]+)", text)) - {"GITHUB_TOKEN"}
+DYNAMIC = "<dynamic secrets access>"
+
+
+def _secrets(node) -> set[str]:
+    """Every secret a job (or any YAML node) can read, GITHUB_TOKEN aside.
+
+    `secrets.NAME` gives the name; any other use of the `secrets` context
+    (`secrets['NAME']`, `toJSON(secrets)`, `secrets: inherit`) reads secrets
+    the map cannot check, so it is reported as DYNAMIC."""
+    text = yaml.safe_dump(node, width=10**9)
+    found: set[str] = set()
+    for expr in re.findall(r"\$\{\{(.*?)\}\}", text, re.S):
+        for m in re.finditer(r"\bsecrets\b(\.([A-Za-z0-9_]+))?", expr):
+            found.add(m.group(2) if m.group(2) else DYNAMIC)
+    if re.search(r"^\s*secrets:", text, re.M):  # a reusable-workflow call passing secrets
+        found.add(DYNAMIC)
+    return found - {"GITHUB_TOKEN"}
+
+
+def test_secret_detection_sees_every_access_form():
+    assert _secrets({"run": "${{ secrets.SSH_HOST }}"}) == {"SSH_HOST"}
+    assert _secrets({"run": "${{ secrets['SSH_HOST'] }}"}) == {DYNAMIC}
+    assert _secrets({"env": {"ALL": "${{ toJSON(secrets) }}"}}) == {DYNAMIC}
+    assert _secrets({"uses": "./.github/workflows/x.yml", "secrets": "inherit"}) == {DYNAMIC}
+    assert _secrets({"run": "${{ secrets.GITHUB_TOKEN }}"}) == set()
+
+
+def test_no_secret_outside_jobs():
+    """A workflow-level `env:` (or anything else outside `jobs`) reaches every job."""
+    for path in _workflows():
+        doc = _load(path)
+        rest = {k: v for k, v in doc.items() if k != "jobs"}
+        assert not _secrets(rest), f"{path.name} reads {sorted(_secrets(rest))} outside jobs"
 
 
 def test_no_workflow_triggers_on_pull_request_target():
@@ -142,3 +172,16 @@ def test_vapid_public_key_is_a_variable_not_a_secret():
     text = (WORKFLOWS / "deploy.yml").read_text(encoding="utf-8")
     assert "secrets.NEXT_PUBLIC_VAPID_PUBLIC_KEY" not in text
     assert "NEXT_PUBLIC_VAPID_PUBLIC_KEY=${{ vars.NEXT_PUBLIC_VAPID_PUBLIC_KEY }}" in text
+
+
+def test_frontend_build_refuses_a_missing_vapid_variable():
+    """`vars.X` is an empty string when the variable was never created: the image would
+    ship with no push-notification key and no error. The build stops instead."""
+    doc = _load(WORKFLOWS / "deploy.yml")
+    steps = doc["jobs"]["build-images"]["steps"]
+    names = [s.get("name", "") for s in steps]
+    guard = next(s for s in steps if s.get("name") == "Require the VAPID public key variable")
+    assert guard["if"] == "steps.decide.outputs.build_frontend == 'true'"
+    assert guard["env"]["VAPID"] == "${{ vars.NEXT_PUBLIC_VAPID_PUBLIC_KEY }}"
+    assert 'if [ -z "$VAPID" ]' in guard["run"] and "exit 1" in guard["run"]
+    assert names.index(guard["name"]) < names.index("Build and push frontend image")
