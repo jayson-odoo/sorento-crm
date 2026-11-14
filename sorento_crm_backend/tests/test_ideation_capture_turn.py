@@ -1502,7 +1502,7 @@ def test_s_has_idea_false_on_an_ask_reply_gives_up_and_calls_no_ss(env):
 _PERMANENT = [401, 403, 404, 409, 422]
 _TRANSIENT = [500, 502, 503, 408, 429, None]
 _CONFIG_ERROR_EN = (
-    "Idea capture isn't set up correctly here, so I couldn't save that. "
+    "Feedback isn't set up correctly here, so I couldn't save that. "
     "Please let your Sorento contact know."
 )
 

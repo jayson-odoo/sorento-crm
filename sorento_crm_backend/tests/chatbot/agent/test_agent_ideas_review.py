@@ -451,7 +451,7 @@ def test_AC_RV_2_a_console_confirm_of_an_idea_keeps_its_full_reply(db, ss):
     outcome = confirm(db, w, row)
     assert "IDEA-0184" in outcome.reply_text and f"{CRM}/ideas/{idea_id}" in outcome.reply_text
     assert NOTE_TEXT in outcome.reply_text
-    assert "test idea" not in outcome.reply_text.lower()
+    assert "test feedback" not in outcome.reply_text.lower()
 
 
 # ------------------------------------------------------------------ AC-RC-1 the model never receives the note or the link

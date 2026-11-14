@@ -199,7 +199,7 @@ def test_P1_the_staff_web_panel_never_attaches_chat_photos(db, ss, monkeypatch):
     assert seam.uploads == []
 
 
-@pytest.mark.parametrize("ss_type, label", [("issue", "Issue"), ("idea", "Feature request"), (None, "Feature request")])
+@pytest.mark.parametrize("ss_type, label", [("issue", "Problem report"), ("idea", "Feature request"), (None, "Feature request")])
 def test_T2_the_ideas_list_rows_carry_the_type_label(db, ss, ss_type, label):  # noqa: F811
     from app.services.chatbot.agent import writes
 

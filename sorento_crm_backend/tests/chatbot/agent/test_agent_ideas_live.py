@@ -67,7 +67,7 @@ def test_ac_w28_the_note_does_not_call_the_idea_a_test(db, ss):
     assert outcome.steps[0]["status"] == "done"
     low = outcome.reply_text.lower()
     assert "IDEA-0184" in outcome.reply_text and f"{CRM}/ideas/{idea_id}" in outcome.reply_text, "positive control"
-    assert "test idea" not in low
+    assert "test feedback" not in low
     assert "not on the board" not in low
 
 
@@ -153,7 +153,7 @@ def test_ac_w29_an_idea_that_is_not_the_users_is_still_refused(db, ss):
     res, step = propose(db, w, UPDATE, {"idea_id": IDEA, "title": "New title"}, seen=[IDEA])
 
     assert res.status in ("denied", "invalid") and step is None
-    assert "only edit your own ideas" in res.message
+    assert "only edit your own feedback" in res.message
     assert patches(ss) == []
 
 
@@ -450,7 +450,7 @@ def test_ac_w35_a_replay_whose_idea_moved_past_captured_says_it_was_already_capt
     outcome = confirm(db, w, row)
 
     text = reply_of(outcome)
-    assert "This idea was already captured as idea IDEA-0184" in text, text
+    assert "This feedback was already captured as feedback IDEA-0184" in text, text
     assert REACHED not in text.lower()
     assert not leaks(text.replace(CRM, ""))
 
@@ -465,7 +465,7 @@ def test_ac_w35_an_ss_4xx_says_the_workspace_refused_the_idea_and_names_no_detai
     outcome = confirm(db, w, row)
 
     text = reply_of(outcome)
-    assert "The Ideas workspace refused this idea." in text, text
+    assert "The feedback service refused this feedback." in text, text
     assert REACHED not in text.lower()
     assert "ZZTSECRETDETAIL" not in text
     assert not leaks(text)
@@ -484,7 +484,7 @@ def test_ac_w35_control_an_unreachable_or_failing_ss_still_says_not_reached(db, 
 
     assert [s["status"] for s in outcome.steps] == ["failed"]
     assert REACHED in reply_of(outcome).lower()
-    assert "refused this idea" not in reply_of(outcome)
+    assert "refused this feedback" not in reply_of(outcome)
 
 
 def test_ac_w35_control_a_normal_capture_is_unchanged(db, ss):
@@ -536,7 +536,7 @@ def test_fr3_c1_a_live_turn_creates_a_real_idea_with_no_test_note(db, ss):
 
     assert similar["is_test"] is False
     assert create["is_test"] is False
-    assert "test idea" not in outcome.reply_text.lower()
+    assert "test feedback" not in outcome.reply_text.lower()
 
 
 def test_fr3_c1_the_two_turns_make_different_intake_refs_for_the_same_text(db, ss):

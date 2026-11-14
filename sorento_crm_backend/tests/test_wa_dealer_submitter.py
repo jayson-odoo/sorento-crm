@@ -693,7 +693,7 @@ def test_D7_the_dealer_user_the_bot_created_cannot_sign_in(env):
 # Round 6 (lead): the turn must be the contact's own message; reply details   #
 # --------------------------------------------------------------------------- #
 NO_ACCESS_EN = (
-    "You need a CRM login with Ideas access to submit ideas here. Please ask your Sorento contact for one."
+    "You need a CRM login with access to send feedback here. Please ask your Sorento contact for one."
 )
 ACCOUNT_FAILED_EN = "I couldn't set up your account to file this. Please ask your salesperson."
 

@@ -766,7 +766,7 @@ def test_B_the_list_without_type_is_unchanged(gw):
 # SS #235: an ss 422 (`unknown_type`) on create is a plain reply, never retried #
 # --------------------------------------------------------------------------- #
 UNKNOWN_TYPE = {"error": {"code": "unknown_type", "message": "Unknown idea type: issue."}}
-TYPE_REFUSED_EN = "I couldn't file this: the Ideas workspace doesn't take this type yet."
+TYPE_REFUSED_EN = "I couldn't file this: feedback of this type can't be taken yet."
 
 
 def test_SS235_the_bot_lane_answers_unknown_type_plainly_and_does_not_retry(env):  # noqa: F811

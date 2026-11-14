@@ -134,11 +134,11 @@ MAIN_LEFT_OUT = (
     "last purchase cost; purchase orders placed; last receipt; orders by product; finding names and codes; "
     "finding products; searching company documents; reading the CRM user guides; your customer asks; "
     "recent changes; your sales opportunities; opportunity stages; finding dealer contacts; "
-    "purchase requests and sponsorship forms; your ideas; reading CRM records, totals and groupings; "
+    "purchase requests and sponsorship forms; your feedback; reading CRM records, totals and groupings; "
     "listing the CRM records you can read; change a customer ask; create an opportunity; "
     "change an opportunity; change a dealer contact; approve or reject a purchase request; "
-    "take back a purchase request action; record a suggestion or wish for what the system should have or do, "
-    "an idea or a feature request, or report a problem with the CRM system or the assistant; change one of your ideas; grant a dealer contact access; add or remove contact tags; "
+    "take back a purchase request action; record feedback: a wish or feature request, "
+    "or a problem with the CRM system or the assistant; change your feedback; grant a dealer contact access; add or remove contact tags; "
     "assign sales agents to customers; edit contacts from a pasted table"
 )
 
