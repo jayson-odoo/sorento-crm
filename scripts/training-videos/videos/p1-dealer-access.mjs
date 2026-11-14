@@ -13,8 +13,9 @@ export default {
     {
       en: 'Open Dealer access under My Work.',
       ms: 'Buka Dealer access di bawah My Work.',
-      run: async ({ nav, sleep }) => {
+      run: async ({ page, nav, sleep }) => {
         await nav('Dealer access');
+        await page.getByRole('heading', { name: 'Dealer access', level: 1 }).waitFor({ timeout: 60000 });
         await sleep(1200);
       },
     },
@@ -99,17 +100,20 @@ export default {
       },
     },
     {
-      en: 'To take access away, right-click the row and choose Unlink.',
-      ms: 'Untuk menarik balik akses, klik kanan baris dan pilih Unlink.',
+      en: 'To take access away, click the three dots on their row and choose Unlink.',
+      ms: 'Untuk menarik balik akses, klik tiga titik pada baris mereka dan pilih Unlink.',
+      run: async ({ page, click, sleep }) => {
+        await click(page.getByRole('button', { name: 'Nora Aziz actions' }).first());
+        await sleep(500);
+        await click(page.getByRole('menuitem', { name: /Unlink from 300-L001/ }).first(), { hold: 900 });
+      },
+    },
+    {
+      en: 'You have a few seconds to press Cancel. After that, their access is removed.',
+      ms: 'Anda ada beberapa saat untuk menekan Cancel. Selepas itu, akses mereka dikeluarkan.',
       run: async ({ page, sleep }) => {
-        const cell = page.getByRole('cell', { name: 'Nora Aziz', exact: true }).first();
-        const b = await cell.boundingBox();
-        await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 25 });
-        await sleep(300);
-        await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2, { button: 'right' });
-        await sleep(2200);
-        await page.keyboard.press('Escape');
-        await sleep(400);
+        await page.getByRole('cell', { name: 'Nora Aziz', exact: true }).waitFor({ state: 'detached', timeout: 30000 });
+        await sleep(1500);
       },
     },
   ],

@@ -12,7 +12,8 @@ Run from the backend directory against the local sandbox DB only:
 p1: admin + salesperson logins, sales agent with own customers, products, prices, stock in
     two warehouses, tag templates, complaint master data, a chatbot-console test contact.
 p2: a project with a published project sales order (4 lines), order inquiries in mixed
-    states through the real decision path, a CS user, ready for an amendment.
+    states through the real decision path, a CS user, ready for an amendment. p2 drives the
+    sandbox backend over HTTP, so it needs TV_API_URL (that backend's /api/v1 base) set.
 
 Idempotent: every row is found by a natural key first and only created when missing.
 Refuses to run against anything but a localhost database named sorento_ci.
@@ -457,8 +458,8 @@ def reset_video_rows(db):
     from app.models.access import RespondContact, RespondContactCustomer
 
     for phone in VIDEO_PHONES:
-        row = db.query(RespondContact).filter(RespondContact.phone_number == msisdn(phone)).first()
-        if row is not None:
+        # The Add people form saves the number with a leading +, the seeder without one.
+        for row in db.query(RespondContact).filter(RespondContact.phone_number.in_([msisdn(phone), "+" + msisdn(phone)])):
             db.query(RespondContactCustomer).filter_by(contact_id=row.id).delete()
             say(f"unlinked video contact {row.name}")
     db.flush()
@@ -563,7 +564,9 @@ def seed_p1(db) -> dict:
 # ============================================================================ P2
 
 
-API = "http://localhost:8000/api/v1"  # the sandbox dev server, which reads the same sorento_ci DB
+# The sandbox backend that reads this same sorento_ci DB, e.g. http://127.0.0.1:8477/api/v1. No
+# default: on a shared machine localhost:8000 can be another lane's backend on another database.
+API = os.environ.get("TV_API_URL", "").rstrip("/")
 
 PROJECT_TITLE = "Taman Demo Residences"
 BUYER = ("300-B005", "Bina Jaya Builders Sdn Bhd", "012-000 1105", "procurement@binajaya.example.com")
@@ -911,6 +914,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--part", choices=["p1", "p2", "all"], default="all")
     args = parser.parse_args()
+    if args.part in ("p2", "all") and not API:
+        raise SystemExit("Part p2 calls the sandbox backend: set TV_API_URL (e.g. http://127.0.0.1:8477/api/v1).")
 
     register_company_scope_listeners()
     db = SessionLocal()

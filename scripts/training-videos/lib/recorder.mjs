@@ -64,7 +64,21 @@ if (!noVoice) {
 }
 
 // 2. Sign in outside the recording, so the video opens on the app, not the login page.
-const browser = await chromium.launch();
+// Playwright's pinned Chromium build, else TV_CHROMIUM, else the newest headless shell already
+// in the browser cache (so a version bump in node_modules never forces a download).
+function cachedShell() {
+  const dir = path.join(process.env.HOME, 'Library/Caches/ms-playwright');
+  const builds = fs.existsSync(dir) ? fs.readdirSync(dir).filter((d) => d.startsWith('chromium_headless_shell-')) : [];
+  builds.sort((a, b) => Number(b.split('-')[1]) - Number(a.split('-')[1]));
+  for (const b of builds) {
+    const exe = path.join(dir, b, 'chrome-headless-shell-mac-arm64', 'chrome-headless-shell');
+    if (fs.existsSync(exe)) return exe;
+  }
+  return undefined;
+}
+let exe = process.env.TV_CHROMIUM;
+if (!exe && !fs.existsSync(chromium.executablePath())) exe = cachedShell();
+const browser = await chromium.launch(exe ? { executablePath: exe } : {});
 const user = spec.user;
 const pre = await browser.newContext({ viewport: { width: W, height: H } });
 const lp = await pre.newPage();
