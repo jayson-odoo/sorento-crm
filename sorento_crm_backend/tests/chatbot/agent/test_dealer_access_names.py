@@ -160,6 +160,8 @@ def respond(monkeypatch, db):
             return {"id": _new_id(phone), "phone": phone}
         if rec.lookup == "timeout":
             raise httpx.ReadTimeout("timed out", request=httpx.Request("GET", "https://respond.invalid/v2/contact/x"))
+        if rec.lookup == "connect":
+            raise httpx.ConnectError("refused", request=httpx.Request("GET", "https://respond.invalid/v2/contact/x"))
         raise _http_error(404 if rec.lookup == "missing" else 500)
 
     def create(self, phone, first_name=None, *a, **k):
@@ -1061,3 +1063,96 @@ def test_N5_2_the_worker_still_raises_on_a_respond_error_and_logs_it_failed(db, 
     rows = logs_of(db, o.ali.id)
     assert_logged(rows, 1)
     assert rows[0].status == "failed"
+
+
+# ================================================================== review round (14 Nov)
+
+
+@pytest.mark.parametrize("lookup", ["timeout", "connect"])
+def test_N5_3_review_after_the_first_timeout_or_connection_error_the_rest_are_not_called(db, respond, lookup):
+    o = names_world(db)
+    respond.key, respond.lookup = True, lookup
+    phones = [fake_phone(), fake_phone(), fake_phone()]
+
+    out = service().grant(db, o.s1, ["SRT"], ids_of(o.w.cust_a), [
+        person_of(p, name=f"ZZT Down {i}") for i, p in enumerate(phones)
+    ])
+
+    assert [c[0] for c in respond.calls].count("get_contact_by_phone") == 1, respond.calls
+    rows = out["rows"]
+    assert [r["respond"] for r in rows] == ["failed", "failed", "failed"]
+    assert len({r["respond_error"] for r in rows}) == 1
+    assert_plain(rows[0]["respond_error"])
+    for phone in phones:
+        assert state(db, phone)["links"] == [str(o.w.cust_a.id)]
+
+
+def test_N4_3_review_a_phone_linked_only_to_an_inactive_customer_of_my_company_already_has_access(db):
+    o = names_world(db)
+    w = o.w
+    gone = add_customer(db, w, unique_code("ZZT Closed Link"), agent=o.other)
+    person = dealer(db, w, customers=(gone,), name="ZZT Inactive Linked")
+    deactivate(db, gone)
+
+    with pytest.raises(AppException) as err:
+        service().grant(db, o.s1, ["SRT"], ids_of(w.cust_a), [person_of(person.phone_number, name="ZZT Typed")])
+
+    assert refusal_rows(err.value) == [{"index": 0, "error": "This number already has access.", "contact": None}]
+    assert "ZZT Inactive Linked" not in str(err.value.detail)
+    assert links_of(db, person.id) == {str(gone.id)}
+
+
+def test_N4_3_review_a_phone_linked_only_in_an_ungranted_company_keeps_the_other_company_text(db):
+    o = names_world(db)
+    w = o.w
+    outside = dealer(db, w, customers=(o.hidden_shop,), companies=(w.hidden,), name="ZZT Outside Again")
+
+    with pytest.raises(AppException) as err:
+        service().grant(db, o.s1, ["SRT"], ids_of(w.cust_a), [person_of(outside.phone_number)])
+
+    assert refusal_rows(err.value) == [{"index": 0, "error": OTHER_COMPANY, "contact": None}]
+
+
+def test_N5_2_review_the_404_before_a_create_is_logged_success_and_no_row_is_failed(db, respond):
+    o = names_world(db)
+    respond.key, respond.lookup = True, "missing"
+
+    cid = _grant_one(db, o, fake_phone())["rows"][0]["contact_id"]
+
+    rows = logs_of(db, cid)
+    assert_logged(rows, 3)
+    assert [r.status for r in rows] == ["success", "success", "success"], [(r.endpoint, r.status) for r in rows]
+
+
+def test_N5_2_review_a_found_flow_has_no_failed_rows(db, respond):
+    o = names_world(db)
+    respond.key, respond.lookup = True, "found"
+
+    cid = _grant_one(db, o, fake_phone())["rows"][0]["contact_id"]
+
+    assert [r.status for r in logs_of(db, cid) if r.status == "failed"] == []
+
+
+@pytest.mark.parametrize("lookup", ["error", "timeout"])
+def test_N5_review_no_phone_number_in_the_app_log_on_a_failure(db, respond, caplog, lookup):
+    import logging
+
+    o = names_world(db)
+    respond.key, respond.lookup = True, lookup
+    phone = fake_phone()
+    caplog.set_level(logging.DEBUG)
+
+    out = _grant_one(db, o, phone)
+    service().respond_retry(db, o.s1, str(out["rows"][0]["contact_id"]))
+
+    assert out["rows"][0]["respond"] == "failed"
+    national = digits_of(phone)[2:]  # without the 60 country code
+    records = [r for r in caplog.records if "respond_contact_ensure" in r.name]
+    assert records, "the failure is logged by respond_contact_ensure"
+    for r in records:
+        text = r.getMessage()
+        assert "+60" not in text and national not in text and digits_of(phone) not in text, text
+
+
+def digits_of(phone: str) -> str:
+    return "".join(ch for ch in str(phone) if ch.isdigit())

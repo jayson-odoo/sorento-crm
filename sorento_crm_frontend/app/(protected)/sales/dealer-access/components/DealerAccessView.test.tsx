@@ -224,6 +224,33 @@ describe('DealerAccessView - DEALER-ACCESS-NAMES chips', () => {
     expect(within(chips).getAllByText('Kedai Lain').length).toBeGreaterThan(0);
     expect(within(chips).queryByText('Kedai Lain (300-B001)')).toBeNull();
   });
+
+  it('review: the chip popover lists a duplicate-name item as "Name (code)" once, the code not repeated', async () => {
+    svc.getPeople.mockResolvedValue(
+      page([
+        row({
+          accounts: [
+            { id: 'a1', code: '300-A004', name: 'Kedai Test Satu', link_id: 'l1', mine: true },
+            { id: 'a9', code: '300-A009', name: 'Kedai Test Satu', link_id: 'l9', mine: true },
+          ] as unknown as DealerAccessRow['accounts'],
+        }),
+      ]),
+    );
+    render(<DealerAccessView />);
+    const chips = await screen.findByTestId('dealer-accounts-c1:SRT');
+    const visible = within(chips)
+      .getAllByText('Kedai Test Satu (300-A004)')
+      .find((el) => !el.closest('[aria-hidden="true"]'));
+    fireEvent.click(visible!);
+    await waitFor(() =>
+      expect(screen.getAllByRole('listitem').some((li) => (li.textContent || '').includes('300-A004'))).toBe(true),
+    );
+    const item = screen
+      .getAllByRole('listitem')
+      .find((li) => (li.textContent || '').includes('300-A004'))!;
+    expect((item.textContent || '').replace(/\s+/g, ' ').trim()).toBe('Kedai Test Satu (300-A004)');
+    expect((item.textContent || '').split('300-A004').length - 1).toBe(1);
+  });
 });
 
 describe('DealerAccessView - DEALER-ACCESS-NAMES', () => {
@@ -370,5 +397,54 @@ describe('DealerAccessView - DEALER-ACCESS-NAMES', () => {
     render(<DealerAccessView />);
     await waitFor(() => expect(screen.getByText('Ali Test')).toBeTruthy());
     expect(screen.queryByText('Not in Respond.io yet')).toBeNull();
+  });
+
+  it('review N5.4: the desktop grid has its own one-line "Respond.io" column; Access holds only the access label', async () => {
+    svc.getPeople.mockResolvedValue(
+      page([row({ in_respond: false }), row({ contact_id: 'c3', name: 'Eve Test', in_respond: true })]),
+    );
+    render(<DealerAccessView />);
+    await waitFor(() => expect(screen.getByText('Ali Test')).toBeTruthy());
+    const headers = screen.getAllByRole('columnheader').map((h) => (h.textContent || '').trim());
+    const accessAt = headers.indexOf('Access');
+    const respondAt = headers.indexOf('Respond.io');
+    expect(accessAt).toBeGreaterThanOrEqual(0);
+    expect(respondAt).toBeGreaterThanOrEqual(0);
+    const cellsOf = (name: string) =>
+      within(screen.getAllByRole('row').find((r) => within(r).queryByText(name))!).getAllByRole('cell');
+    const ali = cellsOf('Ali Test');
+    expect((ali[accessAt].textContent || '').trim()).toBe('Employee');
+    expect((ali[respondAt].textContent || '').trim()).toBe('Not in Respond.io yet');
+    const eve = cellsOf('Eve Test');
+    expect((eve[accessAt].textContent || '').trim()).toBe('Employee');
+    expect((eve[respondAt].textContent || '').trim()).toBe('');
+  });
+
+  it('review: the search text is written to the address bar as q=', async () => {
+    const replaceState = vi.spyOn(window.history, 'replaceState');
+    const pushState = vi.spyOn(window.history, 'pushState');
+    svc.getPeople.mockResolvedValue(page([row()]));
+    render(<DealerAccessView />);
+    fireEvent.change(screen.getByLabelText('Search people'), { target: { value: 'ali' } });
+    await waitFor(() => {
+      const written = [
+        ...nav.replace.mock.calls,
+        ...nav.push.mock.calls,
+        ...replaceState.mock.calls.map((c) => [c[2]]),
+        ...pushState.mock.calls.map((c) => [c[2]]),
+      ].map((c) => String(c[0] ?? ''));
+      expect(written.some((u) => /[?&]q=ali(&|$)/.test(u))).toBe(true);
+    });
+    replaceState.mockRestore();
+    pushState.mockRestore();
+  });
+
+  it('review: q= in the address bar is restored into the search box and the request', async () => {
+    nav.params = new URLSearchParams('q=ali');
+    svc.getPeople.mockResolvedValue(page([row()]));
+    render(<DealerAccessView />);
+    await waitFor(() => expect(svc.getPeople).toHaveBeenCalled());
+    expect((screen.getByLabelText('Search people') as HTMLInputElement).value).toBe('ali');
+    await waitFor(() => expect(lastPeopleParams().searchQuery).toBe('ali'));
   });
 });
