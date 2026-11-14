@@ -14,7 +14,7 @@ from __future__ import annotations
 import hashlib
 import re
 from datetime import date, datetime
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_EVEN, Decimal, InvalidOperation
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from app.models.project_so import ProjectPOLine
@@ -292,6 +292,14 @@ def _is_description_fragment(item: Dict[str, Any]) -> bool:
     )
 
 
+def line_amount(qty: Optional[Decimal], unit_price: Optional[Decimal]) -> Optional[Decimal]:
+    """``qty * unit_price`` to the cent, half-even (banker's rounding, the same rule the
+    grid's live preview uses), or None when a factor is missing."""
+    if qty is None or unit_price is None:
+        return None
+    return (qty * unit_price).quantize(_CENTS, rounding=ROUND_HALF_EVEN)
+
+
 def arithmetic_ok(
     qty: Optional[Decimal], unit_price: Optional[Decimal], amount: Optional[Decimal]
 ) -> Optional[bool]:
@@ -303,7 +311,7 @@ def arithmetic_ok(
     """
     if qty is None or unit_price is None or amount is None:
         return None
-    return (qty * unit_price).quantize(_CENTS) == amount.quantize(_CENTS)
+    return line_amount(qty, unit_price) == amount.quantize(_CENTS, rounding=ROUND_HALF_EVEN)
 
 
 def _computed_amount(line: ProjectPOLine) -> Decimal:
@@ -312,8 +320,9 @@ def _computed_amount(line: ProjectPOLine) -> Decimal:
     nothing."""
     qty = _to_decimal(line.qty)
     unit_price = _to_decimal(line.unit_price)
-    if qty is not None and unit_price is not None:
-        return (qty * unit_price).quantize(_CENTS)
+    computed = line_amount(qty, unit_price)
+    if computed is not None:
+        return computed
     return _money(_to_decimal(line.amount))
 
 

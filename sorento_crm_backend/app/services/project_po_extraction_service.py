@@ -254,6 +254,10 @@ class ProjectPOExtractionService(
             # is where they are read and shown, so they travel with the version.
             "purchase_order": {
                 "po_number": po.po_number or "",
+                # Who issued it: the customer accepted codes are remembered for, set from
+                # the confirm screen while the version is To confirm.
+                "issuing_party_id": po.issuing_party_id,
+                "issuing_party_name": self._party_name(po.issuing_party_id),
                 "status": po.status,
                 "approved_by_name": self._user_name(po.approved_by),
                 "approved_at": po.approved_at,
@@ -320,6 +324,9 @@ class ProjectPOExtractionService(
                 if product is not None
             ],
             "qty_suggested": bool((match or {}).get("qty_suggested")),
+            # No amount was printed: the server computes it from qty x unit price, and a
+            # qty or price edit moves it until a person types one.
+            "amount_computed": bool((match or {}).get("amount_computed")),
         }
 
     def serialize_annotation(self, annotation: ProjectPOAnnotation) -> Dict[str, Any]:
@@ -366,6 +373,14 @@ class ProjectPOExtractionService(
                 ),
                 code="po_version_confirmed",
             )
+
+    def _party_name(self, party_id: Optional[str]) -> Optional[str]:
+        if not party_id:
+            return None
+        from app.models.projects import ProjectParty
+
+        party = self.db.get(ProjectParty, party_id)
+        return party.name if party is not None else None
 
     def _user_name(self, user_id: Optional[str]) -> Optional[str]:
         if not user_id:

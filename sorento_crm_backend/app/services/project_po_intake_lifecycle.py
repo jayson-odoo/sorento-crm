@@ -76,6 +76,7 @@ from app.services.project_po_reading import (  # noqa: F401 - shared vocabulary
     _int_or_none,
     _is_description_fragment,
     arithmetic_ok,
+    line_amount,
     _computed_amount,
     _parse_date,
     normalise_annotation_text,
@@ -973,8 +974,9 @@ class POIntakeLifecycleMixin:
             product = query.first()
             if product is not None:
                 return product.id, "code"
-        key = customer_code_map.customer_code_for(stock_code, description)
-        product_id = (remembered or {}).get(key.upper()) if key else None
+        product_id = customer_code_map.lookup(
+            remembered or {}, customer_code_map.customer_code_for(stock_code, description)
+        )
         if product_id and self._product_in_company(product_id, company_id) is not None:
             return product_id, "map"
         return None, None
@@ -1022,6 +1024,14 @@ class POIntakeLifecycleMixin:
                     suggested, _to_decimal(line.unit_price), _to_decimal(line.amount)
                 )
                 matches.setdefault(str(line.line_no), {})["qty_suggested"] = True
+            # No amount printed: the server owns it from here, qty x unit price, and a qty
+            # or price edit moves it (`update_line`) until a person types an amount.
+            if line.amount is None:
+                matches.setdefault(str(line.line_no), {})["amount_computed"] = True
+                line.amount = line_amount(_to_decimal(line.qty), _to_decimal(line.unit_price))
+                line.arithmetic_ok = arithmetic_ok(
+                    _to_decimal(line.qty), _to_decimal(line.unit_price), line.amount
+                )
         data = dict(version.extracted_json or {})
         data["line_matches"] = matches
         version.extracted_json = data
@@ -1351,6 +1361,16 @@ class POIntakeLifecycleMixin:
 
         if "qty" in payload and self._line_match(version, line).get("qty_suggested"):
             self._set_line_match(version, line, qty_suggested=False)
+
+        # A computed amount (none was printed) follows qty x unit price; a typed amount is
+        # the person's figure and is never moved again.
+        if "amount" in payload:
+            if self._line_match(version, line).get("amount_computed"):
+                self._set_line_match(version, line, amount_computed=False)
+        elif ("qty" in payload or "unit_price" in payload) and self._line_match(
+            version, line
+        ).get("amount_computed"):
+            line.amount = line_amount(_to_decimal(line.qty), _to_decimal(line.unit_price))
 
         line.arithmetic_ok = arithmetic_ok(
             _to_decimal(line.qty), _to_decimal(line.unit_price), _to_decimal(line.amount)

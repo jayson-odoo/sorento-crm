@@ -150,6 +150,13 @@ class POLineResponse(BaseModel):
         False,
         description="The qty was worked out from amount / unit price and is not yet accepted.",
     )
+    amount_computed: bool = Field(
+        False,
+        description=(
+            "No amount was printed: it is qty x unit price, and a qty or price edit moves "
+            "it until an amount is typed."
+        ),
+    )
 
 
 
@@ -185,6 +192,8 @@ class POApprovalStamps(BaseModel):
     """The approval handshake, which lives on the PO row but is read on this screen."""
 
     po_number: str = ""
+    issuing_party_id: Optional[str] = None
+    issuing_party_name: Optional[str] = None
     status: Optional[str] = None
     approved_by_name: Optional[str] = None
     approved_at: Optional[datetime] = None

@@ -740,6 +740,10 @@ def _po_line_matcher_fallback() -> str:
         '- When two or more candidates fit equally well, set "product_code" to null and\n'
         "  list them in \"options\" (codes from the line's candidates only). Otherwise\n"
         '  "options" may list the close alternatives, or be empty.\n'
+        "- A VARIANT (a size or finish, e.g. 35MM, or a colour) named in the description\n"
+        "  that only ONE candidate code carries, while another candidate is the bare code\n"
+        "  without it: do not pick. Set \"product_code\" to null and list both codes in\n"
+        "  \"options\" for a person to choose.\n"
         '- "confidence": "high" when the code is plainly the same product, "medium" when\n'
         '  it is very likely, "low" when it is a guess. When nothing fits, product_code\n'
         '  null, options empty, confidence "low".\n'

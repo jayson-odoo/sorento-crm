@@ -7,9 +7,9 @@ next document of either kind. No other module queries ``CustomerItemCodeMap``.
 """
 from __future__ import annotations
 
+import re
 from typing import Dict, Optional
 
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.project_so import CustomerItemCodeMap
@@ -17,6 +17,29 @@ from app.models.projects import Project, ProjectParty, ProjectPurchaseOrder
 
 #: ``customer_item_code_map.customer_code`` is String(180).
 CODE_MAX_LENGTH = 180
+
+
+def normalise_code(code: Optional[str]) -> str:
+    """The comparison key of a printed code: letters and digits only, upper case.
+
+    Owner ruling 13 Nov: case, spaces, dashes and marks do not make a different code, so
+    `SORENTO BBTSRTWT9121 -GM **` is `sorento bbtsrtwt9121-gm`. Different letters or digits
+    still differ (`CB310-CR-L` is not `CB310-CR`). Only the comparison uses this; the map
+    stores the code as printed.
+    """
+    return re.sub(r"[^A-Z0-9]", "", (code or "").upper())
+
+
+def lookup(remembered: Dict[str, str], code: Optional[str]) -> Optional[str]:
+    """The product a remembered code points at, comparing by ``normalise_code``. The one
+    lookup both the PO reader and the delivery-schedule matcher use."""
+    key = normalise_code(code)
+    if not key:
+        return None
+    for remembered_code, product_id in remembered.items():
+        if normalise_code(remembered_code) == key:
+            return product_id
+    return None
 
 
 def customer_code_for(stock_code: Optional[str], description: Optional[str]) -> Optional[str]:
@@ -47,18 +70,21 @@ def remember_code(
     product_id: str,
     actor_user_id: Optional[str],
 ) -> None:
-    """Insert or overwrite, case-insensitive on the code. A blank code or no customer is a
-    no-op: there is nothing to key the memory on."""
+    """Insert, or overwrite the one row whose code is the same by ``normalise_code``. A blank
+    code or no customer is a no-op: there is nothing to key the memory on."""
     code = (customer_code or "").strip()[:CODE_MAX_LENGTH]
     if not customer_id or not code or not product_id:
         return
-    existing = (
-        db.query(CustomerItemCodeMap)
-        .filter(
-            CustomerItemCodeMap.customer_id == customer_id,
-            func.upper(CustomerItemCodeMap.customer_code) == code.upper(),
-        )
-        .first()
+    key = normalise_code(code)
+    existing = next(
+        (
+            row
+            for row in db.query(CustomerItemCodeMap)
+            .filter(CustomerItemCodeMap.customer_id == customer_id)
+            .all()
+            if normalise_code(row.customer_code) == key
+        ),
+        None,
     )
     if existing is not None:
         existing.product_id = product_id

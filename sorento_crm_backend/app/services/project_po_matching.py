@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from sqlalchemy.orm import Session
@@ -91,7 +92,11 @@ def ask_line_matcher(db: Session, lines: List[dict], *, company_id: Optional[str
     company, for the log line: the candidates were already scoped to it by the caller.
     """
     from app.services.ai_prompt_registry import agent_model, get_prompt
-    from app.services.document_extraction import _assistant_config, _reader_model
+    from app.services.document_extraction import (
+        _assistant_config,
+        _reader_model,
+        log_model_usage,
+    )
     from app.services.llm_provider import get_provider, resolve_api_key
 
     provider_name, model = agent_model(db, PROMPT_KEY)
@@ -121,6 +126,7 @@ def ask_line_matcher(db: Session, lines: List[dict], *, company_id: Optional[str
         ],
     }
     system = get_prompt(db, PROMPT_KEY).text
+    started = time.perf_counter()
     logger.info(
         "PO line matcher: %s lines, %s shared candidates, company %s, %s/%s",
         len(lines),
@@ -139,6 +145,19 @@ def ask_line_matcher(db: Session, lines: List[dict], *, company_id: Optional[str
         json_schema=LINE_MATCHER_SCHEMA,
         json_schema_name="po_line_matches",
         timeout=_MATCHER_TIMEOUT_SECONDS,
+    )
+    log_model_usage(
+        db,
+        model=model,
+        provider=provider_name,
+        prompt_tokens=getattr(result, "prompt_tokens", 0) or 0,
+        completion_tokens=getattr(result, "completion_tokens", 0) or 0,
+        cached_tokens=getattr(result, "cached_tokens", 0) or 0,
+        calls=1,
+        elapsed_ms=int((time.perf_counter() - started) * 1000),
+        answered=bool((result.content or "").strip()),
+        feature="po_line_match",
+        form_key=PROMPT_KEY,
     )
     data = json.loads((result.content or "").strip())
     matches = data.get("matches") if isinstance(data, dict) else None

@@ -1246,9 +1246,9 @@ class ProjectScheduleService:
         """The two exact tiers: what this customer taught us, then the code printed
         inside their own. ``(None, None)`` means neither placed the column - the
         caller's cue to try it in the batched fuzzy match instead."""
-        raw = (column.customer_code_raw or "").upper()
-        if raw and raw in remembered:
-            return remembered[raw], _RESOLUTION_MAP
+        remembered_product = customer_code_map.lookup(remembered, column.customer_code_raw)
+        if remembered_product:
+            return remembered_product, _RESOLUTION_MAP
 
         for candidate in _code_candidates(column.header_code, column.customer_code_raw):
             product = self._product_by_code(version, candidate)
