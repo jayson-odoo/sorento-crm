@@ -477,9 +477,6 @@ NEAR_PICK_KEY = "near_pick"
 #: `_pick_as_trgm_neighbour`'s answer for an offered pick while the raw as typed reaches several
 #: codes: the pick is set aside (the raw is asked as typed), nothing is offered alone.
 SET_ASIDE: dict[str, Any] = {}
-#: CHATBOT-CLOSE-CODES F2: the parser's code a `SET_ASIDE` entity carries, so the which-one the
-#: raw asks lists it first (`task.after_reply`, the dealer's which-one); order only.
-SET_ASIDE_PICK_KEY = "set_aside_pick"
 #: CHATBOT-CLOSE-CODES (lead ruling, 13 Nov 2026): the asks whose parser code is answered or
 #: offered by `picked_code_verdict`, and whose lone prefix hit is offered (`code_sizes`): stock and
 #: incoming. Every other ask keeps today's answer.
@@ -1087,6 +1084,8 @@ def ground(
             if corrected:
                 near = _pick_as_trgm_neighbour(db, raw, canonical, offered=entity if close_ask else None)
                 if near is SET_ASIDE:
+                    from app.services.chatbot.turn.task import SET_ASIDE_PICK_KEY
+
                     notes.append({"from": hint, "raw": raw, "to": f"which one: {canonical} set aside (the raw reaches several codes)"})
                     entity = {**entity, "canonical_code": None, SET_ASIDE_PICK_KEY: canonical}
                     canonical = ""

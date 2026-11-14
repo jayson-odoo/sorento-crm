@@ -996,9 +996,7 @@ def after_reply(
         if len(labelled) < 2:
             continue
         # CHATBOT-CLOSE-CODES F2: the parser's code grounding set aside for this token
-        # (`grounding.SET_ASIDE_PICK_KEY`) is listed first; order only.
-        from app.services.chatbot.head.grounding import SET_ASIDE_PICK_KEY
-
+        # (`SET_ASIDE_PICK_KEY`) is listed first; order only.
         suggested = str(entity.get(SET_ASIDE_PICK_KEY) or "").strip().casefold() if isinstance(entity, dict) else ""
         lead = [pair for pair in labelled if suggested and pair[1].casefold() == suggested]
         labelled = [*lead, *(pair for pair in labelled if pair not in lead)]
@@ -1056,6 +1054,10 @@ NEXT_PICKS = "next_picks"
 #: CHATBOT-CLOSE-CODES F2: on a which-one list (`groups[]`), the parser's own code listed first,
 #: which a "yes" over a one-list pick answers (`apply._suggested_position`).
 SUGGESTED = "suggested"
+#: CHATBOT-CLOSE-CODES F2: the parser's code `head/grounding` set aside on a product entity because
+#: the raw reaches several codes (`grounding.SET_ASIDE`), so the which-one `after_reply` asks lists
+#: it first; order only. Here, not in `head`, because the turn package imports nothing from it.
+SET_ASIDE_PICK_KEY = "set_aside_pick"
 #: The pick's own quantity per code, one per list (`after_reply`), for `_spend_stock_pick`.
 QTY_BY_CODE = "qty_by_code"
 #: Codes still owed a quantity while a pick is open (`{"key", "label"}` each): asked by
