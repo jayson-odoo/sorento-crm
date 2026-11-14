@@ -20,6 +20,7 @@ from app.services.project_quotation_template_service import prepared_by_names
 
 #: The most entries each comparison list holds; the rest are counted in `<name>_not_shown`.
 COMPARE_CAP = 20
+COMPARE_LISTS = ("only_in", "shared", "scopes_only_in", "scope_totals")
 
 
 def _num(value: Any) -> float | None:
@@ -105,7 +106,8 @@ def project_quotation_lines(db: Session, project_id: str, refs: list[str], cap: 
         .order_by(ProjectQuotation.sort_order.asc(), ProjectQuotation.created_at.asc(), ProjectQuotation.id.asc())
         .all()
     )
-    current = {row["id"]: row for row in svc.serialize_quotations(db, scopes)}
+    prepared_by = prepared_by_names(db, documents)  # the document's creator, never the project owner
+    current = {row["id"]: row for row in svc.serialize_quotations(db, scopes, prepared_by)}
     wanted = [r.strip() for r in refs if isinstance(r, str) and r.strip()]
     issues = (
         db.query(ProjectQuotationIssue)
@@ -115,7 +117,6 @@ def project_quotation_lines(db: Session, project_id: str, refs: list[str], cap: 
         if documents and wanted
         else []
     )
-    prepared_by = prepared_by_names(db, documents)  # the document's creator, never the project owner
     out: list[dict] = []
     matched: set[str] = set()
 
@@ -161,8 +162,9 @@ def project_quotation_lines(db: Session, project_id: str, refs: list[str], cap: 
     for doc in out:
         _facts(doc)
     data: dict[str, Any] = {"documents": out, "not_found": not_found, "total_lines": sum(d["line_count"] for d in out)}
-    if len(out) > 1:
-        data["comparison"] = _compare(out)  # from every line, before `_fit` cuts any
+    filled = [d for d in out if not d["empty"]]
+    if len(filled) > 1:  # from every line, before `_fit` cuts any
+        data["comparison"] = _compare(filled, [d["ref"] for d in out if d["empty"]])
     return data, _fit(data, cap)
 
 
@@ -192,16 +194,17 @@ def _capped(block: dict, name: str, entries: list) -> None:
         block[f"{name}_not_shown"] = len(entries) - COMPARE_CAP
 
 
-def _compare(docs: list[dict]) -> dict:
-    """The differences between two or more documents (UAC C1 to C6): every figure the answer needs is here,
-    so the model compares without arithmetic."""
+def _compare(docs: list[dict], empty_refs: list[str]) -> dict:
+    """The differences between two or more non-empty documents (UAC C1 to C6, R1, R2): every figure the answer
+    needs is here, so the model compares without arithmetic. Empty documents are only named."""
     refs = [d["ref"] for d in docs]
     ranked = sorted(docs, key=lambda d: d["total"])  # stable: a tie keeps document order
     low = ranked[0]["total"]
     block: dict[str, Any] = {
         "totals": [{"ref": d["ref"], "total": d["total"], "gap_to_lowest": round(d["total"] - low, 2)} for d in ranked],
         "lowest": ranked[0]["ref"],
-        "highest": ranked[-1]["ref"],
+        "highest": max(docs, key=lambda d: d["total"])["ref"],  # the first with the highest total
+        "empty_documents": empty_refs,
     }
 
     by_code: dict[str, dict[str, list[dict]]] = {}  # code -> ref -> its lines, both in first-seen order
@@ -238,35 +241,44 @@ def _compare(docs: list[dict]) -> dict:
         })
     shared.sort(key=lambda e: -e["line_total_gap"])  # stable: a tie keeps first-seen order
 
-    _capped(block, "only_in", only_in(by_code, "code"))
-    _capped(block, "shared", shared)
-    _capped(block, "scopes_only_in", only_in(by_scope, "scope"))
-    _capped(block, "scope_totals", [
+    scope_totals = [
         {"scope": label, "totals": [{"ref": r, "total": v[r]} for r in refs if r in v]}
         for label, v in by_scope.items() if len(v) > 1
-    ])
+    ]
+    for name, entries in zip(COMPARE_LISTS, (only_in(by_code, "code"), shared, only_in(by_scope, "scope"), scope_totals)):
+        _capped(block, name, entries)
     return block
 
 
 def _fit(data: dict, cap: int) -> int:
-    """Cut lines, from the scope with most, until the JSON is under `cap` characters; each cut scope says how many
-    it left out. With no lines left, whole documents go (`documents_not_shown`). Returns the count cut. What is
-    left (an empty `documents` and at most ten `not_found` refs) is far under any cap."""
+    """Keep the JSON under `cap` characters, cutting in this order. Lines, from the scope with most (each cut scope
+    says how many it left out in `lines_not_shown`). Then comparison entries, from the longest list, last first
+    (`<name>_not_shown`). Then the comparison block, and then whole documents, last first (`documents_not_shown`),
+    so a comparison never names a document that is not shown. Returns the count of lines and documents cut."""
     cut = 0
     scope_rows = [s for d in data["documents"] for s in d["scopes"]]
     while len(json.dumps(data, default=str)) > cap:
         biggest = max(scope_rows, key=lambda s: len(s["lines"]), default=None)
-        if biggest is None or not biggest["lines"]:
-            # No lines left to cut: whole documents go, last first, and are counted.
-            if not data["documents"]:
-                break
-            data["documents"].pop()
-            data["documents_not_shown"] = data.get("documents_not_shown", 0) + 1
-            cut += 1
-            scope_rows = [s for d in data["documents"] for s in d["scopes"]]
+        if biggest is not None and biggest["lines"]:
+            drop = max(1, len(biggest["lines"]) // 4)
+            del biggest["lines"][-drop:]
+            biggest["lines_not_shown"] = biggest.get("lines_not_shown", 0) + drop
+            cut += drop
             continue
-        drop = max(1, len(biggest["lines"]) // 4)
-        del biggest["lines"][-drop:]
-        biggest["lines_not_shown"] = biggest.get("lines_not_shown", 0) + drop
-        cut += drop
+        block = data.get("comparison")
+        lists = [n for n in COMPARE_LISTS if block and block[n]]
+        if lists:
+            name = max(lists, key=lambda n: len(json.dumps(block[n], default=str)))
+            block[name].pop()
+            block[f"{name}_not_shown"] = block.get(f"{name}_not_shown", 0) + 1
+            continue
+        if block is not None:
+            del data["comparison"]
+            continue
+        if not data["documents"]:
+            break
+        data["documents"].pop()
+        data["documents_not_shown"] = data.get("documents_not_shown", 0) + 1
+        cut += 1
+        scope_rows = [s for d in data["documents"] for s in d["scopes"]]
     return cut

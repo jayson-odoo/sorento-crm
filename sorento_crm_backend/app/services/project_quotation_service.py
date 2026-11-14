@@ -1674,9 +1674,12 @@ def _assert_loss_reason(db: Session, reason: Optional[str]) -> str:
 
 
 def serialize_quotations(
-    db: Session, quotations: Sequence[ProjectQuotation]
+    db: Session,
+    quotations: Sequence[ProjectQuotation],
+    prepared_by: Optional[Dict[str, Optional[str]]] = None,
 ) -> List[Dict[str, Any]]:
-    """Bulk, with the current version and alert counts folded in.
+    """Bulk, with the current version and alert counts folded in. ``prepared_by`` (document id ->
+    creator name, from ``prepared_by_names``) saves the users read when the caller already has it.
 
     Alert counts come from the CURRENT version only: a breach on a superseded version is
     history, and counting it would make a fixed quotation look permanently broken.
@@ -1746,10 +1749,12 @@ def serialize_quotations(
         .filter(ProjectQuotationDocument.id.in_(document_ids))
         .all()
     } if document_ids else {}
-    # Prepared By per row: the document's creator, never the project owner (one users query).
-    from app.services.project_quotation_template_service import prepared_by_names
+    # Prepared By per row: the document's creator, never the project owner (one users query, or
+    # the caller's map when it already read the names).
+    if prepared_by is None:
+        from app.services.project_quotation_template_service import prepared_by_names
 
-    prepared_by = prepared_by_names(db, documents.values())
+        prepared_by = prepared_by_names(db, documents.values())
 
     out: List[Dict[str, Any]] = []
     for quotation in quotations:
