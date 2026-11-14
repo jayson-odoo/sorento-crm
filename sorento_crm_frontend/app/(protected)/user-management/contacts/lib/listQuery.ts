@@ -74,7 +74,7 @@ export function contactTagFiltersFromUrl(filters: Record<string, string>): {
 }
 
 /**
- * FILTER-MULTISELECT: the Company filter (the companies of the contact's linked customers, any-of),
+ * FILTER-MULTISELECT: the Company filter (the contact's company access, any-of; CONTACT-COMPANIES-COL),
  * one comma-joined `company` value. A single id from an older link reads as a one-company filter.
  */
 export function contactCompanyFilterFromUrl(filters: Record<string, string>): string[] {
