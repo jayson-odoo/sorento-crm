@@ -899,7 +899,9 @@ function ManageDialog({
       : !capabilities.unlink_row.enabled
         ? (capabilities.unlink_row.reason ?? 'Waiting for AutoCount')
         : null;
-    return [
+    // Typed before the filter: a `.filter` straight on the literal drops the contextual
+    // ColumnDef type, so the cell callbacks' `row` reads as any under CI's typecheck.
+    const all: ColumnDef<ManageRow>[] = [
       buildSelectColumn<ManageRow>({
         rowLabel: (row) => `Select ${row.original.line.so_number} line ${soLine(row.original.line)}`,
       }),
@@ -1060,7 +1062,8 @@ function ManageDialog({
           );
         },
       },
-    ].filter((col) => (col.id === 'qty' ? hasNew : col.id === 'action' ? hasLinked : true));
+    ];
+    return all.filter((col) => (col.id === 'qty' ? hasNew : col.id === 'action' ? hasLinked : true));
     // Cells read live values through `stateRef` (the RequestReserveDialog G6 lesson).
   }, [capabilities, poLinesFor, poById, labelOf, bookNote, hasNew, hasLinked, soProducts]);
 

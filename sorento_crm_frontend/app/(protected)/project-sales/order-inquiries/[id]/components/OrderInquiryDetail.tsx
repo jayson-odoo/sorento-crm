@@ -331,9 +331,11 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   // link) is about.
   const chooseDocumentLine =
     selectedIds.length === 1 ? (activeLines.find((l) => l.id === selectedIds[0]) ?? null) : null;
-  // The AutoCount link needs the switch, the grant and every ticked line in AutoCount.
-  const poViaAutocount =
-    canLinkPo && selectedLines.length > 0 && selectedLines.every((l) => l.in_autocount !== false);
+  // The AutoCount link needs the switch, the grant and a ticked line in AutoCount; ticked lines
+  // that are not in AutoCount yet are left out and named in the popup, as on the lines list
+  // ("1 of 2", crew db3 pass 14 Nov).
+  const poEligible = selectedLines.filter((l) => l.in_autocount !== false).length;
+  const poViaAutocount = canLinkPo && poEligible > 0;
   const poWhyNot =
     selectedLines.length === 0
       ? 'Tick the lines to link to a PO.'
@@ -865,7 +867,14 @@ export function OrderInquiryDetail({ id }: { id: string }) {
                         }
                       >
                         <Link2 className="size-4" aria-hidden />
-                        {`Link PO... (${selectedLines.length})`}
+                        {poViaAutocount && poEligible !== selectedLines.length
+                          ? `Link PO... (${poEligible} of ${selectedLines.length})`
+                          : `Link PO... (${selectedLines.length})`}
+                        {poWhyNot ? (
+                          <span className="ms-auto max-w-[12rem] truncate ps-2 text-xs text-muted-foreground" title={poWhyNot}>
+                            {poWhyNot}
+                          </span>
+                        ) : null}
                       </DropdownMenuItem>
                       <DropdownMenuItem
                         disabled={crmOnlyLinked.length === 0}
