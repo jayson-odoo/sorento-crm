@@ -581,6 +581,24 @@ export function renderPriceTagDescription(
 }
 
 /**
+ * SPEC-SHEET-PARITY-B2 v3 (AC-C3.2, AC-C3.6): a field's readable name, the one its chip shows
+ * ("Code" for `product.code`, the key for a spec), or null for a path the catalog does not name.
+ */
+export function mergeFieldLabelOf(path: string): string | null {
+  const fixed = FIELD_LABELS.find((field) => field.path === path);
+  // The chip is the short name: the dialog's note in brackets stays in the dialog.
+  if (fixed) return fixed.label.replace(/\s*\([^)]*\)\s*$/, '') || fixed.label;
+  if (path.startsWith('spec.')) return path.slice('spec.'.length).replace(/_/g, ' ');
+  return null;
+}
+
+/** The text with every `{{token}}` left in it shown by its readable name (a designer's canvas). */
+export function withFieldLabels(text: string): string {
+  if (!text) return text;
+  return text.replace(tokenPattern(), (whole, path: string) => mergeFieldLabelOf(path) ?? whole);
+}
+
+/**
  * Every field the Insert field dialog offers, grouped.
  *
  * The spec group comes from the registry rather than from a list in here, so a

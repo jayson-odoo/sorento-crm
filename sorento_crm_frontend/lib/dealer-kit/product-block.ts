@@ -53,7 +53,7 @@ import { formatTagPrice } from './price-badge';
 import type { MergeFieldMode } from './merge-fields';
 import { resolveTableText } from './table-layout';
 import type { TableLayerProps } from './tag-template-types';
-import { hasMergeField, renderMergeFields, soleMergeField } from './merge-fields';
+import { hasMergeField, renderMergeFields, soleMergeField, withFieldLabels } from './merge-fields';
 import { blocksPlainText, isRich, parseRichText, richPlainText, type RichBlock, type RichRun } from './rich-text';
 import { comboPartsHtml } from './combo-parts';
 import { sameDisplayText } from '@/lib/product-display';
@@ -1458,7 +1458,10 @@ export function layerDisplay(
       return { price: priceBadgeInput(data, layer) };
 
     case 'table':
-      return { table: resolveTableText(layer.props, (text) => renderMergeFields(text, data, 'editor', layer)) };
+      // v3 (AC-C3.6): a field with no value to show is drawn by its readable name, as its chip.
+      return {
+        table: resolveTableText(layer.props, (text) => withFieldLabels(renderMergeFields(text, data, 'editor', layer))),
+      };
 
     case 'badge':
       return { imageUrl: assetUrls[layer.props.assetId] ?? null };

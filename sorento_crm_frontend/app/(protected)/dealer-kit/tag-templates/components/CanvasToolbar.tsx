@@ -156,6 +156,20 @@ interface CanvasToolbarProps {
    * round.
    */
   trailing?: ToolbarTrailingAction[];
+  /**
+   * SPEC-SHEET-PARITY-B2 v3 (AC-C1.4): what the selection brings into the row (the text format
+   * controls, or a table's actions), after Undo / Redo. Absent or null: nothing.
+   */
+  contextual?: ReactNode;
+  /** v3 (AC-C1.3): Delete / Duplicate / Group / Ungroup sit in a "More" menu instead of icons. */
+  foldEdits?: boolean;
+  /** v3 (AC-C1.1): the Fit button's name ("Fit width" on the spec sheet). */
+  fitLabel?: string;
+  /** v3 (AC-C1.1): the host's full screen toggle and save state, at the right end of the row. */
+  fullScreen?: ReactNode;
+  saveState?: ReactNode;
+  /** v3 (AC-C1.1): someone who cannot edit: only zoom, fit and the right end show. */
+  viewOnly?: boolean;
 }
 
 /**
@@ -373,6 +387,12 @@ export function CanvasToolbar({
   hasMultiSelection,
   selectionIsGroup,
   trailing,
+  contextual,
+  foldEdits,
+  fitLabel = 'Fit to View',
+  fullScreen,
+  saveState,
+  viewOnly,
 }: CanvasToolbarProps) {
   const mac = useIsMac();
   if (accessoryEdit) {
@@ -431,7 +451,7 @@ export function CanvasToolbar({
     // sideways while the toolbar itself sat still.
     <div className="relative flex h-10 min-w-0 shrink-0 flex-nowrap items-center gap-1 overflow-x-auto border-b bg-background px-2">
       {/* Tools */}
-      {tool && onToolChange && (
+      {!viewOnly && tool && onToolChange && (
         <>
           <ToolbarButton
             icon={MousePointer2}
@@ -452,60 +472,71 @@ export function CanvasToolbar({
         </>
       )}
 
-      {/* Add layer buttons */}
-      <ToolbarButton icon={Type} label="Add Text" onClick={onAddText} disabled={addDisabled} />
-      <ToolbarButton icon={Shapes} label="Add Shape" onClick={onAddShape} disabled={addDisabled} />
-      <ToolbarButton icon={ImageIcon} label="Add Image" onClick={onAddImage} disabled={addDisabled} />
-      {onAddProductSlot && (
-        <ToolbarButton icon={RectangleHorizontal} label="Add Product Slot" onClick={onAddProductSlot} />
+      {!viewOnly && (
+        <>
+          {/* Add layer buttons */}
+          <ToolbarButton icon={Type} label="Add Text" onClick={onAddText} disabled={addDisabled} />
+          <ToolbarButton icon={Shapes} label="Add Shape" onClick={onAddShape} disabled={addDisabled} />
+          <ToolbarButton icon={ImageIcon} label="Add Image" onClick={onAddImage} disabled={addDisabled} />
+          {onAddProductSlot && (
+            <ToolbarButton icon={RectangleHorizontal} label="Add Product Slot" onClick={onAddProductSlot} />
+          )}
+          {onAddPriceBadge && <ToolbarButton icon={Banknote} label="Add Price Badge" onClick={onAddPriceBadge} />}
+          <ToolbarButton icon={Tag} label="Add Badge" onClick={onAddBadge} disabled={addDisabled} />
+          {onAddBarcode && <ToolbarButton icon={Barcode} label="Add Barcode" onClick={onAddBarcode} />}
+          {onAddTable && <ToolbarButton icon={Table2} label="Add Table" onClick={onAddTable} disabled={addDisabled} />}
+          {onAddFeatureIcons && (
+            <ToolbarButton icon={BadgeCheck} label="Add Feature icons" onClick={onAddFeatureIcons} />
+          )}
+
+          <Separator orientation="vertical" className="mx-1 h-5 shrink-0" />
+
+          {/* Product-bound blocks and presets */}
+          {onAddProduct && <ToolbarButton icon={Package} label="Add Product" onClick={onAddProduct} />}
+          {onAddSet && <ToolbarButton icon={Boxes} label="Add Set" onClick={onAddSet} />}
+          {onAddAlternativesRow && (
+            <ToolbarButton icon={Shuffle} label="Add Alternatives Row" onClick={onAddAlternativesRow} />
+          )}
+          {onAddAccessories && onInsertAccessoryTemplate ? (
+            <AccessoriesMenuButton
+              templates={accessoryTemplates ?? []}
+              onDefault={onAddAccessories}
+              onPick={onInsertAccessoryTemplate}
+            />
+          ) : (
+            onAddAccessories && (
+              <ToolbarButton icon={Sparkles} label="Add Accessories" onClick={onAddAccessories} disabled={addDisabled} />
+            )
+          )}
+
+          <Separator orientation="vertical" className="mx-1 h-5 shrink-0" />
+
+          {/* Undo / Redo */}
+          <ToolbarButton
+            icon={Undo2}
+            label="Undo"
+            onClick={onUndo}
+            disabled={!canUndo}
+            shortcut={shortcutLabel('Z', mac)}
+          />
+          <ToolbarButton
+            icon={Redo2}
+            label="Redo"
+            onClick={onRedo}
+            disabled={!canRedo}
+            shortcut={shortcutLabel('Z', mac, true)}
+          />
+
+          <Separator orientation="vertical" className="mx-1 h-5 shrink-0" />
+
+          {contextual && (
+            <>
+              {contextual}
+              <Separator orientation="vertical" className="mx-1 h-5 shrink-0" />
+            </>
+          )}
+        </>
       )}
-      {onAddPriceBadge && <ToolbarButton icon={Banknote} label="Add Price Badge" onClick={onAddPriceBadge} />}
-      <ToolbarButton icon={Tag} label="Add Badge" onClick={onAddBadge} disabled={addDisabled} />
-      {onAddBarcode && <ToolbarButton icon={Barcode} label="Add Barcode" onClick={onAddBarcode} />}
-      {onAddTable && <ToolbarButton icon={Table2} label="Add Table" onClick={onAddTable} disabled={addDisabled} />}
-      {onAddFeatureIcons && (
-        <ToolbarButton icon={BadgeCheck} label="Add Feature icons" onClick={onAddFeatureIcons} />
-      )}
-
-      <Separator orientation="vertical" className="mx-1 h-5 shrink-0" />
-
-      {/* Product-bound blocks and presets */}
-      {onAddProduct && <ToolbarButton icon={Package} label="Add Product" onClick={onAddProduct} />}
-      {onAddSet && <ToolbarButton icon={Boxes} label="Add Set" onClick={onAddSet} />}
-      {onAddAlternativesRow && (
-        <ToolbarButton icon={Shuffle} label="Add Alternatives Row" onClick={onAddAlternativesRow} />
-      )}
-      {onAddAccessories && onInsertAccessoryTemplate ? (
-        <AccessoriesMenuButton
-          templates={accessoryTemplates ?? []}
-          onDefault={onAddAccessories}
-          onPick={onInsertAccessoryTemplate}
-        />
-      ) : (
-        onAddAccessories && (
-          <ToolbarButton icon={Sparkles} label="Add Accessories" onClick={onAddAccessories} disabled={addDisabled} />
-        )
-      )}
-
-      <Separator orientation="vertical" className="mx-1 h-5 shrink-0" />
-
-      {/* Undo / Redo */}
-      <ToolbarButton
-        icon={Undo2}
-        label="Undo"
-        onClick={onUndo}
-        disabled={!canUndo}
-        shortcut={shortcutLabel('Z', mac)}
-      />
-      <ToolbarButton
-        icon={Redo2}
-        label="Redo"
-        onClick={onRedo}
-        disabled={!canRedo}
-        shortcut={shortcutLabel('Z', mac, true)}
-      />
-
-      <Separator orientation="vertical" className="mx-1 h-5 shrink-0" />
 
       {onZoomIn && onZoomOut && onZoomReset && onFit && zoom !== undefined && (
         <>
@@ -520,38 +551,87 @@ export function CanvasToolbar({
             {Math.round(zoom * 100)}%
           </button>
           <ToolbarButton icon={Plus} label="Zoom In" onClick={onZoomIn} />
-          <ToolbarButton icon={Expand} label="Fit to View" onClick={onFit} shortcut={shortcutLabel('0', mac)} />
+          <ToolbarButton icon={Expand} label={fitLabel} onClick={onFit} shortcut={shortcutLabel('0', mac)} />
 
           <Separator orientation="vertical" className="mx-1 h-5 shrink-0" />
         </>
       )}
 
-      {/* Selection actions */}
-      <ToolbarButton
-        icon={Trash2}
-        label="Delete"
-        onClick={onDeleteSelected}
-        disabled={!hasSelection}
-        shortcut="Del"
-      />
-      <ToolbarButton
-        icon={Copy}
-        label="Duplicate"
-        onClick={onDuplicateSelected}
-        disabled={!hasSelection}
-        shortcut={shortcutLabel('D', mac)}
-      />
-      {onGroupSelected && (
-        <ToolbarButton
-          icon={Group}
-          label="Group"
-          onClick={onGroupSelected}
-          disabled={!hasMultiSelection}
-          shortcut={shortcutLabel('G', mac)}
-        />
+      {/* Selection actions: icons, or (foldEdits) one More menu */}
+      {!viewOnly && foldEdits && (
+        <DropdownMenu>
+          <Tooltip delayDuration={300}>
+            <TooltipTrigger asChild>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="sm" className="h-8 w-8 shrink-0 p-0" aria-label="More">
+                  <MoreHorizontal className="size-4" />
+                </Button>
+              </DropdownMenuTrigger>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="text-xs">
+              More
+            </TooltipContent>
+          </Tooltip>
+          <DropdownMenuContent align="start">
+            <DropdownMenuItem onSelect={onDeleteSelected} disabled={!hasSelection}>
+              <Trash2 className="size-4" />
+              Delete
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={onDuplicateSelected} disabled={!hasSelection}>
+              <Copy className="size-4" />
+              Duplicate
+            </DropdownMenuItem>
+            {onGroupSelected && (
+              <DropdownMenuItem onSelect={onGroupSelected} disabled={!hasMultiSelection}>
+                <Group className="size-4" />
+                Group
+              </DropdownMenuItem>
+            )}
+            {onUngroupSelected && (
+              <DropdownMenuItem onSelect={onUngroupSelected} disabled={!selectionIsGroup}>
+                <Ungroup className="size-4" />
+                Ungroup
+              </DropdownMenuItem>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
       )}
-      {onUngroupSelected && (
-        <ToolbarButton icon={Ungroup} label="Ungroup" onClick={onUngroupSelected} disabled={!selectionIsGroup} />
+      {!viewOnly && !foldEdits && (
+        <>
+          <ToolbarButton
+            icon={Trash2}
+            label="Delete"
+            onClick={onDeleteSelected}
+            disabled={!hasSelection}
+            shortcut="Del"
+          />
+          <ToolbarButton
+            icon={Copy}
+            label="Duplicate"
+            onClick={onDuplicateSelected}
+            disabled={!hasSelection}
+            shortcut={shortcutLabel('D', mac)}
+          />
+          {onGroupSelected && (
+            <ToolbarButton
+              icon={Group}
+              label="Group"
+              onClick={onGroupSelected}
+              disabled={!hasMultiSelection}
+              shortcut={shortcutLabel('G', mac)}
+            />
+          )}
+          {onUngroupSelected && (
+            <ToolbarButton icon={Ungroup} label="Ungroup" onClick={onUngroupSelected} disabled={!selectionIsGroup} />
+          )}
+        </>
+      )}
+
+      {(fullScreen || saveState) && (
+        <div className="ml-auto flex shrink-0 items-center gap-1">
+          {fullScreen}
+          {saveState}
+        </div>
       )}
 
       {trailing && trailing.length > 0 && (

@@ -54,7 +54,6 @@ import { toast } from '@/lib/toast';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
 import { LiveNumberInput } from '@/components/ui/number-input';
 import { Label } from '@/components/ui/label';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -319,7 +318,6 @@ export function InspectorPanel({
   onUploadFont,
   onInsertField,
   tableCell,
-  onTableCellChange,
   onContentEditorReady,
   onChooseImage,
   onChooseBadge,
@@ -652,9 +650,7 @@ export function InspectorPanel({
             <TableInspector
               props={layer.props}
               cellAt={tableCell ?? { row: 0, col: 0 }}
-              onCellChange={onTableCellChange}
               onChange={updateProps}
-              onInsertField={onInsertField}
               usedColours={usedColours}
             />
           )}
@@ -914,6 +910,13 @@ function TextInspector({
         {layer.slot_binding != null && layer.slot_binding in UPGRADE_SLOT_PREFIX && (
           <UpgradeFigureControls props={props} onChange={onChange} />
         )}
+        <label className="flex items-center gap-1.5 text-xs">
+          <Checkbox
+            checked={!!props.uppercase}
+            onCheckedChange={(v) => onChange({ ...props, uppercase: !!v })}
+          />
+          ALL CAPS
+        </label>
         <TypographyControls
           values={{
             fontFamily: props.fontFamily,
@@ -1281,20 +1284,19 @@ const TABLE_SIDE_OPTIONS = [
   { value: 'left', label: 'Left' },
 ];
 
-/** B4: the table's size, then the picked cell: its text, borders, padding and fill. */
+/**
+ * B4: the table's size, then the picked cell (picked and typed on the page, v3 AC-C3.4): its row
+ * height and column width, borders, padding and fill.
+ */
 function TableInspector({
   props,
   cellAt,
-  onCellChange,
   onChange,
-  onInsertField,
   usedColours,
 }: {
   props: Extract<TagLayerProps, { kind: 'table' }>;
   cellAt: { row: number; col: number };
-  onCellChange?: (row: number, col: number) => void;
   onChange: (changes: Partial<TagLayerProps>) => void;
-  onInsertField?: () => void;
   usedColours: string[];
 }) {
   const [side, setSide] = useState('all');
@@ -1322,38 +1324,39 @@ function TableInspector({
         <p className="text-xs text-muted-foreground">
           {props.rows.length} rows x {props.columns.length} columns
         </p>
+        <label className="flex items-center gap-1.5 text-xs">
+          <Checkbox
+            checked={!!props.headerRow}
+            onCheckedChange={(v) => onChange({ ...props, headerRow: !!v })}
+          />
+          Header row
+        </label>
+        <label className="flex items-center gap-1.5 text-xs">
+          <Checkbox
+            checked={!!props.uppercase}
+            onCheckedChange={(v) => onChange({ ...props, uppercase: !!v })}
+          />
+          ALL CAPS
+        </label>
+        <h4 className="mt-1 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">Cell</h4>
         <div className="grid grid-cols-2 gap-2">
           <NumberInput
-            label="Cell row"
-            value={row + 1}
+            label="Row height (mm)"
+            value={props.rows[row].height_mm}
+            step={0.5}
             min={1}
-            max={props.rows.length}
-            onChange={(v) => onCellChange?.(Math.max(0, Math.min(props.rows.length - 1, Math.round(v) - 1)), col)}
+            onChange={(v) =>
+              onChange({ ...props, rows: props.rows.map((r, i) => (i === row ? { ...r, height_mm: v } : r)) })
+            }
           />
           <NumberInput
-            label="Cell column"
-            value={col + 1}
+            label="Column width (mm)"
+            value={props.columns[col].width_mm}
+            step={0.5}
             min={1}
-            max={props.columns.length}
-            onChange={(v) => onCellChange?.(row, Math.max(0, Math.min(props.columns.length - 1, Math.round(v) - 1)))}
-          />
-        </div>
-        <div className="flex flex-col gap-1">
-          <div className="flex items-center justify-between">
-            <Label className="text-xs text-muted-foreground">Content</Label>
-            {onInsertField && (
-              <Button type="button" size="sm" variant="outline" className="h-6 px-2 text-xs" onClick={onInsertField}>
-                Insert field
-              </Button>
-            )}
-          </div>
-          <Textarea
-            aria-label="Cell content"
-            rows={3}
-            value={cell.text}
-            maxLength={5000}
-            onChange={(e) => patchCell({ text: e.target.value })}
-            className="text-xs"
+            onChange={(v) =>
+              onChange({ ...props, columns: props.columns.map((c, i) => (i === col ? { ...c, width_mm: v } : c)) })
+            }
           />
         </div>
         <div className="flex flex-col gap-1">
