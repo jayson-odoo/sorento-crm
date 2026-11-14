@@ -379,6 +379,7 @@ def register_project(
         template_id=template_id,
         outcome=OUTCOME_OPEN,
         owner_user_id=owner_user_id or actor_user_id,
+        primary_owner_user_id=owner_user_id or actor_user_id,
         created_by=actor_user_id,
     )
     start_project(db, project, actor_user_id=actor_user_id, details=details)
@@ -606,6 +607,77 @@ def create_takeover_request(
     return request
 
 
+def reassign_project_owner(
+    db: Session,
+    *,
+    project: Project,
+    to_user_id: str,
+    actor_user_id: Optional[str],
+) -> bool:
+    """THE one reassign path (PROJECT-LEADS-REASSIGN A1): approving a secondary lead and the
+    manager's owner change both land here. Moves the owner, keeps the outgoing owner as a
+    collaborator (they did real work on it), records one `owner_reassigned` Activity row and
+    queues the notice to the new and the previous owner, which the route sends after its commit.
+
+    Returns False and does nothing when the owner is already `to_user_id` (A4). Who may reassign
+    is the caller's check, not this function's.
+    """
+    previous_owner = project.owner_user_id
+    if not to_user_id or str(to_user_id) == str(previous_owner or ""):
+        return False
+
+    project.owner_user_id = to_user_id
+    if previous_owner:
+        _add_collaborator(db, project.id, previous_owner, actor_user_id)
+    # The owner is not also a collaborator: someone handed the project back loses the
+    # collaborator row they were given when it left them.
+    for row in (
+        db.query(ProjectCollaborator)
+        .filter(
+            ProjectCollaborator.project_id == project.id,
+            ProjectCollaborator.user_id == str(to_user_id),
+        )
+        .all()
+    ):
+        db.delete(row)
+    names = resolve_user_names(db, [previous_owner, to_user_id])
+    from_name = names.get(str(previous_owner)) or "nobody"
+    to_name = names.get(str(to_user_id)) or "a colleague"
+    from app.services import project_activity_service as activity
+    from app.services import project_notify_service as notify
+
+    activity.record_project_event(
+        db,
+        project=project,
+        template="owner_reassigned",
+        payload={
+            "from_user_id": str(previous_owner) if previous_owner else None,
+            "to_user_id": str(to_user_id),
+            "from_name": from_name,
+            "to_name": to_name,
+        },
+        actor_id=actor_user_id,
+        body_text=f"Reassigned from {from_name} to {to_name}",
+    )
+    notify.queue_reassigned(
+        db,
+        project_id=str(project.id),
+        previous_owner_id=str(previous_owner) if previous_owner else None,
+        new_owner_id=str(to_user_id),
+    )
+    db.flush()
+    return True
+
+
+def backfill_primary_owner(db: Session) -> Dict[str, int]:
+    """Fill every NULL primary lead (UAC A6); the migration runs the same statements. Returns
+    the rows filled per rule: `earliest_reassign`, `lead_owner`, `current_owner`."""
+    from app.services.project_primary_owner import backfill
+
+    db.flush()
+    return backfill(db)
+
+
 def decide_takeover_request(
     db: Session,
     *,
@@ -668,27 +740,11 @@ def decide_takeover_request(
                 db, project.id, request.requester_user_id, decider_user_id
             )
         else:
-            previous_owner = project.owner_user_id
-            project.owner_user_id = request.requester_user_id
-            if previous_owner and previous_owner != request.requester_user_id:
-                _add_collaborator(db, project.id, previous_owner, decider_user_id)
-            names = resolve_user_names(db, [previous_owner, request.requester_user_id])
-            from_name = names.get(str(previous_owner)) or "nobody"
-            to_name = names.get(str(request.requester_user_id)) or "a colleague"
-            from app.services import project_activity_service as activity
-
-            activity.record_project_event(
+            reassign_project_owner(
                 db,
                 project=project,
-                template="owner_reassigned",
-                payload={
-                    "from_user_id": str(previous_owner) if previous_owner else None,
-                    "to_user_id": str(request.requester_user_id),
-                    "from_name": from_name,
-                    "to_name": to_name,
-                },
-                actor_id=decider_user_id,
-                body_text=f"Reassigned from {from_name} to {to_name}",
+                to_user_id=request.requester_user_id,
+                actor_user_id=decider_user_id,
             )
 
     db.flush()
@@ -772,6 +828,7 @@ def serialize_projects(
     owner_names = _name_map(
         db,
         [p.owner_user_id for p in projects]
+        + [getattr(p, "primary_owner_user_id", None) for p in projects]
         + [getattr(p, "discount_approver_user_id", None) for p in projects],
     )
     party_names = _party_name_map(
@@ -935,6 +992,8 @@ def serialize_projects(
                 "owner_name": owner_names.get(project.owner_user_id),
                 "owner_contact_id": (owner_contacts.get(project.owner_user_id) or (None, None))[0],
                 "owner_contact_name": (owner_contacts.get(project.owner_user_id) or (None, None))[1],
+                "primary_owner_user_id": getattr(project, "primary_owner_user_id", None),
+                "primary_owner_name": owner_names.get(getattr(project, "primary_owner_user_id", None)),
                 "is_critical": project.is_critical,
                 "critical_at": project.critical_at,
                 "management_support": project.management_support,
@@ -1459,7 +1518,12 @@ def update_project(
                     message="Only a sales manager can reassign a project owner.",
                     code="project_owner_reassign_forbidden",
                 )
-        project.owner_user_id = payload["owner_user_id"]
+        reassign_project_owner(
+            db,
+            project=project,
+            to_user_id=payload["owner_user_id"],
+            actor_user_id=actor_user_id,
+        )
 
     if "is_critical" in payload and payload["is_critical"] is not None:
         set_critical(project, bool(payload["is_critical"]))
