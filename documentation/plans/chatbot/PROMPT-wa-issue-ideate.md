@@ -40,6 +40,36 @@ document), which stays in its own domain" already says it.
    `  - ideate (an idea is never escalated), or none of these this turn -> NO routing: null / null` becomes
    `  - ideate (an idea or an issue report is never escalated), or none of these this turn -> NO routing: null / null`
 
+Round 12 (crew LIVE pass CREW-PASSES-5 on v82 = cbc7364a, 14 Nov; owner ruling 14 Nov ~19:00): the owner's turn
+"i want to report this is not the answer i want to the IT team" (and "i want to report to the IT team") came back
+`request_for_help` / `it_admin` / `it_support` on v82 exactly as on v72, G05 "hi good morning, the sales order list
+keeps loading and never opens" fell to the PIC escalation, G01 was 1 of 2. Cause: MESSAGE TYPE rule 1 (a named team
+means request_for_help) and the "request_for_help outranks ..." line decide message_type BEFORE the model weighs the
+ideate bullet, and nothing there says an issue report is exempt. Owner ruling: reporting a problem, even when the user
+names "the IT team", files an issue; only a plain ask for IT support that reports nothing (G09 "get me IT support")
+stays a help request. The fix is semantic, in place, no word list and no post-parse override:
+
+- Edit 2's new text is widened (same anchor, same line): `... (it errors, keeps loading, does not work or answers
+  wrongly, whatever screen or list it is on), or says they want to report one before saying what it is: an issue to
+  log, no routing, never request_for_help or an IT or support team, also when the user names IT or a team to report
+  it to.`
+- Edit 4, MESSAGE TYPE rule 1 (line 157), appended in place after
+  `Customer/company names (e.g. "today plumbing", "total home") are NOT departments and never trigger request_for_help.`:
+  ` A report of a problem with the CRM system or the assistant is NOT request_for_help, even when it names IT, the IT
+  team or a support team, or asks to report or send it to them: it is ideate (an issue to log, see the ideate
+  bullet), message_type business_query, no routing. Only an ask to be put through to IT or a person that neither
+  reports a problem nor says the user wants to report one stays request_for_help.`
+- Edit 5 (line 164), appended in place after
+  `"request_for_help" outranks business_query, clarification and casual, even when the message also mentions a product or order.`:
+  ` It never outranks a report of a CRM system or assistant problem (rule 1).`
+- Still no line added: the candidate keeps v72's 1037 lines (F3). The code template mirrors edit 4 in R-P3-04 rule 1
+  and the widened ideate line; the rule-1 phrase "is NOT request_for_help, even when it names IT" is in both texts.
+- The routing code needs no change: `turn/apply.py:1730` `_HELP_EXEMPT_DOMAINS` already sends a `request_for_help`
+  verdict whose `domain_hint` is ideate to the ideate lane, never to escalation (pinned by a test this round).
+- The gate turns are frozen in `sorento_crm_backend/tests/chatbot/fixtures/wa_issue_gate_turns.json` (owner turns,
+  G01, G03, G05, G08, G09) and run live by `tests/chatbot/test_wa_issue_parser_gate_live.py` (opt-in,
+  `CHATBOT_LIVE_LLM=1`, `WA_ISSUE_PROMPT_FILE` points it at a stored version's exported text).
+
 ## Gate (crew, on the Mac: this sandbox has no funded LLM key and no prod-copy DB)
 
 Console dry-run turns with the new version pinned (or after the owner promotes it), staff and dealer contacts:
@@ -48,4 +78,5 @@ request (still ideate), a product complaint (still portal_link), "get me IT supp
 a dealer disputing a record ("my order shows the wrong status", still order, not ideate), a stock figure
 question (still inventory, not ideate), "I want to report a problem" (ideate, asks "What went wrong? ..."), the
 first message of a new conversation (no "cleared" reply), and the frozen A-55 follow-ups (dealer "WC8152" after
-a two-code offer, then "19": the typed code and its quantity kept, as on v72). Run x3 on the candidate vs v72.
+a two-code offer, then "19": the typed code and its quantity kept, as on v72). Round 12 adds the owner turns and
+G01/G05/G08 from the frozen file above. Run x3 on the candidate vs v72.
