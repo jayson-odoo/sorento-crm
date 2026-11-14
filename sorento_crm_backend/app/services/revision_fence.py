@@ -92,9 +92,16 @@ def _complaint_model() -> Any:
     return Complaint
 
 
+def _order_change_notice_model() -> Any:
+    from app.models.project_so import OrderChangeNotice
+
+    return OrderChangeNotice
+
+
 STOCK_INQUIRY = "stock_inquiry"
 PURCHASE_REQUEST = "purchase_request"
 COMPLAINT = "complaint"
+ORDER_CHANGE_NOTICE = "order_change_notice"
 
 _TARGETS: dict[str, _FenceTarget] = {
     STOCK_INQUIRY: _FenceTarget(
@@ -120,6 +127,13 @@ _TARGETS: dict[str, _FenceTarget] = {
         entity_types=("complaint",),
         resolve_entity_type=lambda row: "complaint",
     ),
+    # OCN-ORDER-CHANGE-NOTICE: armed by the config row its migration seeds enabled (an
+    # office-only form, so the row is not toggled from the portal revision settings).
+    ORDER_CHANGE_NOTICE: _FenceTarget(
+        load_model=_order_change_notice_model,
+        entity_types=("order_change_notice",),
+        resolve_entity_type=lambda row: "order_change_notice",
+    ),
 }
 
 # How the refusal names the document. Same vocabulary the contact-facing
@@ -129,6 +143,7 @@ _LABELS: dict[str, str] = {
     "purchase_request": "purchase request",
     "sponsorship_form": "sponsorship form",
     "complaint": "complaint",
+    "order_change_notice": "order change notice",
 }
 
 

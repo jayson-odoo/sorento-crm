@@ -10,15 +10,13 @@
  * column header row is hidden there.
  */
 
-import { useCallback, useState } from 'react';
 import { Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { NumberInput } from '@/components/ui/number-input';
 import { Label } from '@/components/ui/label';
-import { AsyncCombobox } from '@/app/(auth)/portal/components/AsyncCombobox';
-import { codeWithName } from '@/lib/product-display';
+import { ProductPickCell, ProductPickMissed, useProductPickSearch } from '@/components/common/ProductPickCell';
 import { numberFieldError } from '@/lib/number-field';
 import { WHOLE_AT_LEAST_ONE, type DraftLine, type FormState } from '@/lib/sample-request-form';
 import type { SampleRequestProductHit } from '@/types/sampleRequest';
@@ -46,17 +44,7 @@ export function SampleRequestLines({
   disabled,
 }: SampleRequestLinesProps) {
   // The search text the server last answered with nothing for; the empty message names it.
-  const [missed, setMissed] = useState('');
-
-  const fetchProducts = useCallback(
-    async (q: string) => {
-      if (!q.trim() && !listWhenEmpty) return [];
-      const hits = await search(q);
-      setMissed(hits.length === 0 ? q.trim() : '');
-      return hits;
-    },
-    [search, listWhenEmpty],
-  );
+  const { fetchProducts, missed, clearMissed } = useProductPickSearch(search, listWhenEmpty);
 
   const patchLine = (key: string, patch: Partial<DraftLine>) =>
     onChange({ lines: value.lines.map((l) => (l.key === key ? { ...l, ...patch } : l)) });
@@ -119,27 +107,17 @@ export function SampleRequestLines({
                   {firstProductRow + index}
                 </td>
                 <td className="min-w-0 px-2 py-2 max-sm:col-start-2 max-sm:row-start-1">
-                  <AsyncCombobox<SampleRequestProductHit>
-                    ariaLabel="Item code"
-                    value={line.product_id}
-                    displayValue={line.label}
+                  <ProductPickCell<SampleRequestProductHit>
+                    productId={line.product_id}
+                    label={line.label}
                     disabled={disabled}
-                    allowFreeText={false}
-                    fetchOptions={fetchProducts}
-                    optionValue={(o) => o.id}
-                    optionLabel={(o) => codeWithName(o.product_code, o.product_name)}
-                    optionMeta={(o) => o.brand_name ?? ''}
-                    placeholder="Search item code"
-                    onChange={(v, item) => {
-                      setMissed('');
+                    fetchProducts={fetchProducts}
+                    onPick={(item, label) => {
+                      clearMissed();
                       patchLine(
                         line.key,
                         item
-                          ? {
-                              product_id: v,
-                              label: codeWithName(item.product_code, item.product_name),
-                              inactive: false,
-                            }
+                          ? { product_id: item.id, label, inactive: false }
                           : { product_id: '', label: '' },
                       );
                     }}
@@ -193,12 +171,10 @@ export function SampleRequestLines({
           </tbody>
         </table>
       </div>
-      {missed && (
-        <p className="mt-2 text-sm text-muted-foreground">
-          {missed} is not in the product list. Pick the product you mean, or ask purchasing to add
-          it as a new product before you request it.
-        </p>
-      )}
+      <ProductPickMissed
+        text={missed}
+        hint="Pick the product you mean, or ask purchasing to add it as a new product before you request it."
+      />
       {errors.lines && <p className="mt-2 text-xs text-destructive">{errors.lines}</p>}
     </div>
   );
