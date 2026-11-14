@@ -9,6 +9,7 @@ import {
 import type { PurchaseOrderUpdateData } from '../types/scm.types';
 import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
+import { retryUnlessRefused } from '@/lib/api-client';
 
 export interface UsePurchaseOrdersParams {
   pageIndex: number;
@@ -117,7 +118,10 @@ export function usePurchaseOrder(id: string | null) {
     queryFn: () => getPurchaseOrder(id as string),
     enabled: !!id,
     staleTime: 5_000,
-    retry: 1,
+    // A refusal or a timeout will not change on a second ask, so it lands at once.
+    retry: retryUnlessRefused,
+    // The page renders the failure in place; no toast on top of it.
+    meta: { silent: true },
   });
 }
 

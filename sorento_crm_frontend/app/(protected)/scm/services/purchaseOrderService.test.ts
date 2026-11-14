@@ -11,6 +11,7 @@ vi.mock('@/lib/api', () => ({ apiFetch: (...a: unknown[]) => apiFetch(...a) }));
 import {
   bulkConfirmPurchaseOrders,
   createGrFromPurchaseOrder,
+  getPurchaseOrder,
   getPurchaseOrders,
 } from './purchaseOrderService';
 
@@ -108,5 +109,30 @@ describe('purchaseOrderService - create-GR (AC-M4.6)', () => {
   it('surfaces the backend error on failure', async () => {
     apiFetch.mockResolvedValue(fail('PO is still a draft'));
     await expect(createGrFromPurchaseOrder('po-5')).rejects.toThrow('PO is still a draft');
+  });
+});
+
+// PO-DETAIL-ERROR-STATE: the detail page tells a missing order from a refusal or a fault,
+// so the read keeps the status, and a hung read gives up inside 15 s.
+describe('getPurchaseOrder', () => {
+  beforeEach(() => apiFetch.mockReset());
+
+  it('asks for a 15 s budget', async () => {
+    apiFetch.mockResolvedValue(ok({ id: 'po-1' }));
+    await getPurchaseOrder('po-1');
+    expect(apiFetch.mock.calls[0][1]).toEqual({ timeoutMs: 15_000 });
+  });
+
+  it('a 404 is no order (null), not an error', async () => {
+    apiFetch.mockResolvedValue(fail('Purchase order not found', 404));
+    await expect(getPurchaseOrder('po-1')).resolves.toBeNull();
+  });
+
+  it.each([
+    [403, 'Permission required: scm.dashboard.view'],
+    [500, 'Internal server error'],
+  ])('a %s rejects with its status and the server message', async (status, message) => {
+    apiFetch.mockResolvedValue(fail(message, status));
+    await expect(getPurchaseOrder('po-1')).rejects.toMatchObject({ status, message });
   });
 });

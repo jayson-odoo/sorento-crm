@@ -41,7 +41,7 @@
  * ============================================================================
  */
 import { apiFetch } from '@/lib/api';
-import { buildDataGridParams, extractApiError } from '@/lib/api-client';
+import { apiError, buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type { DataGridApiResponse } from '@/components/ui/data-grid';
 import type { PurchaseOrder, PurchaseOrderUpdateData } from '../types/scm.types';
 import {
@@ -165,9 +165,12 @@ export async function getPurchaseOrders(
 /** Single PO by stable id - drives the detail page. GET /purchase-orders/{id}. */
 export async function getPurchaseOrder(id: string): Promise<PurchaseOrder | null> {
   if (USE_SLICE_B_MOCKS) return mockGetPurchaseOrder(id);
-  const res = await apiFetch(`${BASE}/${encodeURIComponent(id)}`);
+  // 15 s, not the 30 s read default: a timeout is never retried, so a hung read ends on
+  // the page's error state and its Retry in at most this long.
+  const res = await apiFetch(`${BASE}/${encodeURIComponent(id)}`, { timeoutMs: 15_000 });
   if (res.status === 404) return null;
-  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load purchase order'));
+  // `apiError` keeps the status, so the page can tell a refusal from a fault.
+  if (!res.ok) throw await apiError(res, 'Failed to load purchase order');
   return (await res.json()) as PurchaseOrder;
 }
 

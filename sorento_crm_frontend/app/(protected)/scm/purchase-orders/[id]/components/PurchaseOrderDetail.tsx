@@ -38,6 +38,7 @@ import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visib
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Skeleton } from '@/components/ui/skeleton';
+import { QueryErrorState } from '@/components/common/LoadErrorState';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import AuditTrail from '@/components/audit/AuditTrail';
 import { useHasPermission } from '@/hooks/usePermissions';
@@ -285,7 +286,7 @@ function productFallback(
 }
 
 export function PurchaseOrderDetail({ id }: { id: string }) {
-  const { data, isLoading, isError } = usePurchaseOrder(id);
+  const { data, isLoading, isError, error: loadError, refetch, isFetching } = usePurchaseOrder(id);
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -1010,7 +1011,22 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
     );
   }
 
-  if (isError || !data) {
+  // Every failure ends in a state that says which one it is (NEVER-STUCK-UI): a 404 (the
+  // read answers null) reads "not found"; a refusal is AccessDenied; a fault or a timeout
+  // carries its reason and a Retry. A background refetch that fails over an order already
+  // shown keeps it.
+  if (!data && isError) {
+    return (
+      <QueryErrorState
+        error={loadError}
+        title="Could not load this purchase order"
+        onRetry={() => void refetch()}
+        retrying={isFetching}
+      />
+    );
+  }
+
+  if (!data) {
     return (
       <Card className="flex flex-col items-center gap-3 p-10 text-center">
         <div className="text-sm font-semibold">Purchase order not found</div>
