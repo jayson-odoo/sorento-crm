@@ -130,7 +130,7 @@ export function InsertFieldDialog({
   const insert = (field: MergeField) => {
     // With a context the content is only the picked fields, and the insert point follows them.
     if (context) {
-      setContent(content + field.token);
+      setContent((current) => current + field.token);
       return;
     }
     const [start, end] = caret.current;
@@ -159,7 +159,11 @@ export function InsertFieldDialog({
         </DialogHeader>
         <DialogBody className="flex flex-col gap-3">
           <div className="flex flex-col gap-1">
-            <Label htmlFor="merge-field-content" className="text-xs text-muted-foreground">
+            <Label
+              id="merge-field-content-label"
+              htmlFor="merge-field-content"
+              className="text-xs text-muted-foreground"
+            >
               Content
             </Label>
             {context ? (
@@ -167,12 +171,17 @@ export function InsertFieldDialog({
                 id="merge-field-content"
                 role="textbox"
                 aria-readonly="true"
+                aria-multiline="true"
+                aria-labelledby="merge-field-content-label"
+                tabIndex={0}
                 className="min-h-[72px] w-full whitespace-pre-wrap rounded-md border bg-background px-2 py-1 text-xs"
               >
                 {context.before}
                 {content}
                 <span
                   data-testid="insert-point"
+                  role="img"
+                  aria-label="Insert point"
                   className="inline-block h-3 w-px translate-y-0.5 bg-primary align-baseline"
                 />
                 {context.after}
@@ -182,6 +191,9 @@ export function InsertFieldDialog({
                 id="merge-field-content"
                 role="textbox"
                 aria-readonly="true"
+                aria-multiline="true"
+                aria-labelledby="merge-field-content-label"
+                tabIndex={0}
                 className="min-h-[72px] w-full whitespace-pre-wrap rounded-md border bg-background px-2 py-1 text-xs"
               >
                 {content.split(/(\{\{\s*[A-Za-z0-9_.]+\s*\}\})/).map((piece, index) => {
