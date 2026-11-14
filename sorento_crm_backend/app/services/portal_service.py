@@ -673,11 +673,15 @@ class PortalService:
             )
 
         code = f"{secrets.randbelow(1_000_000):06d}"
+        now = _utcnow()
         otp = PortalOtpCode(
             contact_id=contact.id,
             space_id=space_id,
             code_hash=_hash_otp(code),
-            expires_at=_utcnow() + OTP_TTL,
+            # Written from the same naive-UTC clock the cooldown and daily cap above read;
+            # the column's server_default is the DB session's time zone, not UTC.
+            created_at=now,
+            expires_at=now + OTP_TTL,
             purpose=purpose,
         )
         self.db.add(otp)
@@ -854,9 +858,16 @@ class PortalService:
             PortalToken.verified_at.is_(None),
         ).update({"verified_at": now}, synchronize_session=False)
         self.db.commit()
-        new_token = self.mint_token(contact.id, space_id)
-        # Newly minted token also bypasses the gate (verifier just succeeded)
-        # and gets the full sliding device-trust window straight away.
+        return self.mint_verified_token(contact.id, space_id)
+
+    def mint_verified_token(self, contact_id: str, space_id: str) -> PortalToken:
+        """Mint a token that is already verified and carries the full 30-day device trust.
+
+        The one rule shared by a successful OTP (``verify_otp``) and a CRM sign-in on the
+        user's own linked contact (``POST /public/portal/session-from-crm``).
+        """
+        new_token = self.mint_token(contact_id, space_id)
+        now = _utcnow()
         new_token.verified_at = now
         new_token.expires_at = now + PORTAL_VERIFIED_TOKEN_TTL
         self.db.commit()
