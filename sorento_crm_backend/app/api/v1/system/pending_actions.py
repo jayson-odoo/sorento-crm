@@ -379,6 +379,18 @@ def _assert_entity_visible(
         from app.services import new_product_application_service
 
         new_product_application_service.assert_deletable(db, entity_id, actor_id)
+    elif action_key == "spare_part_request.delete":
+        from app.services import spare_part_request_service
+
+        spare_part_request_service.assert_deletable(db, entity_id, actor_id)
+    elif action_key == "order_inquiry_row_attachment.delete":
+        # The row photo write rule (requester while draft / rejected, approver while
+        # pending), refused at the click rather than at commit.
+        from app.services import spare_part_request_service
+
+        spare_part_request_service.assert_can_write_row_photos(
+            db, str((payload or {}).get("line_id") or ""), actor_id
+        )
     elif action_key == "new_product_application_attachment.unlink":
         from app.services import new_product_application_service
 
@@ -524,6 +536,8 @@ _PARK_SCOPE_EXEMPT: frozenset = frozenset({
     "my_request_attachment.unlink",
     "new_product_application.delete",
     "new_product_application_attachment.unlink",
+    "order_inquiry_row_attachment.delete",
+    "spare_part_request.delete",
     "order_change_notice_attachment.unlink",
     "price_tag_request_tag.delete",
     "product_alternative.unlink",
