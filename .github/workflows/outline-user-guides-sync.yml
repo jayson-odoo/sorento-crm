@@ -36,6 +36,13 @@ concurrency:
 
 jobs:
   sync:
+    # CI-SECRETS-ENV (14 Nov 2026): OUTLINE_* live in the `outline-sync`
+    # environment (deployment branch policy: main only, no reviewer), not at
+    # repo level, so another branch's copy of this file cannot read them. The
+    # `if` makes a dispatch from another branch skip instead of failing on
+    # the policy (crew's scheduler runs the sync since CI-ZERO-MINUTES).
+    if: github.ref == 'refs/heads/main'
+    environment: outline-sync
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
