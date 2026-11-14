@@ -157,6 +157,9 @@ export function useAmendment(amendmentId: string | undefined) {
     queryKey: [AMENDMENT_KEY, amendmentId],
     queryFn: () => getAmendment(amendmentId as string),
     enabled: Boolean(amendmentId),
+    // The notice is approved on another screen; back on this tab, its pill and Publish state
+    // must be current (browser pass 4).
+    refetchOnWindowFocus: true,
   });
 }
 
@@ -460,10 +463,11 @@ export function useAmendmentMutations(projectId: string, psoId: string) {
   const publish = useMutation({
     mutationFn: ({ amendmentId, overrideReason }: { amendmentId: string; overrideReason?: string }) =>
       publishAmendment(amendmentId, overrideReason),
-    onSuccess: (amendment) => {
+    // The publish answer carries no amendment id: refresh the one that was published.
+    onSuccess: (_published, { amendmentId }) => {
       queryClient.invalidateQueries({ queryKey: salesOrderKey(psoId) });
       queryClient.invalidateQueries({ queryKey: [SALES_ORDERS_KEY, projectId] });
-      queryClient.invalidateQueries({ queryKey: [AMENDMENT_KEY, amendment.id] });
+      queryClient.invalidateQueries({ queryKey: [AMENDMENT_KEY, amendmentId] });
       toast.success('Amendment published');
     },
     // An overridable refusal opens the override dialog instead of a toast.
@@ -494,7 +498,9 @@ export function useAmendmentMutations(projectId: string, psoId: string) {
       if (previous) {
         queryClient.setQueryData<AmendmentDetail>(key, {
           ...previous,
-          rows: previous.rows.map((row) => {
+          delta: {
+            ...previous.delta,
+            rows: (previous.delta?.rows ?? []).map((row) => {
             const rowKey = row.row_key ?? `${row.so_line_id}:${row.field}`;
             const patch = decisions[rowKey];
             if (!patch) return row;
@@ -504,6 +510,7 @@ export function useAmendmentMutations(projectId: string, psoId: string) {
               declined_reason: patch.decision === 'declined' ? (patch.reason ?? null) : null,
             };
           }),
+          },
         });
       }
       return { previous };

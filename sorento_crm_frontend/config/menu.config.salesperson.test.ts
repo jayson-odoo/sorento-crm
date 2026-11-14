@@ -59,6 +59,8 @@ const SALES_PERMS = [
   'sales.opportunities.view_own',
   'procurement.new_product_applications.view_own',
   'dealer_kit.price_tag_requests.view_own',
+  // OCN round 20 (UAC I4): the notice is a MY REQUESTS kind like the rest.
+  'procurement.order_change_notices.view_own',
 ];
 
 const ALL_KINDS = [...LANDING_KINDS] as string[];
@@ -84,6 +86,7 @@ const STAFF_LIST: Record<string, string> = {
   sales_opportunity: '/sales/opportunities',
   new_product_application: '/procurement-management/new-product-applications',
   price_tag_request: '/dealer-kit/price-tag-requests',
+  order_change_notice: '/procurement-management/order-change-notices',
 };
 
 describe('MENU_SIDEBAR for a salesperson', () => {

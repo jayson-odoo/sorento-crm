@@ -1559,9 +1559,12 @@ class UserPermissionService:
         )
         return [r.role_id for r in assignments]
 
-    def get_user_role_slugs(self, user_id: str) -> set[str]:
-        """Return all role slugs for a user (for superadmin bypass)."""
-        if _RBAC_CACHE_ENABLED:
+    def get_user_role_slugs(self, user_id: str, *, use_cache: bool = True) -> set[str]:
+        """Return all role slugs for a user (for superadmin bypass).
+
+        `use_cache=False` reads the database every call (and refreshes the cache): for a read
+        whose query count must not depend on what an earlier request happened to cache."""
+        if _RBAC_CACHE_ENABLED and use_cache:
             cached = _rbac_cache.get(("role_slugs", str(user_id)))
             if cached is not None:
                 return cached
