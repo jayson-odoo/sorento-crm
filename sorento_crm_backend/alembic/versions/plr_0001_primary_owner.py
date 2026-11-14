@@ -1,7 +1,7 @@
 """PROJECT-LEADS-REASSIGN: the primary lead on a project.
 
 Revision ID: plr_0001_primary_owner
-Revises: ocn_0001_order_change_notice
+Revises: spr_0001_spare_part_request
 
 Additive and idempotent: `projects.projects.primary_owner_user_id` (nullable, FK users.id ON
 DELETE SET NULL), then the UAC A6 backfill, which fills NULLs only, so a second run changes
@@ -13,7 +13,7 @@ SQLAlchemy, never the model graph. A count per rule is printed.
 from alembic import op
 
 revision = "plr_0001_primary_owner"
-down_revision = "ocn_0001_order_change_notice"
+down_revision = "spr_0001_spare_part_request"
 branch_labels = None
 depends_on = None
 
