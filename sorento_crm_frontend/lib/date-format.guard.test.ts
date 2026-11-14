@@ -22,6 +22,7 @@ const root = path.resolve(__dirname, '..');
 /** file -> why it may format a date itself. Keep this list short and every reason specific. */
 export const ALLOWED: Record<string, string> = {
   'lib/helpers.ts': 'the shared date helpers themselves',
+  'lib/format/date.ts': 'the one date formatter (UI v2 R1); lib/helpers.ts delegates to it',
   'i18n/timezones.ts': 'formats a timezone NAME for the timezone select, not a date',
   'app/(protected)/account/home/settings-plain/components/basic-settings.tsx': 'Metronic demo page, not a CRM screen',
   'app/(protected)/account/home/settings-sidebar/components/basic-settings.tsx': 'Metronic demo page, not a CRM screen',
