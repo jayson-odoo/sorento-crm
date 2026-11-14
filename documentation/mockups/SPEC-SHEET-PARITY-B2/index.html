@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Spec sheet toolbar and table cells (mock v1)</title>
+<title>Spec sheet toolbar and table cells (mock v2)</title>
 <style>
 /* App tokens copied from sorento_crm_frontend/css/config.reui.css (light theme), as in documentation/mockups/SPEC-SHEET-V2-INLINE.
    Case shape: project PPF2611001 > quotation R2 > spec sheet SS1 (2 pages: cover + one item page). Names, refs and text are fake. */
@@ -117,14 +117,15 @@ code{font-size:11.5px;background:var(--muted);padding:0 4px;border-radius:4px}
 </head>
 <body>
 <div class="doc">
-<h1>Spec sheet: one toolbar row, editable table cells, same table in the template editor <span class="newtag">MOCK v1</span></h1>
+<h1>Spec sheet: one toolbar row, editable table cells, same table in the template editor <span class="newtag">MOCK v2</span></h1>
 <p class="intro">Lane SPEC-SHEET-PARITY-B2 (PR #2349). Owner 14 Nov: too many bars taking space, table cells hard to fill with values and variables, table not seen in the template editor. Case shape: SS1 of a project quotation, 2 pages (cover + one item page). All names, refs and text are made up.</p>
-<div class="nav"><a href="#a">A. One toolbar row</a><a href="#b">B. Fill a table cell</a><a href="#c">C. Field picker</a><a href="#d">D. Template editor</a><a href="#e">E. Phone 375</a><a href="#f">F. Cover "Fetching image"</a><a href="#map">Component map</a><a href="#q">Questions</a></div>
+<div class="note"><b>v2 changes (owner notes on v1, 14 Nov):</b> page counter and up/down removed from the toolbar, page navigation is the left Pages side bar only (click a page; the current page is highlighted, "Page 2 of 2" under it); Q1-Q5 decided as (a); the font picker offers "Manage fonts" (upload, rename, delete), the same dialog as the template editor (section G).</div>
+<div class="nav"><a href="#a">A. One toolbar row</a><a href="#b">B. Fill a table cell</a><a href="#c">C. Field picker</a><a href="#d">D. Template editor</a><a href="#e">E. Phone 375</a><a href="#f">F. Cover "Fetching image"</a><a href="#g">G. Fonts</a><a href="#h">H. What is shared</a><a href="#map">Component map</a><a href="#q">Questions</a></div>
 
 <!-- ============ A ============ -->
 <section id="a">
 <h2>A. Today: two rows. Proposed: one row</h2>
-<p class="why">Today the page bar (page up/down, 1 of 2, zoom, Fit width, full screen, text format, Saved) sits ABOVE the add-element toolbar. Proposed: both merge into the shared <code>CanvasToolbar</code> (which already has Zoom out / Zoom in / Fit slots). Text format appears in the SAME row only while a text layer is selected; with a table selected the row shows table actions instead. Delete / Duplicate / Group / Ungroup stay on right-click and in a "More" menu.</p>
+<p class="why">Today the page bar (page up/down, 1 of 2, zoom, Fit width, full screen, text format, Saved) sits ABOVE the add-element toolbar. Proposed: the page counter and up/down go (the Pages side bar already does that job), and the rest merges into the shared <code>CanvasToolbar</code> (which already has Zoom out / Zoom in / Fit slots). Text format appears in the SAME row only while a text layer is selected; with a table selected the row shows table actions instead. Delete / Duplicate / Group / Ungroup stay on right-click and in a "More" menu.</p>
 <div class="card old" style="margin-bottom:10px">
   <div class="oldbar"><span class="b">&#8963;</span><span class="b">&#8964;</span><b>1</b> of 2 <span class="b">&minus;</span> 51% <span class="b">+</span><span class="b">Fit width</span><span class="b">&#x26F6;</span> | <span class="b">DM Sans</span><span class="b">12</span><span class="b">B</span><span class="b">I</span><span class="b">Align</span> <span style="margin-left:auto;color:#71717a">Saved</span></div>
   <div class="oldbar"><span class="b">Text</span><span class="b">Shape</span><span class="b">Image</span><span class="b">Badge</span><span class="b">Table</span><span class="b">Accessories</span><span class="b">Undo</span><span class="b">Redo</span><span class="b">Delete</span><span class="b">Duplicate</span><span class="b">Group</span><span class="b">Ungroup</span></div>
@@ -134,8 +135,6 @@ code{font-size:11.5px;background:var(--muted);padding:0 4px;border-radius:4px}
   <div class="hdr"><h3>SS1<span class="pill">Draft</span></h3><div class="acts"><span class="btn">Templates</span><span class="btn">&#8249; &#8250;</span><span class="btn pri">Export</span></div></div>
   <!-- the one row, nothing selected -->
   <div class="tool">
-    <span class="tb-btn" title="Previous page">&#8963;</span><span class="tb-btn" title="Next page">&#8964;</span><span class="pn"><b>1</b> / 2</span>
-    <span class="sep"></span>
     <span class="tb-btn txt" title="Add Text">T</span><span class="tb-btn txt" title="Add Shape">&#9634;</span><span class="tb-btn txt" title="Add Image">&#128444;</span><span class="tb-btn txt" title="Add Badge">&#127991;</span><span class="tb-btn txt" title="Add Table">&#8862;</span><span class="tb-btn txt" title="Add Accessories">&#10022;</span>
     <span class="sep"></span>
     <span class="tb-btn" title="Undo">&#8630;</span><span class="tb-btn" title="Redo">&#8631;</span><span class="tb-btn" title="More actions">&#8943;</span>
@@ -143,19 +142,17 @@ code{font-size:11.5px;background:var(--muted);padding:0 4px;border-radius:4px}
     <span class="tb-btn" title="Zoom out">&minus;</span><span class="zoom">51%</span><span class="tb-btn" title="Zoom in">+</span><span class="tb-btn" title="Fit width">&#8596;</span><span class="tb-btn" title="Full screen">&#x26F6;</span>
     <span class="saved">Saved</span>
   </div>
-  <div style="padding:8px 14px;font-size:12px;color:var(--muted-fg)">Nothing selected: page nav, add tools, undo/redo, More, zoom. One row, 36 px tall.</div>
+  <div style="padding:8px 14px;font-size:12px;color:var(--muted-fg)">Nothing selected: add tools, undo/redo, More, zoom, full screen. One row, 36 px tall. Pages are picked in the left Pages side bar (section B).</div>
   <!-- text selected -->
   <div class="tool">
-    <span class="tb-btn">&#8963;</span><span class="tb-btn">&#8964;</span><span class="pn"><b>2</b> / 2</span><span class="sep"></span>
     <span class="tb-btn txt">T</span><span class="tb-btn txt">&#9634;</span><span class="tb-btn txt">&#128444;</span><span class="tb-btn txt">&#127991;</span><span class="tb-btn txt">&#8862;</span><span class="tb-btn txt">&#10022;</span><span class="sep"></span>
-    <span class="ctx"><span class="lbl">Text</span><span class="fmt">DM Sans</span><span class="fmt">12</span><span class="tb-btn on"><b>B</b></span><span class="tb-btn"><i>I</i></span><span class="tb-btn">&#8801;</span><span class="tb-btn" title="Insert field">{ }</span></span>
+    <span class="ctx"><span class="lbl">Text</span><span class="fmt">DM Sans &#9662;</span><span class="fmt">12</span><span class="tb-btn on"><b>B</b></span><span class="tb-btn"><i>I</i></span><span class="tb-btn">&#8801;</span><span class="tb-btn" title="Insert field">{ }</span></span>
     <span class="sep"></span><span class="tb-btn">&#8630;</span><span class="tb-btn">&#8631;</span><span class="tb-btn">&#8943;</span><span class="sep"></span>
     <span class="tb-btn">&minus;</span><span class="zoom">51%</span><span class="tb-btn">+</span><span class="tb-btn">&#8596;</span><span class="tb-btn">&#x26F6;</span><span class="saved">Saved</span>
   </div>
   <div style="padding:8px 14px;font-size:12px;color:var(--muted-fg)">A text layer selected: its format controls slot in, same row.</div>
   <!-- table selected -->
   <div class="tool">
-    <span class="tb-btn">&#8963;</span><span class="tb-btn">&#8964;</span><span class="pn"><b>2</b> / 2</span><span class="sep"></span>
     <span class="tb-btn txt">T</span><span class="tb-btn txt">&#9634;</span><span class="tb-btn txt">&#128444;</span><span class="tb-btn txt">&#127991;</span><span class="tb-btn txt on">&#8862;</span><span class="tb-btn txt">&#10022;</span><span class="sep"></span>
     <span class="ctx"><span class="lbl">Table</span><span class="tb-btn txt">+ Row</span><span class="tb-btn txt">+ Column</span><span class="tb-btn txt">Merge</span><span class="tb-btn txt on">Header row</span><span class="tb-btn" title="Insert field">{ }</span></span>
     <span class="sep"></span><span class="tb-btn">&#8630;</span><span class="tb-btn">&#8631;</span><span class="tb-btn">&#8943;</span><span class="sep"></span>
@@ -171,14 +168,13 @@ code{font-size:11.5px;background:var(--muted);padding:0 4px;border-radius:4px}
 <p class="why">Today a cell is picked with "Cell row / Cell column" number boxes in the Inspector, and its text is a plain box full of <code>{{doc.ref}}</code> tokens, with Insert field putting the token at the start. Proposed: click a cell to select it, double-click (or start typing) to edit it IN the page with the same in-place editor text layers already use. Fields show as chips (blue = from the product, green = from the quotation). Insert field (the <code>{ }</code> button, or typing <code>{</code>) opens the same field picker and drops the chip at the cursor. Hovering the table edge shows "+" to add a row or column. Right-click keeps today's menu.</p>
 <div class="card">
   <div class="tool">
-    <span class="tb-btn">&#8963;</span><span class="tb-btn">&#8964;</span><span class="pn"><b>2</b> / 2</span><span class="sep"></span>
     <span class="tb-btn txt">T</span><span class="tb-btn txt">&#9634;</span><span class="tb-btn txt">&#128444;</span><span class="tb-btn txt">&#127991;</span><span class="tb-btn txt on">&#8862;</span><span class="tb-btn txt">&#10022;</span><span class="sep"></span>
     <span class="ctx"><span class="lbl">Table</span><span class="tb-btn txt">+ Row</span><span class="tb-btn txt">+ Column</span><span class="tb-btn txt">Merge</span><span class="tb-btn txt on">Header row</span><span class="tb-btn">{ }</span></span>
     <span class="sep"></span><span class="tb-btn">&#8630;</span><span class="tb-btn">&#8631;</span><span class="tb-btn">&#8943;</span><span class="sep"></span>
     <span class="tb-btn">&minus;</span><span class="zoom">68%</span><span class="tb-btn">+</span><span class="tb-btn">&#8596;</span><span class="tb-btn">&#x26F6;</span><span class="saved">Saving...</span>
   </div>
   <div class="work">
-    <div class="rail"><div class="th"><span class="n">1</span><div class="mini"></div></div><div class="th on"><span class="n">2</span><div class="mini"></div></div></div>
+    <div class="rail"><div style="font-size:11px;font-weight:600;color:var(--muted-fg);text-transform:uppercase;letter-spacing:.05em">Pages</div><div class="th"><span class="n">1</span><div class="mini"></div></div><div class="th on"><span class="n">2</span><div class="mini"></div></div><div style="font-size:11.5px;color:var(--muted-fg)">Page 2 of 2</div></div>
     <div class="stack">
       <div class="pg">
         <div class="abs txt" style="left:5%;top:5%;width:50%"><b>WALL HUNG WATER CLOSET</b></div>
@@ -287,15 +283,15 @@ code{font-size:11.5px;background:var(--muted);padding:0 4px;border-radius:4px}
 <!-- ============ E ============ -->
 <section id="e">
 <h2>E. Phone (375 px)</h2>
-<p class="why">One row that fits: page nav, Add (one menu holding Text, Shape, Image, Badge, Table, Accessories), Undo, Redo, More, Fit. Zoom by pinch. A selected cell edits in place; its border / fill sit in the Properties sheet from the bottom (today's phone pattern), which is never zero-width.</p>
+<p class="why">One row that fits: Pages (opens the existing page strip, the phone form of the side bar), Add (one menu holding Text, Shape, Image, Badge, Table, Accessories), Undo, Redo, More, Fit. Zoom by pinch. A selected cell edits in place; its border / fill sit in the Properties sheet from the bottom (today's phone pattern), which is never zero-width.</p>
 <div class="phones">
   <div class="phone">
-    <div class="tool"><span class="tb-btn">&#8963;</span><span class="tb-btn">&#8964;</span><span class="pn"><b>2</b>/2</span><span class="sep"></span><span class="tb-btn txt">+ Add</span><span class="sep"></span><span class="tb-btn">&#8630;</span><span class="tb-btn">&#8631;</span><span class="tb-btn">&#8943;</span><span class="tb-btn">&#8596;</span><span class="saved">Saved</span></div>
+    <div class="tool"><span class="tb-btn txt" title="Pages">&#9636; 2</span><span class="sep"></span><span class="tb-btn txt">+ Add</span><span class="sep"></span><span class="tb-btn">&#8630;</span><span class="tb-btn">&#8631;</span><span class="tb-btn">&#8943;</span><span class="tb-btn">&#8596;</span><span class="saved">Saved</span></div>
     <div class="stack"><div class="pg"><div class="abs ph-img" style="left:5%;top:14%;width:44%;height:52%">Photo</div><div class="abs" style="left:54%;top:14%;width:41%"><table class="pt"><tr class="head"><td>REF</td><td>Value</td></tr><tr><td>Code</td><td class="cur"><span class="chip">Code</span><span class="caret"></span></td></tr><tr><td>Size</td><td><span class="chip">Dimensions</span></td></tr></table></div></div></div>
     <div class="sheet"><b>Cell</b> &middot; Row 2, column 2<div class="sides"><span class="on">All</span><span>Top</span><span>Right</span><span>Bottom</span><span>Left</span></div><div class="row2"><div class="ip"><span class="sw" style="background:#3f7d3a"></span>#3F7D3A</div><div class="ip">0.3 mm</div></div><span class="btn" style="width:100%;justify-content:center">Insert field</span></div>
   </div>
   <div class="phone">
-    <div class="tool"><span class="tb-btn">&#8963;</span><span class="tb-btn">&#8964;</span><span class="pn"><b>1</b>/2</span><span class="sep"></span><span class="tb-btn txt on">+ Add</span><span class="sep"></span><span class="tb-btn">&#8630;</span><span class="tb-btn">&#8631;</span><span class="tb-btn">&#8943;</span><span class="tb-btn">&#8596;</span><span class="saved">Saved</span></div>
+    <div class="tool"><span class="tb-btn txt" title="Pages">&#9636; 1</span><span class="sep"></span><span class="tb-btn txt on">+ Add</span><span class="sep"></span><span class="tb-btn">&#8630;</span><span class="tb-btn">&#8631;</span><span class="tb-btn">&#8943;</span><span class="tb-btn">&#8596;</span><span class="saved">Saved</span></div>
     <div class="stack" style="position:relative"><div class="pg"></div>
       <div class="menu" style="left:70px;top:4px;width:180px"><div>Text</div><div>Shape</div><div>Image</div><div>Badge</div><div>Table</div><div>Accessories</div></div>
     </div>
@@ -313,12 +309,49 @@ code{font-size:11.5px;background:var(--muted);padding:0 4px;border-radius:4px}
 </div>
 </section>
 
+<!-- ============ G ============ -->
+<section id="g">
+<h2>G. Fonts: upload like the template editor <span class="newtag">NEW v2</span></h2>
+<p class="why">Today the template editor's Font Family has "Manage fonts" (upload, rename, delete) but the spec sheet does not: its Inspector is the same <code>InspectorPanel</code> without the upload hook, and its format bar has no entry. Proposed: the same "Manage fonts" link and the same dialog on the spec sheet. Fonts are one kit library, so an upload shows in both screens at once.</p>
+<div class="card" style="position:relative;height:420px;background:var(--viewer)">
+  <div class="menu" style="left:24px;top:20px;width:240px"><div><b>DM Sans</b><span class="k">&#10003;</span></div><div>Inter</div><div>Brand Serif</div><div>Montserrat</div><hr><div style="color:var(--primary)">Manage fonts...</div></div>
+  <div class="dlg-back" style="left:300px">
+    <div class="dlg" style="width:440px">
+      <header>Fonts</header>
+      <div class="body">
+        <div class="fld">Brand Serif<span>Regular, Bold</span></div>
+        <div class="fld">Montserrat<span>Regular</span></div>
+        <div class="ip" style="border-style:dashed;text-align:center;color:var(--muted-fg);padding:18px">Drop a .ttf / .otf / .woff file, or click to choose</div>
+      </div>
+      <footer><span class="btn">Close</span><span class="btn pri">Upload</span></footer>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- ============ H ============ -->
+<section id="h">
+<h2>H. Is it one editor in both places? <span class="newtag">NEW v2</span></h2>
+<p class="why">Yes for the canvas, mostly for the panels; the outer frame is still two.</p>
+<div class="card"><table class="map">
+<tr><th>Part</th><th>Template editor</th><th>Spec sheet</th><th>Shared?</th></tr>
+<tr><td>Canvas (Konva)</td><td><code>TagCanvasEditor.tsx</code>, Konva Stage (<code>:240</code>, <code>:4725</code>)</td><td>the same <code>TagCanvasEditor</code>, one per page, in "embedded" mode (<code>ReaderPage.tsx:167-171</code>, <code>:569</code>)</td><td>Yes, one component</td></tr>
+<tr><td>Add tools toolbar</td><td><code>CanvasToolbar</code> (<code>TagCanvasEditor.tsx:5701</code>)</td><td><code>CanvasToolbar</code> (<code>SpecSheetReader.tsx:1041</code>)</td><td>Yes</td></tr>
+<tr><td>Inspector</td><td><code>InspectorPanel</code> (<code>TagCanvasEditor.tsx:5954</code>)</td><td><code>InspectorPanel</code> inside <code>ReaderInspector.tsx:132</code></td><td>Yes (spec sheet misses the font upload hook, fixed in G)</td></tr>
+<tr><td>Insert field</td><td><code>InsertFieldDialog</code> (<code>TagCanvasEditor.tsx:6102</code>)</td><td><code>InsertFieldDialog</code> (<code>ReaderInspector.tsx</code>)</td><td>Yes</td></tr>
+<tr><td>Table, accessories, text, images</td><td colspan="2">drawn by the same <code>KonvaTagLayer.tsx</code>, table maths in <code>lib/dealer-kit/table-layout.ts</code></td><td>Yes</td></tr>
+<tr><td>Fonts, colours, pictures</td><td colspan="2"><code>useKitLibrary</code> (<code>useTagBindings.ts</code>)</td><td>Yes, one library</td></tr>
+<tr><td>Outer frame</td><td>rulers, layers list, Save / Publish, preview product, built into <code>TagCanvasEditor.tsx</code> and switched off in embedded mode (<code>:5669</code>)</td><td>page side bar <code>PageRail.tsx</code>, page bar, <code>FormatBar.tsx</code>, autosave, in <code>SpecSheetReader.tsx</code></td><td>No: one template vs many pages</td></tr>
+</table></div>
+<div class="note">With v2, the spec sheet's page bar and separate format bar go away (A), so the only part still different is the frame: the side bar with pages (spec sheet) or layers (template editor), and Save / Publish (template editor only, the spec sheet autosaves).</div>
+</section>
+
 <!-- ============ map ============ -->
 <section id="map">
 <h2>Component map (every element reuses existing code)</h2>
 <div class="card"><table class="map">
 <tr><th>Element</th><th>Reuses</th><th>Change</th></tr>
-<tr><td>One toolbar row</td><td><code>dealer-kit/tag-templates/components/CanvasToolbar.tsx</code> (already has Zoom out / Zoom in / Fit slots, lines 419-421, 513-523)</td><td>Add optional page-nav and full-screen slots; spec sheet passes them and drops its own page bar (<code>SpecSheetReader.tsx:955-1038</code>)</td></tr>
+<tr><td>One toolbar row</td><td><code>dealer-kit/tag-templates/components/CanvasToolbar.tsx</code> (already has Zoom out / Zoom in / Fit slots, lines 419-421, 513-523)</td><td>Add an optional full-screen slot; spec sheet drops its own page bar (<code>SpecSheetReader.tsx:955-1038</code>), page nav stays in <code>PageRail.tsx</code> only</td></tr>
 <tr><td>Text format in the row</td><td><code>spec-sheet/.../components/FormatBar.tsx</code></td><td>Rendered inside the toolbar's contextual slot instead of the page bar</td></tr>
 <tr><td>Full screen</td><td><code>dealer-kit/components/FocusMode.tsx</code> <code>FocusToggle</code> (iconOnly)</td><td>none</td></tr>
 <tr><td>More menu (Delete, Duplicate, Group, Ungroup)</td><td><code>CanvasToolbar</code>'s existing "More actions" overflow</td><td>Always folded there on the spec sheet</td></tr>
@@ -328,18 +361,20 @@ code{font-size:11.5px;background:var(--muted);padding:0 4px;border-radius:4px}
 <tr><td>Table maths (merge, borders)</td><td><code>lib/dealer-kit/table-layout.ts</code> (<code>setCellBorder</code> etc.)</td><td>Header row flag</td></tr>
 <tr><td>Cell inspector</td><td><code>InspectorPanel.tsx</code> <code>TableInspector</code> (1285), <code>ColorPicker</code>, <code>NumberInput</code></td><td>Drop "Cell row / Cell column" and the Content box; border side as segmented choice</td></tr>
 <tr><td>Phone Add menu, Properties sheet</td><td><code>CanvasToolbar</code> overflow, the reader's existing phone Properties sheet</td><td>none new</td></tr>
+<tr><td>Pages side bar (only page navigation)</td><td><code>spec-sheet/.../components/PageRail.tsx</code> (desktop rail and phone strip, <code>SpecSheetReader.tsx:1064</code>, <code>:1115</code>)</td><td>Shows "Page N of M" under the thumbnails</td></tr>
+<tr><td>Manage fonts</td><td><code>tag-templates/components/FontUploadDialog.tsx:170</code> and the Inspector's "Manage fonts" button (<code>InspectorPanel.tsx:1110-1118</code>), as the template editor wires them (<code>TagCanvasEditor.tsx:5962</code>, <code>:6120-6140</code>)</td><td>Spec sheet's <code>ReaderInspector.tsx:132</code> passes <code>onUploadFont</code> and renders the same dialog; <code>FormatBar.tsx</code> font list gets the same "Manage fonts" entry. Fonts are the shared kit library, so a font uploaded on either screen shows in both</td></tr>
 <tr><td>Image placeholder</td><td><code>KonvaTagLayer.tsx</code> <code>ImageContent</code>, <code>useHtmlImage.ts</code></td><td>Return a failed state; draw "Image not available"</td></tr>
 </table></div>
 </section>
 
 <!-- ============ questions ============ -->
 <section id="q">
-<h2>Questions (with recommendation)</h2>
-<div class="qs"><b>1. Where do Delete / Duplicate / Group / Ungroup go?</b>(a) in the "&#8943; More" menu + right-click <i>(recommended: the owner's minimal rule)</i>; (b) stay as visible icons.</div>
-<div class="qs"><b>2. Header row</b>: (a) a toggle that bolds and shades row 1 and repeats nothing <i>(recommended: simplest)</i>; (b) no header row, style row 1 by hand.</div>
-<div class="qs"><b>3. Chips on the spec sheet after editing</b>: (a) show the real value once you click away, chips only while typing <i>(recommended: the page looks like the print)</i>; (b) always show chips.</div>
-<div class="qs"><b>4. Typing "{" in a cell opens the field picker</b>: (a) yes, plus the { } button <i>(recommended)</i>; (b) button only.</div>
-<div class="qs"><b>5. Scope</b>: (a) ship #2349 as is, this redesign as slice C on a new PR <i>(recommended: #2349 is frozen for the hand test and the owner needs the table in prod)</i>; (b) fold it into #2349 (needs a new hand test).</div>
+<h2>Questions: decided by the owner, all (a)</h2>
+<div class="qs"><b>1. Where do Delete / Duplicate / Group / Ungroup go?</b>(a) in the "&#8943; More" menu + right-click <i>(chosen; recommended: the owner's minimal rule)</i>; (b) stay as visible icons.</div>
+<div class="qs"><b>2. Header row</b>: (a) a toggle that bolds and shades row 1 and repeats nothing <i>(chosen; recommended: simplest)</i>; (b) no header row, style row 1 by hand.</div>
+<div class="qs"><b>3. Chips on the spec sheet after editing</b>: (a) show the real value once you click away, chips only while typing <i>(chosen; recommended: the page looks like the print)</i>; (b) always show chips.</div>
+<div class="qs"><b>4. Typing "{" in a cell opens the field picker</b>: (a) yes, plus the { } button <i>(chosen; recommended)</i>; (b) button only.</div>
+<div class="qs"><b>5. Scope</b>: (a) ship #2349 as is, this redesign as slice C on a new PR <i>(chosen; recommended: #2349 is frozen for the hand test and the owner needs the table in prod)</i>; (b) fold it into #2349 (needs a new hand test).</div>
 </section>
 </div>
 </body>
