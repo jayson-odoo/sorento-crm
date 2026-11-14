@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Secret scan with the gitleaks CLI (CI fast gate, a step of the PR gate since
-# CI-COST round 2). Rules in .gitleaks.toml, .gitleaksignore honoured.
+# Secret scan with the gitleaks CLI (a check of scripts/pr-gate.sh, the PR gate
+# crew runs in the lane sandbox since CI-ZERO-MINUTES). Rules in .gitleaks.toml, .gitleaksignore honoured.
 #
 # The CLI, not gitleaks/gitleaks-action: the action demands a paid license key
 # once the repo belongs to an organization ("[foundryx-sdn-bhd] is an

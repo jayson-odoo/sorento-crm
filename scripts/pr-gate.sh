@@ -54,7 +54,11 @@ if [ -n "${CREW_CHANGED_FILES+x}" ]; then
 else
   # --no-renames: a rename is its deleted and its added path, both judged.
   # quotePath=false: a non-ASCII name prints as itself and matches its area below.
-  files="$(git -c core.quotePath=false diff --name-only --no-renames "$BASE_SHA" HEAD)"
+  # A failed diff must never become an empty, docs-only list that passes (fail closed).
+  if ! files="$(git -c core.quotePath=false diff --name-only --no-renames "$BASE_SHA" HEAD)"; then
+    echo "pr-gate: $HEAD_SHA FAIL main=$BASE_SHA reason=diff-failed"
+    exit 1
+  fi
 fi
 files="$(printf '%s\n' "$files" | sed '/^$/d' | sort -u)"
 

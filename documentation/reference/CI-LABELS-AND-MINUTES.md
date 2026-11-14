@@ -82,10 +82,10 @@ possibly an artefact of the earlier `next typegen` in that checkout). A full bui
 | Item | Count a month | Each | Month |
 | --- | ---: | ---: | ---: |
 | Releases, default (build-images median 7 + build-and-deploy median 18) | 60 (2 a day) | ~25 | ~1,500 |
-| PR gate runs (`Changed areas` + `PR gate`; 0 since CI-ZERO-MINUTES) | ~7 a day | ~7 | ~1,500 |
-| **Total** | | | **~3,000** |
+| PR gate runs | 0 (crew runs `scripts/pr-gate.sh` in the sandbox since CI-ZERO-MINUTES) | 0 | 0 |
+| **Total** | | | **~1,500** |
 
-Fewer releases buy PR gates at about 3.5 per release. A `full_suite=true` emergency
+A `full_suite=true` emergency
 release (~470) or a `skip_tests=false` release (~25-50 more) comes out of the same pool. The
 tests themselves (each lane's `crew-tests.sh`, the ~2 h release sweep) bill no GitHub minutes.
 

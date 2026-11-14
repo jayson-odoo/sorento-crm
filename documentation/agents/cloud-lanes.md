@@ -75,7 +75,8 @@ never post that status themselves.
 Outline-guide and gitleaks gates on every PR, then by changed area the backend import chains and
 `pytest --collect-only`, the MCP import check, and `tsc` plus ESLint over the changed frontend files
 (whole files: 54 files carry 195 ESLint errors on main today, so touching one means fixing its
-errors). It refuses a head that does not contain `origin/main` (`reason=main-not-merged`), and
+errors). It refuses a head that does not contain `origin/main` (`reason=main-not-merged`) and a tree with
+uncommitted changes to tracked files (`reason=dirty-tree`), and
 `--plan` prints the checks it would run. Its last line is
 `pr-gate: <sha> PASS|FAIL main=<sha> checks=<ids> [failed=<ids>]`. The tests run separately, in the
 same sandbox (next section). **A merge does not deploy**, and a push to main runs nothing. The
