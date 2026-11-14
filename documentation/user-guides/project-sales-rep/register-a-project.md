@@ -86,8 +86,8 @@ The **Access** card lists every lead on the project in one table:
 If the project's owner is someone who is neither the primary nor a secondary lead, they get a row of
 their own with only the crown.
 
-On a phone the table shows the salesperson and their icons; turn on the other columns from
-**Columns**.
+On a phone the table shows only the salesperson, their icons and the **...** button; open the
+project on a wider screen to see the date, how they found it and the status.
 
 **Managers:** click a row's **...** button, or right-click the row, and choose
 **Reassign to {name}**. Both show the same choices. The reassign window opens with that person
