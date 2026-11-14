@@ -1,6 +1,6 @@
 # PLAN: spec sheet designer parity, slice B
 
-Status: in review, PR #2349 (full track: migration + new export surface). B1-B7 built; reviewer READY, security ready, browser passes done; UAC `spec-sheet-designer-parity-b-11nov-acceptance-criteria.md`; migration timed (UAC AC-M.2).
+Status: owner hand-test fix round C (v3 editor, approved 14 Nov 13:56) in build on PR #2349; UAC `spec-sheet-editor-v3-14nov-acceptance-criteria.md` (C1-C8). B1-B7 built and reviewed earlier. Full track (UI on two designers, new table props).
 Branch `claude/spec-sheet-designer-parity-b2-2sv9bf`, PR #2349, on main after slice A (#2331)
 merged as c3169d9c; the earlier PR #2336 is superseded.
 
@@ -104,3 +104,24 @@ live canvas layers, and the next edit saves the old layers back. Fix: on the res
 reader forgets that page's draft and history and restarts its canvas from the refreshed payload
 (the same restart apply-all uses). Red test: edit, reset, edit again -> the save carries the
 template's layers plus only the new edit.
+
+## C. v3 editor (owner hand-test fix round, 14 Nov)
+
+Mock `documentation/mockups/SPEC-SHEET-PARITY-B2/index.html`, UAC
+`spec-sheet-editor-v3-14nov-acceptance-criteria.md`. Shared code only, as for B:
+- C1 toolbar: `CanvasToolbar` gains optional slots (contextual group, full screen, save state,
+  `foldEdits` to put Delete/Duplicate/Group/Ungroup in More); `SpecSheetReader` drops its page bar
+  and passes zoom/fit/full screen/FormatBar into it.
+- C2 `PageRail`: per-thumbnail "..." + right-click Remove page (existing `hidden` patch, the same
+  `onPatch` the old Leave out button called), "Removed pages (N)" with Put back; `ReaderPage`
+  loses its Leave out button.
+- C3/C4/C5 table: in-place cell editor = `InlineTextEditor` positioned on the cell rect from
+  `table-layout.ts`; `InsertFieldDialog` insert-at-cursor; new optional table props `headerRow`,
+  `uppercase` (and `uppercase` on text layers) added to the TS types, `price_tag.py` docs schemas,
+  `table_layer_check`, `KonvaTagLayer`, `TagSheetRenderer` and `spec_sheet_pptx`; Inspector
+  Row height / Column width + edge drag.
+- C6 `ReaderInspector` passes `onUploadFont` and renders `FontUploadDialog` as `TagCanvasEditor`
+  does (`:6120-6140`).
+- C7 keyboard Delete: `TagCanvasEditor` keydown (`:3860`) already deletes when `shortcutsLive`;
+  verify on the spec sheet and fix the focus/active-page gap if it does not fire.
+- C8 `useHtmlImage` returns a failed state; `ImageContent` draws "Image not available".
