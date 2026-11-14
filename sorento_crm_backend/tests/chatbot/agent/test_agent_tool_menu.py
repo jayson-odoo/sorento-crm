@@ -392,6 +392,11 @@ def test_t8_the_dealer_flow_offers_exactly_todays_dealer_list(db):
     assert prov.seen[0]["tool_choice"] == "required"
     assert prov.names(0) == expected, (prov.names(0), expected)
     assert LOAD not in prov.names(0)
+    # Review S1: the dealer flow offers no crm_tools_load, so its system prompt does not name it.
+    from app.services.chatbot.agent.loop import TOOLS_LOAD_LINE
+
+    system = prov.seen[0]["messages"][0]["content"]
+    assert TOOLS_LOAD_LINE not in system and LOAD not in system, system[-400:]
 
 
 # ================================================================== T9 (U1, Q1 = (a))
@@ -415,6 +420,33 @@ def test_t9_the_previous_agent_turns_tools_are_preloaded_on_a_follow_up_and_abse
     fresh, prov3, _rec = _panel(db, _principal(user_id), [_answer("Hello.")], text="and last month?")
     assert fresh.status == "answered", (fresh.status, fresh.reply_text)
     assert STOCK not in prov3.names(0), prov3.names(0)
+
+
+def _revoke(db, user_id, slug):
+    """Take `slug` away from the user's roles (the permission row itself stays)."""
+    from app.models.user import UserPermission, UserRoleAssignment, UserRolePermission
+
+    roles = [r.role_id for r in db.query(UserRoleAssignment).filter(UserRoleAssignment.user_id == str(user_id)).all()]
+    perm = db.query(UserPermission).filter(UserPermission.slug == slug).one()
+    db.query(UserRolePermission).filter(
+        UserRolePermission.role_id.in_(roles), UserRolePermission.permission_id == perm.id
+    ).delete(synchronize_session=False)
+    db.commit()
+
+
+def test_t9b_a_tool_whose_permission_was_revoked_after_the_first_turn_is_neither_preloaded_nor_listed(db):
+    """Review S2: the previous turn's tools are preloaded only while the user may still use them."""
+    user_id = _all_user(db)
+    principal = _principal(user_id)
+    first, _prov1, _rec = _panel(db, principal, [_round(_tc(STOCK, {"page": "1"}, "s1")), _answer("Read.")],
+                                 text="stock of ZZT-1?", rec=Recorder(result=STOCK_BODY))
+    assert first.status == "answered", (first.status, first.reply_text)
+    _revoke(db, user_id, "inventory.stock.view")
+
+    follow, prov2, _rec = _panel(db, principal, [_answer("Same.")], text="and last month?")
+    assert follow.status == "answered", (follow.status, follow.reply_text)
+    assert STOCK not in prov2.names(0), prov2.names(0)
+    assert STOCK not in _directory(prov2.schema(0, LOAD)), sorted(_directory(prov2.schema(0, LOAD)))
 
 
 # ================================================================== T10 (U5)
