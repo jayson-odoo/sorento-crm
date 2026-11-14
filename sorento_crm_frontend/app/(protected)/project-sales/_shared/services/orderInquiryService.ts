@@ -983,8 +983,16 @@ export interface OrderInquiryHistory {
   events: RecordHistoryEvent[];
 }
 
-export async function getOrderInquiryHistory(id: string): Promise<OrderInquiryHistory> {
-  const response = await apiFetch(`${BASE}/order-inquiry-headers/${id}/history`);
+/** `view: 'inquiry'`: the OI page's read; an order request shows only what happened from
+ * its first raise on (SPARE-PART-OR-B C, C3.4). No options: the whole life (the OR page). */
+export type OrderInquiryHistoryView = 'inquiry';
+
+export async function getOrderInquiryHistory(
+  id: string,
+  options: { view?: OrderInquiryHistoryView } = {},
+): Promise<OrderInquiryHistory> {
+  const query = options.view ? `?view=${options.view}` : '';
+  const response = await apiFetch(`${BASE}/order-inquiry-headers/${id}/history${query}`);
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to load the history'));
   return response.json();

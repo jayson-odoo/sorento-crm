@@ -1,6 +1,6 @@
 /**
  * SPARE-PART-ORDER-REQUEST F5 (UAC R1, R2, R5, R6): the New spare part request form.
- * Header fields Currency, Needed by, Default location, Reason; a lines table with Product,
+ * Header fields Currency, Delivery date (C5.1, was Needed by), Default location, Reason; a lines table with Product,
  * Location, Qty, Unit price, Total; "Submit" is the ONE filled main button and "Save as
  * draft" is secondary (owner standing rule: one filled main button per page).
  *
@@ -79,9 +79,9 @@ beforeEach(() => {
 });
 
 describe('F5 / UAC R1-R2: the New spare part request form', () => {
-  it('renders the header fields Currency, Needed by, Default location, Reason', async () => {
+  it('renders the header fields Currency, Delivery date, Default location, Reason', async () => {
     mount();
-    for (const label of ['Currency', 'Needed by', 'Default location', 'Reason']) {
+    for (const label of ['Currency', 'Delivery date', 'Default location', 'Reason']) {
       expect((await screen.findAllByText(new RegExp(`^${label}\\b`))).length).toBeGreaterThan(0);
     }
   });

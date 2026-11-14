@@ -100,6 +100,10 @@ const VIEWS: Array<[string, Options, Record<string, unknown>]> = [
   ['OR page, reader, raised', OR_RAISED, {}],
   ['OI page, purchasing, raised', OI_RAISED, {}],
 ];
+/** SPARE-PART-OR-B C (C3.2, lead sign-off 14 Nov): the OI page Qty cell is the SO line's, so
+ *  its History icon sits in State as on an SO line; the OR page keeps it in Qty. */
+const OR_VIEWS = VIEWS.filter(([who]) => who.startsWith('OR page'));
+const historyCellOf = (options: Options) => (options.sparePartView === 'inquiry' ? 'State' : 'Qty');
 
 const rowClick = vi.fn();
 
@@ -181,12 +185,20 @@ describe('U1.1: no "was" text in the Qty or Unit price cell', () => {
 // =============================================================================
 
 describe('U1.2: exactly one History button per spare part line, in the Qty cell', () => {
-  it.each(VIEWS)('%s', (_who, options, over) => {
+  it.each(OR_VIEWS)('%s', (_who, options, over) => {
     renderGrid([spareRow(over)], options);
     const line = screen.getByTestId('line');
     expect(within(line).getAllByRole('button', { name: 'History' })).toHaveLength(1);
     expect(within(cell('Qty')).getAllByRole('button', { name: 'History' })).toHaveLength(1);
     expect(within(cell('State')).queryAllByRole('button', { name: 'History' })).toHaveLength(0);
+  });
+
+  it('OI page, purchasing, raised: in State, as on an SO line (C3.2)', () => {
+    renderGrid([spareRow()], OI_RAISED);
+    const line = screen.getByTestId('line');
+    expect(within(line).getAllByRole('button', { name: 'History' })).toHaveLength(1);
+    expect(within(cell('State')).getAllByRole('button', { name: 'History' })).toHaveLength(1);
+    expect(within(cell('Qty')).queryAllByRole('button', { name: 'History' })).toHaveLength(0);
   });
 
   it('the button sits after the value / input', () => {
@@ -200,7 +212,7 @@ describe('U1.2: exactly one History button per spare part line, in the Qty cell'
 });
 
 describe('U1.5: the Qty cell stays one line', () => {
-  it.each(VIEWS)('%s: input/value and icon in one flex items-center row', (_who, options, over) => {
+  it.each(OR_VIEWS)('%s: input/value and icon in one flex items-center row', (_who, options, over) => {
     renderGrid([spareRow(over)], options);
     const qty = cell('Qty');
     const button = within(qty).getByRole('button', { name: 'History' });
@@ -249,7 +261,7 @@ describe('U1.3: the OR page History button says whether the line changed', () =>
 // =============================================================================
 
 describe('U4.7: the OI page History button is coloured only for a post-approval change', () => {
-  const historyButton = () => within(cell('Qty')).getByRole('button', { name: 'History' });
+  const historyButton = () => within(cell('State')).getByRole('button', { name: 'History' });
 
   it('an approver change before approval (qty != submitted) is not a change here', () => {
     renderGrid([spareRow({ qty: '8', submitted_qty: '10', previous_qty: null })], OI_RAISED);
@@ -275,7 +287,7 @@ describe('U1.4: clicking History calls onLineHistoryClick and leaves the row alo
   it.each(VIEWS)('%s', (_who, options, over) => {
     const onLineHistoryClick = vi.fn();
     renderGrid([spareRow(over)], { ...options, onLineHistoryClick });
-    fireEvent.click(within(cell('Qty')).getByRole('button', { name: 'History' }));
+    fireEvent.click(within(cell(historyCellOf(options))).getByRole('button', { name: 'History' }));
     expect(onLineHistoryClick).toHaveBeenCalledTimes(1);
     expect(onLineHistoryClick.mock.calls[0][0].primary.id).toBe('row-1');
     expect(rowClick).not.toHaveBeenCalled();

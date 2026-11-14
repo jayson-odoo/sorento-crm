@@ -42,9 +42,11 @@ import {
   LocationCell,
   orderInquiryReserveQtyColumns,
   orderInquirySuggestedColumn,
+  QtyCell,
   RaisedCell,
   SupplierCell,
 } from '../../components/orderInquiryWorklistColumns';
+import { WorklistPill } from '../../components/orderInquiryDocumentPills';
 import type {
   OrderInquiryLineSplit,
   OrderInquiryWorklistRow,
@@ -698,6 +700,20 @@ function sparePartLineColumns({
       cell: ({ row }) => {
         const line = lineOf(row.original);
         const primary = line.primary;
+        if (view === 'inquiry' && !(qtyEditable && onEditLine)) {
+          // SPARE-PART-OR-B C (C3.1 / C3.2): purchasing reads the approved qty in the
+          // SO line's own Qty cell (Was N while it waits for CS, the (i) once a change
+          // settled, Changed as an SO line shows it); the History icon sits in State,
+          // as on an SO line.
+          return (
+            <span className="flex min-w-0 items-center gap-1">
+              <QtyCell row={primary} />
+              {primary.ack_state === 'changed' ? (
+                <WorklistPill testId={`qty-changed-${primary.id}`}>Changed</WorklistPill>
+              ) : null}
+            </span>
+          );
+        }
         // U1.2 / U1.5: the value (or the input), then the line's one History icon, one line.
         return (
           <div className="flex min-w-0 items-center gap-1">
@@ -794,6 +810,13 @@ function sparePartLineColumns({
                 <OrderInquiryLineStatusPill line={line} rejectedTestId={`lines-rejected-${primary.id}`} />
               )}
             </span>
+            {view === 'inquiry' && !(qtyEditable && onEditLine) ? (
+              <LineHistoryButton
+                line={line}
+                onClick={onLineHistoryClick}
+                changed={sparePartLineChanged(primary, view)}
+              />
+            ) : null}
             <SoLineAttachmentsButton
               lineId={primary.id}
               target={{ kind: 'order_inquiry_row', id: primary.id }}
@@ -825,7 +848,6 @@ export function useOrderInquiryHeaderLinesColumns({
   sparePartView = 'inquiry',
   headerState,
   revisionState = null,
-  canEditRevision = false,
   canDecide = false,
   onEditLine,
   currency,
@@ -878,10 +900,11 @@ export function useOrderInquiryHeaderLinesColumns({
   sparePartView?: SparePartView;
   /** The header's state: a decider edits Qty / Unit price only while `pending_approval`. */
   headerState?: string | null;
-  /** U4.3, order request page only: an open revision's state. While one is open only Qty
-   *  changes, by the requester (draft / rejected) or a decider (pending_approval). */
+  /** U4.3, order request page only: an open revision's state. While one is pending a
+   *  decider sets its qtys here; the requester revises in the edit form (C4.1). */
   revisionState?: string | null;
-  /** The viewer is the requester and may change the revision's qtys (server `can_edit`). */
+  /** The viewer is the requester and may change the revision (server `can_edit`). Read by
+   *  the page's Edit link, not by these cells: no inline revision input (C4.1). */
   canEditRevision?: boolean;
   /** The viewer is the current approver (server's `can_decide`). */
   canDecide?: boolean;
@@ -898,11 +921,9 @@ export function useOrderInquiryHeaderLinesColumns({
       const deciding = canDecide && headerState === 'pending_approval';
       return sparePartLineColumns({
         view: sparePartView,
-        qtyEditable: revising
-          ? revisionState === 'pending_approval'
-            ? canDecide
-            : canEditRevision
-          : deciding,
+        // C4.1: the requester revises in the edit form (Revise opens it), never inline; a
+        // decider still sets a pending revision's qty here.
+        qtyEditable: revising ? revisionState === 'pending_approval' && canDecide : deciding,
         priceEditable: !revising && deciding,
         currency,
         onEditLine,
@@ -1162,7 +1183,6 @@ export function useOrderInquiryHeaderLinesColumns({
     sparePartView,
     headerState,
     revisionState,
-    canEditRevision,
     canDecide,
     onEditLine,
     currency,

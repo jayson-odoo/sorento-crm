@@ -53,7 +53,7 @@ export function SparePartRequestGeneralCards({ header }: { header: SparePartGene
         </CardHeader>
         <section aria-label="Request" className="grid grid-cols-1 gap-4 p-4 sm:grid-cols-2">
           <Field label="Requested by">{header.requested_by_name ?? <NotStated />}</Field>
-          <Field label="Needed by">
+          <Field label="Delivery date">
             {header.needed_by ? formatDateInMalaysia(header.needed_by) : <NotStated />}
           </Field>
           <Field label="Currency">{header.currency ?? <NotStated />}</Field>

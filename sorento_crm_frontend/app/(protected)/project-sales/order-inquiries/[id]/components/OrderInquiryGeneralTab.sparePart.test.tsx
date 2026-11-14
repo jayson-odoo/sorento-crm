@@ -1,6 +1,6 @@
 /**
  * SPARE-PART-ORDER-REQUEST F2 (UAC P4, H1): the OI page's General tab, for an inquiry of
- * type `spare_part_request`, renders a Request card (Requested by, Needed by, Currency,
+ * type `spare_part_request`, renders a Request card (Requested by, Delivery date, Currency,
  * Default location, Reason) and an Approval card; a sales-order inquiry renders exactly as
  * today (Order + Customer + Raise history, no Request / Approval card).
  *
@@ -63,10 +63,10 @@ function card(title: string): HTMLElement {
 }
 
 describe('F2 / UAC P4: General tab of a spare part request', () => {
-  it('renders a Request card with Requested by, Needed by, Currency, Default location, Reason', () => {
+  it('renders a Request card with Requested by, Delivery date, Currency, Default location, Reason', () => {
     render(<OrderInquiryGeneralTab header={SPARE} />);
     const request = card('Request');
-    for (const label of ['Requested by', 'Needed by', 'Currency', 'Default location', 'Reason']) {
+    for (const label of ['Requested by', 'Delivery date', 'Currency', 'Default location', 'Reason']) {
       expect(within(request).getByText(label)).toBeInTheDocument();
     }
     expect(within(request).getByText('Aina Requester')).toBeInTheDocument();

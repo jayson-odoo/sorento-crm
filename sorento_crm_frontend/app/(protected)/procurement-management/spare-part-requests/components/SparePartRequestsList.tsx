@@ -143,10 +143,10 @@ export function SparePartRequestsList() {
       },
       {
         accessorKey: 'needed_by',
-        header: ({ column }) => <DataGridColumnHeader title="Needed by" column={column} />,
+        header: ({ column }) => <DataGridColumnHeader title="Delivery date" column={column} />,
         size: 130,
         cell: ({ row }) => <span className="tabular-nums">{day(row.original.needed_by)}</span>,
-        meta: { headerTitle: 'Needed by', skeleton: <Skeleton className="h-4 w-20" /> },
+        meta: { headerTitle: 'Delivery date', skeleton: <Skeleton className="h-4 w-20" /> },
       },
       {
         accessorKey: 'line_count',

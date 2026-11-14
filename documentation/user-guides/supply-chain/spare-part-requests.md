@@ -15,7 +15,7 @@ To raise a request you need **Create Order Requests**.
 
 1. Open **Order Requests** (under **Procurement > Supply Chain**, or under **MY REQUESTS**).
 2. Click **Create**. The page opens as **New Order Request**.
-3. In the **Request** section, choose the **Currency** (required). Optionally set **Needed by**, a **Default location** and a **Reason**.
+3. In the **Request** section, choose the **Currency** (required). Optionally set a **Delivery date** (each new line starts on it; a line can take its own in the **Delivery date** column), a **Default location** and a **Reason**.
 4. In the **Products** section, search for a product by code or name (for example ZZX-100). Only products from the catalogue can be added.
 5. The **Description** starts as the product's name; change it if purchasing needs more detail. Purchasing sees your description on the line.
 6. Check the **Location** on the line. It starts from the default location and can differ per line.

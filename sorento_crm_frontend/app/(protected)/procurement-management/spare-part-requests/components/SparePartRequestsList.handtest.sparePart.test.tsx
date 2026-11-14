@@ -4,7 +4,7 @@
  * F3 SparePartRequestsList (app/(protected)/procurement-management/spare-part-requests/
  *    components/SparePartRequestsList.tsx): a standard DataGrid over
  *    GET /api/v1/project-sales/spare-part-requests with the columns Number, Status, Requested by,
- *    Needed by, Lines, Total, Submitted; a toolbar with search, Filters, Columns and a "Create"
+ *    Delivery date, Lines, Total, Submitted; a toolbar with search, Filters, Columns and a "Create"
  *    button shown only with `procurement.spare_part_requests.create`; a row click opens the
  *    request's record page /procurement-management/spare-part-requests/<id>.
  *
@@ -125,11 +125,11 @@ describe('F3 (G3): the Spare Part Requests list', () => {
     expect(calls.some((u) => u.includes('/order-inquiry-headers'))).toBe(false);
   });
 
-  it('has the columns Number, Status, Requested by, Needed by, Lines, Total, Submitted', async () => {
+  it('has the columns Number, Status, Requested by, Delivery date, Lines, Total, Submitted', async () => {
     mount();
     await screen.findByText('OI-2611-0009');
     const headers = screen.getAllByRole('columnheader').map((h) => h.textContent?.trim() ?? '');
-    for (const name of ['Number', 'Status', 'Requested by', 'Needed by', 'Lines', 'Total', 'Submitted']) {
+    for (const name of ['Number', 'Status', 'Requested by', 'Delivery date', 'Lines', 'Total', 'Submitted']) {
       expect(headers.some((h) => h.startsWith(name)), `column ${name} in ${headers.join(' | ')}`).toBe(true);
     }
     expect(screen.getByText('Pending approval')).toBeInTheDocument();

@@ -27,6 +27,7 @@ import type { OrderInquiryReserveHistoryEntry } from '../../../_shared/services/
 import { documentsOf } from '../../components/orderInquiryWorklistColumns';
 import { ReserveHistoryEntries } from './ReserveLineHistoryDialog';
 import { OrderInquiryHistory } from './OrderInquiryHistory';
+import type { OrderInquiryHistoryView } from '../../../_shared/services/orderInquiryService';
 import { SoCustomerProject } from '@/components/common/SoCustomerProject';
 
 /**
@@ -195,12 +196,15 @@ export function OrderInquiryLineHistoryDialog({
   line,
   onOpenChange,
   reserveEntries,
+  view,
 }: {
   line: OrderInquiryLine;
   onOpenChange: (open: boolean) => void;
   /** The line's reserve request history; `undefined` when the line has none, which drops
    * the Reserve tab (AC-ND-14). */
   reserveEntries?: OrderInquiryReserveHistoryEntry[];
+  /** `inquiry` on the OI page (SPARE-PART-OR-B C, C3.3); passed on to the History tab. */
+  view?: OrderInquiryHistoryView;
 }) {
   const coreLineId = line.primary.core_line_id ?? null;
   const trail = useDecisionTrail(coreLineId);
@@ -238,7 +242,7 @@ export function OrderInquiryLineHistoryDialog({
               {reserveEntries ? <TabsTrigger value="reserve">Reserve</TabsTrigger> : null}
             </TabsList>
             <TabsContent value="history" className="mt-0 min-w-0">
-              <OrderInquiryHistory inquiryId={inquiryId} rowIds={rowIds} />
+              <OrderInquiryHistory inquiryId={inquiryId} rowIds={rowIds} view={view} />
             </TabsContent>
             <TabsContent value="rows" className="mt-0 min-w-0">
               <LineRowsGrid entries={entries} />

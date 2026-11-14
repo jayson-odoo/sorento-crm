@@ -84,8 +84,9 @@ export type SparePartActionsHeader = Pick<
  * reason is required). Nobody else gets a button.
  *
  * SPARE-PART-OR-B (U4.2 - U4.4): Revise opens a revision on any approved request. While it is
- * a draft or rejected the requester changes qtys in the Lines tab and Submits it (no Edit, no
- * Delete: only qtys change); while it is pending the decider gets Approve and Reject.
+ * pending the decider gets Approve and Reject. SPARE-PART-OR-B C (C4.1): Revise opens the
+ * SAME edit form as Create, in revision mode; while the revision is a draft or rejected the
+ * requester has Edit (that form) and Submit, no Delete.
  */
 export function SparePartRequestActions({
   header,
@@ -251,17 +252,24 @@ export function SparePartRequestActions({
     </Button>
   );
 
+  const editPath = `${SPARE_PART_REQUESTS_PATH}/${id}/edit`;
+  const editLink = (
+    <Button size="sm" variant="outline" asChild>
+      <Link href={editPath}>Edit</Link>
+    </Button>
+  );
+
   if (header.can_edit && header.revision_state) {
-    return <div className="flex items-center gap-2">{submitButton}</div>;
+    return (
+      <div className="flex items-center gap-2">
+        {editLink}
+        {submitButton}
+      </div>
+    );
   }
 
   if (header.can_edit) {
     if (deletion.countdown) return <div className="flex items-center gap-2">{deletion.countdown}</div>;
-    const editLink = (
-      <Button size="sm" variant="outline" asChild>
-        <Link href={`${SPARE_PART_REQUESTS_PATH}/${id}/edit`}>Edit</Link>
-      </Button>
-    );
     // G5: while it waits for approval the requester may still edit it; nothing else.
     if (header.state === 'pending_approval' || !isPreApproval(header.state)) {
       return <div className="flex items-center gap-2">{editLink}</div>;
@@ -284,7 +292,12 @@ export function SparePartRequestActions({
 
   if (header.can_revise) {
     return (
-      <Button size="sm" variant="outline" onClick={() => revise.mutate()} disabled={revise.isPending}>
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={() => revise.mutate(undefined, { onSuccess: () => router.push(editPath) })}
+        disabled={revise.isPending}
+      >
         Revise
       </Button>
     );

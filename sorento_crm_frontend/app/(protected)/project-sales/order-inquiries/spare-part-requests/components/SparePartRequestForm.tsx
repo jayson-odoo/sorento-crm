@@ -64,6 +64,8 @@ interface DraftLine {
   stockLocation: string;
   qty: number | null;
   unitPrice: number | null;
+  /** C5.1: the line's own delivery date (YYYY-MM-DD), starting on the header's. */
+  deliveryDate: string | null;
 }
 
 interface Problems {
@@ -73,13 +75,14 @@ interface Problems {
 }
 
 let lineSeq = 0;
-const newLine = (): DraftLine => ({
+const newLine = (deliveryDate: string | null = null): DraftLine => ({
   key: `new-${(lineSeq += 1)}`,
   product: null,
   description: '',
   stockLocation: '',
   qty: null,
   unitPrice: null,
+  deliveryDate,
 });
 
 function lineTotal(line: DraftLine): string | null {
@@ -104,8 +107,13 @@ function withSavedIds(
   });
 }
 
+/** The form's lines off a saved request. While a revision is open a line it took to 0 is a
+ *  removed line (C4.1), so it is left off; a cancelled line is history, never a form line. */
 function fromRequest(request: SparePartRequest): DraftLine[] {
-  return request.lines.map((l) => ({
+  const revising = Boolean(request.revision_state);
+  return request.lines
+    .filter((l) => l.state !== 'cancelled' && !(revising && Number(l.qty) === 0))
+    .map((l) => ({
     key: l.id,
     id: l.id,
     product: l.product_id
@@ -118,6 +126,7 @@ function fromRequest(request: SparePartRequest): DraftLine[] {
     stockLocation: l.stock_location ?? '',
     qty: l.qty == null ? null : Number(l.qty),
     unitPrice: l.unit_price == null ? null : Number(l.unit_price),
+    deliveryDate: l.delivery_date ? l.delivery_date.slice(0, 10) : null,
   }));
 }
 
@@ -129,6 +138,11 @@ function fromRequest(request: SparePartRequest): DraftLine[] {
  * starts as the header default, qty and unit price; each line's stock table is a chevron
  * away and, once saved, its photos are the fulfilment paperclip. Submit is the one main
  * button; Save as draft keeps it editable.
+ *
+ * SPARE-PART-OR-B C: each line has its own Delivery date, starting on the header's (C5.1;
+ * a header change moves only the lines still on the old header date, C5.4). Revise opens
+ * this same form on the approved request (C4.1): qty, product and delivery date change, lines
+ * are added or removed; the header and an existing line's other fields stay as approved.
  */
 export function SparePartRequestForm({ id }: { id?: string } = {}) {
   const router = useRouter();
@@ -141,7 +155,7 @@ export function SparePartRequestForm({ id }: { id?: string } = {}) {
   const submit = useSubmitSparePartRequest();
 
   const [currency, setCurrency] = useState<string>(id ? '' : BASE_CURRENCY);
-  const [neededBy, setNeededBy] = useState<string | null>(null);
+  const [neededBy, setNeededByState] = useState<string | null>(null);
   const [defaultLocation, setDefaultLocation] = useState('');
   const [reason, setReason] = useState('');
   const [lines, setLines] = useState<DraftLine[]>(() =>
@@ -172,10 +186,11 @@ export function SparePartRequestForm({ id }: { id?: string } = {}) {
     if (!request || loadedRef.current) return;
     loadedRef.current = true;
     setCurrency(request.currency ?? '');
-    setNeededBy(request.needed_by ?? null);
+    setNeededByState(request.needed_by ?? null);
     setDefaultLocation(request.default_location ?? '');
     setReason(request.reason ?? '');
-    setLines(request.lines.length ? fromRequest(request) : [newLine()]);
+    const loaded = fromRequest(request);
+    setLines(loaded.length ? loaded : [newLine(request.needed_by ?? null)]);
   }, [existing.data]);
 
   // ---- Sections, as PriceTagRequestForm (openSectionOnce): a rule opens a section once,
@@ -209,7 +224,7 @@ export function SparePartRequestForm({ id }: { id?: string } = {}) {
     request:
       [
         currency || null,
-        neededBy ? `needed by ${formatDateInMalaysia(neededBy)}` : null,
+        neededBy ? `delivery ${formatDateInMalaysia(neededBy)}` : null,
       ]
         .filter(Boolean)
         .join(', ') || null,
@@ -234,6 +249,19 @@ export function SparePartRequestForm({ id }: { id?: string } = {}) {
   // upload after it would be refused).
   const canHoldPhotos = !id || canEditPhotos;
 
+  // C4.1: an open revision changes the lines only.
+  const revising = Boolean(existing.data?.revision_state);
+
+  /** C5.4: the header date moves every line still on the previous header date. */
+  const setNeededBy = (next: string | null) => {
+    setNeededByState(next);
+    setLines((prev) =>
+      prev.map((l) =>
+        l.deliveryDate == null || l.deliveryDate === neededBy ? { ...l, deliveryDate: next } : l,
+      ),
+    );
+  };
+
   const updateLine = (key: string, patch: Partial<DraftLine>) =>
     setLines((prev) =>
       prev.map((l) => (l.key === key ? { ...l, ...patch } : l)),
@@ -256,6 +284,7 @@ export function SparePartRequestForm({ id }: { id?: string } = {}) {
           l.unitPrice == null || Number.isNaN(l.unitPrice)
             ? null
             : String(l.unitPrice),
+        delivery_date: l.deliveryDate ?? neededBy,
       })),
   });
 
@@ -448,6 +477,7 @@ export function SparePartRequestForm({ id }: { id?: string } = {}) {
             <Label htmlFor="spr-currency">Currency *</Label>
             <SearchableSelect
               id="spr-currency"
+              disabled={revising}
               value={currency}
               onChange={(value) => {
                 setCurrency(value);
@@ -461,17 +491,19 @@ export function SparePartRequestForm({ id }: { id?: string } = {}) {
             ) : null}
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="spr-needed-by">Needed by</Label>
+            <Label htmlFor="spr-needed-by">Delivery date</Label>
             <DatePickerField
               id="spr-needed-by"
               value={neededBy}
               onChange={setNeededBy}
+              disabled={revising}
             />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="spr-default-location">Default location</Label>
             <SearchableSelect
               id="spr-default-location"
+              disabled={revising}
               value={defaultLocation}
               onChange={setDefaultLocation}
               options={locationOptions}
@@ -485,6 +517,7 @@ export function SparePartRequestForm({ id }: { id?: string } = {}) {
             <Label htmlFor="spr-reason">Reason</Label>
             <Textarea
               id="spr-reason"
+              disabled={revising}
               value={reason}
               onChange={(event) => setReason(event.target.value)}
               rows={3}
@@ -510,22 +543,23 @@ export function SparePartRequestForm({ id }: { id?: string } = {}) {
               className="relative overflow-x-auto"
               onContextMenuCapture={pickMenuLine}
             >
-              {/* 920px of columns: fits the card at 1280 (935px inside); below that the table
+              {/* 928px of columns: fits the card at 1280 (935px inside); below that the table
               scrolls inside its own box, so 375 stays usable. */}
-              <table className="w-full min-w-[920px] table-fixed text-sm">
+              <table className="w-full min-w-[928px] table-fixed text-sm">
                 <thead className="border-b border-border bg-muted/40 text-left text-xs text-muted-foreground">
                   <tr>
                     <th className="w-12 px-3 py-2 font-medium">No.</th>
-                    <th className="w-44 px-3 py-2 font-medium">Product</th>
-                    <th className="w-44 px-3 py-2 font-medium">Description</th>
-                    <th className="w-32 px-3 py-2 font-medium">Location</th>
-                    <th className="w-24 px-3 py-2 text-right font-medium">
+                    <th className="w-40 px-3 py-2 font-medium">Product</th>
+                    <th className="w-28 px-3 py-2 font-medium">Description</th>
+                    <th className="w-28 px-3 py-2 font-medium">Location</th>
+                    <th className="w-40 px-3 py-2 font-medium">Delivery date</th>
+                    <th className="w-20 px-3 py-2 text-right font-medium">
                       Qty
                     </th>
-                    <th className="w-28 px-3 py-2 text-right font-medium">
+                    <th className="w-24 px-3 py-2 text-right font-medium">
                       Unit price
                     </th>
-                    <th className="w-32 px-3 py-2 text-right font-medium">
+                    <th className="w-24 px-3 py-2 text-right font-medium">
                       Total
                     </th>
                     <th className="w-[72px] px-3 py-2">
@@ -602,6 +636,7 @@ export function SparePartRequestForm({ id }: { id?: string } = {}) {
                         <td className="px-3 py-2">
                           <Input
                             aria-label={`Description for line ${index + 1}`}
+                            disabled={revising && Boolean(line.id)}
                             value={line.description}
                             onChange={(event) =>
                               updateLine(line.key, {
@@ -615,6 +650,7 @@ export function SparePartRequestForm({ id }: { id?: string } = {}) {
                         <td className="px-3 py-2">
                           <SearchableSelect
                             aria-label={`Location for line ${index + 1}`}
+                            disabled={revising && Boolean(line.id)}
                             value={line.stockLocation}
                             onChange={(value) =>
                               updateLine(line.key, { stockLocation: value })
@@ -622,6 +658,15 @@ export function SparePartRequestForm({ id }: { id?: string } = {}) {
                             options={locationOptions}
                             placeholder={defaultLabel}
                             clearable
+                          />
+                        </td>
+                        <td className="px-3 py-2">
+                          <DatePickerField
+                            ariaLabel={`Delivery date for line ${index + 1}`}
+                            value={line.deliveryDate}
+                            onChange={(deliveryDate) =>
+                              updateLine(line.key, { deliveryDate })
+                            }
                           />
                         </td>
                         <td className="px-3 py-2">
@@ -639,6 +684,7 @@ export function SparePartRequestForm({ id }: { id?: string } = {}) {
                         <td className="px-3 py-2">
                           <NumberInput
                             aria-label={`Unit price for line ${index + 1}`}
+                            disabled={revising && Boolean(line.id)}
                             value={line.unitPrice}
                             onValueChange={(unitPrice) =>
                               updateLine(line.key, { unitPrice })
@@ -700,7 +746,7 @@ export function SparePartRequestForm({ id }: { id?: string } = {}) {
                           key={`${line.key}-stock`}
                           className="border-b border-border"
                         >
-                          <td colSpan={8} className="px-3 py-2">
+                          <td colSpan={9} className="px-3 py-2">
                             <OrderInquiryStockGrid
                               productId={line.product.value}
                               location={
@@ -715,12 +761,12 @@ export function SparePartRequestForm({ id }: { id?: string } = {}) {
                 </tbody>
                 <tfoot>
                   <tr>
-                    <td colSpan={6} className="px-3 py-2">
+                    <td colSpan={7} className="px-3 py-2">
                       <Button
                         type="button"
                         variant="ghost"
                         size="sm"
-                        onClick={() => setLines((prev) => [...prev, newLine()])}
+                        onClick={() => setLines((prev) => [...prev, newLine(neededBy)])}
                       >
                         <Plus className="size-4" aria-hidden />
                         Add product

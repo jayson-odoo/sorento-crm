@@ -159,7 +159,7 @@ describe('R2 (M2): Requested by and Total sort on the server', () => {
       Number: 'inquiry_no',
       Status: 'state',
       'Requested by': 'requested_by_name',
-      'Needed by': 'needed_by',
+      'Delivery date': 'needed_by', // C5.1 relabel (SPARE-PART-OR-B C, lead sign-off)
       Lines: 'line_count',
       Total: 'total',
       Submitted: 'submitted_at',

@@ -35,6 +35,9 @@ export interface SparePartLineInput {
   stock_location: string | null;
   qty: string | null;
   unit_price: string | null;
+  /** SPARE-PART-OR-B C (C5.1): the line's own delivery date (YYYY-MM-DD); the header's when
+   *  null. */
+  delivery_date?: string | null;
 }
 
 export interface SparePartRequestInput {
@@ -52,6 +55,8 @@ export interface SparePartLine {
   item_code: string | null;
   description: string | null;
   stock_location: string | null;
+  /** C5.1: the line's delivery date (an open revision's, on the order request page). */
+  delivery_date?: string | null;
   qty: string;
   /** The prices are supplier cost: null for a reader who may not see them. */
   unit_price: string | null;

@@ -36,6 +36,7 @@ import {
   unplaceAllOrderInquiryRows,
   unplaceOrderInquiryRow,
 } from '../services/orderInquiryService';
+import type { OrderInquiryHistoryView } from '../services/orderInquiryService';
 import {
   commitOrderInquiryReserve,
   createOrderInquiryReserveRequest,
@@ -188,10 +189,13 @@ export function useOrderInquiryHeaderLines(id: string | undefined) {
 /** STANDARD-HISTORY wave 1: the History tab and the line dialog's "All events" tab, one
  * read per OI, shared by both. Refetched each time either opens, so a press made a moment
  * ago is on it. */
-export function useOrderInquiryHistory(id: string | undefined) {
+export function useOrderInquiryHistory(
+  id: string | undefined,
+  view?: OrderInquiryHistoryView,
+) {
   return useQuery({
-    queryKey: [ORDER_INQUIRY_HISTORY_KEY, id],
-    queryFn: () => getOrderInquiryHistory(id as string),
+    queryKey: [ORDER_INQUIRY_HISTORY_KEY, id, view ?? 'all'],
+    queryFn: () => getOrderInquiryHistory(id as string, { view }),
     enabled: Boolean(id),
     refetchOnMount: 'always',
   });

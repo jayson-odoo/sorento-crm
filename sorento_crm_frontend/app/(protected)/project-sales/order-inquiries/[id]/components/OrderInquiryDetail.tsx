@@ -686,6 +686,9 @@ export function OrderInquiryDetail({ id }: { id: string }) {
 
 
   const header = headerQuery.data;
+  // SPARE-PART-OR-B C (C3.3): purchasing's page reads an order request's History from its
+  // first raise on; the order request page keeps the whole life.
+  const historyView = header && isSparePartInquiry(header) ? ('inquiry' as const) : undefined;
 
   // AC-DP-05: the visible label is simply how many lines are TICKED; disabled reads the
   // scope's own eligibility - the ticked lines' handshake state with something ticked,
@@ -1144,7 +1147,7 @@ export function OrderInquiryDetail({ id }: { id: string }) {
 
         <TabsContent value="history" className="mt-0 focus-visible:outline-none">
           {/* STANDARD-HISTORY v2: the PO / product History tab's own component. */}
-          <OrderInquiryHistory inquiryId={id} />
+          <OrderInquiryHistory inquiryId={id} view={historyView} />
         </TabsContent>
       </Tabs>
 
@@ -1260,6 +1263,7 @@ export function OrderInquiryDetail({ id }: { id: string }) {
           // AC-ND-14: a Reserve tab only when the line has reserve history - any live row
           // reserved or declined (review S4), not the primary row alone.
           reserveEntries={reserveHistoryRow ? (historyQuery.data ?? []) : undefined}
+          view={historyView}
         />
       ) : null}
 
