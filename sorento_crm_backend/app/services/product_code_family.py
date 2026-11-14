@@ -12,9 +12,11 @@ The rule, in order:
   1. A token is a code token when a word of the message is letters then digits and the
      token starts with it (the lane folds "Srtwc7604 p trap" into one token, so the word
      is read back off the message).
-  2. The family is every active product whose code, with separators removed, starts with
-     that word, or with the same word with an "X" after its letters (SRTWC7604 and
-     SRTWCX7604), and does not go on with another digit (8840 is not 88401).
+  2. The family is what the catalogue links: every active product whose code, with
+     separators removed, starts with that word and does not go on with another digit (8840
+     is not 88401), every product whose stored Family code is the word's family, and the
+     members of a registered set of that family. A variant coded differently (SRTWCX7604)
+     is in the family only through one of those links; no letter is inserted into the code.
   3. The other words of the code's OWN LINE of the message are matched against each
      variant's code, name, description and spec values: first two-word phrases ("p trap",
      "seat cover"), then single words of three letters or more. A word no variant carries
@@ -91,6 +93,93 @@ def _family_set_members(db: Session, family: str) -> list[str]:
     ]
 
 
+def _set_code_tokens(db: Session, tokens: list[str]) -> dict[str, str]:
+    """The tokens that ARE the code of a registered set the contact may be told about (token to
+    the set's code), folded
+    the way the resolver's exact set tier folds them (`entity_resolver._probe_product_set`:
+    case, dashes and spaces only), so "qwc604 p rl" is the set QWC604-P-RL and "qwc604/p/rl"
+    is not."""
+    from app.models.product_set import ProductSet
+    from app.services.entity_resolver import (
+        _strip_all_ws,
+        _ws_insensitive_lower,
+        visible_set_clauses,
+    )
+
+    folds = {_strip_all_ws(str(t or "").lower()): t for t in tokens if str(t or "").strip()}
+    if not folds:
+        return {}
+    rows = (
+        db.query(ProductSet.set_code)
+        .filter(_ws_insensitive_lower(ProductSet.set_code).in_(list(folds)), *visible_set_clauses(db))
+        .all()
+    )
+    return {
+        folds[_strip_all_ws(str(code).lower())]: str(code)
+        for (code,) in rows
+        if _strip_all_ws(str(code).lower()) in folds
+    }
+
+
+def _finds_a_set(db: Session, token: str) -> bool:
+    """Does the resolver's set probe (`entity_resolver._prefix_probe_product_set`, the product
+    code rule over set codes, case, dashes and spaces folded) find the token, whether it answers
+    the sets or holds them back as nearly named (`_ProbeRows.near`)?"""
+    from app.services.entity_resolver import _prefix_probe_product_set
+
+    found = _prefix_probe_product_set(db, token)
+    return bool(found) or bool(getattr(found, "near", False))
+
+
+def _after(words: list[str], folded_token: str) -> list[str]:
+    """The words of a line after the run of words that spells `folded_token` ("qwc604", "p",
+    "rl" spell QWC604PRL); empty when no run spells it."""
+    folds = [_fold(w) for w in words]
+    for start in range(len(words)):
+        spelt = ""
+        for end in range(start, len(words)):
+            spelt += folds[end]
+            if spelt == folded_token:
+                return words[end + 1 :]
+            if not folded_token.startswith(spelt):
+                break
+    return []
+
+
+def _completed_code(db: Session, token: str, after: list[str]) -> tuple[str, list[str]] | None:
+    """CHATBOT-SET-CODES AC-2c (owner ruling 13 Nov): the catalogue code that the code token plus
+    the words that follow it on its own line (longest first) equals, folded by case, dashes and
+    spaces only, with the words it took; None when no run of them completes a code. A code is a
+    visible registered set code (`_set_code_tokens`) or a chat-visible product code (the
+    resolver's exact probe, `entity_resolver._probe_product`): "QWC605-RL soft" is the set
+    QWC605-RL-SOFT, "QWX7700 gm" the product QWX7700-GM."""
+    from app.services.entity_resolver import _probe_product
+
+    for k in range(len(after), 0, -1):
+        candidate = " ".join([token, *after[:k]])
+        found = _set_code_tokens(db, [candidate]).get(candidate)
+        if found is None:
+            found = next((e.canonical_code for e in _probe_product(db, [candidate]).get(candidate) or []), None)
+        if found:
+            return str(found), after[:k]
+    return None
+
+
+def _own_lines(lines: list[list[str]], folded: str, code_word: str, folded_tokens: list[str]) -> list[list[str]]:
+    """NARROW-CODE-OWN-LINE: the code's own line(s), the ones holding the code word and, when the
+    token folds more than the code (the words typed beside it), the token's words too, so a code
+    typed on two lines with two descriptors reads each line for its own token. The bare code
+    leaves the lines where another token typed this code with words beside it ("SRTWC8840 x 1"
+    over "SRTWC8840 p trap"). A token with no such line (the parser shortened "white seat cover"
+    to "seat cover") reads every line of its code."""
+    code_lines = [words for words in lines if any(_fold(w) == code_word for w in words)]
+    joined = ["".join(_fold(w) for w in words) for words in code_lines]
+    longer = [f for f in folded_tokens if f != code_word and f.startswith(code_word)] if folded == code_word else []
+    return [
+        words for words, text in zip(code_lines, joined) if folded in text and not any(f in text for f in longer)
+    ] or code_lines
+
+
 def _family_rows(
     db: Session, code_word: str, *, loose: bool = False
 ) -> list[tuple[str, dict[str, Any], str]]:
@@ -109,12 +198,13 @@ def _family_rows(
 
     letters, rest = _CODE_WORD.match(code_word).groups()  # type: ignore[union-attr]
     boundary = "([^0-9]|$)" if not loose or rest[-1].isdigit() else ""
-    body = f"({re.escape(letters)}|{re.escape(letters)}X){re.escape(rest)}{boundary}"
+    body = f"{re.escape(letters)}{re.escape(rest)}{boundary}"
     folded_code = func.upper(func.regexp_replace(Product.product_code, "[^A-Za-z0-9]", "", "g"))
     # CHATBOT-CODE-MATCH AC-24 (crew ruling, 12 Nov 2026): the family is ALSO what the catalogue
     # says - a product whose stored `family_code` is the word's family (derived or set by hand,
     # one column, `product_family.family_code_for`), and the members of a registered set of that
-    # family - beside the code pattern above, which stays as the fallback.
+    # family - beside the code pattern above. CHATBOT-SET-CODES Q2 (13 Nov 2026): the pattern is
+    # the typed word only; a variant coded with another letter joins through these links alone.
     family = family_code_for(code_word)
     by_data = [Product.family_code == family] if family else []
     members = _family_set_members(db, family) if family else []
@@ -338,7 +428,7 @@ def _pick(family: list[tuple[str, str]], descriptor: list[str]) -> tuple[list[st
     picked = [code for score, code in scored if score == best]
     if len(picked) == len(family):
         # Every variant carries what was said ("SRTWC286 water closet"): the words
-        # picked nothing, and swapping the code for its whole family (X siblings too)
+        # picked nothing, and swapping the code for its whole family (its linked variants too)
         # would widen the ask rather than narrow it.
         return None
     return picked, terms
@@ -379,23 +469,28 @@ def narrow_code_tokens(
     folded_tokens = [_fold(t) for t in tokens]
     replaced: dict[int, list[str]] = {}
     consumed: set[str] = set()
+    # CHATBOT-SET-CODES AC-2: a token that is a registered set's code ("qwc604 p rl") is that
+    # set, answered by the resolver's exact set tier; its words are part of the code, never
+    # words that pick among the family's variants. Only words that complete another exact code
+    # on its own line (AC-2c, `_completed_code`) change it.
+    set_codes = _set_code_tokens(db, list(tokens))
     for i, token in enumerate(tokens):
         folded = folded_tokens[i]
         code_word = _code_word_for(str(token or ""), message)
         if not code_word:
             continue
-        # The code's own line(s): the ones holding the code word and, when the token folds
-        # more than the code (the words typed beside it), the token's words too, so a code
-        # typed on two lines with two descriptors reads each line for its own token. The
-        # bare code leaves the lines where another token typed this code with words beside
-        # it ("SRTWC8840 x 1" over "SRTWC8840 p trap"). A token with no such line (the
-        # parser shortened "white seat cover" to "seat cover") reads every line of its code.
-        code_lines = [words for words in lines if any(_fold(w) == code_word for w in words)]
-        joined = ["".join(_fold(w) for w in words) for words in code_lines]
-        longer = [f for f in folded_tokens if f != code_word and f.startswith(code_word)] if folded == code_word else []
-        own_lines = [
-            words for words, text in zip(code_lines, joined) if folded in text and not any(f in text for f in longer)
-        ] or code_lines
+        own_lines = _own_lines(lines, folded, code_word, folded_tokens)
+        if token in set_codes:
+            completed = next((c for words in own_lines if (c := _completed_code(db, token, _after(words, folded)))), None)
+            if completed is not None:
+                # CHATBOT-SET-CODES AC-2c: the set code and the words after it on its own line ARE
+                # another exact code ("QWC605-RL soft" is QWC605-RL-SOFT): the token becomes that
+                # code, and the description tokens those words came from are dropped.
+                code, took = completed
+                replaced[i] = [code]
+                consumed.update(w for raw in took for w in _words(raw))
+            # Words that complete no code change nothing (AC-2e): the set is the answer.
+            continue
         descriptor = [
             w for words in own_lines for raw in words if _fold(raw) != code_word for w in _words(raw) if not _CODE_WORD.match(w)
         ]
@@ -410,10 +505,14 @@ def narrow_code_tokens(
             picked = _pick(family, descriptor)
         if picked is None:
             spaced = keep_unplaced and any(_spaced_after(str(code), code_word) for code, _ in family)
-            if _fold(token) != code_word and folded not in answered and not spaced:
+            if _fold(token) != code_word and folded not in answered and not spaced and not _finds_a_set(db, token):
                 # "Srtwc7604ptrap" whose words picked nothing: the code alone, rather
                 # than a folded phrase no product is coded as. A code the grounding
                 # answered ("SRTWT8259-GLD" for "SRTWT8259 gold", `answered`) stays.
+                # CHATBOT-SET-CODES F2/R2: a token the resolver's set probe finds ("QWC7405 RL"
+                # over QWC7405-RL-P-PJ and QWC7405-RL-S-PJ) stays whole, as its dashed form
+                # "QWC7405-RL" does: space, dash and case are one code, so the resolver offers
+                # the sets it nearly names.
                 replaced[i] = [code_word]
             continue
         codes, terms = picked

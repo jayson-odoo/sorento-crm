@@ -9191,13 +9191,19 @@ def _run_stages_body(  # noqa: PLR0915
                 from app.services.chatbot.lanes.business import answer as business_answer
 
                 class_terms = turn_runtime.class_scope_terms(verdict)
-                qualifying = int((predicate or {}).get("qualifying_total") or 0)
+                # A turn records a browse page only when its fetch actually listed that browse.
+                carry_predicate = (
+                    predicate
+                    if plan.fetch and turn_runtime.predicate_rides(plan.fetch[0], compatible_entities)
+                    else None
+                )
+                qualifying = int((carry_predicate or {}).get("qualifying_total") or 0)
                 asked = named_count(verdict.get("top_n"))
                 # Fix round 9 on PR #833: a long set lists what fits, and is carried like
                 # a named count so "another N" continues it (SET-STOCK-RENDER, owner 16
                 # Oct 2026: every long set, never withheld for a breakdown).
                 listed_to_the_limit = (
-                    predicate is not None
+                    carry_predicate is not None
                     and plan.fetch
                     and spec_tier
                     and qualifying > business_answer.SET_LIST_MAX
@@ -9207,7 +9213,7 @@ def _run_stages_body(  # noqa: PLR0915
                 # named fewer than qualify) is carried too, so their own "another N"
                 # continues it. The reply never offers that.
                 partly_listed = (
-                    predicate is not None
+                    carry_predicate is not None
                     and plan.fetch
                     and spec_tier
                     and asked is not None
@@ -9222,11 +9228,13 @@ def _run_stages_body(  # noqa: PLR0915
                 window_last = (
                     int(window["last"]) if isinstance(window, dict) and window.get("last") else None
                 )
-                members = (predicate or {}).get("members") if isinstance(predicate, dict) else None
+                members = (
+                    (carry_predicate or {}).get("members") if isinstance(carry_predicate, dict) else None
+                )
                 members_total = int((members or {}).get("total") or 0) if isinstance(members, dict) else 0
                 members_listed = len((members or {}).get("codes") or []) if isinstance(members, dict) else 0
                 cut_small = bool(
-                    predicate is not None
+                    carry_predicate is not None
                     and plan.fetch
                     and spec_tier
                     and window_last is not None
@@ -9235,7 +9243,7 @@ def _run_stages_body(  # noqa: PLR0915
                 )
                 members_paged = bool(
                     composers.enabled()
-                    and predicate is not None
+                    and carry_predicate is not None
                     and plan.fetch
                     and not qualifying
                     and members_total > members_listed > 0
@@ -9282,7 +9290,7 @@ def _run_stages_body(  # noqa: PLR0915
                     state_out.focus.set_page = None
                 elif members_paged:
                     state_out.focus.set_page = turn_runtime.set_page_carry(
-                        {**predicate, "qualifying_total": members_total},
+                        {**carry_predicate, "qualifying_total": members_total},
                         plan.fetch[0],
                         class_terms,
                         access_levels=(envelopes[0].get("access_levels_used") if envelopes else None),
@@ -9297,7 +9305,7 @@ def _run_stages_body(  # noqa: PLR0915
                             state_out.focus.set_page["set_key"]["offer_team"] = first_team
                 elif partly_listed or listed_to_the_limit or cut_small:
                     state_out.focus.set_page = turn_runtime.set_page_carry(
-                        predicate,
+                        carry_predicate,
                         plan.fetch[0],
                         class_terms,
                         access_levels=(
@@ -9316,13 +9324,13 @@ def _run_stages_body(  # noqa: PLR0915
                             envelopes[0].get("attachment_type_ids") if envelopes else None
                         ),
                     )
-                elif predicate is not None and plan.fetch and spec_tier and (
-                    predicate.get("other_brands") or predicate.get("set_brands")
+                elif carry_predicate is not None and plan.fetch and spec_tier and (
+                    carry_predicate.get("other_brands") or carry_predicate.get("set_brands")
                 ):
                     # Round 7 item 6: the reply closed with "Other brands ... Name one to
                     # see them.", so the brand named next narrows this set.
                     state_out.focus.set_page = turn_runtime.set_page_carry(
-                        predicate,
+                        carry_predicate,
                         plan.fetch[0],
                         class_terms,
                         access_levels=(
@@ -9575,9 +9583,10 @@ def _run_stages_body(  # noqa: PLR0915
             )
             turn_trace.add("held_none_match", {"held": held_none_match["held"], "said": held_none_match["said"]})
 
-        if answer is not None and unplaced_tokens:
+        if answer is not None and (unplaced_tokens or resolver_payload):
             # CHATBOT-CODE-MATCH R6: every missed code, single or beside found ones, and the
             # close codes it was offered from (the same `did_you_mean_by_token` read).
+            # CHATBOT-SET-CODES AC-8: and every set a typed word was answered as.
             for event in trace_mod.code_candidates_events(
                 resolver_payload,
                 unplaced=unplaced_tokens,
@@ -9585,6 +9594,8 @@ def _run_stages_body(  # noqa: PLR0915
                 question=getattr(answer, "question", None),
                 shown_codes=getattr(answer, "shown_codes", None),
                 answered=turn_compose.answered_codes(envelopes),
+                typed_words=_typed_product_words(verdict),
+                read_codes=_read_product_codes(envelopes),
             ):
                 turn_trace.add("code_candidates", event)
 
@@ -10182,6 +10193,32 @@ def _with_settled_picks(
         if isinstance(p, dict) and p.get("uuid") and str(p.get("uuid")) not in held
     ]
     return [*compatible, *extra] if extra else compatible
+
+
+def _typed_product_words(verdict: Any) -> dict[str, str]:
+    """The product words the parser read off this message, folded the way the resolver's
+    token is (`turn.state.token_key`) to the word as typed (CHATBOT-SET-CODES AC-8)."""
+    out: dict[str, str] = {}
+    for e in (verdict.get("entities") if isinstance(verdict, dict) else None) or []:
+        if not isinstance(e, dict) or e.get("hint") not in (None, "product"):
+            continue
+        word = str(e.get("raw") or e.get("canonical_code") or "").strip()
+        for value in (e.get("canonical_code"), e.get("raw")):
+            if isinstance(value, str) and value.strip() and word:
+                out.setdefault(turn_state.token_key(value), word)
+    return out
+
+
+def _read_product_codes(envelopes: list[dict[str, Any]]) -> set[str]:
+    """The product codes a tool that ran read this turn (`product_codes` of an envelope with
+    `tool_ran`, less its `miss`), folded by `turn.state.token_key` (CHATBOT-SET-CODES AC-8b)."""
+    out: set[str] = set()
+    for env in envelopes or []:
+        if not isinstance(env, dict) or env.get("tool_ran") is not True:
+            continue
+        missed = {turn_state.token_key(c) for c in env.get("miss") or [] if isinstance(c, str)}
+        out |= {turn_state.token_key(c) for c in env.get("product_codes") or [] if isinstance(c, str)} - missed
+    return out
 
 
 def _unplaced_suggestions(

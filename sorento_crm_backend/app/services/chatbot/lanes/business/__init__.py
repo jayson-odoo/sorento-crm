@@ -2409,6 +2409,11 @@ def run_fetch(
         # CHAT-CODE-LOOKUP R2: member rows of a product set the customer typed; the reply
         # groups them under their set and prints no price (`output_structurer`).
         trigger["set_by_code"] = set_by_code
+        # CHATBOT-SET-CODES R1: the products placed in their own right this turn (no set), so a
+        # member's alternative the customer also asked for stays an item of its own.
+        trigger["set_asked"] = sorted(
+            {str(e.get("code")).casefold() for e in entities if isinstance(e, dict) and e.get("code") and not e.get("set_code")}
+        )
         # CHATBOT-CODE-MATCH AC-29: the price drop is for a set the customer TYPED; a family
         # word that also heads a registered set ("Srtwc8608") keeps every price line it
         # printed before the set existed (the rows are still grouped under the set).

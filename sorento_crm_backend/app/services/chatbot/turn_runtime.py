@@ -3310,6 +3310,8 @@ def candidates_by_kind(
             built["set_code"] = row["set_code"]
             if row.get("set_codes"):
                 built["set_codes"] = list(row["set_codes"])
+            if row.get("set_quantities"):
+                built["set_quantities"] = dict(row["set_quantities"])
         # Finding 3 (owner, hand-pass 1): the gate carries the resolver's own human
         # label as `display_name` - for customers only, by `gate._display_name`'s rule,
         # because a customer's `canonical_code` is an ACCOUNT code the customer never
@@ -3651,11 +3653,61 @@ def _spec_quantities(
         # read anything - so by the time a fetch is built the quantity is always per
         # entity, whichever field the parser happened to fill.
         return out
+    from app.services.chatbot.turn.task import set_part_quantity
+
+    # CHATBOT-SET-CODES L1 (crew live step 5, 14 Nov 2026): the resolver completes a set code
+    # typed with its last word ("QWC605-RL soft x 1" is the set QWC605-RL-SOFT,
+    # `product_code_family._completed_code`), so the typed token's quantity is keyed by a code
+    # no row carries. Rule 5 below, applied to the set codes: a typed token naming no placed
+    # code or set, that is the prefix of exactly ONE placed set's code the parser did not
+    # name itself, is that set. A set named as typed ("QWC605-RL-NEW") is never another
+    # token's completion, with or without a quantity of its own (reviewer, 14 Nov 2026:
+    # "QWC605 x 3, QWC605-RL-NEW" never asks NEW at 3).
+    typed_keys = {
+        _token_key(value)
+        for e in jsc.array(out.get("entities"))
+        if isinstance(e, dict) and e.get("hint") in (None, "product")
+        for value in (e.get("canonical_code"), e.get("raw"))
+        if isinstance(value, str) and value.strip()
+    }
+    set_keys = {
+        _token_key(str(c))
+        for e in entities
+        if isinstance(e, dict)
+        for c in e.get("set_codes") or [e.get("set_code")]
+        if c
+    }
+    placed_keys = set_keys | {
+        _token_key(str(e.get(name)))
+        for e in entities
+        if isinstance(e, dict)
+        for name in ("code", "canonical_code")
+        if e.get(name)
+    }
+    completions = set_keys - typed_keys
+    for token, quantity in list(by_code.items()):
+        if token in placed_keys:
+            continue
+        completed = [key for key in completions if key.startswith(token)]
+        if len(completed) == 1 and completed[0] not in by_code:
+            by_code[completed[0]] = quantity
+
     quantities: dict[str, int] = {}
     for e in entities:
         uuid = e.get("uuid") if isinstance(e, dict) else None
         if not isinstance(uuid, str) or not uuid:
             continue
+        if e.get("set_code"):
+            # CHATBOT-SET-CODES B: a part of a set typed with a quantity is asked at that
+            # quantity times its own quantity in the set. The same part also typed on its
+            # own beside the set asks for the total (the gate keeps it as one entity).
+            part = set_part_quantity(e, lambda code: by_code.get(_token_key(code)))
+            if part is not None:
+                own_code = _token_key(str(e.get("code") or ""))
+                set_keys = {_token_key(str(c)) for c in e.get("set_codes") or [e.get("set_code")] if c}
+                own = by_code.get(own_code, 0) if own_code and own_code not in set_keys else 0
+                quantities[uuid] = part + own
+                continue
         for name in ("code", "canonical_code", "raw"):
             code = e.get(name)
             if not isinstance(code, str) or not code.strip():
@@ -4257,7 +4309,7 @@ def make_tool_runner(
         # that set is not the fetch's subject and never rides it.
         if page_predicate is not None:
             block = page_predicate
-        elif scoped_to_a_resolved_product(spec) and not _spec_is_the_set(spec, compatible_entities):
+        elif not predicate_rides(spec, compatible_entities):
             block = None
             gate.pop("predicate", None)
         else:
@@ -5803,6 +5855,7 @@ def _spec_row(entity: dict[str, Any]) -> dict[str, Any]:
         # a did-you-mean) keeps the set's code, as the gate's own member rows do.
         **({"set_code": entity["set_code"]} if entity.get("set_code") else {}),
         **({"set_codes": list(entity["set_codes"])} if entity.get("set_codes") else {}),
+        **({"set_quantities": dict(entity["set_quantities"])} if entity.get("set_quantities") else {}),
     }
 
 
@@ -5897,6 +5950,13 @@ def scoped_to_a_resolved_product(spec: FetchSpec) -> bool:
     product from a set's members (the reconciled plan carries a set question's population
     with uuids too), which is why the gate reads it together with `_spec_is_the_set`."""
     return bool(_spec_product_ids(spec))
+
+
+def predicate_rides(spec: FetchSpec, compatible: list[dict[str, Any]]) -> bool:
+    """Does the turn's set predicate ride this fetch? Not when the spec names a resolved
+    product that is not the set the resolver placed this turn (`_spec_is_the_set`): that
+    fetch lists the product, not the browse."""
+    return not (scoped_to_a_resolved_product(spec) and not _spec_is_the_set(spec, compatible))
 
 
 def _spec_is_the_set(spec: FetchSpec, compatible: list[dict[str, Any]]) -> bool:
