@@ -296,6 +296,29 @@ describe('AC-12 the PO link items in the Actions menu', () => {
   });
 });
 
+describe('AC-HT1-d rows of different products can be linked together (owner, 14 Nov)', () => {
+  it('Link PO... (2) is enabled for ticked rows of two products and carries no one-product reason', async () => {
+    listOrderInquiryWorklist.mockResolvedValue(
+      envelope([ROW_1, line('row-p4', 'CK900', 'SO-P4', '7', 'oi-4', 'OI-2609-0004', { product_id: 'prod-ck' })]),
+    );
+    await ready();
+    tick('SO-P1');
+    fireEvent.click(screen.getByLabelText('Select CK900 on SO-P4'));
+    openActionsMenu();
+    const item = await screen.findByRole('menuitem', { name: 'Link PO... (2)' });
+    expect(item).not.toHaveAttribute('aria-disabled', 'true');
+    expect(item.getAttribute('title') ?? '').not.toContain('one product');
+    expect(screen.queryByText(/Tick rows of one product/)).toBeNull();
+    fireEvent.click(item);
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('Link PO')).toBeInTheDocument();
+    await waitFor(() => expect(optionsSpy).toHaveBeenCalled());
+    const key = JSON.stringify((optionsSpy.mock.calls[0][0] as { key: unknown }).key);
+    expect(key).toContain('row-p1');
+    expect(key).toContain('row-p4');
+  });
+});
+
 describe('AC-15 the two renames', () => {
   it('reads Recheck in AutoCount and Remove link in CRM, and no longer Link selected / Unlink selected', async () => {
     await ready();

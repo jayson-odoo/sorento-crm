@@ -916,9 +916,12 @@ describe('Document view gear: one Link PO... item and Remove link in CRM', () =>
     }
   });
 
-  it('two products ticked: Link PO... is disabled', async () => {
+  it('two products ticked: Link PO... (2) is enabled and no one-product reason is given (AC-HT1-d)', async () => {
     await gear([A, doc('row-d', 'ZZT-DDD', true, { product_id: 'prod-2' })], ['ZZT-AAA', 'ZZT-DDD']);
-    expect(screen.getByRole('menuitem', { name: /^Link PO\.\.\./ })).toHaveAttribute('aria-disabled', 'true');
+    const item = screen.getByRole('menuitem', { name: /^Link PO\.\.\. \(2\)$/ });
+    expect(item).not.toHaveAttribute('aria-disabled', 'true');
+    expect(item.getAttribute('title') ?? '').not.toContain('one product');
+    expect(screen.queryByText(/Tick lines of one product/)).toBeNull();
   });
 
   it('Link PO... opens the shared popup titled Link PO for exactly the ticked row ids', async () => {

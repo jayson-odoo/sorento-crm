@@ -768,3 +768,112 @@ describe('Link PO popup (mode manage)', () => {
     expect(within(dialog).getByRole('button', { name: /^Save/ })).toBeDisabled();
   });
 });
+
+
+// OI-PO-LINK owner hand test round (14 Nov): AC-HT1-e and AC-HT2a.
+// ASSUMPTION: the dialog takes the options response's `so_products` as a prop `soProducts`
+// (sales_order_line_id -> product id) and each PO option carries `product_id`.
+describe('Link PO popup: rows of several products and the Qty / Action columns', () => {
+  const MANAGE_CAPS: PoLinkCapabilities = {
+    split_link: { enabled: true, reason: null },
+    link_row: { enabled: false, reason: null },
+    unlink_row: { enabled: true, reason: null },
+    relink_row: { enabled: false, reason: null },
+  };
+  const PRODUCT_PO_LINES = [
+    { ...PO_LINES[0], product_id: 'prod-A' },
+    { ...PO_LINES[1], product_id: 'prod-B' },
+    { ...PO_LINES[2], product_id: 'prod-A', book: 'DB3' },
+  ] as PoLinkOption[];
+
+  function renderMulti(lines: SnapshotLine[], soProducts: Record<string, string>) {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <PoLinkDialog
+          mode={'manage' as never}
+          target={snapshotPoLinkTarget('snap', 'row')}
+          lines={lines}
+          allLines={lines}
+          capabilities={MANAGE_CAPS}
+          poLines={PRODUCT_PO_LINES}
+          soBooks={{ 'sol-1': 'DB3', 'sol-2': 'DB3', 'sol-3': 'DB3' }}
+          {...({ soProducts } as object)}
+          onClose={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+    return screen.getByTestId('po-link-dialog');
+  }
+  const newLine = (id: string, so: string) =>
+    soLine({ sales_order_line_id: id, so_number: so, open_qty: 40, short_qty: 40 });
+  const labelsOf = (dialog: HTMLElement, id: string) =>
+    [...(dialog.querySelector(`[id="po-manage-po-${id}:new"]`) as HTMLSelectElement).options]
+      .filter((o) => o.value)
+      .map((o) => o.textContent);
+  const rowOf = (dialog: HTMLElement, text: string) =>
+    within(dialog).getAllByRole('row').find((row) => (row.textContent ?? '').includes(text)) as HTMLElement;
+
+  it('AC-HT1-e: each new row offers only the PO lines of its own product', () => {
+    const dialog = renderMulti(
+      [newLine('sol-1', 'SO425045'), newLine('sol-2', 'SO425046')],
+      { 'sol-1': 'prod-A', 'sol-2': 'prod-B' },
+    );
+    expect(labelsOf(dialog, 'sol-1')).toEqual(['202609-S0029', '202609-S0064']);
+    expect(labelsOf(dialog, 'sol-2')).toEqual(['202610-S0007']);
+  });
+
+  it('AC-HT1-e: a row whose product has no PO line with free qty says so in that row and the others still Save', async () => {
+    linkPoLines.mockResolvedValue({ results: [result({ sales_order_line_id: 'sol-1', qty: 40 })] });
+    const dialog = renderMulti(
+      [newLine('sol-1', 'SO425045'), newLine('sol-3', 'SO425047')],
+      { 'sol-1': 'prod-A', 'sol-3': 'prod-C' },
+    );
+    expect(rowOf(dialog, 'SO425047')).toHaveTextContent('No PO line has stock free for this product.');
+    expect(rowOf(dialog, 'SO425045')).not.toHaveTextContent('No PO line has stock free for this product.');
+    expect(labelsOf(dialog, 'sol-3')).toEqual([]);
+    fireEvent.change(dialog.querySelector('[id="po-manage-po-sol-1:new"]') as HTMLSelectElement, {
+      target: { value: 'po-3' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save (1)' }));
+    await waitFor(() =>
+      expect(linkPoLines).toHaveBeenCalledWith('snap', 'row', [
+        { sales_order_line_id: 'sol-1', po_line_id: 'po-3', qty: 40 },
+      ]),
+    );
+  });
+
+  const headerTexts = (dialog: HTMLElement) =>
+    within(within(dialog).getAllByRole('row')[0]).getAllByRole('columnheader').map((c) => (c.textContent ?? '').trim());
+  const columnOf = (cell: Element | null) => {
+    const td = (cell as HTMLElement).closest('td,[role="cell"]') as HTMLElement;
+    return [...(td.parentElement as HTMLElement).children].indexOf(td);
+  };
+  const linkedLine = soLine({
+    sales_order_line_id: 'sol-2', so_number: 'SO425046', open_qty: 120,
+    now: {
+      so_status: 'open', open_qty: 120,
+      po_links: [{ po_line_id: 'po-7', po_number: '202610-S0007', po_line_no: 1, qty: 120, open_qty: 120, location_code: 'MWH-BB' }],
+    },
+  });
+
+  it('AC-HT2a: with only a new row there is a Qty column holding the qty box and no Action column', () => {
+    const dialog = renderMulti([newLine('sol-1', 'SO425045')], { 'sol-1': 'prod-A' });
+    const headers = headerTexts(dialog);
+    expect(headers).toContain('Qty');
+    expect(headers).not.toContain('Action');
+    const qty = dialog.querySelector('[id="po-manage-qty-sol-1:new"]');
+    expect(headers[columnOf(qty)]).toBe('Qty');
+  });
+
+  it('AC-HT2a: with a linked row too, Action holds the Keep / Unlink picker and Qty holds the new row qty box', () => {
+    const dialog = renderMulti([newLine('sol-1', 'SO425045'), linkedLine], { 'sol-1': 'prod-A', 'sol-2': 'prod-B' });
+    const headers = headerTexts(dialog);
+    expect(headers).toContain('Qty');
+    expect(headers).toContain('Action');
+    const qty = dialog.querySelector('[id="po-manage-qty-sol-1:new"]');
+    const action = dialog.querySelector('[id="po-manage-action-sol-2:po-7"]');
+    expect(headers[columnOf(qty)]).toBe('Qty');
+    expect(headers[columnOf(action)]).toBe('Action');
+  });
+});

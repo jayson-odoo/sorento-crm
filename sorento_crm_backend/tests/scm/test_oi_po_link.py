@@ -257,32 +257,96 @@ def test_oi_options_have_one_line_per_distinct_so_line_and_name_the_skipped_rows
     assert "Not in AutoCount yet" in skipped
 
 
-def test_oi_options_refuse_rows_of_more_than_one_product(scm_app, fake_ss):
+def _add_second_product(w):
+    """A second product on the same OI: its own AutoCount SO line (doc 12500, dtl 12501, 5 at MWH),
+    project SO line, OI row, and an open PO line of 300 at HQ (doc 12400, dtl 12401)."""
     from app.models.project_so import (
         ACK_ACKNOWLEDGED, INQUIRY_RAISED, IV_ORDER, OrderInquiryRow, ProjectSalesOrderLine,
     )
 
-    w = _oi_world(scm_app)
     db = w["db"]
     product2 = _product(db, f"{w['marker']}-B")
-    _o, line2 = _demand(db, product2, w["mwh"], qty=5, required_date=_months_ahead(1), so_number=f"{w['marker']}-B")
-    line2.source_ref = f"{DB}:11988:11995"
+    order_b, line_b = _demand(
+        db, product2, w["mwh"], qty=5, required_date=_months_ahead(1), so_number=f"{w['marker']}-SOB")
+    order_b.order_date = date(2026, 10, 22)
+    order_b.source_system, order_b.source_ref = "autocount", f"{DB}:12500"
+    line_b.source_system, line_b.source_ref, line_b.line_no = "autocount", f"{DB}:12500:12501", 20
+    po_b, po_line_b = _po_line(db, product2, w["hq"], qty=300, received=0, doc_key=12400, dtl_key=12401)
     pl = ProjectSalesOrderLine(
         id=_u(), company_id=SORENTO_COMPANY_ID, project_sales_order_id=w["pso"].id,
-        core_sales_order_line_id=line2.id, line_no=9, product_id=product2.id, qty=Decimal("1"),
+        core_sales_order_line_id=line_b.id, line_no=9, product_id=product2.id, qty=Decimal("5"),
     )
     db.add(pl)
     db.flush()
-    other_row = OrderInquiryRow(
+    row_b = OrderInquiryRow(
         id=_u(), company_id=SORENTO_COMPANY_ID, order_inquiry_id=w["inquiry"].id, so_line_id=pl.id,
-        item_code=product2.product_code, qty=Decimal("1"), verb=IV_ORDER, state=INQUIRY_RAISED,
+        item_code=product2.product_code, qty=Decimal("5"), verb=IV_ORDER, state=INQUIRY_RAISED,
         ack_state=ACK_ACKNOWLEDGED,
     )
-    db.add(other_row)
+    db.add(row_b)
     db.flush()
-    resp = w["c"].post(f"{OI}/po-link/options", json={"row_ids": [w["rows"]["a"].id, other_row.id]})
-    assert resp.status_code == 422
-    assert "Tick rows of one product." in resp.text
+    w["rows"]["b2"] = row_b
+    w.update(product2=product2, so_line_b=line_b, so_b=order_b, po_b=po_b, po_line_b=po_line_b)
+    return w
+
+
+def test_oi_options_accept_rows_of_more_than_one_product(scm_app, fake_ss):
+    """AC-HT1-a (rewrites test_oi_options_refuse_rows_of_more_than_one_product)."""
+    w = _add_second_product(_oi_world(scm_app))
+    resp = w["c"].post(f"{OI}/po-link/options", json={"row_ids": _ids(w, "a", "c", "b2")})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert sorted(l["sales_order_line_id"] for l in body["lines"]) == sorted(
+        [w["so_line"].id, w["other"].id, w["so_line_b"].id])
+    by_po = {p["po_line_id"]: p for p in body["po_lines"]}
+    assert w["po_line"].id in by_po and w["po_line_b"].id in by_po
+    assert by_po[w["po_line"].id]["product_id"] == w["product"].id
+    assert by_po[w["po_line_b"].id]["product_id"] == w["product2"].id
+    assert body["so_products"] == {
+        w["so_line"].id: w["product"].id,
+        w["other"].id: w["product"].id,
+        w["so_line_b"].id: w["product2"].id,
+    }
+
+
+def test_oi_link_of_two_products_sends_each_so_line_to_its_own_products_po_line(scm_app, fake_ss):
+    """AC-HT1-b happy path."""
+    w = _add_second_product(_oi_world(scm_app))
+
+    def answer(request):
+        body = json.loads(request.content)
+        if body["poDtlKey"] == 12009:
+            return _batch_answer(links=((11988, 11990, 4, 12080),))(request)
+        reply = _batch_answer(links=((12500, 12501, 3, 12481),))(request)
+        reply[1]["docKey"] = 12400
+        return reply
+
+    fake_ss.answers[BATCH] = answer
+    resp = _oi_link(
+        w,
+        [_item(w, "so_line", 4, "po_line"),
+         {"sales_order_line_id": w["so_line_b"].id, "po_line_id": w["po_line_b"].id, "qty": 3}],
+        rows=("a", "b2"),
+    )
+    assert resp.status_code == 200, resp.text
+    bodies = fake_ss.bodies(BATCH)
+    assert sorted((b["poDtlKey"], [l["soDtlKey"] for l in b["links"]][0]) for b in bodies) == [
+        (12009, 11990), (12401, 12501)]
+
+
+def test_oi_link_refuses_a_po_line_of_another_product_and_sends_nothing(scm_app, fake_ss):
+    """AC-HT1-b refusal: PO line of product B for an SO line of product A."""
+    w = _add_second_product(_oi_world(scm_app))
+    resp = _oi_link(w, [_item(w, "so_line", 4, "po_line"),
+                        {"sales_order_line_id": w["so_line"].id, "po_line_id": w["po_line_b"].id, "qty": 1}],
+                    rows=("a", "b2"))
+    assert resp.status_code == 422, resp.text
+    assert "different product" in resp.text and w["po_b"].po_number in resp.text
+    assert not [r for r in fake_ss.calls if r.url.path in (PO_LINKS, BATCH, UNLINK)]
+    resp = _oi_link(w, [{"sales_order_line_id": w["so_line"].id, "po_line_id": w["po_line_b"].id, "qty": 1}],
+                    rows=("a", "b2"))
+    assert resp.status_code == 422, resp.text
+    assert not [r for r in fake_ss.calls if r.url.path in (PO_LINKS, BATCH, UNLINK)]
 
 
 def test_oi_options_with_only_rows_outside_autocount_are_refused(scm_app, fake_ss):
@@ -1191,3 +1255,70 @@ def test_change_holds_no_uncommitted_po_line_writes_while_the_link_half_is_sent(
     assert state["at_send"] == [("unlink", False), ("link", False)], state["at_send"]
     linked = [r for r in resp.json()["results"] if r.get("action") == "link"]
     assert [r["outcome"] for r in linked] == ["done"]
+
+
+# --------------------------------------------------------------------------- AC-HT2b plain skip reasons
+
+
+_PO_NOT_FOUND_CODES = ["PO_ROW_NOT_FOUND", "PO_NOT_FOUND", "PO_LINE_NOT_FOUND", "DOC_NOT_FOUND"]
+
+
+@pytest.mark.parametrize("code", _PO_NOT_FOUND_CODES)
+def test_every_line_skipped_with_a_po_not_found_code_names_the_po(scm_app, fake_ss, code):
+    w = _oi_world(scm_app)
+    fake_ss.answers[BATCH] = (422, {
+        "operationId": "op-s", "actionId": None, "outcome": "refused", "errorCode": "ALL_LINKS_SKIPPED",
+        "message": "No link could be made.", "warnings": [], "links": [], "freeLine": None,
+        "skipped": [
+            {"soDocKey": 11988, "soDtlKey": 11990, "code": code},
+            {"soDocKey": 11999, "soDtlKey": 12001, "code": code},
+        ],
+        "document": None,
+    })
+    resp = _oi_link(w, [_item(w, "so_line", 4), _item(w, "other", 3)])
+    assert resp.status_code == 200, resp.text
+    for result in resp.json()["results"]:
+        assert "is not in AutoCount" in result["message"], result["message"]
+        assert w["po"].po_number in result["message"]
+    for raw in _PO_NOT_FOUND_CODES + ["ALL_LINKS_SKIPPED"]:
+        assert raw not in json.dumps(resp.json()["results"])
+
+
+def test_a_done_batch_with_a_po_row_not_found_skip_names_the_po(scm_app, fake_ss):
+    w = _oi_world(scm_app)
+    fake_ss.answers[BATCH] = _batch_answer(
+        links=((11988, 11990, 4, 12080),), skipped=[(12001, "PO_ROW_NOT_FOUND")])
+    resp = _oi_link(w, [_item(w, "so_line", 4), _item(w, "other", 3)])
+    assert resp.status_code == 200, resp.text
+    first, second = resp.json()["results"]
+    assert first["outcome"] == "done"
+    assert "is not in AutoCount" in second["message"] and w["po"].po_number in second["message"]
+    assert "PO_ROW_NOT_FOUND" not in json.dumps(second)
+
+
+def test_a_skipped_line_with_its_own_message_shows_that_message(scm_app, fake_ss):
+    w = _oi_world(scm_app)
+    answer = _batch_answer(links=((11988, 11990, 4, 12080),))
+
+    def with_message(request):
+        status, body = answer(request)
+        body["skipped"] = [{"soDtlKey": 12001, "code": "WEIRD_CODE", "message": "The PO row is locked by another user."}]
+        return status, body
+
+    fake_ss.answers[BATCH] = with_message
+    resp = _oi_link(w, [_item(w, "so_line", 4), _item(w, "other", 3)])
+    assert resp.status_code == 200, resp.text
+    second = resp.json()["results"][1]
+    assert "The PO row is locked by another user." in second["message"]
+    assert "WEIRD_CODE" not in json.dumps(second)
+
+
+def test_a_skipped_line_with_an_unknown_code_and_no_message_keeps_the_generic_words(scm_app, fake_ss):
+    w = _oi_world(scm_app)
+    fake_ss.answers[BATCH] = _batch_answer(
+        links=((11988, 11990, 4, 12080),), skipped=[(12001, "WEIRD_CODE")])
+    resp = _oi_link(w, [_item(w, "so_line", 4), _item(w, "other", 3)])
+    assert resp.status_code == 200, resp.text
+    second = resp.json()["results"][1]
+    assert "AutoCount did not accept it" in second["message"]
+    assert "WEIRD_CODE" not in json.dumps(second)
