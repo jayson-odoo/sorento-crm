@@ -467,16 +467,20 @@ class PoLinkService:
                 qty=None, company_code: str, linked_line=None) -> Dict[str, Any]:
         doc = answer.get("document") or {}
         target = linked_line if linked_line is not None else po_line
+        po_number = answer.get("docNo") or doc.get("DocNo") or (po.po_number if po is not None else None)
+        message = answer.get("message") or ""
+        if not message.strip() and answer.get("outcome") in ("refused", "vendor_error"):
+            message = self._plain_refusal(answer.get("errorCode"), po_number)
         return {
             "sales_order_line_id": str(so_line.id) if so_line is not None else None,
             "so_number": so.so_number if so is not None else None,
             "so_line_no": so_line.line_no if so_line is not None else None,
-            "po_number": answer.get("docNo") or doc.get("DocNo") or (po.po_number if po is not None else None),
+            "po_number": po_number,
             "qty": qty,
             "outcome": answer.get("outcome"),
             "error_code": answer.get("errorCode"),
             "warnings": list(answer.get("warnings") or []),
-            "message": answer.get("message") or "",
+            "message": message,
             "operation_id": answer.get("operationId"),
             "company_code": company_code,
             # The PO line the follow-up (Move location, Resume) acts on: the linked line the
@@ -760,6 +764,18 @@ class PoLinkService:
     }
 
     _PO_GONE_CODES = ("PO_ROW_NOT_FOUND", "PO_NOT_FOUND", "PO_LINE_NOT_FOUND", "DOC_NOT_FOUND")
+
+    @classmethod
+    def _plain_refusal(cls, code: Optional[str], po_number: Optional[str]) -> str:
+        """A whole-operation refusal SS sent without words (owner finding 3, db3 14 Nov: refused,
+        DOC_NOT_FOUND, message ""): the plain reason for a code we know, else "" so the screen
+        keeps its own default. Never the code itself."""
+        code = str(code or "")
+        if code in cls._PO_GONE_CODES:
+            what = f"PO {po_number}" if po_number else "The PO"
+            return f"{what} was not found in AutoCount. Nothing was changed."
+        why = cls._SKIP_WHY.get(code)
+        return f"{why[0].upper()}{why[1:]}. Nothing was changed." if why else ""
 
     def _send_group(self, po_line, po, members: List[Tuple]) -> List[Dict[str, Any]]:
         """All the links of one PO line in ONE Shared Service batch call (`po-links/batch`, all
