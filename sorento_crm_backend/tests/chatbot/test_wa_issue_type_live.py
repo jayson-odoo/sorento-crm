@@ -26,6 +26,16 @@ CASES = [
     ("Boleh tak tambah fungsi untuk tengok sejarah harga produk", "idea"),
 ]
 
+# Round 14: the owner's complaint about the assistant's answer, with the exchange it complains about
+# (the capture hands the contact's last exchanges to the extractor as `recent_exchanges=[(user, bot)]`).
+CASES_WITH_CONTEXT = [
+    (
+        [("show me the promotion for SRTWC286-SH", "Promotion for SRTWC286-SH: none found")],
+        "i want to report this is not the answer i want to the IT team",
+        "issue",
+    ),
+]
+
 
 @pytest.fixture
 def live_extractor(monkeypatch):
@@ -48,4 +58,15 @@ def test_live_the_model_reads_the_type_by_meaning(live_extractor, text, expected
     assert out.type == expected, (text, out.type)
     assert out.fields.get("problem"), out
     # Round 13: a title is always set once there is a problem statement, whatever the language (L3).
+    assert (out.title or "").strip(), (text, out.title)
+
+
+@pytest.mark.parametrize("exchanges,text,expected", CASES_WITH_CONTEXT)
+def test_live_a_complaint_about_the_answer_is_an_issue_with_a_problem(live_extractor, exchanges, text, expected):
+    """Round 14: "this is not the answer I want" about the assistant is enough detail (crew, 14 Nov)."""
+    out = live_extractor(None, message_text=text, recent_exchanges=exchanges)
+    assert not out.failed
+    assert out.type == expected, (text, out.type)
+    assert out.has_idea is not False, (text, out)
+    assert (out.fields.get("problem") or "").strip(), out
     assert (out.title or "").strip(), (text, out.title)

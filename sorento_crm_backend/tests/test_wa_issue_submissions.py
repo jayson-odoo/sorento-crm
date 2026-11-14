@@ -439,12 +439,9 @@ def test_R11_F1_a_dealers_intent_only_report_asks_what_went_wrong_and_creates_no
     assert _linked_users(env.db, contact.id) == []
 
 
-def test_I2_a_second_empty_answer_gives_up(env):  # noqa: F811
-    env.ready()
-    out = env.turn_ask(_empty_issue(env, "something is wrong", "en"))
-    assert out["status"] == "ask_idea_gave_up"
-    assert out["reply_text"] != ISSUE_ASK_EN
-    assert env.create_calls == []
+# Round 14 (crew decision 14 Nov): an issue flow never gives up. The I-2 "second empty answer gives up"
+# test is retired; its replacement is tests/test_wa_issue_never_gives_up.py
+# (test_R14_an_issue_ask_reply_with_no_problem_never_gives_up).
 
 
 # --------------------------------------------------------------------------- #
