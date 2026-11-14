@@ -9,7 +9,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import type { MenuItemState } from '../lib/poLinkWording';
+import type { MenuItemState } from '../../_shared/po-link/poLinkWording';
 
 /**
  * AC-LINK-CRM-UI (mock v4, owner 4 Nov: "click rows to decide"): the drill group's ONE action,

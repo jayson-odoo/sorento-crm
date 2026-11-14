@@ -17,10 +17,10 @@ the committed fixtures, so nothing here ever needs a live FoundryX to be exercis
 from __future__ import annotations
 
 import time
+from urllib.parse import quote
 from typing import Any, Optional
 
 import httpx
-from urllib.parse import quote
 from sqlalchemy.orm import Session
 
 from app.models.integration import Integration
