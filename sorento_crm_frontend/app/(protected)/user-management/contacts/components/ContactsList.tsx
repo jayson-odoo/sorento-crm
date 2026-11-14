@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { useSession } from 'next-auth/react';
+import { isSuperadminUser } from '@/lib/is-superadmin';
 import { extractApiError } from '@/lib/api-client';
 import { useHasPermission } from '@/hooks/usePermissions';
 
@@ -123,6 +125,11 @@ export default function ContactsList() {
   const canViewUsers = useHasPermission('user_management.users.view');
   const canAddUsers = useHasPermission('user_management.users.add');
   const canEditContacts = useHasPermission('user_management.contacts.edit');
+  // CONTACT-COMPANIES-COL: the Companies column, its sort and the Company filter show the contact's
+  // company access, the detail page's list, which only a superadmin may read
+  // (PLAN-user-management-read-gates.md:138). Everyone else gets neither column nor filter.
+  const { data: session } = useSession();
+  const canReadCompanyAccess = isSuperadminUser(session?.user);
   const [createUserContact, setCreateUserContact] =
     useState<RespondContact | null>(null);
   const [pagination, setPagination] = useState<PaginationState>({
@@ -154,8 +161,13 @@ export default function ContactsList() {
   const [tagSettings, setTagSettings] = useState<TagSettingsFilter | null>(
     null,
   );
-  // FILTER-MULTISELECT: the companies of the contact's linked customers, any-of.
-  const [companyIds, setCompanyIds] = useState<string[]>([]);
+  // FILTER-MULTISELECT: the contact's company access, any-of. Ignored (also from the URL) for a
+  // viewer who cannot read company access.
+  const [companyIdsState, setCompanyIds] = useState<string[]>([]);
+  const companyIds = useMemo(
+    () => (canReadCompanyAccess ? companyIdsState : []),
+    [canReadCompanyAccess, companyIdsState],
+  );
 
   // Back hands the list its own query string back, and the pager keeps
   // rewriting it, so the list reads it (S3-01). One hook, every list.
@@ -478,29 +490,34 @@ export default function ContactsList() {
           skeleton: <Skeleton className="h-4 w-28" />,
         },
       },
-      // FILTER-MULTISELECT (owner 27 Oct): the companies of the linked customers, by name.
-      {
-        id: 'companies',
-        accessorFn: (row) => row.customer_companies?.join(', ') ?? '',
-        header: ({ column }) => (
-          <DataGridColumnHeader title="Companies" column={column} />
-        ),
-        size: 160,
-        cell: ({ row }) => {
-          const label = (row.original.customer_companies ?? []).join(', ');
-          return label ? (
-            <span className="block truncate" title={label}>
-              {label}
-            </span>
-          ) : (
-            <span className="text-muted-foreground"> - </span>
-          );
-        },
-        meta: {
-          headerTitle: 'Companies',
-          skeleton: <Skeleton className="h-4 w-24" />,
-        },
-      },
+      // FILTER-MULTISELECT (owner 27 Oct), CONTACT-COMPANIES-COL (owner 14 Nov, "it should
+      // follow the detail page"): the contact's company access, by name. Superadmin only.
+      ...(canReadCompanyAccess
+        ? [
+            {
+              id: 'companies',
+              accessorFn: (row: RespondContact) => row.companies?.join(', ') ?? '',
+              header: ({ column }: { column: Column<RespondContact> }) => (
+                <DataGridColumnHeader title="Companies" column={column} />
+              ),
+              size: 160,
+              cell: ({ row }: { row: { original: RespondContact } }) => {
+                const label = (row.original.companies ?? []).join(', ');
+                return label ? (
+                  <span className="block truncate" title={label}>
+                    {label}
+                  </span>
+                ) : (
+                  <span className="text-muted-foreground"> - </span>
+                );
+              },
+              meta: {
+                headerTitle: 'Companies',
+                skeleton: <Skeleton className="h-4 w-24" />,
+              },
+            },
+          ]
+        : []),
       {
         id: 'access_types',
         accessorFn: (row) => row.access_type_codes?.join(',') ?? '',
@@ -797,6 +814,7 @@ export default function ContactsList() {
       canViewUsers,
       canAddUsers,
       canEditContacts,
+      canReadCompanyAccess,
     ],
   );
 
@@ -882,6 +900,7 @@ export default function ContactsList() {
     customersNone,
     noTags,
     companyIds,
+    canFilterCompany: canReadCompanyAccess,
     setAccessFilters,
     setCustomersNone,
     setNoTags,

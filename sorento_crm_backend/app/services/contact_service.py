@@ -92,6 +92,34 @@ def _global_agent_daily_turns(db: Optional[Session]) -> Optional[int]:
     return int(row[0]) if row is not None else 50
 
 
+
+def can_read_company_access(redact_sections: frozenset) -> bool:
+    """Company access is superadmin-only to read (PLAN-user-management-read-gates.md:138); the
+    list already carries that verdict as the redacted ``companies`` tag-settings section
+    (``contact_tag_settings._READ_GATES``), so the list's column, sort and filter follow it."""
+    return "companies" not in (redact_sections or frozenset())
+
+
+def company_access_by_contact(db: Session, contact_ids) -> dict[str, list[dict]]:
+    """Each contact's company access (``respond_contact_companies``): the companies whose records
+    it may be told about, as ``[{id, name, code}]`` sorted by name, ONE query for the page.
+
+    The one source of a contact's "Companies" (CONTACT-COMPANIES-COL, owner 14 Nov: the list
+    "should follow the detail page"): the detail endpoint and the list column both read it."""
+    if not contact_ids:
+        return {}
+    rows = (
+        db.query(RespondContactCompany.respond_contact_id, Company.id, Company.name, Company.code)
+        .join(Company, Company.id == RespondContactCompany.company_id)
+        .filter(RespondContactCompany.respond_contact_id.in_([str(c) for c in contact_ids]))
+        .order_by(Company.name.asc(), Company.id.asc())
+        .all()
+    )
+    out: dict[str, list[dict]] = {}
+    for contact_id, company_id, name, code in rows:
+        out.setdefault(str(contact_id), []).append({"id": str(company_id), "name": name, "code": code})
+    return out
+
 class ContactService:
     """Service for respond contact operations."""
     
@@ -164,11 +192,16 @@ class ContactService:
                 )
             )
         if access_filters:
-            q = self._apply_access_filters(q, access_filters, viewer_id)
+            q = self._apply_access_filters(
+                q, access_filters, viewer_id, can_read_company_access(redact_sections)
+            )
         
         total = q.count()
         
-        order = self._order_by(q, sort_field, sort_dir == "desc", viewer_id, include_linked_users)
+        order = self._order_by(
+            q, sort_field, sort_dir == "desc", viewer_id, include_linked_users,
+            can_read_company_access(redact_sections),
+        )
         contacts = q.order_by(*order).offset((page - 1) * limit).limit(limit).all()
 
         linked_map: dict[str, dict] = {}
@@ -177,13 +210,16 @@ class ContactService:
 
             linked_map = linked_user_map(self.db, [str(c.id) for c in contacts])
 
-        from app.services.contact_customer_service import (
-            customer_codes_by_contact,
-            customer_companies_by_contact,
-        )
+        from app.services.contact_customer_service import customer_codes_by_contact
 
         codes_map = customer_codes_by_contact(self.db, [str(c.id) for c in contacts], viewer_id)
-        companies_map = customer_companies_by_contact(self.db, [str(c.id) for c in contacts], viewer_id)
+        # CONTACT-COMPANIES-COL: the Companies column is the detail page's company access, read
+        # by the same function; withheld (empty) for a viewer who may not read it.
+        companies_map = (
+            company_access_by_contact(self.db, [str(c.id) for c in contacts])
+            if can_read_company_access(redact_sections)
+            else {}
+        )
         cost_ids = self._cost_visible_ids([str(c.id) for c in contacts])
 
         from app.services.contact_brand_scope import brand_refs_by_contact
@@ -211,7 +247,7 @@ class ContactService:
                 data["linked_user_id"] = linked["id"] if linked else None
                 data["linked_user_name"] = linked["name"] if linked else None
                 data["customer_codes"] = codes_map.get(str(contact.id), [])
-                data["customer_companies"] = companies_map.get(str(contact.id), [])
+                data["companies"] = [c["name"] for c in companies_map.get(str(contact.id), [])]
                 data["brands"] = brands_map.get(str(contact.id), [])
                 data["tags"] = tags_map.get(str(contact.id), [])
                 data["tag_settings"] = contact_tag_settings.row_summary(tag_settings_map[str(contact.id)])
@@ -227,7 +263,15 @@ class ContactService:
             empty=total == 0
         )
     
-    def _order_by(self, q, sort_field: str, desc: bool, viewer_id: Optional[str], include_linked_users: bool) -> list:
+    def _order_by(
+        self,
+        q,
+        sort_field: str,
+        desc: bool,
+        viewer_id: Optional[str],
+        include_linked_users: bool,
+        read_company_access: bool = False,
+    ) -> list:
         """ORDER BY for the list: every grid column sorts on the server (ACCESS-SHEET-FIXES, owner
         27 Oct). A multi-value cell sorts by the first value it shows; an empty cell sorts last both
         ways; name then id break ties so pages never repeat or skip a row."""
@@ -262,25 +306,31 @@ class ContactService:
             "regions": RespondContact.regions,
         }
         key = columns.get(sort_field)
-        if sort_field in ("customers", "companies"):
-            # What the Customers / Companies column shows: every granted company when the viewer
+        if sort_field == "companies":
+            # CONTACT-COMPANIES-COL: what the Companies column shows, the contact's company access
+            # (`company_access_by_contact`); a viewer who may not read it gets the default order
+            # (created, then name, then id), so the order cannot reveal it.
+            if read_company_access:
+                key = first(
+                    select(func.min(Company.name))
+                    .select_from(RespondContactCompany)
+                    .join(Company, Company.id == RespondContactCompany.company_id)
+                    .where(RespondContactCompany.respond_contact_id == RespondContact.id)
+                )
+        elif sort_field == "customers":
+            # What the Customers column shows: every granted company when the viewer
             # is known. Core tables, not the entities: the session's auto-filter would narrow them
             # back to the active company; the link's own company is scoped to the grants instead.
-            from app.models.company import Company
             from app.services.company_scope_resolver import grants_scope_value
 
             scope = grants_scope_value(self.db, viewer_id) if viewer_id else get_company_scope(self.db)
             customers, links = Customer.__table__, RespondContactCustomer.__table__
-            companies = Company.__table__
-            shown = customers.c.customer_code if sort_field == "customers" else companies.c.name
             stmt = (
-                select(func.min(shown))
+                select(func.min(customers.c.customer_code))
                 .select_from(links)
                 .join(customers, customers.c.id == links.c.customer_id)
                 .where(links.c.contact_id == RespondContact.id)
             )
-            if sort_field == "companies":
-                stmt = stmt.join(companies, companies.c.id == customers.c.company_id)
             if scope is not None:  # None = every company; UNSET or empty fails closed
                 ids = sorted(scope) if isinstance(scope, frozenset) else []
                 # Both sides: a link's company is stamped from its customer, but nothing enforces it.
@@ -366,7 +416,9 @@ class ContactService:
             )
         }
 
-    def _apply_access_filters(self, q, f: dict, viewer_id: Optional[str] = None):
+    def _apply_access_filters(
+        self, q, f: dict, viewer_id: Optional[str] = None, read_company_access: bool = False
+    ):
         """UAC A2.3-A2.6: each filter narrows; together they AND. `yes|no` for the switches."""
         from app.models.access import (
             RespondContactCustomer,
@@ -430,29 +482,20 @@ class ContactService:
                 self._visible_link(viewer_id, RespondContactCustomer.customer_id.in_(f["customer_ids"]))
             )
         if f.get("company_ids"):
-            # FILTER-MULTISELECT: a contact matches when any linked customer belongs to a chosen
-            # company (the Companies column's own source), any-of across the chosen ones.
-            # The core table: the session's auto-filter would narrow the entity to the active company.
-            from app.models.order import Customer
+            # CONTACT-COMPANIES-COL: a contact matches when its company access (the Companies
+            # column, `company_access_by_contact`) holds any chosen company. A viewer who may not
+            # read company access matches nothing: the filter must not reveal what the column hides.
+            if not read_company_access:
+                from sqlalchemy import literal
 
-            customers = Customer.__table__
-            # Both sides, as the Companies sort does: a link's company is stamped from its customer,
-            # but nothing enforces it, so the customer's own company must be in reach too.
-            scope = self._link_scope(viewer_id)
-            wanted = f["company_ids"]
-            if isinstance(scope, frozenset):
-                wanted = [c for c in wanted if c in scope]
-            elif scope is not None:  # UNSET fails closed
-                wanted = []
-            q = q.filter(
-                self._visible_link(
-                    viewer_id,
+                q = q.filter(literal(False))
+            else:
+                q = q.filter(
                     exists().where(
-                        customers.c.id == RespondContactCustomer.customer_id,
-                        customers.c.company_id.in_(wanted),
-                    ),
+                        RespondContactCompany.respond_contact_id == RespondContact.id,
+                        RespondContactCompany.company_id.in_(f["company_ids"]),
+                    )
                 )
-            )
         if f.get("access_differs_from"):
             from app.services.contact_access_copy_service import contacts_differing_from
 
@@ -626,14 +669,7 @@ class ContactService:
     def list_contact_companies(self, contact_id: str) -> list[dict]:
         """Return the companies granted to a contact as ``[{id,name,code}]``."""
         self.get_contact(contact_id)
-        rows = (
-            self.db.query(Company)
-            .join(RespondContactCompany, RespondContactCompany.company_id == Company.id)
-            .filter(RespondContactCompany.respond_contact_id == contact_id)
-            .order_by(Company.name.asc())
-            .all()
-        )
-        return [{"id": str(c.id), "name": c.name, "code": c.code} for c in rows]
+        return company_access_by_contact(self.db, [contact_id]).get(str(contact_id), [])
 
     def set_contact_companies(self, contact_id: str, company_ids: list[str]) -> dict:
         """Replace a contact's company grants with the given ids (unknown ids skipped)."""
