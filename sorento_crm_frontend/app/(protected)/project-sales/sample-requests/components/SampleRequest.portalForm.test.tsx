@@ -31,7 +31,7 @@ vi.mock('@/hooks/usePublicViewLinksEnabled', () => ({ usePublicViewLinksEnabled:
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
 }));
-vi.mock('@/hooks/useEffectiveUserId', () => ({ useEffectiveUserId: () => 'u-owner' }));
+vi.mock('@/hooks/useEffectiveUserId', () => ({ useEffectiveUserId: () => 'u-owner', useEffectiveUserName: () => 'Ann Sales' }));
 vi.mock('@/hooks/useDeferredAction', () => ({ useDeferredAction: () => ({ countdown: null, isBlocked: false, start: vi.fn() }) }));
 vi.mock('@/app/(protected)/project-sales/_shared/components/OrderInquiryStockGrid', () => ({ OrderInquiryStockGrid: () => null }));
 vi.mock('@/app/(protected)/sla-management/_shared/formSLAService', () => ({ getFormSLATrackers: async () => [], escalateFormTracking: vi.fn() }));
@@ -48,7 +48,14 @@ vi.mock('@/components/ui/dropdown-menu', () => ({
     <button onClick={() => onSelect?.()}>{children}</button>
   ),
 }));
-vi.mock('@/app/(protected)/project-sales/_shared/services/projectService', () => ({ getProject: vi.fn() }));
+vi.mock('@/app/(protected)/project-sales/_shared/services/projectService', () => ({
+  getProject: vi.fn(),
+  // SAMPLE-REQUEST-V2: the staff form's Ship to picker reads the roles and the parties.
+  listPartyRoles: vi.fn(async () => []),
+  getPartiesOnProject: vi.fn(async () => []),
+  listParties: vi.fn(async () => ({ data: [] })),
+  listPartyContacts: vi.fn(async () => []),
+}));
 
 let held = new Set<string>();
 vi.mock('@/hooks/usePermissions', () => ({
@@ -217,7 +224,10 @@ describe('limited user, Sample Request seeded from a project (?project_id=)', ()
     (getProject as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({ id: PROJECT_ID, project_code: 'PRJ-0001', title: 'Project One' });
     mountForm(LIMITED, { projectId: PROJECT_ID });
     expect(await screen.findByRole('button', { name: 'Submit sample request' })).toBeInTheDocument();
-    await waitFor(() => expect((document.getElementById('sr-project-title') as HTMLInputElement).value).toBe('Project One'));
+    // The project reads as its one line in the picker; no second typed title repeats it (owner 12 Nov ~15:45).
+    // One clamped line, the whole label on hover (crew pass round 3).
+    expect(await screen.findByTitle('PRJ-0001 - Project One')).toBeInTheDocument();
+    expect(document.getElementById('sr-project-title')).toBeNull();
     expect(document.body.textContent).not.toContain(PROJECT_ID);
     fireEvent.click(screen.getByRole('button', { name: 'Save as draft' }));
     await waitFor(() => expect(where((c) => c.method === 'POST' && c.url === MINE)).toHaveLength(1));
@@ -228,7 +238,8 @@ describe('limited user, Sample Request seeded from a project (?project_id=)', ()
   it('from a project, the bottom Cancel goes back to its Samples Request tab (PROJECT-STAGE-ACTIONS)', async () => {
     (getProject as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({ id: PROJECT_ID, project_code: 'PRJ-0001', title: 'Project One' });
     mountForm(LIMITED, { projectId: PROJECT_ID });
-    await waitFor(() => expect((document.getElementById('sr-project-title') as HTMLInputElement).value).toBe('Project One'));
+    // The project shows as its one picker line (SAMPLE-REQUEST-V2 removed the typed title box).
+    expect(await screen.findByTitle('PRJ-0001 - Project One')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(nav.push).toHaveBeenCalledWith(`/project-sales/${PROJECT_ID}?tab=sample-requests`);
   });
@@ -264,6 +275,8 @@ describe('limited user, a refused save shows the message', () => {
 describe('staff keep today\'s Sample Request screens', () => {
   it('staff New is the CRM form: Add row, nothing sent to my-requests', async () => {
     mountForm(STAFF);
+    // Owner 12 Nov: sections start collapsed; the guided CRM form is there with its Items section.
+    fireEvent.click(await screen.findByRole('button', { name: /^Items/ }));
     expect(await screen.findByRole('button', { name: /Add row/ })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Submit sample request' })).toBeNull();
     expect(where((c) => c.url.startsWith('/api/v1/my-requests'))).toHaveLength(0);
