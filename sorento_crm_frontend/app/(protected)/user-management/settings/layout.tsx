@@ -14,6 +14,7 @@ import {
   Image as ImageIcon,
   Mail,
   MessageSquareWarning,
+  Palette,
   Plug,
   Ruler,
   Settings,
@@ -29,6 +30,7 @@ import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import { PageHeader } from '@/components/common/PageHeader';
 import { SystemSetting } from '@/app/models/system';
 import { AUTO_COLLECT_DAYS_DEFAULT } from '@/lib/dealer-kit/print-collection';
+import { useHasPermission } from '@/hooks/usePermissions';
 import { SettingsProvider } from './components/settings-context';
 
 type NavRoutes = Record<
@@ -40,6 +42,13 @@ type NavRoutes = Record<
     path: string;
   }
 >;
+
+function mapTheme(raw: unknown): NonNullable<SystemSetting['theme']> {
+  const t = (raw && typeof raw === 'object' ? raw : {}) as { preset?: unknown; custom_hex?: unknown };
+  const presets = ['sorento-blue', 'sorento-red', 'teal', 'graphite', 'indigo'] as const;
+  const preset = presets.find((id) => id === t.preset) ?? 'sorento-blue';
+  return { preset, customHex: typeof t.custom_hex === 'string' ? t.custom_hex : null };
+}
 
 /** Map API snake_case settings to frontend camelCase SystemSetting */
 export function mapSettingsFromApi(
@@ -199,6 +208,9 @@ export function mapSettingsFromApi(
         ? raw.chat_latency_min_sample
         : 30,
     smtp: (raw.smtp as SystemSetting['smtp']) ?? null,
+    // UI v2 (phase 0): the API sends `theme: {preset, custom_hex}` and `ui_v2_enabled`.
+    theme: mapTheme(raw.theme),
+    uiV2Enabled: typeof raw.ui_v2_enabled === 'boolean' ? raw.ui_v2_enabled : true,
   } as SystemSetting;
 }
 
@@ -325,6 +337,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const roles = data.roles ?? [];
   const settings = data.settings ?? createDefaultSettings();
 
+  const canEditSettings = useHasPermission('user_management.settings.edit');
+
   const navRoutes = useMemo<NavRoutes>(
     () => ({
       general: {
@@ -397,8 +411,18 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         icon: Plug,
         path: '/user-management/settings/integrations',
       },
+      // UI v2 brand colour: only an editor sees the tab (the save needs the edit slug).
+      ...(canEditSettings
+        ? {
+            appearance: {
+              title: 'Appearance',
+              icon: Palette,
+              path: '/user-management/settings/appearance',
+            },
+          }
+        : {}),
     }),
-    [],
+    [canEditSettings],
   );
 
   // Local state to instantly update the active tab on click
