@@ -8,7 +8,7 @@ card and the UAC land here before any code.
 ## Owner answers (14 Nov 16:25 mock v1 "ok"; 16:45 answers)
 
 - Q1 item 3: the accessory photo is saved per main product + accessory link (one nullable column, like product_accessories.image_id).
-- Q2 item 8: PENDING (owner asked "why b?" 16:45; crew explaining (a) template box vs (b) per product on each tag).
+- Q2 item 8 (owner 16:53 "ok b"): spec icon show/hide is saved per product on each tag; other products on the same template are unaffected.
 - Q3 item 1: the inspector font list (uploaded fonts included) and sizes in pt.
 - Q4 items 5, 7 (CHANGED 16:45): never hide an item that does not fit. No silent drop: the box grows (more rows); if it reaches the page edge, a visible warning on the canvas names what does not fit. Shrinking stops at a minimum readable size (no shrink-until-invisible). Applies to the Accessories box and the Spec icons box.
 - Q5 item 6: picking several images makes one box per image.
