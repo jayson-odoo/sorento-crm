@@ -231,6 +231,24 @@ export function SpecSheetReader({
     }
     return ref;
   }, []);
+  // The table cell picked on a page (its canvas reports it): the Inspector's Cell section and the
+  // toolbar's table actions use it.
+  const [pickedCell, setPickedCell] = React.useState<{
+    pageKey: string;
+    layerId: string;
+    row: number;
+    col: number;
+  } | null>(null);
+  const onTableCell = React.useCallback(
+    (key: string, cell: { layerId: string; row: number; col: number } | null) =>
+      setPickedCell((prev) => {
+        if (!cell) return prev?.pageKey === key ? null : prev;
+        if (prev && prev.pageKey === key && prev.layerId === cell.layerId && prev.row === cell.row && prev.col === cell.col)
+          return prev;
+        return { pageKey: key, ...cell };
+      }),
+    [],
+  );
   const onSelectLayer = React.useCallback(
     (key: string, layerId: string | null) => {
       setSelection((prev) =>
@@ -573,6 +591,10 @@ export function SpecSheetReader({
   const selectedLayer = selection
     ? (selectedLayers.find((l) => l.id === selection.layerId) ?? null)
     : null;
+  const selectedTableCell =
+    pickedCell && selection && pickedCell.pageKey === selection.pageKey && pickedCell.layerId === selection.layerId
+      ? { row: pickedCell.row, col: pickedCell.col }
+      : null;
   // A pressed page counts while it is a live canvas; scrolled out of the drawn window, it no longer
   // decides where a paste or an undo goes.
   const pressedLive = pressedKey && liveKeys.has(pressedKey) ? pressedKey : null;
@@ -1000,13 +1022,7 @@ export function SpecSheetReader({
                   selectedLayer.props.kind === 'table' ? (
                     <TableToolbarActions
                       props={selectedLayer.props}
-                      // Read when clicked: the canvas holds the cell last picked on the page.
-                      cell={() => {
-                        const picked = selection
-                          ? controllerRefFor(selection.pageKey).current?.tableCell?.()
-                          : null;
-                        return picked && picked.layerId === selectedLayer.id ? picked : null;
-                      }}
+                      cell={selectedTableCell}
                       onChange={(next) => changeSelectedProps(selectedLayer.id, next)}
                       onInsertField={
                         selection ? () => controllerRefFor(selection.pageKey).current?.insertField?.() : undefined
@@ -1171,6 +1187,7 @@ export function SpecSheetReader({
                           onReset={onResetPage}
                           onSelectLayer={onSelectLayer}
                           onLayersReport={onLayersReport}
+                          onTableCell={onTableCell}
                           onHistory={onHistory}
                           onPressPage={onPressPage}
                           controllerRefFor={controllerRefFor}
@@ -1220,6 +1237,7 @@ export function SpecSheetReader({
                               onModeChange={setApplyMode}
                               onApplyAll={sendToEveryPage}
                               onManageFonts={openFonts}
+                              tableCell={selectedTableCell}
                             />
                           ) : (
                             <div
@@ -1275,6 +1293,7 @@ export function SpecSheetReader({
                       onModeChange={setApplyMode}
                       onApplyAll={sendToEveryPage}
                       onManageFonts={openFonts}
+                      tableCell={selectedTableCell}
                     />
                   </div>
                 )}

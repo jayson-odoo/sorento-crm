@@ -36,6 +36,7 @@ export function ReaderInspector({
   onModeChange,
   onApplyAll,
   onManageFonts,
+  tableCell,
 }: {
   pageKey: string | null;
   layer: TagLayer | null;
@@ -46,6 +47,8 @@ export function ReaderInspector({
   onApplyAll: (layerId: string, changes: ApplyAllChanges) => void;
   /** The host's one font dialog (the reader shares it with the toolbar); absent: this opens its own. */
   onManageFonts?: () => void;
+  /** The table cell picked on the page: the Cell section shows its row height / column width. */
+  tableCell?: { row: number; col: number } | null;
 }) {
   const library = useKitLibrary();
   // Insert field (owner hand test #2331): the template designer's own dialog and registry, so a
@@ -144,6 +147,7 @@ export function ReaderInspector({
           onUpdateProps={onUpdateProps}
           layers={layers}
           fontOptions={library.fontOptions}
+          tableCell={tableCell}
           onUploadFont={canManageFonts ? (onManageFonts ?? (() => setFontUploadOpen(true))) : undefined}
           specSheet
           specKeys={library.specKeys}

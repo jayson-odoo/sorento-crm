@@ -227,6 +227,8 @@ export interface ReaderPageProps {
   onReset: (key: string) => void;
   onSelectLayer: (key: string, layerId: string | null) => void;
   onLayersReport: (key: string, base: TagLayer[], layers: TagLayer[]) => void;
+  /** The table cell picked on this page's canvas (the Inspector edits its row / column). Stable. */
+  onTableCell?: (key: string, cell: { layerId: string; row: number; col: number } | null) => void;
   /** Ctrl/Cmd+Z / Shift+Z / Y on this page: the host's per-page undo. Stable, like `onPatch`. */
   onHistory: (key: string, step: -1 | 1) => void;
   /** Any press on this page (left or right button, empty spot included): it becomes the page a
@@ -298,6 +300,7 @@ export const ReaderPage = React.memo(function ReaderPage({
   onReset,
   onSelectLayer,
   onLayersReport,
+  onTableCell,
   onHistory,
   onPressPage,
   controllerRefFor,
@@ -381,6 +384,7 @@ export const ReaderPage = React.memo(function ReaderPage({
       readOnly: !canEdit,
       active,
       onHistory: (step: -1 | 1) => onHistory(page.key, step),
+      onTableCell: (cell: { layerId: string; row: number; col: number } | null) => onTableCell?.(page.key, cell),
       // A double-click on AREA / COMMENT / marker opens its box; a single click selects it.
       onEditField: (layerId: string) => {
         const layer = layersRef.current?.find((l) => l.id === layerId);
@@ -403,6 +407,7 @@ export const ReaderPage = React.memo(function ReaderPage({
       canEdit,
       active,
       onHistory,
+      onTableCell,
       isCover,
     ],
   );

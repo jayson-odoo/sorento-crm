@@ -552,6 +552,8 @@ export interface EmbeddedMode {
   active?: boolean;
   /** Ctrl/Cmd+Z (`-1`) and Shift+Ctrl/Cmd+Z or Ctrl/Cmd+Y (`1`) on the active page: the host's undo. */
   onHistory?: (step: -1 | 1) => void;
+  /** v3: the table cell picked on this page, so the host's Inspector edits that cell's row / column. */
+  onTableCell?: (cell: { layerId: string; row: number; col: number } | null) => void;
 }
 
 interface TagCanvasEditorProps {
@@ -1667,6 +1669,12 @@ export function TagCanvasEditor({
   const [tableCell, setTableCell] = useState<{ layerId: string; row: number; col: number } | null>(null);
   const tableCellRef = useRef(tableCell);
   tableCellRef.current = tableCell;
+  // The host (a spec sheet page) hears the pick, so its Inspector shows the picked row / column.
+  const onTableCellRef = useRef(embedded?.onTableCell);
+  onTableCellRef.current = embedded?.onTableCell;
+  useEffect(() => {
+    onTableCellRef.current?.(tableCell);
+  }, [tableCell]);
   // The pointer reads the stage, which is declared below the click handler.
   const pointerMmRef = useRef<() => { x_mm: number; y_mm: number } | null>(() => null);
   /** v3 (AC-C3.6): a table as the canvas DRAWS it (fields resolved or named), so a click, a
@@ -5702,7 +5710,9 @@ export function TagCanvasEditor({
             </div>
           </ContextMenuTrigger>
 
-          <ContextMenuContent className="w-56">
+          {/* Sized to its longest item (a shortcut is never cut), and kept inside the viewport at
+              375 px (collision padding, never wider than the screen). */}
+          <ContextMenuContent collisionPadding={8} className="w-max min-w-56 max-w-[calc(100vw-1rem)]">
             {hasSelection && !menuOnEmpty ? (
               <>
                 {tableMenu && (
