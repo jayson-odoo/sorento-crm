@@ -42,6 +42,10 @@ SORENTO = "00000000-0000-0000-0000-000000000001"
 # both of 354's directions leave them exactly where their own migration put them.
 BORN_AFTER_THE_MOVE = frozenset({
     "so_supply_decisions",
+    # OCN-ORDER-CHANGE-NOTICE (migration ocn_0001_order_change_notice): the notice's lines and
+    # its change-type lookup, born straight into `projects` beside `order_change_notices`.
+    "order_change_notice_lines",
+    "order_change_types",
     # SPEC-SHEET-V2 (migration ssv2_0001_spec_sheets): the saved spec sheets of a quotation,
     # born straight into `projects`.
     "quotation_spec_sheets",
