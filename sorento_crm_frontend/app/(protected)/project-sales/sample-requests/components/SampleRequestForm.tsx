@@ -6,7 +6,7 @@
  * shows the same fields in the same order.
  */
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Loader2, LoaderCircleIcon, Plus } from 'lucide-react';
 import { toast } from '@/lib/toast';
@@ -14,9 +14,12 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
+import { DatePicker, parseDateInput, toIsoDate } from '@/components/ui/date-picker';
+import type { SubmissionPaths } from '@/app/(auth)/portal/lib/submission-client';
+import { myRequestsPaths } from '@/services/myRequestsSubmissionClient';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
+import { DocField, ReadValue } from '@/components/common/DocField';
 import { SampleRequestLines } from '@/components/common/SampleRequestLines';
 import { SampleRequestFooterFields } from '@/components/common/SampleRequestFooterFields';
 import {
@@ -27,7 +30,6 @@ import { useSampleRequestPrefill } from '@/hooks/useSampleRequestPrefill';
 import { AsyncCombobox } from '@/app/(auth)/portal/components/AsyncCombobox';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
-import { cn } from '@/lib/utils';
 import { SampleRequestError } from '@/types/sampleRequest';
 import {
   EMPTY_FORM,
@@ -59,38 +61,6 @@ import {
 } from '../services/sampleRequestService';
 
 const BASE_PATH = '/project-sales/sample-requests';
-
-function DocField({
-  label,
-  htmlFor,
-  className,
-  error,
-  children,
-}: {
-  label: string;
-  htmlFor?: string;
-  className?: string;
-  error?: string;
-  children: ReactNode;
-}) {
-  return (
-    <div className={cn('min-w-0', className)}>
-      {htmlFor ? (
-        <Label htmlFor={htmlFor} className="text-sm font-normal text-muted-foreground">
-          {label}
-        </Label>
-      ) : (
-        <p className="text-sm text-muted-foreground">{label}</p>
-      )}
-      <div className="mt-1.5">{children}</div>
-      {error && <p className="mt-1 text-xs text-destructive">{error}</p>}
-    </div>
-  );
-}
-
-const ReadValue = ({ children }: { children: ReactNode }) => (
-  <p className="min-h-9 break-words py-2 text-sm">{children || '-'}</p>
-);
 
 interface SampleRequestFormProps {
   /** Edit mode: the draft to change. */
@@ -136,6 +106,18 @@ function NewOwnSampleRequest({ projectId }: { projectId?: string }) {
         : undefined,
     [project],
   );
+  // From a project its Cancel goes back to the project's Samples Request tab, as the staff form's
+  // does (PROJECT-STAGE-ACTIONS); a saved request still opens on its own page.
+  const paths = useMemo<SubmissionPaths | undefined>(
+    () =>
+      project
+        ? {
+            ...myRequestsPaths,
+            home: () => `/project-sales/${encodeURIComponent(project.id)}?tab=sample-requests`,
+          }
+        : undefined,
+    [project],
+  );
   if (projectId && isLoading) {
     return (
       <div className="flex items-center justify-center p-8">
@@ -144,7 +126,7 @@ function NewOwnSampleRequest({ projectId }: { projectId?: string }) {
     );
   }
   return (
-    <MyRequestClientProvider>
+    <MyRequestClientProvider paths={paths}>
       <PortalSampleRequestForm initialValues={initialValues} />
     </MyRequestClientProvider>
   );
@@ -375,11 +357,12 @@ function StaffSampleRequestForm({ requestId, projectId }: SampleRequestFormProps
               htmlFor="sr-delivery-date"
               error={errors.delivery_date}
             >
-              <Input
+              {/* The shared DD/MM/YYYY picker, never the browser's own date box. */}
+              <DatePicker
                 id="sr-delivery-date"
-                type="date"
-                value={state.delivery_date}
-                onChange={(e) => set('delivery_date', e.target.value)}
+                ariaLabel="Request Delivery Date"
+                value={parseDateInput(state.delivery_date)}
+                onChange={(date) => set('delivery_date', date ? toIsoDate(date) : '')}
               />
             </DocField>
 
@@ -483,7 +466,15 @@ function StaffSampleRequestForm({ requestId, projectId }: SampleRequestFormProps
             <Button
               type="button"
               variant="outline"
-              onClick={() => router.push(requestId ? `${BASE_PATH}/${requestId}` : BASE_PATH)}
+              onClick={() =>
+                router.push(
+                  requestId
+                    ? `${BASE_PATH}/${requestId}`
+                    : projectId
+                      ? `/project-sales/${projectId}?tab=sample-requests`
+                      : BASE_PATH,
+                )
+              }
             >
               Cancel
             </Button>

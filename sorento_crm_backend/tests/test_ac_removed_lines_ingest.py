@@ -524,6 +524,10 @@ def test_fp_email_one_trigger_q1_the_board_confirm_retires_them_and_emails_cance
     _register(None)
     calls = _captured_dispatches(monkeypatch)
 
+    # F2 12/13 Nov: a cancel is saved like any change before Confirm
+    from ._cancel_decide import decide_cancelled_rows
+
+    decide_cancelled_rows(env.db, batch_id)
     mark_purchasing_email_trigger(env.db)
     planning_change_service.apply(env.db, str(batch_id), _USER_ID)
     env.db.commit()
@@ -585,10 +589,10 @@ def test_ac_rl_20_an_actioned_row_on_a_removed_so_line_is_left_for_the_board(env
     assert (snap["state"], snap["ack_state"]) == (INQUIRY_ACTIONED, ACK_AWAITING), snap
 
 
-def test_fp_email_one_trigger_a_line_dropped_by_a_header_cancel_push_is_still_flagged(env):
-    """Guard of the removed-line exclusion: a push that cancels the HEADER (the line left out
-    too) is a cancelled order, not a removed line, so its live rows are flagged done
-    (`flag_rows_for_cancelled_lines` -> acknowledged) as before."""
+def test_fp_email_one_trigger_a_line_dropped_by_a_header_cancel_push_is_left_for_the_board(env):
+    """A push that cancels the HEADER (the line left out too) no longer flags its live rows
+    done at sync: owner rule 12 Nov, supersedes 30 Oct (OI-WHOLE-SO-CANCEL v2, AC-V2-1). The
+    row keeps (state, ack_state) until CS's board Confirm, exactly like a removed line."""
     record, header, line_x, y = _push_so(env)
     row_id, _ = _so_mirror_row(env, header, line_x, state=INQUIRY_RAISED, ack=ACK_AWAITING)
 
@@ -597,7 +601,7 @@ def test_fp_email_one_trigger_a_line_dropped_by_a_header_cancel_push_is_still_fl
     env.db.expire_all()
 
     snap = _row_snapshot(env, row_id)
-    assert (snap["state"], snap["ack_state"]) == (INQUIRY_RAISED, ACK_ACKNOWLEDGED), snap
+    assert (snap["state"], snap["ack_state"]) == (INQUIRY_RAISED, ACK_AWAITING), snap
 
 
 # ============================================================== guards (AC-RL-30..34)
@@ -910,7 +914,8 @@ def test_fp_email_one_trigger_a_removed_lines_open_row_stays_open_until_the_boar
     line's rows, so `flag_rows_for_cancelled_lines` met LIVE rows and acknowledged them by the
     system: a buy purchasing still had open read Done, with no email and nothing changed on the
     board. A REMOVED line is left out of that flag: the row keeps its state and ack until CS's
-    board Confirm retires it (and emails the CANCEL)."""
+    board Confirm retires it (and emails the CANCEL). H1 (owner ruling 12 Nov 22:55): an OI whose only
+    live row is waiting for CS still reads header status "outstanding"."""
     from app.models.planning_change import PlanningChangeRow
     from app.services import planning_change_service
     from app.services.project_order_inquiry_service import mark_purchasing_email_trigger
@@ -935,6 +940,10 @@ def test_fp_email_one_trigger_a_removed_lines_open_row_stays_open_until_the_boar
     )
     _register(None)
     calls = _captured_dispatches(monkeypatch)
+    # F2 12/13 Nov: a cancel is saved like any change before Confirm
+    from ._cancel_decide import decide_cancelled_rows
+
+    decide_cancelled_rows(env.db, batch_id)
     mark_purchasing_email_trigger(env.db)
     planning_change_service.apply(env.db, str(batch_id), _USER_ID)
     env.db.commit()

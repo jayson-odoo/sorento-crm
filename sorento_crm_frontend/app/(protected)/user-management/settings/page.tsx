@@ -205,6 +205,21 @@ export default function Page() {
     ],
   );
 
+  const approversForOrderChangeNotice = useMemo(
+    () =>
+      mergeApproverOptions(
+        approverUserOptions,
+        settings?.orderChangeNoticeDefaultApproverUserId,
+        settings?.orderChangeNoticeDefaultApproverName,
+        null,
+      ),
+    [
+      approverUserOptions,
+      settings?.orderChangeNoticeDefaultApproverUserId,
+      settings?.orderChangeNoticeDefaultApproverName,
+    ],
+  );
+
   const approversForOffSeries = useMemo(
     () =>
       mergeApproverOptions(
@@ -313,6 +328,7 @@ export default function Page() {
     borrowFromOrderEnabled: Boolean(settings?.borrowFromOrderEnabled),
     // Off is the shipped state (SR-CORE).
     sampleRequestRequireProject: Boolean(settings?.sampleRequestRequireProject),
+    orderChangeNoticeRequireProject: Boolean(settings?.orderChangeNoticeRequireProject),
     // Off is the shipped state (AC-QTSO-CRM).
     projectAutocountWriteEnabled: Boolean(settings?.projectAutocountWriteEnabled),
     // Off is the shipped state (AC-PROJECT-REGISTER).
@@ -329,6 +345,8 @@ export default function Page() {
       settings.sponsorshipFormDefaultApproverUserId.length > 0
         ? settings.sponsorshipFormDefaultApproverUserId
         : NO_DEFAULT_APPROVER_VALUE,
+    orderChangeNoticeDefaultApproverUserId:
+      settings?.orderChangeNoticeDefaultApproverUserId || NO_DEFAULT_APPROVER_VALUE,
     offSeriesApproverUserId: settings?.offSeriesApproverUserId || NO_DEFAULT_APPROVER_VALUE,
     defaultQuotationApproverUserId:
       settings?.defaultQuotationApproverUserId || NO_DEFAULT_APPROVER_VALUE,
@@ -393,6 +411,7 @@ export default function Page() {
       localBuyRoutingEnabled: Boolean(settings.localBuyRoutingEnabled),
       borrowFromOrderEnabled: Boolean(settings.borrowFromOrderEnabled),
       sampleRequestRequireProject: Boolean(settings.sampleRequestRequireProject),
+      orderChangeNoticeRequireProject: Boolean(settings.orderChangeNoticeRequireProject),
       projectAutocountWriteEnabled: Boolean(settings.projectAutocountWriteEnabled),
       projectAutocountRegisterEnabled: Boolean(settings.projectAutocountRegisterEnabled),
       stockDebtPoLinkEnabled: Boolean(settings.stockDebtPoLinkEnabled),
@@ -407,6 +426,8 @@ export default function Page() {
         settings.sponsorshipFormDefaultApproverUserId.length > 0
           ? settings.sponsorshipFormDefaultApproverUserId
           : NO_DEFAULT_APPROVER_VALUE,
+      orderChangeNoticeDefaultApproverUserId:
+        settings.orderChangeNoticeDefaultApproverUserId || NO_DEFAULT_APPROVER_VALUE,
       offSeriesApproverUserId: settings.offSeriesApproverUserId || NO_DEFAULT_APPROVER_VALUE,
       defaultQuotationApproverUserId:
         settings.defaultQuotationApproverUserId || NO_DEFAULT_APPROVER_VALUE,
@@ -453,6 +474,7 @@ export default function Page() {
         local_buy_routing_enabled: values.localBuyRoutingEnabled,
         borrow_from_order_enabled: values.borrowFromOrderEnabled,
         sample_request_require_project: values.sampleRequestRequireProject,
+        order_change_notice_require_project: values.orderChangeNoticeRequireProject,
         project_autocount_write_enabled: values.projectAutocountWriteEnabled,
         project_autocount_register_enabled: values.projectAutocountRegisterEnabled,
         stock_debt_po_link_enabled: values.stockDebtPoLinkEnabled,
@@ -467,6 +489,10 @@ export default function Page() {
           NO_DEFAULT_APPROVER_VALUE
             ? null
             : values.sponsorshipFormDefaultApproverUserId,
+        order_change_notice_default_approver_user_id:
+          values.orderChangeNoticeDefaultApproverUserId === NO_DEFAULT_APPROVER_VALUE
+            ? null
+            : values.orderChangeNoticeDefaultApproverUserId,
         off_series_approver_user_id:
           values.offSeriesApproverUserId === NO_DEFAULT_APPROVER_VALUE
             ? null
@@ -1289,6 +1315,28 @@ export default function Page() {
 
               <FormField
                 control={form.control}
+                name="orderChangeNoticeRequireProject"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormControl>
+                      <div className="flex items-center space-x-2 rounded-lg bg-accent/60 p-4">
+                        <Switch
+                          id="order-change-notice-require-project"
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                        />
+                        <Label htmlFor="order-change-notice-require-project">
+                          Order change notices need a registered project
+                        </Label>
+                      </div>
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
                 name="projectAutocountWriteEnabled"
                 render={({ field }) => (
                   <FormItem>
@@ -1430,6 +1478,32 @@ export default function Page() {
                             value: u.id,
                             label:
                               (u.name?.trim() || u.email) + ` (${u.email})`,
+                          })),
+                        ]}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="orderChangeNoticeDefaultApproverUserId"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Default approver (order change notices)</FormLabel>
+                    <FormControl>
+                      <SearchableSelect
+                        key={`def-ocn-appr-${field.value}-${approversForOrderChangeNotice.length}`}
+                        onChange={field.onChange}
+                        value={field.value}
+                        placeholder="None"
+                        options={[
+                          { value: NO_DEFAULT_APPROVER_VALUE, label: 'None' },
+                          ...approversForOrderChangeNotice.map((u) => ({
+                            value: u.id,
+                            label: (u.name?.trim() || u.email) + (u.email ? ` (${u.email})` : ''),
                           })),
                         ]}
                       />

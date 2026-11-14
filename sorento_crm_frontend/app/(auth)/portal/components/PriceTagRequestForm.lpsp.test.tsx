@@ -561,7 +561,7 @@ describe('PriceTagRequestForm AI extract apply (AC-22)', () => {
     expect(toasts.error).toHaveBeenCalledWith(expect.stringContaining('SRTBF11840'));
   });
 
-  it('a product listed twice becomes one line and the later type wins', async () => {
+  it('a product listed twice becomes two lines, each with its own type (PRICETAG-ALA-CARTE AC-10)', async () => {
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Customer');
     await applyExtract([
@@ -571,16 +571,19 @@ describe('PriceTagRequestForm AI extract apply (AC-22)', () => {
     await selectOption('Customer', 'ZZTD01');
     chooseTypedItems();
     await screen.findByLabelText('Quantity for line 1');
-    expect(screen.queryByLabelText('Quantity for line 2')).toBeNull();
+    expect(screen.getByLabelText('Quantity for line 2')).toBeInTheDocument();
     sendToMarketing();
     const payload = await lastCreatePayload();
-    expect(payload.lines).toHaveLength(1);
-    expect(payload.lines[0].price_type).toBe('selling');
+    expect(payload.lines).toHaveLength(2);
+    expect(payload.lines.map((l: { price_type: string }) => l.price_type)).toEqual(['list', 'selling']);
   });
 });
 
 // --------------------------------------------------------------------------- fix round 2, bug 20
-describe('PriceTagRequestForm AI extract merge into an existing line (bug 20)', () => {
+// PRICETAG-ALA-CARTE AC-10: a "+" row of a product already on the request no longer merges into
+// that line; it becomes its own line. Bug 20's rules now read on the two lines: the existing
+// line's promotion is left alone, and the new combo line takes the typed SP.
+describe('PriceTagRequestForm AI extract beside an existing line of the product (bug 20)', () => {
   const part = (product: { id: string; code: string; name: string }) => ({
     product_id: product.id,
     code: product.code,
@@ -621,7 +624,7 @@ describe('PriceTagRequestForm AI extract merge into an existing line (bug 20)', 
 
   async function lineWithAutoPromotion() {
     pricingWithPromotions();
-    // Two combos on the host, so no lone combo is auto-picked onto the line.
+    // Two combos on the host; the line starts ala carte either way (PRICETAG-ALA-CARTE AC-3).
     asMock(lookupProductCombos).mockResolvedValue({
       host_guarded: false,
       combos: [
@@ -640,35 +643,43 @@ describe('PriceTagRequestForm AI extract merge into an existing line (bug 20)', 
     );
   }
 
-  it('a "+" row merging into a line with an AUTO promotion applies its combo and typed SP', async () => {
+  it('a "+" row of a product on a line with an AUTO promotion is its own line with its combo and typed SP', async () => {
     await lineWithAutoPromotion();
     await applyExtract([COMBO_ROW]);
-    expect(screen.queryByLabelText('Quantity for line 2')).toBeNull();
+    expect(await screen.findByLabelText('Quantity for line 2')).toBeInTheDocument();
     sendToMarketing();
     const payload = await lastCreatePayload();
-    expect(payload.lines).toHaveLength(1);
-    expect(payload.lines[0].combo_id).toBe('combo-b');
-    expect(payload.lines[0].parts).toEqual([{ product_id: P2.id, role: null, candidates: [] }]);
-    expect(payload.lines[0].price_type).toBe('selling');
-    expect(payload.lines[0].manual_sell_price).toBe(2299);
-    expect(payload.lines[0].promotion_id == null).toBe(true);
+    expect(payload.lines).toHaveLength(2);
+    // The existing line is untouched: ala carte, its auto promotion kept.
+    expect(payload.lines[0].combo_id ?? null).toBeNull();
+    expect(payload.lines[0].promotion_id).toBe('promo-auto');
+    expect(payload.lines[1].combo_id).toBe('combo-b');
+    expect(payload.lines[1].parts).toEqual([{ product_id: P2.id, role: null, candidates: [] }]);
+    expect(payload.lines[1].price_type).toBe('selling');
+    expect(payload.lines[1].manual_sell_price).toBe(2299);
+    expect(payload.lines[1].promotion_id == null).toBe(true);
   });
 
-  it('a promotion the user picked is kept, and the typed SP is not applied', async () => {
+  it('a promotion the user picked is kept, and the typed SP is not applied to that line', async () => {
     await lineWithAutoPromotion();
     await selectOption('No covering promotion', 'promo-other');
     await applyExtract([COMBO_ROW]);
     sendToMarketing();
     const payload = await lastCreatePayload();
-    expect(payload.lines).toHaveLength(1);
-    expect(payload.lines[0].combo_id).toBe('combo-b');
+    expect(payload.lines).toHaveLength(2);
+    expect(payload.lines[0].combo_id ?? null).toBeNull();
     expect(payload.lines[0].promotion_id).toBe('promo-other');
     expect(payload.lines[0].manual_sell_price == null).toBe(true);
+    // The row's combo and typed SP land on its own new line.
+    expect(payload.lines[1].combo_id).toBe('combo-b');
+    expect(payload.lines[1].manual_sell_price).toBe(2299);
   });
 
   it('a line answer that lands while Apply waits on its combos lookup is not overwritten', async () => {
     // The race: Apply builds its lines after an async combos lookup. An answer for a line already
-    // on the form (here its lone combo, auto-applied) that lands during that wait must survive.
+    // on the form (here its combos, which arm its Package select) that lands during that wait must
+    // survive. PRICETAG-ALA-CARTE AC-3: the lone combo is no longer auto-applied, so line 1 stays
+    // ala carte.
     const waiting: Record<string, (value: unknown) => void> = {};
     asMock(lookupProductCombos).mockImplementation(
       (id: string) => new Promise((resolve) => (waiting[id] = resolve)),
@@ -688,7 +699,7 @@ describe('PriceTagRequestForm AI extract merge into an existing line (bug 20)', 
     ]);
     await waitFor(() => expect(waiting[P2.id]).toBeDefined());
 
-    // The existing line's answer lands first (one combo: applied on the spot)...
+    // The existing line's answer lands first (one combo: offered, not applied)...
     await act(async () => {
       waiting[P1.id]({
         host_guarded: false,
@@ -706,10 +717,12 @@ describe('PriceTagRequestForm AI extract merge into an existing line (bug 20)', 
       });
     });
     await screen.findByLabelText('Quantity for line 2');
+    // Line 1's answer survived: both lines show their Package select.
+    expect(screen.getAllByLabelText('Ala carte')).toHaveLength(2);
     sendToMarketing();
     const payload = await lastCreatePayload();
     expect(payload.lines.map((l: { combo_id: string | null }) => l.combo_id)).toEqual([
-      'combo-p1',
+      null,
       'combo-p2',
     ]);
   });

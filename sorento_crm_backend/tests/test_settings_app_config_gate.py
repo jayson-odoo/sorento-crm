@@ -63,6 +63,9 @@ EXPECTED_FIELDS = {
     # filling it do not hold `user_management.settings.view`. One boolean, not
     # sensitive. (The quotation switch was removed 16 Oct.)
     "sample_request_require_project",
+    # OCN-ORDER-CHANGE-NOTICE (lead ruling m13): the order change notice form must know whether a
+    # project is required, the sample request's reason. One boolean, not sensitive.
+    "order_change_notice_require_project",
     # AC-QTSO-CRM (owner, 5 Nov): Project sales hides its AutoCount write actions while the
     # switch is off; the salesperson who sends holds no `user_management.settings.view`.
     "project_autocount_write_enabled",
@@ -220,6 +223,8 @@ def test_app_config_open_to_a_caller_with_zero_permissions(api, db):
         "oi_reserve_default_pool_warehouse_id": None,
         # SR-CORE: the project switch ships OFF (soft transition).
         "sample_request_require_project": False,
+        # OCN-ORDER-CHANGE-NOTICE: ships OFF.
+        "order_change_notice_require_project": False,
         # AC-QTSO-CRM: ships OFF.
         "project_autocount_write_enabled": False,
         "project_autocount_register_enabled": False,
@@ -286,6 +291,7 @@ def test_app_config_returns_nulls_when_no_settings_row_exists(api, db):
     # SR-CORE: a missing row reads the switches OFF, the same as their column default,
     # so a fresh install never demands a project.
     expected["sample_request_require_project"] = False
+    expected["order_change_notice_require_project"] = False
     expected["project_autocount_write_enabled"] = False
     expected["project_autocount_register_enabled"] = False
     expected["stock_debt_po_link_enabled"] = False

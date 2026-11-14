@@ -6,6 +6,7 @@ import type {
   AmendmentCreateBody,
   AmendmentCreated,
   AmendmentDetail,
+  AmendmentPublished,
   AmendmentPreview,
   AmendmentPreviewBody,
   AmendmentRowDecisionInput,
@@ -533,7 +534,7 @@ export async function getAmendment(amendmentId: string): Promise<AmendmentDetail
 export async function publishAmendment(
   amendmentId: string,
   overrideReason?: string,
-): Promise<AmendmentDetail> {
+): Promise<AmendmentPublished> {
   const response = await apiFetch(`${BASE}/amendments/${amendmentId}/publish`, {
     method: 'POST',
     ...(overrideReason

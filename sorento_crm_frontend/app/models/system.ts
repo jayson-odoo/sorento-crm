@@ -101,6 +101,8 @@ export interface SystemSetting {
 
   /** Sample requests (SR-CORE): submit needs a registered project / a quotation. Off by default. */
   sampleRequestRequireProject?: boolean;
+  /** OCN-ORDER-CHANGE-NOTICE: Submit needs a project. Off by default. */
+  orderChangeNoticeRequireProject?: boolean;
   /** AutoCount quotations and sales orders from Project sales (AC-QTSO-CRM). Off by default. */
   projectAutocountWriteEnabled?: boolean;
   /** AutoCount project registration (AC-PROJECT-REGISTER). Off by default. */
@@ -120,6 +122,9 @@ export interface SystemSetting {
   sponsorshipFormDefaultApproverUserId?: string | null;
   sponsorshipFormDefaultApproverName?: string | null;
   sponsorshipFormDefaultApproverEmail?: string | null;
+  /** OCN-ORDER-CHANGE-NOTICE: the order change notice's default approver. */
+  orderChangeNoticeDefaultApproverUserId?: string | null;
+  orderChangeNoticeDefaultApproverName?: string | null;
   /** PS-QUOTE-RULES: who approves a project quotation line outside its series. */
   offSeriesApproverUserId?: string | null;
   offSeriesApproverName?: string | null;

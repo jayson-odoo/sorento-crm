@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Order Change Notice mock</title>
+<!-- OCN mock (12 Nov 2026) for CARD-ocn-order-change-notice-12nov.md. Draws the card's RECOMMENDED answers; Q1..Q5 tags mark each spot that depends on a question. Every name, PO number and item code is invented (public repo). FE = sorento_crm_frontend/. -->
+<style>
+:root{--fg:#09090b;--muted:#71717a;--border:#e4e4e7;--muted-bg:#f4f4f5;--primary:#1b84ff;--destructive:#dc2626;--callout:#e11d74;--dec:#7c3aed;--decbg:#f5f3ff;
+  --font:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+*{box-sizing:border-box}
+body{margin:0;background:#f4f4f5;color:var(--fg);font:14px/1.45 var(--font)}
+.doc{max-width:1760px;margin:0 auto;padding:24px 16px 64px}
+.doc>h1{font-size:22px;margin:0 0 4px}.sub{color:var(--muted);margin:0 0 8px;max-width:980px}
+h2.ft{font-size:15px;margin:32px 0 10px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.layout{display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap}
+.scroll{overflow-x:auto;max-width:100%}
+.frame{background:#fff;border:1px solid var(--border);border-radius:12px;position:relative;overflow:hidden}
+.w1280{width:1280px}.w375{width:375px;flex:none}.w900{width:900px}
+.notes{flex:1 1 360px;min-width:300px;max-width:620px}
+.notes ol{margin:0;padding:0;list-style:none}
+.notes li{display:flex;gap:10px;background:#fff;border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px}
+.notes li b{display:block;margin-bottom:2px}
+.ref{display:block;color:var(--muted);font-size:12px;margin-top:4px;font-family:ui-monospace,Menlo,monospace;word-break:break-word}
+.co{display:inline-flex;align-items:center;justify-content:center;flex:none;min-width:22px;height:22px;padding:0 3px;border-radius:50%;background:var(--callout);color:#fff;font-size:12px;font-weight:700;box-shadow:0 0 0 2px #fff}
+.pin{position:absolute;z-index:5;right:-8px;top:-8px}.rel{position:relative}
+.dtag{display:inline-flex;align-items:center;border:1px dashed var(--dec);background:var(--decbg);color:var(--dec);border-radius:6px;padding:1px 7px;font-size:11px;font-weight:700;white-space:nowrap;margin-left:6px}
+.muted{color:var(--muted)}.xs{font-size:12px}.b{font-weight:600}
+.shell{display:flex}.side{width:232px;flex:none;border-right:1px solid var(--border);padding:16px 12px;background:#fcfcfd;font-size:13px}
+.side .brand{font-weight:700;font-size:16px;margin:0 8px 18px}.side .grp{color:var(--muted);font-size:11px;text-transform:uppercase;margin:14px 8px 6px}
+.side .it{padding:6px 8px;border-radius:6px}.side .it.on{background:#e9f3ff;color:var(--primary);font-weight:600}
+.main{flex:1;min-width:0}.topbar{height:52px;border-bottom:1px solid var(--border)}.content{padding:20px 28px 28px}
+.phdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;gap:8px}.phdr h1{font-size:20px;font-weight:600;margin:0;display:flex;align-items:center;gap:10px}
+.crumb{font-size:12px;color:var(--muted)}
+.btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--primary);background:var(--primary);color:#fff;border-radius:6px;padding:7px 14px;font:500 13px var(--font);white-space:nowrap}
+.btn.out{background:#fff;color:var(--fg);border-color:var(--border)}.btn.sm{padding:4px 10px;font-size:12px}
+.ib{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border:1px solid var(--border);border-radius:6px;background:#fff;font-size:12px;color:var(--muted)}
+.pill{display:inline-flex;border-radius:999px;padding:2px 8px;font-size:12px;font-weight:600;background:#f1f5f9;color:#334155;white-space:nowrap}
+.pill.ok{background:#dcfce7;color:#166534}.pill.blue{background:#dbeafe;color:#1e40af}.pill.amber{background:#fef3c7;color:#92400e}.pill.red{background:#fee2e2;color:#991b1b}
+.badge2{display:inline-flex;border-radius:6px;background:var(--muted-bg);padding:1px 8px;font-size:12px;font-weight:500}
+.inp{border:1px solid var(--border);border-radius:6px;padding:6px 10px;min-height:34px;display:flex;justify-content:space-between;align-items:center;gap:6px;background:#fff;font-size:14px;width:100%}
+.inp.ph{color:var(--muted)}.inp.ro{background:var(--muted-bg);color:var(--muted)}
+.lbl{font-size:12px;color:var(--muted);margin-bottom:3px;display:block}.req{color:var(--destructive)}
+.toolbar{display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
+.toolbar .search{flex:1;min-width:180px;max-width:320px}
+table.grid{border-collapse:collapse;width:100%;table-layout:fixed;font-size:13px}
+table.grid th{text-align:left;font-weight:600;color:var(--muted);padding:9px 10px;border-bottom:1px solid var(--border);background:#fafafa;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+table.grid td{padding:9px 10px;border-bottom:1px solid var(--border);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+table.grid tr.on td{background:#f8fbff}
+.pager{display:flex;justify-content:space-between;color:var(--muted);font-size:12px;padding-top:10px}
+/* form */
+.card{border:1px solid var(--border);border-radius:12px;background:#fff;margin-bottom:12px}
+.card .ch{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;font-weight:600}
+.card .cb{padding:4px 16px 16px}
+.card.closed .ch{color:var(--muted)}
+.g{display:grid;gap:12px 16px}.g3{grid-template-columns:repeat(3,1fr)}.g2{grid-template-columns:repeat(2,1fr)}.g1{grid-template-columns:1fr}
+.seg{display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;flex-wrap:wrap}
+.seg span{padding:7px 16px;font-size:13px;border-right:1px solid var(--border);background:#fff}
+.seg span:last-child{border-right:none}.seg span.on{background:var(--primary);color:#fff;font-weight:600}
+.risk{display:inline-flex;gap:6px;align-items:center;margin-left:12px}
+.rte{border:1px solid var(--border);border-radius:6px}.rte .tb{border-bottom:1px solid var(--border);padding:5px 8px;color:var(--muted);font-size:12px;background:#fafafa;letter-spacing:.1em}
+.rte .bd{padding:8px 10px;min-height:70px}
+.drop{border:1px dashed var(--primary);border-radius:6px;padding:14px;text-align:center;color:var(--primary);font-size:12px}
+.empty{border:1px dashed var(--border);border-radius:8px;padding:16px;text-align:center}
+.empty b{display:block}
+.meta{display:flex;gap:28px;flex-wrap:wrap;padding:10px 0 14px;border-bottom:1px solid var(--border);margin-bottom:12px;font-size:13px}
+.meta span{display:block;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.03em}
+.tabs{display:flex;gap:22px;border-bottom:1px solid var(--border);margin-bottom:16px;font-size:13px}
+.tabs div{padding:8px 0;color:var(--muted)}.tabs div.on{color:var(--primary);border-bottom:2px solid var(--primary);font-weight:600}
+.kv{display:grid;grid-template-columns:repeat(3,1fr);gap:12px 16px}.kv span{display:block;color:var(--muted);font-size:12px}
+.sign{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;border:1px solid var(--border);border-radius:8px;padding:12px 14px;background:#fafafa}
+.sign span{display:block;color:var(--muted);font-size:12px}
+.dcard{border:2px solid var(--border);border-radius:12px;background:#fff;max-width:1024px;margin:0 auto;padding:24px 40px 32px;box-shadow:0 1px 2px rgba(0,0,0,.06)}
+.dcard h2.dt{margin:0 0 24px;border-bottom:1px solid var(--border);padding-bottom:16px;text-align:center;font-size:20px;font-weight:600}
+.dtop{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:16px}
+.dg{display:grid;grid-template-columns:1fr 1fr;gap:20px 40px}.dg .full{grid-column:1/-1}
+.dg .rv{padding:6px 0;font-size:14px}
+.lh{display:flex;justify-content:space-between;align-items:center;margin:32px 0 12px}.lh h3{margin:0;font-size:16px;font-weight:600}
+.dbtns{display:flex;justify-content:flex-end;gap:8px;margin-top:32px}
+.w375 .dcard{padding:16px 14px 20px}.w375 .dg{grid-template-columns:1fr}.w375 .dbtns{flex-direction:column}.w375 .dbtns .btn{justify-content:center}
+.w375 .dcard h2.dt{font-size:18px}
+/* phone */
+.w375 .content{padding:14px 12px}.w375 .g3,.w375 .g2,.w375 .kv{grid-template-columns:1fr}
+.w375 .phdr{flex-wrap:wrap}.w375 .seg span{padding:7px 10px;flex:1 1 45%;text-align:center;border-bottom:1px solid var(--border)}
+.w375 table.grid{font-size:12px}
+.w375 .btnrow{display:flex;flex-direction:column;gap:8px}.w375 .btnrow .btn{justify-content:center}
+.mbar{height:44px;border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 12px;font-weight:700}
+.dd{border:1px solid var(--border);border-radius:6px;margin-top:4px;box-shadow:0 2px 6px rgba(0,0,0,.08);font-size:13px;background:#fff}.dd div{padding:6px 10px}.dd div.hl{background:var(--muted-bg)}
+</style>
+</head>
+<body>
+<div class="doc">
+<h1>Order Change Notice (OCN), mock</h1>
+<p class="sub">Draws the RECOMMENDED answers of the behaviour card (<code>documentation/plans/procurement/CARD-ocn-order-change-notice-12nov.md</code>). Each spot that depends on a question carries a dashed purple tag <span class="dtag" style="margin:0">Q1</span> to <span class="dtag" style="margin:0">Q5</span>. Q1 four types as an editable lookup. Q2 risk shown, no routing. Q3 structured lines plus description. Flow (owner d1): salesperson, sales admin, management, Customer Service, exactly like the purchase request and sponsorship form; no Purchasing step. Q5 project optional. All names, numbers and codes are invented. FE = <code>sorento_crm_frontend/</code>.</p>
+<p class="sub b">v4: owner approval 13 Nov, menu under Project Sales Admin, form in the sample request design.</p>
+
+<!-- ================= FRAME 1 LIST -->
+<h2 class="ft">1. List, Project Sales Admin &rsaquo; Order Change Notices (1280)</h2>
+<div class="layout">
+<div class="scroll"><div class="frame w1280"><div class="shell">
+ <div class="side"><div class="brand">Sorento</div><div class="grp">Project Sales Admin</div><div class="it">Sales Orders</div><div class="it">Consignment</div><div class="it">Purchase Requests</div><div class="it">Sponsorship Forms</div><div class="it on">Order Change Notices</div><div class="it">Sponsorship Report</div></div>
+ <div class="main"><div class="topbar"></div><div class="content">
+  <div class="phdr rel"><div><h1>Order Change Notices</h1><div class="crumb">Dashboards &rsaquo; Project Sales Admin &rsaquo; Order Change Notices</div></div><span class="co pin">1</span></div>
+  <div class="toolbar rel"><div class="inp ph search">Search</div><span class="btn out">Filters</span><span class="btn out">Columns</span><span style="flex:1"></span><span class="btn">Create</span><span class="co pin" style="top:-14px">2</span></div>
+  <div class="toolbar rel xs"><span class="badge2">Status: Pending approval, Approved &times;</span><span class="badge2">Type: Exchange, Cancellation &times;</span><span class="badge2">Risk: any</span><span class="co pin" style="top:-8px;right:auto;left:640px">3</span></div>
+  <div class="rel"><span class="co pin" style="right:auto;left:-8px;top:-8px;z-index:6">4</span>
+  <table class="grid">
+   <colgroup><col style="width:120px"><col style="width:96px"><col style="width:130px"><col style="width:140px"><col style="width:110px"><col style="width:90px"><col style="width:150px"><col style="width:120px"><col style="width:120px"><col style="width:100px"></colgroup>
+   <tr><th>OCN no. &uarr;</th><th>Date</th><th>Customer</th><th>Customer PO no.</th><th>Type</th><th>Risk</th><th>Project</th><th>Sales in charge</th><th>Status</th><th>SLA due</th></tr>
+   <tr><td>OCN26-0305</td><td>12/11/2026</td><td>Customer D</td><td>PO-D-1120</td><td>Delay</td><td><span class="pill">Low</span></td><td>Project Beta Residence</td><td>Sales Person A</td><td><span class="pill">Draft</span></td><td>-</td></tr>
+   <tr class="on"><td>OCN26-0304</td><td>10/11/2026</td><td>Customer C</td><td>PO-C-0091</td><td>Advance</td><td><span class="pill">Low</span></td><td>Project Alpha Tower</td><td>Sales Person A</td><td><span class="pill ok">Approved</span></td><td>13/11/2026</td></tr>
+   <tr><td>OCN26-0303</td><td>06/11/2026</td><td>Customer B Sdn Bhd</td><td>300/4800002913</td><td>Cancellation</td><td><span class="pill red">Highest</span></td><td>Project Beta Residence</td><td>Sales Person A</td><td><span class="pill amber">Pending approval</span></td><td>09/11/2026</td></tr>
+   <tr><td>OCN26-0302</td><td>03/11/2026</td><td>Customer A</td><td>XT04/3871 (R1)</td><td>Exchange</td><td><span class="pill amber">High</span></td><td>Project Alpha Tower</td><td>Sales Person A</td><td><span class="pill blue">Submitted</span></td><td>04/11/2026</td></tr>
+   <tr><td>OCN26-0301</td><td>29/10/2026</td><td>Customer A</td><td>XT04/3871 (R1)</td><td>Exchange</td><td><span class="pill amber">High</span></td><td>Project Alpha Tower</td><td>Sales Person A</td><td><span class="pill ok">Done</span></td><td>-</td></tr>
+  </table></div>
+  <div class="pager"><span>5 of 5</span><span>Rows per page 25</span></div>
+ </div></div></div></div>
+<div class="notes"><ol>
+ <li><span class="co">1</span><div><b>Page header</b>Title and breadcrumb. No subtitle, no button here (one CTA, in the toolbar).<span class="ref">components/common/PageHeader.tsx ; menu: config/menu.config.tsx (new entry in Project Sales Admin, between Sponsorship Forms and Sponsorship Report, two places)</span></div></li>
+ <li><span class="co">2</span><div><b>One toolbar row</b>Search, Filters, Columns, Create. Create opens the dedicated raise page.<span class="ref">components/ui/data-grid-list-toolbar.tsx ; pattern: procurement-management/purchase-requests/components/PurchaseRequestsList.tsx (new OrderChangeNoticesList.tsx)</span></div></li>
+ <li><span class="co">3</span><div><b>Multi-select filters</b>Status, Type, Risk as chips.<span class="ref">components/common/SearchableMultiSelect.tsx ; components/ui/data-grid-column-filter.tsx ; filter pattern PurchaseRequestsList.multiFilters.test.tsx</span></div></li>
+ <li><span class="co">4</span><div><b>DataGrid, single-line rows, all columns sortable, no action column</b>Fixed layout, resizable columns, explicit sizes, truncate. Row click opens the detail (rowHref). Status via status pill, Risk via Badge. Dates dd/mm/yyyy.<span class="ref">components/ui/data-grid.tsx, data-grid-table.tsx, data-grid-column-header.tsx ; lib/status-pill.ts (statusPillClass) ; components/ui/badge.tsx ; lib/helpers.ts formatDate ; list contract: sorento_crm_backend/app/services/list_query_registry.py (new entry)</span></div></li>
+</ol></div></div></div>
+
+<!-- ================= FRAME 2 FORM -->
+<h2 class="ft">2. Raise form, Create page, sample request design (1280 and 375)</h2>
+<div class="layout">
+<div class="scroll"><div class="frame w1280"><div class="shell">
+ <div class="side"><div class="brand">Sorento</div><div class="grp">Project Sales Admin</div><div class="it">Sales Orders</div><div class="it">Consignment</div><div class="it">Purchase Requests</div><div class="it">Sponsorship Forms</div><div class="it on">Order Change Notices</div><div class="it">Sponsorship Report</div></div>
+ <div class="main"><div class="topbar"></div><div class="content">
+  <div class="dcard rel"><span class="co pin">1</span>
+   <div class="dtop rel"><span class="badge2">Order Change Notice</span><span class="pill">Draft</span><span class="co pin">2</span></div>
+   <h2 class="dt">Order Change Notice</h2>
+   <div class="dg"><div class="rel"><label class="lbl">Sales Person</label><div class="rv">Sales Person A</div><span class="co pin">3</span></div><div class="rel"><label class="lbl">Date</label><div class="rv">12/11/2026</div></div><div class="rel full"><label class="lbl">Customer Name <span class="req">*</span></label><div class="inp">Customer A<span class="muted">search</span></div><span class="co pin">4</span></div><div class="rel"><label class="lbl">Customer PO No. <span class="req">*</span></label><div class="inp">XT04/3871 (R1)</div></div><div class="rel"><label class="lbl">SO No.</label><div class="inp ph">Optional</div></div><div class="rel"><label class="lbl">Registered project (optional) <span class="dtag">Q5</span></label><div class="inp">Project Alpha Tower<span class="muted">x</span></div><span class="co pin">5</span></div><div class="rel"><label class="lbl">C.S. Incharge</label><div class="inp">CS Person A<span class="muted">x</span></div></div><div class="rel"><label class="lbl">Sales Incharge</label><div class="inp">Sales Person A<span class="muted">x</span></div></div>
+    <div class="rel full"><label class="lbl">Type of change <span class="req">*</span> <span class="dtag">Q1</span><span class="dtag">Q2</span></label>
+    <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px"><div class="seg"><span>Advance</span><span class="on">Exchange</span><span>Cancellation</span><span>Delay</span></div><span class="risk" style="margin-left:4px"><span class="muted xs">Risk</span><span class="pill amber">High</span></span></div>
+    <div class="xs muted" style="margin-top:8px">Exchange: check delivered stock and whether the supplier order can be switched.</div><span class="co pin">6</span></div>
+   </div>
+   <div class="lh rel"><h3>Line items</h3><span class="btn out sm">+ Add row</span><span class="co pin">7</span></div>
+   <table class="grid">
+    <colgroup><col style="width:44px"><col style="width:140px"><col style="width:96px"><col style="width:90px"><col style="width:104px"><col style="width:104px"><col style="width:84px"><col><col style="width:44px"></colgroup>
+    <tr><th>No.</th><th>Item Code</th><th>Qty before</th><th>Qty after</th><th>Date before</th><th>Date after</th><th>Delivered</th><th>Remark</th><th></th></tr>
+    <tr><td>1</td><td>ABC123-RL</td><td>842</td><td>0</td><td>15/01/2027</td><td>15/01/2027</td><td>12</td><td>Collect back 12 sets</td><td><span class="ib" style="width:26px;height:26px">x</span></td></tr>
+    <tr><td>2</td><td>ABC123-SH</td><td>0</td><td>842</td><td>15/01/2027</td><td>15/01/2027</td><td>0</td><td>Replacement</td><td><span class="ib" style="width:26px;height:26px">x</span></td></tr>
+   </table>
+   <div class="rel" style="margin-top:32px"><label class="lbl">Description</label><div class="inp" style="min-height:70px;align-items:flex-start">Customer replaces ABC123-RL with ABC123-SH, same delivery date.</div><span class="co pin">8</span></div>
+   <div class="rel" style="margin-top:24px"><label class="lbl">Attachments</label><div class="drop">Drop files or browse</div><span class="co pin">9</span></div>
+   <div class="dbtns rel"><span class="btn out">Cancel</span><span class="btn out">Save as draft</span><span class="btn">Submit</span><span class="co pin">10</span></div>
+  </div>
+ </div></div></div></div>
+<div class="notes"><ol>
+ <li><span class="co">1</span><div><b>Shell: centred card, 2px border</b>Max width 5xl, padding 5/10, dedicated create page. Same shell as the sample request form. No page header buttons; the buttons sit at the bottom of the card.<span class="ref">app/(protected)/project-sales/sample-requests/components/SampleRequestForm.tsx (shell, lines 280-300; new OrderChangeNoticeForm.tsx under procurement-management/order-change-notices/components/)</span></div></li>
+ <li><span class="co">2</span><div><b>Secondary Badge plus status pill</b>Badge "Order Change Notice" top-left, status pill "Draft" beside it.<span class="ref">components/ui/badge.tsx ; lib/status-pill.ts (statusPillClass, STATUS_PILL_BASE)</span></div></li>
+ <li><span class="co">3</span><div><b>DocField and ReadValue</b>Muted label above the value, two-column grid, one column below sm. Sales Person and Date are read-only (ReadValue), Date shown dd/mm/yyyy.<span class="ref">SampleRequestForm.tsx (DocField, ReadValue) ; lib/helpers.ts formatDateInMalaysia</span></div></li>
+ <li><span class="co">4</span><div><b>Customer Name, searchable, full width</b>Free text kept as fallback. Customer PO No. and SO No. are plain inputs.<span class="ref">components/common/AsyncCombobox.tsx ; lookupCustomersForRequest (as in SampleRequestForm.tsx)</span></div></li>
+ <li><span class="co">5</span><div><b>Registered project, optional, searchable, clearable (Q5)</b>C.S. and Sales Incharge are user pickers.<span class="ref">components/common/SearchableSelect.tsx ; searchProjectsForLink ; services/userSelectService.ts</span></div></li>
+ <li><span class="co">6</span><div><b>Type of change, full width</b>Four-way choice from the admin lookup (Q1), risk read-only (Q2), guide text muted on one line. Segmented look is new; built on the toggle group.<span class="ref">components/ui/toggle-group.tsx ; components/ui/badge.tsx (risk)</span></div></li>
+ <li><span class="co">7</span><div><b>Line items heading row plus line table</b>Outline "Add row" button, table columns No., Item Code, Qty before, Qty after, Date before, Date after, Delivered, Remark, remove icon. OCN gets its own shared OrderChangeNoticeLines built the same way.<span class="ref">components/common/SampleRequestLines.tsx (line table pattern) ; new components/common/OrderChangeNoticeLines.tsx</span></div></li>
+ <li><span class="co">8</span><div><b>Description, full width</b><span class="ref">SampleRequestFooterFields pattern in SampleRequestForm.tsx ; components/ui/textarea.tsx</span></div></li>
+ <li><span class="co">9</span><div><b>Attachments</b><span class="ref">purchase-requests/components/PurchaseRequestAttachmentsSection.tsx</span></div></li>
+ <li><span class="co">10</span><div><b>Buttons bottom-right</b>Cancel (outline), Save as draft (outline), Submit (filled). Stack on mobile.<span class="ref">SampleRequestForm.tsx (button row, lines 490-510)</span></div></li>
+</ol></div>
+<div class="frame w375"><div class="mbar">Sorento</div><div class="content">
+ <div class="dcard">
+  <div class="dtop"><span class="badge2">Order Change Notice</span><span class="pill">Draft</span></div>
+  <h2 class="dt">Order Change Notice</h2>
+  <div class="dg"><div class="rel"><label class="lbl">Sales Person</label><div class="rv">Sales Person A</div><span class="co pin" hidden>3</span></div><div class="rel"><label class="lbl">Date</label><div class="rv">12/11/2026</div></div><div class="rel full"><label class="lbl">Customer Name <span class="req">*</span></label><div class="inp">Customer A<span class="muted">search</span></div><span class="co pin" hidden>4</span></div><div class="rel"><label class="lbl">Customer PO No. <span class="req">*</span></label><div class="inp">XT04/3871 (R1)</div></div><div class="rel"><label class="lbl">SO No.</label><div class="inp ph">Optional</div></div><div class="rel"><label class="lbl">Registered project (optional) <span class="dtag">Q5</span></label><div class="inp">Project Alpha Tower<span class="muted">x</span></div><span class="co pin" hidden>5</span></div><div class="rel"><label class="lbl">C.S. Incharge</label><div class="inp">CS Person A<span class="muted">x</span></div></div><div class="rel"><label class="lbl">Sales Incharge</label><div class="inp">Sales Person A<span class="muted">x</span></div></div>
+   <div class="rel full"><label class="lbl">Type of change <span class="req">*</span> <span class="dtag">Q1</span><span class="dtag">Q2</span></label>
+    <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px"><div class="seg"><span>Advance</span><span class="on">Exchange</span><span>Cancellation</span><span>Delay</span></div><span class="risk" style="margin-left:4px"><span class="muted xs">Risk</span><span class="pill amber">High</span></span></div>
+    <div class="xs muted" style="margin-top:8px">Exchange: check delivered stock and whether the supplier order can be switched.</div></div>
+  </div>
+  <div class="lh"><h3>Line items</h3><span class="btn out sm">+ Add row</span></div>
+  <div class="scroll"><table class="grid" style="width:780px">
+    <colgroup><col style="width:44px"><col style="width:140px"><col style="width:96px"><col style="width:90px"><col style="width:104px"><col style="width:104px"><col style="width:84px"><col><col style="width:44px"></colgroup>
+    <tr><th>No.</th><th>Item Code</th><th>Qty before</th><th>Qty after</th><th>Date before</th><th>Date after</th><th>Delivered</th><th>Remark</th><th></th></tr>
+    <tr><td>1</td><td>ABC123-RL</td><td>842</td><td>0</td><td>15/01/2027</td><td>15/01/2027</td><td>12</td><td>Collect back 12 sets</td><td><span class="ib" style="width:26px;height:26px">x</span></td></tr>
+    <tr><td>2</td><td>ABC123-SH</td><td>0</td><td>842</td><td>15/01/2027</td><td>15/01/2027</td><td>0</td><td>Replacement</td><td><span class="ib" style="width:26px;height:26px">x</span></td></tr>
+   </table></div>
+  <div class="rel" style="margin-top:32px"><label class="lbl">Description</label><div class="inp" style="min-height:70px;align-items:flex-start">Customer replaces ABC123-RL with ABC123-SH, same delivery date.</div></div>
+  <div class="rel" style="margin-top:24px"><label class="lbl">Attachments</label><div class="drop">Drop files or browse</div></div>
+  <div class="dbtns"><span class="btn out">Cancel</span><span class="btn out">Save as draft</span><span class="btn">Submit</span></div>
+ </div>
+</div></div>
+</div></div>
+
+<!-- ================= FRAME 3 DETAIL -->
+<h2 class="ft">3. Detail page /procurement-management/order-change-notices/{id} (1280)</h2>
+<div class="layout">
+<div class="scroll"><div class="frame w1280"><div class="shell">
+ <div class="side"><div class="brand">Sorento</div><div class="grp">Project Sales Admin</div><div class="it">Sales Orders</div><div class="it">Consignment</div><div class="it">Purchase Requests</div><div class="it">Sponsorship Forms</div><div class="it on">Order Change Notices</div><div class="it">Sponsorship Report</div></div>
+ <div class="main"><div class="topbar"></div><div class="content">
+  <div class="phdr rel"><div><h1>OCN26-0303 <span class="pill amber">Pending approval</span></h1><div class="crumb">Customer B Sdn Bhd, PO 300/4800002913</div></div>
+   <div style="display:flex;gap:8px;align-items:center"><span class="ib">&lt;</span><span class="xs muted">3 of 5</span><span class="ib">&gt;</span><span class="ib">gear</span><span class="ib">print</span><span class="btn">Approve</span></div><span class="co pin">1</span></div>
+  <div class="meta rel"><div><span>Created by</span>Sales Person A</div><div><span>Created</span>06/11/2026</div><div><span>Revision</span>1</div><div><span>Source</span>CRM</div><div><span>SLA due</span>09/11/2026</div><span class="co pin">2</span></div>
+  <div class="tabs rel"><div class="on">Details</div><div>Conversation</div><div>SLA</div><div>Revisions</div><div>History</div><span class="co pin">3</span></div>
+  <div class="card"><div class="ch">Order details</div><div class="cb"><div class="kv">
+   <div><span>Date</span>06/11/2026</div><div><span>Customer</span>Customer B Sdn Bhd</div><div><span>Customer PO no.</span>300/4800002913</div>
+   <div><span>SO no.</span>-</div><div><span>Project</span>Project Beta Residence</div><div><span>C.S. in charge</span>CS Person A</div><div><span>Sales in charge</span>Sales Person A</div>
+   <div><span>Type of change</span>Cancellation <span class="pill red">Highest</span></div></div></div></div>
+  <div class="card"><div class="ch">Affected lines</div><div class="cb"><table class="grid">
+   <colgroup><col style="width:190px"><col style="width:90px"><col style="width:90px"><col style="width:110px"><col style="width:110px"><col style="width:90px"><col></colgroup>
+   <tr><th>Product</th><th>Qty before</th><th>Qty after</th><th>Date before</th><th>Date after</th><th>Delivered</th><th>Remark</th></tr>
+   <tr><td>XYZ456A-SS</td><td>976 sets</td><td>956 sets</td><td>-</td><td>-</td><td>0 sets</td><td>Customer cuts 20 sets</td></tr></table></div></div>
+  <div class="card"><div class="ch">Description</div><div class="cb">Quantity cut of 20 sets on the customer PO.</div></div>
+  <div class="card"><div class="ch">Attachments</div><div class="cb xs muted">Revised customer PO.pdf</div></div>
+  <div class="g g2 rel">
+   <div class="card" style="grid-column:1/-1"><div class="ch">Customer Service comment</div><div class="cb"><div class="empty"><b>No comment yet</b><span class="muted xs">Customer Service adds it after approval.</span></div></div></div><span class="co pin" style="top:-2px">4</span></div>
+  <div class="rel"><div class="sign"><div><span>Decision</span><b>Pending</b></div><div><span>Name</span>Manager A</div><div><span>Date</span>dd/mm/yyyy</div><div><span>Remarks</span>-</div></div><span class="co pin">5</span></div>
+ </div></div></div></div>
+<div class="notes"><ol>
+ <li><span class="co">1</span><div><b>Record header</b>Number and status pill on one line, one short subtitle, prev/next pager, gear, print, one main button (Approve for the approver; Submit, Send for approval or Revise for others).<span class="ref">components/common/PageHeader.tsx ; components/common/RecordNavigation.tsx ; components/common/DetailActions.tsx, DetailActionsMenu.tsx ; lib/status-pill.ts ; shell pattern PurchaseRequestDetail.tsx (new OrderChangeNoticeDetail.tsx)</span></div></li>
+ <li><span class="co">2</span><div><b>Read-only metadata under the header</b><span class="ref">components/common/RecordHeaderCard.tsx</span></div></li>
+ <li><span class="co">3</span><div><b>Line tabs</b>Details, Conversation, SLA, Revisions, History.<span class="ref">sla-management/_shared/FormDetailWithSLATabs.tsx ; purchase-requests/components/PurchaseRequestConversationPanel.tsx ; components/common/comments/FormComments.tsx ; components/common/RevisionTimeline.tsx ; components/audit/AuditTrail.tsx</span></div></li>
+ <li><span class="co">4</span><div><b>Same layout as the form, read-only, then the Customer Service comment</b>Optional box CS fills while processing after approval; empty state (heading and hint, no button) until then. No Purchasing box (owner d1).<span class="ref">PurchaseRequestDetail.tsx (read-only sections) ; components/common/FormSection.tsx ; line grid InlineLineTable.tsx</span></div></li>
+ <li><span class="co">5</span><div><b>Management sign-off block</b>Decision, name, date, remarks.<span class="ref">purchase-requests/components/PurchaseRequestSignoffFooter.tsx (variant detailCard; reused, made generic in the build)</span></div></li>
+</ol></div></div></div>
+
+<!-- SLA tab -->
+<h2 class="ft">3b. SLA tab (smaller frame)</h2>
+<div class="layout">
+<div class="scroll"><div class="frame w900"><div class="content">
+ <div class="tabs"><div>Details</div><div>Conversation</div><div class="on rel">SLA<span class="co pin" style="right:-30px;top:-6px">1</span></div><div>Revisions</div><div>History</div></div>
+ <table class="grid">
+  <colgroup><col style="width:210px"><col style="width:170px"><col style="width:120px"><col></colgroup>
+  <tr><th>Step</th><th>Assignee team</th><th>Due</th><th>State</th></tr>
+  <tr><td>Admin check</td><td>Project Sales Admin</td><td>07/11/2026</td><td><span class="pill ok">Done</span></td></tr>
+  <tr><td>Management approval</td><td>Management</td><td>10/11/2026</td><td><span class="pill amber">Running</span></td></tr>
+  <tr><td>Customer service action</td><td>Customer Service</td><td>-</td><td><span class="pill">Not started</span></td></tr>
+ </table></div></div>
+<div class="notes"><ol>
+ <li><span class="co">1</span><div><b>SLA tracking tab</b>One row per step with team, due and state. Steps exactly as the purchase request today: Admin check (Project Sales Admin, 24 h) on submit, Management approval (Project Sales Manager 72 h, then Director 24 h) on send for approval, Customer service action on approval. Same teams, new SLA key.<span class="ref">sla-management/_shared/FormSLATrackingTab.tsx ; sorento_crm_backend/app/services/form_sla_service.py (new key order_change_notice)</span></div></li>
+</ol></div></div>
+
+<!-- ================= FRAME 4 PROJECT PANEL -->
+<h2 class="ft">4. Project page panel, "Order change notices" (1280)</h2>
+<div class="layout">
+<div class="scroll"><div class="frame w1280"><div class="content">
+ <div class="b" style="font-size:12px;color:var(--muted);margin-bottom:10px">Project Alpha Tower</div>
+ <div class="card rel"><div class="ch">Order change notices<span class="co pin">1</span></div><div class="cb">
+  <table class="grid">
+   <colgroup><col style="width:140px"><col style="width:120px"><col style="width:150px"><col style="width:150px"><col></colgroup>
+   <tr><th>OCN no.</th><th>Date</th><th>Type</th><th>Status</th><th>Customer PO no.</th></tr>
+   <tr><td>OCN26-0304</td><td>10/11/2026</td><td>Advance</td><td><span class="pill ok">Approved</span></td><td>PO-C-0091</td></tr>
+   <tr><td>OCN26-0302</td><td>03/11/2026</td><td>Exchange</td><td><span class="pill blue">Submitted</span></td><td>XT04/3871 (R1)</td></tr>
+  </table></div></div>
+ <div class="card rel"><div class="ch">Order change notices (Project Beta Residence)<span class="co pin">2</span></div><div class="cb"><div class="empty"><b>No order change notices</b><span class="muted xs">Notices raised for this project appear here.</span></div></div></div>
+</div></div></div>
+<div class="notes"><ol>
+ <li><span class="co">1</span><div><b>Panel with a small DataGrid</b>Rows open the notice. Sourced from a project endpoint in the sponsorships shape. Plugged in by the PROJECT-RELATED-RECORDS lane.<span class="ref">app/(protected)/project-sales/[projectId]/components/SampleRequestsPanel.tsx (new OrderChangeNoticesPanel.tsx) ; mounted in ProjectDetailClient.tsx ; components/ui/data-grid.tsx</span></div></li>
+ <li><span class="co">2</span><div><b>Empty state</b>Heading and hint, no button (one CTA per page). A notice with no project never shows here (Q5).<span class="ref">components/ui/data-grid-table.tsx (empty state) ; pattern SampleRequestsPanel.tsx</span></div></li>
+</ol></div></div>
+
+<!-- ================= FRAME 5 AMENDMENT REUSES AN OCN -->
+<h2 class="ft">5. One change, one notice: an amendment on the same project SO picks the existing OCN (dialog, 1280)</h2>
+<div class="layout">
+<div class="scroll"><div class="frame w900"><div class="content">
+ <div class="card rel" style="max-width:460px;margin:0 auto"><div class="ch">Create the amendment<span class="co pin">1</span></div><div class="cb">
+  <div class="muted xs" style="margin-bottom:10px">2 rows from version 1 to version 2.</div>
+  <div class="rel" style="margin-bottom:10px"><div class="xs b" style="margin-bottom:4px">Order change notice <span class="dtag">d2</span></div><div class="inp">OCN26-0302, Exchange, Approved<span class="muted">x</span></div><span class="co pin">2</span>
+   <div class="dd"><div>Draft a new notice from this change</div><div class="hl">OCN26-0302, Exchange, Approved</div><div>OCN26-0304, Advance, Approved</div></div></div>
+  <div class="xs b" style="margin-bottom:4px">Reason <span class="req">*</span></div><div class="inp ta">Customer revised PO (R1), model change</div>
+  <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px"><span class="btn out">Cancel</span><span class="btn">Create amendment</span></div>
+ </div></div>
+ <div class="card rel" style="margin-top:18px"><div class="ch">OCN26-0302, Details: linked amendment<span class="co pin">3</span></div><div class="cb">
+  <table class="grid"><colgroup><col style="width:160px"><col style="width:160px"><col style="width:140px"><col></colgroup>
+  <tr><th>Sales order</th><th>Amendment</th><th>Status</th><th>Change</th></tr>
+  <tr><td>PSO-ALPHA-01</td><td>Version 1 to 2</td><td><span class="pill">Proposed</span></td><td>Model change 842 sets, Collect back 12 sets</td></tr></table>
+ </div></div>
+</div></div></div>
+<div class="notes"><ol>
+ <li><span class="co">1</span><div><b>Existing amendment dialog, one field added</b>Today it always drafts a new notice. It keeps doing that by default.<span class="ref">app/(protected)/project-sales/[projectId]/components/AmendmentCreateDialog.tsx ; BE services/project_so_delta_service.py:728 _persist_amendment</span></div></li>
+ <li><span class="co">2</span><div><b>Pick, never match</b>A searchable, clearable select of this project's notices not yet linked to another amendment. The person picks; nothing is linked by PO text. Picked = no second notice is drafted; the amendment publishes only once that notice is approved (d2).<span class="ref">components/common/SearchableSelect.tsx ; rule: no automatic name matching</span></div></li>
+ <li><span class="co">3</span><div><b>The notice shows its amendment read-only</b>The notice's own lines stay as the salesperson wrote them; the linked amendment's change rows show beside them, read-only. A hand-raised notice never creates an amendment.<span class="ref">PurchaseRequestDetail.tsx section pattern ; components/ui/data-grid-table.tsx</span></div></li>
+</ol></div></div>
+</div>
+</div>
+</body>
+</html>

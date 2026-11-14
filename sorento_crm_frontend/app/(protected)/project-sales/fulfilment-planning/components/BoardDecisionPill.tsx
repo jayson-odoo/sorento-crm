@@ -14,6 +14,7 @@ import type {
   BoardDecision,
 } from '../../_shared/types/fulfilmentPlanning.types';
 import { outsidePlanningSentence, unplannableLabel } from '../../_shared/lib/supplyVocabulary';
+import { isBookCancelled } from '../../_shared/lib/boardAmend';
 
 /**
  * How far one line has got, in one word (R6).
@@ -152,6 +153,7 @@ export function verdictOf(
     BoardContribution,
     | 'cancelled'
     | 'cancelled_at'
+    | 'pending_change_batch_id'
     | 'cancel_open_oi_rows'
     | 'unplannable'
     | 'covered'
@@ -183,6 +185,11 @@ export function verdictOf(
   // CANCEL-STOP-AT-SO: an AutoCount Cancel SO left live order inquiry rows for CS to handle,
   // so nothing about the line is settled yet. With the Transfer to Cancel SO the sync (or CS)
   // saved it reads Saved, waiting for Confirm; dismissed, it wears Cancelled.
+  // OI-WHOLE-SO-CANCEL F2: a cancel the book proposed waits on CS like any pending change -
+  // "Change proposed" until saved, "Saved" after.
+  if (isBookCancelled(contribution)) {
+    return draftSource && !isPreMarkOnly(contribution, decision) ? 'saved' : 'change_proposed';
+  }
   if (contribution.cancelled_at) {
     if (!contribution.cancel_open_oi_rows) return 'confirmed';
     return draftSource?.verdict === 'cancelled' ? 'saved' : 'cancelled';
