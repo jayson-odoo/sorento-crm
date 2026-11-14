@@ -1,12 +1,15 @@
-"""Lane FILTER-MULTISELECT, PR 1: the contacts list's Company filter and Companies column.
+"""The contacts list's Company filter, Companies column and sort (FILTER-MULTISELECT PR1, then
+CONTACT-COMPANIES-COL).
 
-Owner, 27 Oct: "here need to be able to filter by companies" and "show the companies column also".
-A contact's companies are the companies of its linked customers (``respond_contact_customers`` ->
-``customers.company_id``), read across every company the viewer is granted, the same reach as the
-Customers column. The filter is multi-select: ``company`` repeats or comma-joins, values OR-ed.
+Owner, 14 Nov (CONTACT-COMPANIES-COL), on the list showing one company and the detail two: "it
+should follow the detail page". A contact's companies are its COMPANY ACCESS
+(``respond_contact_companies``), the list read through the same function as the detail page's
+``GET /contacts/{id}/companies``; linked customers no longer decide them. The read stays
+superadmin-only (PLAN-user-management-read-gates.md:138): anyone else gets an empty list.
+The filter is multi-select: ``company`` repeats or comma-joins, values OR-ed.
 
-Red tests written before the implementation. Postgres only (``blank_session``); every row is
-seeded here. Assertions go through the HTTP response (``response_model`` drops undeclared fields).
+Postgres only (``blank_session``); every row is seeded here. Assertions go through the HTTP
+response (``response_model`` drops undeclared fields).
 """
 from __future__ import annotations
 
@@ -21,7 +24,7 @@ from app.main import app  # noqa: E402
 from app.dependencies import get_current_user, get_current_user_or_api_key, get_db
 from app.models.access import RespondContact, RespondContactCustomer
 from app.models.base import set_company_scope
-from app.models.company import Company
+from app.models.company import Company, RespondContactCompany
 from app.models.order import Customer
 from app.services.company_scope import DEFAULT_COMPANY_ID
 from app.services.company_scope_resolver import apply_company_scope
@@ -46,7 +49,7 @@ def db():
 @pytest.fixture
 def state():
     """Mutable scope the request override reads on every call."""
-    return {"scope": frozenset({SORENTO, MOCHA_ID})}
+    return {"scope": frozenset({SORENTO, MOCHA_ID}), "superadmin": True}
 
 
 @pytest.fixture
@@ -74,6 +77,11 @@ def client(db, state, monkeypatch):
         UserPermissionService,
         "check_user_has_permission",
         lambda self, uid, slug: slug == CONTACT_VIEW,
+    )
+    monkeypatch.setattr(
+        UserPermissionService,
+        "get_user_role_slugs",
+        lambda self, uid: {"superadmin"} if state["superadmin"] else set(),
     )
     try:
         yield TestClient(app)
@@ -109,25 +117,36 @@ def _link(db, contact, customer) -> None:
     db.flush()
 
 
+def _access(db, contact, *company_ids) -> None:
+    for company_id in company_ids:
+        db.add(RespondContactCompany(respond_contact_id=contact.id, company_id=company_id))
+    db.flush()
+
+
 def _name(db, company_id: str) -> str:
     return db.query(Company.name).filter(Company.id == company_id).scalar()
 
 
 @pytest.fixture
 def seeded(db):
-    """both: a Sorento and a Mocha customer (Mocha linked first); sorento / mocha: one each,
-    sorento with two Sorento customers (one company, listed once); none: no customer."""
+    """The owner's case and its mirror images, access vs linked customers:
+    owner: access Sorento + Mocha, linked customers only in Mocha (list showed 1, detail 2);
+    sorento: access Sorento only, but a Mocha customer linked;
+    mocha: access Mocha only, no customer;
+    none: no access, but a Sorento customer linked."""
     tag = unique_code("T")
-    both = _contact(db, f"{tag}-both")
+    owner = _contact(db, f"{tag}-own")
     sorento = _contact(db, f"{tag}-srt")
     mocha = _contact(db, f"{tag}-mch")
     none = _contact(db, f"{tag}-none")
-    _link(db, both, _customer(db, MOCHA_ID))
-    _link(db, both, _customer(db, SORENTO))
-    _link(db, sorento, _customer(db, SORENTO))
-    _link(db, sorento, _customer(db, SORENTO))
-    _link(db, mocha, _customer(db, MOCHA_ID))
-    return dict(tag=tag, both=both, sorento=sorento, mocha=mocha, none=none)
+    for _ in range(3):
+        _link(db, owner, _customer(db, MOCHA_ID))
+    _access(db, owner, MOCHA_ID, SORENTO)
+    _link(db, sorento, _customer(db, MOCHA_ID))
+    _access(db, sorento, SORENTO)
+    _access(db, mocha, MOCHA_ID)
+    _link(db, none, _customer(db, SORENTO))
+    return dict(tag=tag, owner=owner, sorento=sorento, mocha=mocha, none=none)
 
 
 def _list(client, params):
@@ -142,49 +161,84 @@ def _ids(resp) -> set[str]:
     return {row["id"] for row in resp.json()["data"]}
 
 
+def _rows(client, tag) -> dict[str, dict]:
+    resp = _list(client, {"query": tag})
+    assert resp.status_code == 200, resp.text
+    return {row["id"]: row for row in resp.json()["data"]}
+
+
 # --- Companies column ---------------------------------------------------------------------
 
 
-def test_rows_carry_distinct_sorted_customer_company_names(client, db, seeded):
-    body = _list(client, {"query": seeded["tag"]}).json()
-    by_id = {row["id"]: row for row in body["data"]}
+def test_column_shows_company_access_not_linked_customers_companies(client, db, seeded):
+    rows = _rows(client, seeded["tag"])
     srt, mch = _name(db, SORENTO), _name(db, MOCHA_ID)
-    assert by_id[seeded["both"].id]["customer_companies"] == sorted([srt, mch])
-    # Two Sorento customers are one company, shown once.
-    assert by_id[seeded["sorento"].id]["customer_companies"] == [srt]
-    assert by_id[seeded["mocha"].id]["customer_companies"] == [mch]
-    assert by_id[seeded["none"].id]["customer_companies"] == []
+    # The owner's case: three Mocha customers, access to both companies -> both, sorted.
+    assert rows[seeded["owner"].id]["companies"] == sorted([srt, mch])
+    assert rows[seeded["sorento"].id]["companies"] == [srt]
+    assert rows[seeded["mocha"].id]["companies"] == [mch]
+    # A linked customer alone grants nothing.
+    assert rows[seeded["none"].id]["companies"] == []
 
 
-def test_column_reads_only_companies_the_viewer_can_see(client, state, seeded):
+def test_column_equals_the_detail_page_for_every_row(client, seeded):
+    """One function, one answer: the list cell is the detail page's chips, row for row."""
+    rows = _rows(client, seeded["tag"])
+    assert len(rows) == 4
+    for contact_id, row in rows.items():
+        detail = client.get(f"{CONTACTS}{contact_id}/companies")
+        assert detail.status_code == 200, detail.text
+        assert row["companies"] == [c["name"] for c in detail.json()], contact_id
+
+
+def test_column_does_not_depend_on_the_viewers_active_company(client, db, state, seeded):
+    """Like the detail page: access is the contact's, whatever company the viewer works in."""
     state["scope"] = frozenset({SORENTO})
-    body = _list(client, {"query": seeded["tag"]}).json()
-    by_id = {row["id"]: row for row in body["data"]}
-    assert by_id[seeded["mocha"].id]["customer_companies"] == []
-    assert len(by_id[seeded["both"].id]["customer_companies"]) == 1
+    rows = _rows(client, seeded["tag"])
+    assert rows[seeded["mocha"].id]["companies"] == [_name(db, MOCHA_ID)]
+    assert len(rows[seeded["owner"].id]["companies"]) == 2
+
+
+def test_non_superadmin_gets_no_company_access_values(client, state, seeded):
+    """The access read stays superadmin-only (read-gates plan :138): withheld, not guessed."""
+    state["superadmin"] = False
+    rows = _rows(client, seeded["tag"])
+    assert all(row["companies"] == [] for row in rows.values())
+
+
+def test_old_customer_companies_field_is_gone(client, seeded):
+    rows = _rows(client, seeded["tag"])
+    assert all("customer_companies" not in row for row in rows.values())
 
 
 # --- Company filter -----------------------------------------------------------------------
 
 
-def test_one_company_lists_contacts_with_a_customer_there(client, seeded):
+def test_one_company_lists_contacts_with_access_there(client, seeded):
     ids = _ids(_list(client, {"query": seeded["tag"], "company": MOCHA_ID}))
-    assert ids == {seeded["both"].id, seeded["mocha"].id}
+    # `sorento` has a Mocha customer but no Mocha access: out.
+    assert ids == {seeded["owner"].id, seeded["mocha"].id}
+
+
+def test_filter_ignores_linked_customers(client, seeded):
+    ids = _ids(_list(client, {"query": seeded["tag"], "company": SORENTO}))
+    # `none` has a Sorento customer but no access: out.
+    assert ids == {seeded["owner"].id, seeded["sorento"].id}
 
 
 def test_repeated_company_values_are_or_ed(client, seeded):
     ids = _ids(_list(client, [("query", seeded["tag"]), ("company", MOCHA_ID), ("company", SORENTO)]))
-    assert ids == {seeded["both"].id, seeded["sorento"].id, seeded["mocha"].id}
+    assert ids == {seeded["owner"].id, seeded["sorento"].id, seeded["mocha"].id}
 
 
 def test_comma_joined_company_values_are_or_ed(client, seeded):
     ids = _ids(_list(client, {"query": seeded["tag"], "company": f"{SORENTO},{MOCHA_ID}"}))
-    assert ids == {seeded["both"].id, seeded["sorento"].id, seeded["mocha"].id}
+    assert ids == {seeded["owner"].id, seeded["sorento"].id, seeded["mocha"].id}
 
 
 def test_company_filter_ands_with_other_filters(client, seeded):
-    ids = _ids(_list(client, {"query": seeded["tag"], "company": SORENTO, "customers": "none"}))
-    assert ids == set()
+    ids = _ids(_list(client, {"query": seeded["tag"], "company": MOCHA_ID, "customers": "none"}))
+    assert ids == {seeded["mocha"].id}
 
 
 def test_company_filter_total_matches_rows(client, seeded):
@@ -193,52 +247,14 @@ def test_company_filter_total_matches_rows(client, seeded):
     assert len(body["data"]) == 1
 
 
-def test_company_outside_the_viewers_reach_matches_nothing(client, state, seeded):
-    """Fail closed: naming a company the viewer cannot see never reveals its links."""
-    state["scope"] = frozenset({SORENTO})
+def test_company_filter_matches_nothing_for_a_non_superadmin(client, state, seeded):
+    """Fail closed: a viewer who may not read access cannot learn it through the filter either."""
+    state["superadmin"] = False
     assert _ids(_list(client, {"query": seeded["tag"], "company": MOCHA_ID})) == set()
 
 
 def test_malformed_company_value_is_422(client, seeded):
     assert _list(client, {"company": "not-a-uuid"}).status_code == 422
-
-
-def _grant(db, user_id, *company_ids):
-    from app.models.company import UserCompany
-
-    for company_id in company_ids:
-        db.add(UserCompany(user_id=user_id, company_id=company_id))
-    db.flush()
-
-
-def test_column_and_filter_reach_every_granted_company_not_just_the_active_one(client, db, state, seeded):
-    """The list is company-less: a viewer working in Sorento who also holds Mocha sees Mocha."""
-    state["scope"] = frozenset({SORENTO})
-    _grant(db, state["actor_id"], SORENTO, MOCHA_ID)
-    body = _list(client, {"query": seeded["tag"]}).json()
-    by_id = {row["id"]: row for row in body["data"]}
-    assert by_id[seeded["mocha"].id]["customer_companies"] == [_name(db, MOCHA_ID)]
-    ids = _ids(_list(client, {"query": seeded["tag"], "company": MOCHA_ID}))
-    assert ids == {seeded["both"].id, seeded["mocha"].id}
-
-
-def test_a_link_stamped_with_another_company_than_its_customer_never_leaks_that_customers_company(
-    client, db, state
-):
-    """Nothing enforces a link's company matching its customer's; the filter checks both sides,
-    as the Companies sort does, so a Sorento-only viewer learns nothing about a Mocha customer."""
-    tag = unique_code("X")
-    contact = _contact(db, f"{tag}-odd")
-    mocha_customer = _customer(db, MOCHA_ID)
-    db.add(
-        RespondContactCustomer(
-            contact_id=contact.id, customer_id=mocha_customer.id, company_id=SORENTO, source="manual"
-        )
-    )
-    db.flush()
-    state["scope"] = frozenset({SORENTO})
-    _grant(db, state["actor_id"], SORENTO)
-    assert _ids(_list(client, {"query": tag, "company": MOCHA_ID})) == set()
 
 
 # --- Server-side sort ---------------------------------------------------------------------
@@ -250,14 +266,25 @@ def _order(client, tag, direction) -> list[str]:
     return [row["id"] for row in resp.json()["data"]]
 
 
-def test_sort_by_companies_uses_first_company_name_and_empty_sorts_last(client, db, seeded):
+def test_sort_by_companies_uses_first_access_company_and_empty_sorts_last(client, db, seeded):
     srt, mch = _name(db, SORENTO), _name(db, MOCHA_ID)
     assert srt != mch
     low_only, high_only = (seeded["mocha"], seeded["sorento"]) if mch < srt else (seeded["sorento"], seeded["mocha"])
-    # `both` sorts by its first company, the lower one, so it groups with `low_only`.
-    low = {seeded["both"].id, low_only.id}
+    # `owner` holds both, so it sorts by the lower name and groups with `low_only`.
+    low = {seeded["owner"].id, low_only.id}
     asc = _order(client, seeded["tag"], "asc")
     desc = _order(client, seeded["tag"], "desc")
     assert set(asc[:2]) == low and asc[2] == high_only.id and asc[3] == seeded["none"].id
-    # An empty cell sorts last both ways.
+    # An empty cell sorts last both ways; `none`'s linked customer does not count.
     assert desc[0] == high_only.id and set(desc[1:3]) == low and desc[3] == seeded["none"].id
+
+
+def test_sort_by_companies_reveals_nothing_to_a_non_superadmin(client, state, seeded):
+    """Withheld values must not leak through the order: a non-superadmin sorting by Companies gets
+    the list's default order (created_at, then name, then id), whichever direction."""
+    state["superadmin"] = False
+    for direction in ("asc", "desc"):
+        default = _list(client, {"query": seeded["tag"], "sort": "created_at", "dir": direction})
+        assert default.status_code == 200, default.text
+        expected = [row["id"] for row in default.json()["data"]]
+        assert _order(client, seeded["tag"], direction) == expected, direction

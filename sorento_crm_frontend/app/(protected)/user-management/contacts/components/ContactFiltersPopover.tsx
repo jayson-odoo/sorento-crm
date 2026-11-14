@@ -26,6 +26,8 @@ interface State {
   customersNone: boolean;
   noTags: boolean;
   companyIds: string[];
+  /** CONTACT-COMPANIES-COL: company access is superadmin-only to read, so is its filter. */
+  canFilterCompany?: boolean;
   setAccessFilters: (next: AccessFilters) => void;
   setCustomersNone: (on: boolean) => void;
   setNoTags: (on: boolean) => void;
@@ -46,11 +48,12 @@ export function useContactFiltersToolbar(s: State) {
   });
   const { data: accessTypes = [] } = useContactAccessTypes();
   // The companies the viewer can switch into: the company switcher's own query, so the cache is
-  // shared, and the reach the list's Company filter and Companies column read.
+  // shared. Fetched only for a viewer who may filter by company access.
   const { data: companyContext } = useQuery({
     queryKey: ['company-my-context'],
     queryFn: getMyCompanyContext,
     staleTime: 30 * 1000,
+    enabled: !!s.canFilterCompany,
   });
   const companyOptions = (companyContext?.companies ?? []).map((c) => ({
     value: c.id,
@@ -105,24 +108,26 @@ export function useContactFiltersToolbar(s: State) {
     ),
     content: (
       <div className="space-y-3" data-testid="contacts-filters-popover">
-        <SearchableMultiSelect
-          value={s.companyIds}
-          onChange={s.setCompanyIds}
-          options={companyOptions}
-          placeholder="Company: any"
-          // Names the filter like its siblings ("Access type: Dealer"), several values summarised.
-          renderTriggerLabel={(chosen) =>
-            chosen.length ? (
-              <span className="block truncate">
-                {multiChipLabel('Company', chosen.map((o) => o.label))}
-              </span>
-            ) : (
-              <span className="text-muted-foreground">Company: any</span>
-            )
-          }
-          triggerClassName="w-full"
-          clearable
-        />
+        {s.canFilterCompany && (
+          <SearchableMultiSelect
+            value={s.companyIds}
+            onChange={s.setCompanyIds}
+            options={companyOptions}
+            placeholder="Company: any"
+            // Names the filter like its siblings ("Access type: Dealer"), several values summarised.
+            renderTriggerLabel={(chosen) =>
+              chosen.length ? (
+                <span className="block truncate">
+                  {multiChipLabel('Company', chosen.map((o) => o.label))}
+                </span>
+              ) : (
+                <span className="text-muted-foreground">Company: any</span>
+              )
+            }
+            triggerClassName="w-full"
+            clearable
+          />
+        )}
         <ContactAccessFilters
           value={s.accessFilters}
           onChange={s.setAccessFilters}
