@@ -277,3 +277,14 @@ def test_sort_by_companies_uses_first_access_company_and_empty_sorts_last(client
     assert set(asc[:2]) == low and asc[2] == high_only.id and asc[3] == seeded["none"].id
     # An empty cell sorts last both ways; `none`'s linked customer does not count.
     assert desc[0] == high_only.id and set(desc[1:3]) == low and desc[3] == seeded["none"].id
+
+
+def test_sort_by_companies_reveals_nothing_to_a_non_superadmin(client, state, seeded):
+    """Withheld values must not leak through the order: a non-superadmin sorting by Companies gets
+    the list's default order (created_at, then name, then id), whichever direction."""
+    state["superadmin"] = False
+    for direction in ("asc", "desc"):
+        default = _list(client, {"query": seeded["tag"], "sort": "created_at", "dir": direction})
+        assert default.status_code == 200, default.text
+        expected = [row["id"] for row in default.json()["data"]]
+        assert _order(client, seeded["tag"], direction) == expected, direction

@@ -42,8 +42,17 @@ vi.mock('@/services/contactImpersonationService', () => ({ startContactImpersona
 vi.mock('next-auth/react', () => ({ useSession: () => ({ data: { user: { email: 'admin@zzt.test' } } }) }));
 // Company access is superadmin-only to read (PLAN-user-management-read-gates.md:138); crew 14 Nov:
 // everyone else gets neither the column nor the filter.
-const viewer = vi.hoisted(() => ({ superadmin: true }));
-vi.mock('@/lib/is-superadmin', () => ({ isSuperadminUser: () => viewer.superadmin }));
+const viewer = vi.hoisted(() => ({ superadmin: true, viewingAs: null as string | null }));
+vi.mock('@/lib/is-superadmin', () => ({
+  isSuperadminUser: (u?: { roleName?: string | null } | null) =>
+    u && 'roleName' in u ? u.roleName === 'superadmin' : viewer.superadmin,
+}));
+// A superadmin viewing as another user: the backend answers for the target, so the gate must too.
+vi.mock('@/lib/impersonation-store', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/impersonation-store')>()),
+  useImpersonationSession: () =>
+    viewer.viewingAs ? { targetUser: { role_name: viewer.viewingAs } } : null,
+}));
 vi.mock('@/hooks/usePermissions', () => ({ useHasPermission: () => true }));
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
@@ -131,6 +140,7 @@ const filtersButton = () => screen.getByRole('button', { name: /^filters/i });
 beforeEach(() => {
   vi.clearAllMocks();
   viewer.superadmin = true;
+  viewer.viewingAs = null;
   window.history.replaceState(null, '', '/user-management/contacts');
   urlState.search = new URLSearchParams();
   getContactsMock.mockResolvedValue({ data: [BOTH, NONE], pagination: { total: 2 } } as never);
@@ -165,6 +175,17 @@ describe('ContactsList - Companies hidden from a viewer who cannot read company 
     await screen.findByText('+60100000021');
     expect(screen.queryByRole('button', { name: /^Companies$/ })).toBeNull();
     expect(screen.queryByText('Mocha, Sorento')).toBeNull();
+    await user.click(filtersButton());
+    await screen.findByTestId('contacts-filters-popover');
+    expect(screen.queryByLabelText('Company: any')).toBeNull();
+  });
+
+  it('a superadmin viewing as a non-admin gets neither column nor filter', async () => {
+    viewer.viewingAs = 'sales';
+    const user = userEvent.setup();
+    renderList();
+    await screen.findByText('+60100000021');
+    expect(screen.queryByRole('button', { name: /^Companies$/ })).toBeNull();
     await user.click(filtersButton());
     await screen.findByTestId('contacts-filters-popover');
     expect(screen.queryByLabelText('Company: any')).toBeNull();

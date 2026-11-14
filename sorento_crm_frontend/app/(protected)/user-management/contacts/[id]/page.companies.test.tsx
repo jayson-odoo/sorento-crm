@@ -9,11 +9,19 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-const viewer = vi.hoisted(() => ({ superadmin: true }));
+const viewer = vi.hoisted(() => ({ superadmin: true, viewingAs: null as string | null }));
 const getContactCompaniesMock = vi.hoisted(() => vi.fn());
 
 vi.mock('next-auth/react', () => ({ useSession: () => ({ data: { user: { email: 'admin@zzt.test' } } }) }));
-vi.mock('@/lib/is-superadmin', () => ({ isSuperadminUser: () => viewer.superadmin }));
+vi.mock('@/lib/is-superadmin', () => ({
+  isSuperadminUser: (u?: { roleName?: string | null } | null) =>
+    u && 'roleName' in u ? u.roleName === 'superadmin' : viewer.superadmin,
+}));
+vi.mock('@/lib/impersonation-store', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/impersonation-store')>()),
+  useImpersonationSession: () =>
+    viewer.viewingAs ? { targetUser: { role_name: viewer.viewingAs } } : null,
+}));
 vi.mock('@/hooks/usePermissions', () => ({ useHasPermission: () => true }));
 vi.mock('@/lib/api', () => ({ apiFetch: vi.fn(async () => ({ ok: false, json: async () => ({}) })) }));
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
@@ -56,6 +64,7 @@ function renderPage() {
 beforeEach(() => {
   vi.clearAllMocks();
   viewer.superadmin = true;
+  viewer.viewingAs = null;
   getContactCompaniesMock.mockResolvedValue([
     { id: 'co-m', name: 'Mocha' },
     { id: 'co-s', name: 'Sorento' },
@@ -78,5 +87,13 @@ describe('Contact detail - Companies (company access)', () => {
     expect(screen.queryByText('Companies')).toBeNull();
     expect(screen.queryByText(/receives no records/)).toBeNull();
     expect(getContactCompaniesMock).not.toHaveBeenCalled();
+  });
+
+  it('a superadmin viewing as a non-admin sees no Companies field', async () => {
+    viewer.viewingAs = 'sales';
+    renderPage();
+    await screen.findByText('Contact Information');
+    expect(screen.queryByText('Companies')).toBeNull();
+    expect(screen.queryByText(/receives no records/)).toBeNull();
   });
 });
