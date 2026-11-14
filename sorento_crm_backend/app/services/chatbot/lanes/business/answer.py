@@ -4216,9 +4216,12 @@ def not_found_error_message(
             # production's did-you-mean, and it has to be reachable: `build_suggest_offer`
             # skips its own D1 candidates entirely whenever a clarify fired here, so the
             # set answer does not merely come FIRST, it silences the other one.
-            described_set_answers = isinstance(predicate, dict) and not _unplaced_token_has_neighbours(
-                r, g, product_typed=product_typed_tokens(q)
-            )
+            # #2370 regression fix (release sweep, 13 Nov): the described-set guard keeps its own
+            # code-shape test (`_CODE_RE` only). AC-19's widening by the parser's product hint
+            # belongs to the did-you-mean paths, not here: here it let a class word the parser
+            # hinted as a product ("bidet") silence AC-1319's certificate miss with its
+            # substring neighbours, exactly what this guard's docstring rules out.
+            described_set_answers = isinstance(predicate, dict) and not _unplaced_token_has_neighbours(r, g)
             if jsc.truthy(require_specific):
                 escalate_message = jsc.get(g, "gate_clarification")
             elif described_set_answers and "schemes_on_file" in predicate:

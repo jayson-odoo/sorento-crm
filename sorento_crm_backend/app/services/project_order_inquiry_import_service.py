@@ -1393,6 +1393,9 @@ def _target_facts(db: Session, target_ids: set) -> Dict[str, dict]:
             # `spo_allocations.from_po_line_ref` - how `_chain_allocations` walks the chain
             # line to line rather than document to document.
             "source_ref": (line.source_ref or "").strip(),
+            # Who the book ties this line to now; an `autocount` claim places only while it is
+            # still the row's own SO line (a line freed in AutoCount stays unlinked).
+            "from_so_line_ref": (line.from_so_line_ref or "").strip(),
         }
     for allocation, supplier in (
         db.query(SPOAllocation, Supplier.supplier_name)
@@ -1738,6 +1741,15 @@ def pair_needs(
     target_ids |= {i for ids in ref_allocations.values() for i in ids}
     target_ids |= {i for ids in ref_po_lines.values() for i in ids}
     facts = _target_facts(db, target_ids)
+    freed_from = _freed_from_refs(
+        db,
+        [
+            claim["target_id"] for claim in claims
+            if claim["source"] == "autocount"
+            and (facts.get(claim["target_id"]) or {}).get("kind") == _PO
+            and not (facts[claim["target_id"]].get("from_so_line_ref") or "")
+        ],
+    )
 
     chain_by_line = _chain_allocations(
         db,
@@ -1864,6 +1876,13 @@ def pair_needs(
             if fact["kind"] == _SPO:
                 take(claim["target_id"], from_book=True)
                 continue
+            if claim["source"] == "autocount":
+                tied = fact.get("from_so_line_ref") or ""
+                # Skipped only on evidence: the line is tied to ANOTHER SO line now, or AutoCount
+                # freed it from THIS row's SO line (audit event). A ref that was never known
+                # (an older push) still places by the claim's SO number.
+                if (tied and tied != ref) or (not tied and ref in freed_from.get(claim["target_id"], ())):
+                    continue
             _through_po(claim["target_id"])
 
         if book_targets_out is not None:
@@ -1871,6 +1890,31 @@ def pair_needs(
         if held.takes:
             links[need.key] = held
     return links, not_linkable
+
+
+def _freed_from_refs(db: Session, po_line_ids: List[str]) -> Dict[str, set]:
+    """`{po_line_id: {SO line refs it was tied to before AutoCount cleared it}}`, from the PO-link
+    history events (`po_link_history.EVENT_CHANGE`), ONE query for every candidate line."""
+    ids = sorted({str(i) for i in po_line_ids if i})
+    if not ids:
+        return {}
+    from app.models.audit import AuditLog
+    from app.services.scm import po_link_history
+
+    out: Dict[str, set] = {}
+    for entity_id, old_values in (
+        db.query(AuditLog.entity_id, AuditLog.old_values)
+        .filter(
+            AuditLog.entity_type == "purchase_order_lines",
+            AuditLog.entity_id.in_(ids),
+            AuditLog.event == po_link_history.EVENT_CHANGE,
+        )
+        .all()
+    ):
+        old = ((old_values or {}).get("from_so_line_ref") or "").strip()
+        if old:
+            out.setdefault(str(entity_id), set()).add(old)
+    return out
 
 
 def _pair(db: Session, plan: _Plan) -> Tuple[Dict[int, _RowLinks], List[str]]:

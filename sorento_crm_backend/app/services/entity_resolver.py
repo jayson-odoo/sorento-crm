@@ -3105,14 +3105,20 @@ def offerable_product_rows(db: Session, rows: list[dict[str, Any]]) -> list[dict
     """The serialized product rows (`uuid` dicts) the chat may offer (`offerable_products`,
     owner Q3), one bounded query; a row with no uuid is dropped. The dict-row twin of
     `_drop_unofferable_products`, read by the chat's close-code offers and the reference
-    route's kept code fragments (CHATBOT-CLOSE-CODES)."""
-    from app.models.product import offerable_products
+    route's kept code fragments (CHATBOT-CLOSE-CODES). Also chat-searchable
+    (`chat_searchable_products`), #2397's defensive net so no caller offers a hidden product."""
+    from app.models.product import chat_searchable_products, offerable_products
 
     ids = [str(r["uuid"]) for r in rows if isinstance(r, dict) and r.get("uuid")]
     if not ids:
         return []
     with db.begin_nested():
-        kept = {str(pid) for (pid,) in db.query(Product.id).filter(Product.id.in_(ids), offerable_products()).all()}
+        kept = {
+            str(pid)
+            for (pid,) in db.query(Product.id)
+            .filter(Product.id.in_(ids), offerable_products(), chat_searchable_products())
+            .all()
+        }
     return [r for r in rows if isinstance(r, dict) and str(r.get("uuid")) in kept]
 
 

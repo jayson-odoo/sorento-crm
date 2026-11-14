@@ -35,6 +35,7 @@ from sqlalchemy.orm import Session
 
 from app.api.v1.user_management.contact_impersonation import salesperson_user_id_for_contact
 from app.database import get_db
+from app.dependencies import IMPERSONATE_HEADER, get_current_user_or_api_key
 from app.models.entity_attachment import EntityAttachmentLink
 from app.models.portal import PortalToken
 from app.models.resources import Attachment, AttachmentType
@@ -299,6 +300,80 @@ def portal_slug_info(slug: str = Path(..., min_length=4, max_length=32), db: Ses
     no detail - never confirm revoked-vs-missing.
     """
     return PortalSlugInfoResponse(**PortalService(db).slug_info(slug))
+
+
+class SessionFromCrmPayload(BaseModel):
+    slug: str = Field(..., min_length=4, max_length=32)
+
+
+class SessionFromCrmResponse(BaseModel):
+    token: str
+    expires_at: str
+
+
+@router.post("/session-from-crm", response_model=SessionFromCrmResponse)
+def portal_session_from_crm(
+    payload: SessionFromCrmPayload,
+    request: Request,
+    current_user: dict = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """A CRM sign-in counts as verified for the user's OWN linked contact (SIGNIN-2FA-NOT-ROLE).
+
+    Mints a verified portal token, the same rule as a successful OTP, only when the slug is the
+    signed-in user's own ``respond_contact_id`` and that user still passes the phone sign-in
+    eligibility rule (own number matches the contact's). Refuses API keys, impersonation and any
+    session not minted by a real sign-in (password, passkey, phone code): the bridge is for the
+    person at the keyboard on their own staff session, nobody else.
+    """
+    from app.config import settings as app_settings
+    from app.services import rate_limit
+    from app.services.phone_signin_service import eligible_user_for_contact
+
+    if current_user.get("auth_method") != "jwt":
+        raise _session_from_crm_refused()
+    if getattr(request.state, "session_auth_method", None) not in _BRIDGE_SESSION_AUTH_METHODS:
+        raise _session_from_crm_refused()
+    if getattr(request.state, "impersonation_session_id", None) or request.headers.get(IMPERSONATE_HEADER):
+        raise _session_from_crm_refused()
+    own_contact_id = getattr(request.state, "session_user_contact_id", None)
+    if not own_contact_id:
+        raise _session_from_crm_refused()
+
+    gate = rate_limit.hit(
+        "portal_from_crm", str(current_user["id"]),
+        limit=app_settings.rate_limit_portal_link_max,
+        window_seconds=app_settings.rate_limit_portal_link_window_seconds,
+    )
+    if not gate.allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many requests. Please try again shortly.",
+            headers={"Retry-After": str(gate.retry_after_seconds or app_settings.rate_limit_portal_link_window_seconds)},
+        )
+
+    service = PortalService(db)
+    info = service.slug_info(payload.slug)
+    if info["contact_id"] != str(own_contact_id):
+        raise _session_from_crm_refused()
+    eligible = eligible_user_for_contact(db, info["contact_id"])
+    if eligible is None or str(eligible.id) != str(current_user["id"]):
+        raise _session_from_crm_refused()
+    token = service.mint_verified_token(info["contact_id"], info["space_id"])
+    return SessionFromCrmResponse(token=token.token, expires_at=token.expires_at.isoformat())
+
+
+# A portal_link session came FROM the portal and dev_login is a test copy's bypass: neither is a
+# sign-in the person did themselves, so neither may vouch for the portal.
+_BRIDGE_SESSION_AUTH_METHODS = frozenset({"password", "passkey", "phone_otp"})
+
+
+def _session_from_crm_refused() -> AppException:
+    return AppException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        message="This portal needs its own verification.",
+        code="PORTAL_VERIFY_REQUIRED",
+    )
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)

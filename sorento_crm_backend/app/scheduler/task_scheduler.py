@@ -377,20 +377,20 @@ def _handler_user_downloads_purge(db, task):
     return purge_expired_downloads(db, retention_days=days)
 
 
+def _run_retention_rule(db, key):
+    """One DB retention rule with its system_settings knobs (PLAN-db-retention-12nov).
+    The CLI `python -m app.scripts.run_data_retention` goes through the same function."""
+    from app.services.data_retention_service import run_retention_rule
+
+    return run_retention_rule(db, key)
+
+
 def _handler_api_call_log_prune(db, task):
     """Two-stage retention: NULL payloads at 30d, DELETE rows at 180d.
 
     Split because payloads are the bulk of the bytes and the shortest-lived
     value, while the metadata row stays useful for trend analysis."""
-    from app.models.user import SystemSetting
-    from app.services.api_call_log_service import prune_api_call_log
-
-    settings = db.query(SystemSetting).first()
-    payload_days = int(getattr(settings, "api_call_log_payload_retention_days", 30) or 30) if settings else 30
-    row_days = int(getattr(settings, "api_call_log_row_retention_days", 180) or 180) if settings else 180
-    result = prune_api_call_log(
-        db, payload_retention_days=payload_days, row_retention_days=row_days
-    )
+    result = _run_retention_rule(db, "api_call_log_prune")
     # Browser crash reports (CLIENT-ERROR-REPORT) ride this daily task rather than a
     # scheduled task of their own: same kind of telemetry, one fixed 30-day window.
     from app.services.client_error_report_service import prune_client_error_reports
@@ -411,12 +411,37 @@ def _handler_import_job_rows_prune(db, task):
     live on import_jobs.result and survive forever, so an old job still says what
     it did - you just can no longer page through its individual rows.
     """
-    from app.models.user import SystemSetting
-    from app.services.import_outcome import prune_import_job_rows
+    return _run_retention_rule(db, "import_job_rows_prune")
 
-    settings = db.query(SystemSetting).first()
-    days = int(getattr(settings, "import_job_rows_retention_days", 90) or 90) if settings else 90
-    return prune_import_job_rows(db, retention_days=days)
+
+def _handler_plan_exception_prune(db, task):
+    """Undecided plan exceptions of replaced batches; decided rows stay forever."""
+    return _run_retention_rule(db, "plan_exception_prune")
+
+
+def _handler_integration_log_prune(db, task):
+    """Blank integration_log payloads and headers, later delete the rows; never in-flight ones."""
+    return _run_retention_rule(db, "integration_log_prune")
+
+
+def _handler_chatbot_turn_trace_prune(db, task):
+    """Blank old chat turn traces; the turns stay."""
+    return _run_retention_rule(db, "chatbot_turn_trace_prune")
+
+
+def _handler_scheduled_task_runs_prune(db, task):
+    """Old scheduler run history, except each task's newest run."""
+    return _run_retention_rule(db, "scheduled_task_runs_prune")
+
+
+def _handler_reorder_run_prune(db, task):
+    """Superseded planning runs nobody decided on, children first in batches."""
+    return _run_retention_rule(db, "reorder_run_prune")
+
+
+def _handler_embedding_superseded_prune(db, task):
+    """AI search chunks superseded past the window; current chunks never."""
+    return _run_retention_rule(db, "embedding_superseded_prune")
 
 
 def _handler_automation_runner(db, task):
@@ -882,8 +907,16 @@ def register_task_handlers():
     register_handler("system_health_daily_digest", lambda db, task: run_health_daily_digest(db, task))
     register_handler("chat_message_resolver", _handler_chat_message_resolver)
     register_handler("user_downloads_purge", _handler_user_downloads_purge)
-    register_handler("api_call_log_prune", _handler_api_call_log_prune)
-    register_handler("import_job_rows_prune", _handler_import_job_rows_prune)
+    # DB retention (PLAN-db-retention-12nov): off the heartbeat thread, a prune can run
+    # for its whole time budget (data_retention_max_run_minutes).
+    register_handler("api_call_log_prune", _handler_api_call_log_prune, background=True)
+    register_handler("import_job_rows_prune", _handler_import_job_rows_prune, background=True)
+    register_handler("plan_exception_prune", _handler_plan_exception_prune, background=True)
+    register_handler("integration_log_prune", _handler_integration_log_prune, background=True)
+    register_handler("chatbot_turn_trace_prune", _handler_chatbot_turn_trace_prune, background=True)
+    register_handler("scheduled_task_runs_prune", _handler_scheduled_task_runs_prune, background=True)
+    register_handler("reorder_run_prune", _handler_reorder_run_prune, background=True)
+    register_handler("embedding_superseded_prune", _handler_embedding_superseded_prune, background=True)
     register_handler("chat_latency_watchdog", _handler_chat_latency_watchdog)
     register_handler("chat_history_reconcile", _handler_chat_history_reconcile)
     register_handler("project_staleness_sweep", _handler_project_staleness_sweep)

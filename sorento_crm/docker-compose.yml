@@ -2,6 +2,14 @@
 # `docker compose up`: POSTGRES_USER, POSTGRES_PASSWORD and JWT_SECRET are required.
 version: '3.8'
 
+# Docker log cap per container (50 MB a file, 5 files), the same cap as
+# infra/templates/host/docker-daemon.json, so a host without that file is still capped.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "5"
+
 services:
   # PostgreSQL Database
   db:
@@ -22,6 +30,7 @@ services:
       timeout: 5s
       retries: 5
     restart: unless-stopped
+    logging: *default-logging
     networks:
       - sorento_network
 
@@ -76,6 +85,7 @@ services:
       # - ./sorento_crm_backend/app:/app/app:ro
       - backend_logs:/app/logs
     restart: unless-stopped
+    logging: *default-logging
     networks:
       - sorento_network
 
@@ -97,6 +107,7 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
+    logging: *default-logging
     networks:
       - sorento_network
 

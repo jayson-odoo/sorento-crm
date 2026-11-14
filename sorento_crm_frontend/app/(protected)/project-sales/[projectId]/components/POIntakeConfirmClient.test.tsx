@@ -20,6 +20,35 @@ vi.mock('@/components/common/pdf-viewer/pdfjs', async () =>
 
 const push = vi.fn();
 let originParam: string | null = null;
+// Every toast the screen raises, as (kind, message, ...). The unlinked-issuer notice and the
+// "shown once" rule for the issuer refusal are asserted on these.
+const { toastCalls } = vi.hoisted(() => ({ toastCalls: vi.fn() }));
+vi.mock('@/lib/toast', () => {
+  const record =
+    (kind: string) =>
+    (...args: unknown[]) =>
+      toastCalls(kind, ...args);
+  return {
+    toast: Object.assign(record('default'), {
+      success: record('success'),
+      error: record('error'),
+      info: record('info'),
+      warning: record('warning'),
+      message: record('message'),
+      loading: record('loading'),
+      promise: vi.fn(),
+      dismiss: vi.fn(),
+      custom: vi.fn(),
+    }),
+  };
+});
+
+function toastTexts(kind?: string): string[] {
+  return toastCalls.mock.calls
+    .filter((call) => !kind || call[0] === kind)
+    .map((call) => String(call[1] ?? ''));
+}
+
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push, replace: vi.fn() }),
   usePathname: () => '/project-sales/p1/purchase-orders/v1',
@@ -59,10 +88,30 @@ const getProject = vi.fn(async () => ({
   can_edit: true,
 }));
 
+// Crew pass item 2: the issuer is set from this screen through the EXISTING PO update.
+const listParties = vi.fn(async (..._args: unknown[]) => ({
+  data: [
+    { id: 'pty1', name: 'ZZT Contractor Sdn Bhd', party_type: 'main_contractor' },
+    { id: 'pty2', name: 'ZZT Developer Bhd', party_type: 'developer' },
+  ],
+  total: 2,
+  page: 1,
+  limit: 50,
+}));
+const updatePurchaseOrder = vi.fn(async (poId: string, body: unknown) => ({
+  id: poId,
+  ...(body as object),
+}));
+
 vi.mock('../../_shared/services/projectService', async (importOriginal) => {
   const actual =
     await importOriginal<typeof import('../../_shared/services/projectService')>();
-  return { ...actual, getProject: () => getProject() };
+  return {
+    ...actual,
+    getProject: () => getProject(),
+    listParties: (...args: unknown[]) => listParties(...args),
+    updatePurchaseOrder: (poId: string, body: unknown) => updatePurchaseOrder(poId, body),
+  };
 });
 
 import { POIntakeConfirmClient } from './POIntakeConfirmClient';
@@ -121,6 +170,8 @@ function version(overrides: Partial<POVersion> = {}): POVersion {
       lines_total: '364171.95',
       arithmetic_passed: 1,
       arithmetic_total: 1,
+      // PO-UPLOAD-MATCHING AC-T2: the existing tests read a document WITH a printed total.
+      printed_total_read: true,
     },
     lines: [line()],
     annotations: [],
@@ -249,6 +300,7 @@ describe('POIntakeConfirmClient', () => {
           lines_total: '364171.95',
           arithmetic_passed: 1,
           arithmetic_total: 1,
+          printed_total_read: true,
         },
       }),
     );
@@ -298,7 +350,10 @@ describe('POIntakeConfirmClient', () => {
 
     expect(await screen.findByText('PO HQ/26/01/041 v1')).toBeInTheDocument();
     expect(screen.queryByLabelText('PO number')).toBeNull();
-    expect(screen.getByLabelText('Quantity on line 1')).toHaveValue('927');
+    expect(screen.getByLabelText('Quantity on line 1')).toHaveValue(927);
+    // Qty-edit review item E: the characters on screen, not a 4-decimal server echo.
+    expect(screen.getByLabelText('Quantity on line 1')).toHaveDisplayValue('927');
+    expect(screen.getByLabelText('Quantity on line 1')).not.toHaveDisplayValue('927.0000');
     // The note names line 1, so its compact indicator shows there, on the Lines tab -
     // owner hand test 25 Sep 2026, item 2: the text itself is one click away in a popover,
     // not always open under the row.
@@ -391,6 +446,7 @@ describe('POIntakeConfirmClient', () => {
           lines_total: '364172.95',
           arithmetic_passed: 1,
           arithmetic_total: 2,
+          printed_total_read: true,
         },
       }),
     );
@@ -425,6 +481,7 @@ describe('POIntakeConfirmClient', () => {
           lines_total: '364172.95',
           arithmetic_passed: 1,
           arithmetic_total: 2,
+          printed_total_read: true,
         },
       }),
     );
@@ -464,6 +521,7 @@ describe('POIntakeConfirmClient', () => {
           lines_total: '364171.95',
           arithmetic_passed: 2,
           arithmetic_total: 2,
+          printed_total_read: true,
         },
       }),
     );
@@ -737,3 +795,186 @@ describe('POIntakeConfirmClient', () => {
     expect(screen.queryByRole('button', { name: 'Upload the PO again' })).toBeNull();
   });
 });
+
+/**
+ * PO-UPLOAD-MATCHING (AC-T2): the reader may find no printed grand total, and then the
+ * "document total" is only the sum of the amounts it read. The label says so and the
+ * "above/below the total printed on the document" sentence is not shown; the API tells the
+ * screen which case it is (`totals.printed_total_read`).
+ */
+describe('POIntakeConfirmClient totals wording', () => {
+  it('says "Sum of lines read" and never mentions a printed total when none was read', async () => {
+    getPOVersion.mockResolvedValue(
+      version({
+        lines: [line(), line({ id: 'l2', line_no: 2, amount: '1.00', arithmetic_ok: false })],
+        totals: {
+          extracted_total: '364172.95',
+          lines_total: '364171.95',
+          arithmetic_passed: 1,
+          arithmetic_total: 2,
+          printed_total_read: false,
+        } as POVersion['totals'],
+      }),
+    );
+
+    renderConfirm();
+
+    expect(await screen.findByText(/Sum of lines read/)).toBeInTheDocument();
+    expect(screen.queryByText(/Document total/)).toBeNull();
+    expect(screen.queryByText(/total printed on the document/i)).toBeNull();
+  });
+
+  it('says "Document total" and names the gap to the printed total when one was read', async () => {
+    getPOVersion.mockResolvedValue(
+      version({
+        lines: [line(), line({ id: 'l2', line_no: 2, amount: '1.00', arithmetic_ok: false })],
+        totals: {
+          extracted_total: '728343.90',
+          lines_total: '364172.95',
+          arithmetic_passed: 1,
+          arithmetic_total: 2,
+          printed_total_read: true,
+        } as POVersion['totals'],
+      }),
+    );
+
+    renderConfirm();
+
+    expect(await screen.findByText(/Document total RM 728,343\.90/)).toBeInTheDocument();
+    expect(screen.queryByText(/Sum of lines read/)).toBeNull();
+    expect(
+      screen.getByRole('button', { name: /below the total printed on the document/i }),
+    ).toBeInTheDocument();
+  });
+});
+
+/**
+ * PO-UPLOAD-MATCHING crew pass item 2: a PO read with no issuer (and a project lead with no
+ * buyer) has no customer to remember accepted codes for. While the version is To confirm,
+ * the screen offers "Issued by" (the same searchable, clearable party select as the PO
+ * header card), and choosing one saves it through the existing purchase order update.
+ */
+describe('POIntakeConfirmClient issuer', () => {
+  it('offers "Issued by" while the version is To confirm and saves the pick on the PO', async () => {
+    getPOVersion.mockResolvedValue(version());
+
+    renderConfirm();
+
+    fireEvent.click(await screen.findByRole('combobox', { name: /Issued by/i }));
+    fireEvent.click(await screen.findByRole('option', { name: /ZZT Contractor Sdn Bhd/ }));
+
+    await waitFor(() =>
+      expect(updatePurchaseOrder).toHaveBeenCalledWith(
+        'po1',
+        expect.objectContaining({ issuing_party_id: 'pty1' }),
+      ),
+    );
+  });
+
+  it('puts the previous issuer back when the save is refused (review round 3, R5)', async () => {
+    getPOVersion.mockResolvedValue(
+      version({
+        purchase_order: {
+          po_number: 'HQ/26/01/041',
+          issuing_party_id: 'pty2',
+          // The server always sends the issuer's name with its id.
+          issuing_party_name: 'ZZT Developer Bhd',
+        },
+      } as Partial<POVersion>),
+    );
+    updatePurchaseOrder.mockRejectedValueOnce(new Error('ZZT refused'));
+
+    renderConfirm();
+
+    const select = await screen.findByRole('combobox', { name: /Issued by/i });
+    await waitFor(() => expect(select).toHaveTextContent('ZZT Developer Bhd'));
+    fireEvent.click(select);
+    fireEvent.click(await screen.findByRole('option', { name: /ZZT Contractor Sdn Bhd/ }));
+
+    await waitFor(() => expect(updatePurchaseOrder).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(screen.getByRole('combobox', { name: /Issued by/i })).toHaveTextContent(
+        'ZZT Developer Bhd',
+      ),
+    );
+    expect(screen.getByRole('combobox', { name: /Issued by/i })).not.toHaveTextContent(
+      'ZZT Contractor Sdn Bhd',
+    );
+  });
+
+  it('shows the "Issued by" refusal next to the picker, not only in a toast (crew pass 2)', async () => {
+    getPOVersion.mockResolvedValue(version());
+    confirmPOVersion.mockRejectedValue(
+      Object.assign(
+        new Error('Choose who issued this PO under Issued by, so its codes are remembered.'),
+        { code: 'po_version_issuer_required', status: 422 },
+      ),
+    );
+
+    renderConfirm();
+
+    fireEvent.click(await screen.findByRole('button', { name: /Confirm this PO/i }));
+
+    const sentence = await screen.findByText(/under Issued by, so its codes are remembered/);
+    const picker = screen.getByRole('combobox', { name: /Issued by/i });
+    // Next to the picker: the sentence and the picker share the issuer block, which is a
+    // closer ancestor than the page itself.
+    let block: HTMLElement | null = picker.parentElement;
+    for (let i = 0; i < 4 && block && !block.contains(sentence); i += 1) block = block.parentElement;
+    expect(block?.contains(sentence)).toBe(true);
+  });
+
+  it('says the issuer refusal ONCE: inline under Issued by, never also as a toast', async () => {
+    getPOVersion.mockResolvedValue(version());
+    confirmPOVersion.mockRejectedValue(
+      Object.assign(
+        new Error('Choose who issued this PO under Issued by, so its codes are remembered.'),
+        { code: 'po_version_issuer_required', status: 422 },
+      ),
+    );
+
+    renderConfirm();
+
+    fireEvent.click(await screen.findByRole('button', { name: /Confirm this PO/i }));
+
+    expect(await screen.findByText(/under Issued by, so its codes are remembered/)).toBeInTheDocument();
+    expect(toastTexts().some((text) => /under Issued by/.test(text))).toBe(false);
+  });
+
+  it('after a confirm with an unlinked issuer, says once that codes were not remembered and why', async () => {
+    getPOVersion.mockResolvedValue(version());
+    confirmPOVersion.mockResolvedValue({
+      ...version({ confirmed_at: '2026-11-14T08:00:00Z' }),
+      confirm_result: {
+        line_count: 1,
+        po_amount: '364171.95',
+        model_mismatch_count: 0,
+        price_mismatch_count: 0,
+        codes_not_remembered: 'issuer_not_linked',
+        codes_not_remembered_party: 'ZZT Unlinked Contractor',
+      },
+    } as unknown as POVersion);
+
+    renderConfirm();
+
+    fireEvent.click(await screen.findByRole('button', { name: /Confirm this PO/i }));
+
+    await waitFor(() =>
+      expect(
+        toastTexts().filter(
+          (text) => /not linked to a customer/.test(text) && /ZZT Unlinked Contractor/.test(text),
+        ),
+      ).toHaveLength(1),
+    );
+  });
+
+  it('does not offer "Issued by" once the version is confirmed', async () => {
+    getPOVersion.mockResolvedValue(version({ confirmed_at: '2026-11-14T08:00:00Z' }));
+
+    renderConfirm();
+
+    await screen.findAllByText(/HQ\/26\/01\/041/);
+    expect(screen.queryByRole('combobox', { name: /Issued by/i })).toBeNull();
+  });
+});
+

@@ -331,7 +331,9 @@ def _all_parts_matches(db: Any, typed: str) -> list[dict[str, Any]]:
 
 
 def _offerable_rows(db: Any, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The product rows the chat may offer (`entity_resolver.offerable_product_rows`, owner Q3)."""
+    """The product rows the chat may offer (`entity_resolver.offerable_product_rows`: offerable and
+    chat-searchable, owner Q3; the chat-searchable net is #2397's, pinned by
+    tests/chatbot/test_code_match_regfix_2397.py)."""
     from app.services.entity_resolver import offerable_product_rows
 
     return offerable_product_rows(db, rows)
