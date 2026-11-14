@@ -815,13 +815,17 @@ def process_attachment_bulk_import(
         from app.api.v1.resources.attachments import (
             _suffix_copy_name,
             _find_filename_collision,
+            _folder_name_collision,
         )
 
         def _name_taken_in_dir(_dir_id: Optional[str], _name: str) -> bool:
             key = (_dir_id, _name.lower())
             if key in seen_in_run:
                 return True
-            if _dir_id and _find_filename_collision(db, _dir_id, _name) is not None:
+            if _dir_id and (
+                _find_filename_collision(db, _dir_id, _name) is not None
+                or _folder_name_collision(db, _dir_id, _name) is not None
+            ):
                 return True
             return False
 
@@ -887,10 +891,14 @@ def process_attachment_bulk_import(
                     # ------------------------------------------------------------------
                     intra_key = (directory_id, original_filename.lower())
                     intra_collision = intra_key in seen_in_run
-                    sys_collision = (
-                        _find_filename_collision(db, directory_id, original_filename)
-                        if directory_id
-                        else None
+                    # Replace only ever targets the plain Files row this check has always found
+                    # (never another project's file); the folder-wide match only decides
+                    # that there IS a clash (security review, FILES-MOVE-DUPLICATE).
+                    own_collision = (
+                        _find_filename_collision(db, directory_id, original_filename) if directory_id else None
+                    )
+                    sys_collision = own_collision or (
+                        _folder_name_collision(db, directory_id, original_filename) if directory_id else None
                     )
 
                     existing_to_replace = None
@@ -915,17 +923,16 @@ def process_attachment_bulk_import(
                             original_filename = candidate
                             collisions_renamed_copy += 1
                         else:  # replace
-                            if sys_collision is None:
-                                # Intra-zip-only collision: cannot "replace" a row that
-                                # doesn't exist yet in the system, so rename the second
-                                # occurrence to keep both.
+                            if own_collision is None:
+                                # Intra-zip-only collision, or a same-named file this upload
+                                # may not replace: rename the incoming file to keep both.
                                 candidate = _suffix_copy_name(original_filename)
                                 while _name_taken_in_dir(directory_id, candidate):
                                     candidate = _suffix_copy_name(candidate)
                                 original_filename = candidate
                                 collisions_renamed_copy += 1
                             else:
-                                existing_to_replace = sys_collision
+                                existing_to_replace = own_collision
 
                     # Mirror the single-upload contract (PLAN-attachment-key-uuid-segregation):
                     #   stored_filename   = raw display name (editable, what the folder dup-check matches)
@@ -1064,10 +1071,13 @@ def process_attachment_bulk_import(
                     successful += 1
                     seen_in_run.add((directory_id, original_filename.lower()))
                 except Exception as e:
-                    errors.append(f"{file_path}: {e}")
+                    # An AppException (e.g. a folder name clash) carries a plain message; its
+                    # str() is the raw "409: {...}" body.
+                    plain = getattr(e, "message", None) or str(e)
+                    errors.append(f"{file_path}: {plain}")
                     logger.exception("Bulk import file failed: %s", file_path)
                     outcome.fail(
-                        row=entry_row, code=oc.ROW_ERROR, message=str(e),
+                        row=entry_row, code=oc.ROW_ERROR, message=plain,
                         value=file_path, identity=entry_identity,
                     )
                     failed += 1
