@@ -28,7 +28,9 @@ router = APIRouter()
 _VIEW_PERMISSION = VIEW_PERMISSION
 
 
-_MODULE = {"complaint": "complaints", "sample_request": "projects"}  # every other kind is procurement
+# every other kind is procurement (the order change notice included: its menu and routes are
+# the procurement module's, OCN-ORDER-CHANGE-NOTICE)
+_MODULE = {"complaint": "complaints", "sample_request": "projects", "order_change_notice": "procurement"}
 MAX_FILES = 5
 MAX_FILE_BYTES = 25 * 1024 * 1024
 
@@ -61,6 +63,15 @@ def read_uploads(files: Optional[list[UploadFile]]) -> list:
 def _authorize(kind: str, entity_id: str, current_user: dict, db: Session, *, write: bool = False) -> str:
     if kind not in FORM_COMMENT_KINDS:
         raise handle_unprocessable(f"Unsupported form type: {kind!r}.")
+    if kind == "order_change_notice":
+        # The notice's own reader rule (view all, or view_own on the ones they raised or are
+        # named on): whoever can open the notice reads and writes its thread.
+        from app.services import order_change_notice_service as ocn
+
+        eid = validate_uuid_path(entity_id, resource="Form")
+        _check_module(kind, current_user["id"], db)
+        ocn.reader_for(db, eid, current_user["id"])
+        return eid
     slug = _VIEW_PERMISSION[kind]
     perms = UserPermissionService(db)
     if perms.check_user_has_permission(current_user["id"], slug):

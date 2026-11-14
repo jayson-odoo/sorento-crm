@@ -398,6 +398,9 @@ class ProjectResponse(BaseModel):
 
     owner_user_id: Optional[str] = None
     owner_name: Optional[str] = None
+    # The owner's linked contact: Requested by on a sponsorship form written from the project.
+    owner_contact_id: Optional[str] = None
+    owner_contact_name: Optional[str] = None
 
     is_critical: bool = False
     critical_at: Optional[datetime] = None
@@ -1328,6 +1331,8 @@ class ProjectQuotationResponse(ProjectQuotationBase):
     document_id: Optional[str] = None
     document_no: Optional[str] = None
     document_kind: Optional[str] = None
+    # AGENT-PROPOSAL-INSIGHTS A4: the document creator's name (Prepared By), never the project owner.
+    prepared_by: Optional[str] = None
 
     version_count: int = 0
     # There is no `current_version_id` COLUMN (AC-E3a); this is computed as
@@ -1921,7 +1926,27 @@ class ProjectSponsorshipResponse(BaseModel):
     sponsor_subject: Optional[str] = None
     sponsor_subject_other: Optional[str] = None
     total_project_value: Optional[Decimal] = None
+    # What the form sponsors (its lines' Grand total); `total_project_value` is the project's.
+    sponsored_total: Optional[Decimal] = None
     purpose: Optional[str] = None
+
+
+class ProjectOrderChangeNoticeResponse(BaseModel):
+    """An order change notice of this project, for the project page's panel
+    (OCN-ORDER-CHANGE-NOTICE F1). The record itself is owned by procurement; the panel links out."""
+
+    id: str
+    ocn_number: Optional[str] = None
+    ocn_date: Optional[date] = None
+    status: Optional[str] = None
+    status_label: Optional[str] = None
+    approval_status: Optional[str] = None
+    customer_name: Optional[str] = None
+    customer_po_no: Optional[str] = None
+    change_type_name: Optional[str] = None
+    risk_level: Optional[str] = None
+    requested_by: Optional[str] = None
+    revision_no: int = 0
 
 
 class SponsorshipYearTotal(BaseModel):
@@ -2293,7 +2318,7 @@ class ProjectQuotationDocumentResponse(ProjectQuotationDocumentBase):
     document_no: str
     # What the customer quotes back: the number plus the revision they hold.
     our_ref: Optional[str] = None
-    # The project's salesperson (owner, else the creator), as the cover page prints it.
+    # Prepared By: the document's creator, never the project owner (owner, 11 Nov 2026).
     prepared_by: Optional[str] = None
 
     recipient_party_id: Optional[str] = None

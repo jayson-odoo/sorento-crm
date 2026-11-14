@@ -387,7 +387,7 @@ class OrderInquiryDetail(BaseModel):
     #: `OI-000001` - what a person calls this inquiry. Optional only so a record written
     #: before the column existed still reads; everything created since carries one.
     inquiry_no: Optional[str] = None
-    project_sales_order_id: str
+    project_sales_order_id: Optional[str] = None
     amendment_id: Optional[str] = None
     state: str
     raised_at: Optional[datetime] = None
@@ -432,6 +432,19 @@ class OrderInquiryWorklistRow(BaseModel):
     #: inquiry raised since carries one. The S/O no beside it does not answer the same
     #: question: an amendment raises a SECOND inquiry on the same sales order.
     inquiry_no: Optional[str] = None
+    #: SPARE-PART-ORDER-REQUEST: `sales_order` | `spare_part_request`; a spare part
+    #: request's unit price and line total, and the qty / unit price its requester
+    #: SUBMITTED (the "was" mark when an approver changed them). Null on a sales-order row.
+    inquiry_type: Optional[str] = None
+    unit_price: Optional[str] = None
+    line_total: Optional[str] = None
+    submitted_qty: Optional[str] = None
+    submitted_unit_price: Optional[str] = None
+    #: Hand-test round G1: a spare part line's own description; null on a sales-order row.
+    line_description: Optional[str] = None
+    #: Photos added / removed on a spare part request's line since it was last submitted
+    #: (the Approve popup lists them); null on a sales-order row.
+    photo_changes: Optional[Dict[str, int]] = None
     so_date: Optional[date] = None
     so_number: Optional[str] = None
     item_code: Optional[str] = None
@@ -604,6 +617,12 @@ class OrderInquiryWorklistRow(BaseModel):
     #: Purchased/Incoming still count it when it holds a link. Declared here because
     #: `response_model` silently drops a field it has not been told about.
     line_cancelled: bool = False
+    #: OI-WHOLE-SO-CANCEL v2: AC-V2-2 / AC-V2-5 / AC-V2-4b.
+    waiting_for_cs: bool = False
+    #: What the waiting change is: {kind: so_cancelled|line_removed|date|qty|product|location, was, now}.
+    waiting_change: Optional[List[Dict[str, Optional[str]]]] = None
+    so_cancelled: bool = False
+    previous_so_line_qty: Optional[str] = None
     #: OI-LINE-SPLIT (UAC D3): the splits of this row's SO line, for the OI Lines tab's
     #: read-only expand; empty when not split. Declared because `response_model` drops a
     #: field it has not been told about.
@@ -720,6 +739,10 @@ class OrderInquiryAckCounts(BaseModel):
     #: to answer. A fifth count rather than a fifth state - nothing is stored as
     #: `to_confirm` - so the chip on screen and the filter behind it read one number.
     to_confirm: int = 0
+    #: F1b: the Status column's other words, one count each.
+    waiting_for_cs: int = 0
+    so_cancelled: int = 0
+    line_cancelled: int = 0
 
 
 class OrderInquiryKindTotals(BaseModel):
@@ -1299,7 +1322,10 @@ class OrderInquiryWorklistExportRequest(BaseModel):
     linked: Optional[Literal["po", "spo", "none"]] = None
     kind: Optional[Literal["spo", "po", "buy"]] = None
     ack: Optional[
-        Literal["awaiting", "acknowledged", "changed", "rejected", "to_confirm"]
+        Literal[
+            "awaiting", "acknowledged", "changed", "rejected", "to_confirm",
+            "waiting_for_cs", "so_cancelled", "line_cancelled",
+        ]
     ] = None
     #: Free text: one location, or a list of them (each read whole). An older body may hold one string.
     location: Optional[str | List[str]] = None
@@ -1505,7 +1531,13 @@ class OrderInquiryHeaderOut(BaseModel):
     sales_order_id: Optional[str] = None
     #: AC-CONSIGN-CRM: that core order's doc_type; null when there is no core order.
     so_doc_type: Optional[str] = None
-    project_sales_order_id: str
+    #: Null for a spare part request (it has no sales order).
+    project_sales_order_id: Optional[str] = None
+    #: SPARE-PART-ORDER-REQUEST: `sales_order` | `spare_part_request`, and the header's
+    #: own state (a spare part request is `draft` / `pending_approval` / `rejected` before
+    #: its final approval).
+    inquiry_type: str = "sales_order"
+    state: Optional[str] = None
     so_number: Optional[str] = None
     so_date: Optional[date] = None
     customer_name: Optional[str] = None
@@ -1540,6 +1572,25 @@ class OrderInquiryHeaderDetailOut(OrderInquiryHeaderOut):
 
     order_type: Optional[str] = None
     raise_history: List[OrderInquiryRaiseHistoryEntryOut] = []
+    #: SPARE-PART-ORDER-REQUEST: the request's own fields (null on a sales-order inquiry),
+    #: names resolved (no ids on screen), and what the viewer may do with it.
+    currency: Optional[str] = None
+    needed_by: Optional[date] = None
+    default_location: Optional[str] = None
+    reason: Optional[str] = None
+    requested_by: Optional[str] = None
+    requested_by_name: Optional[str] = None
+    submitted_at: Optional[datetime] = None
+    approved_at: Optional[datetime] = None
+    approved_by: Optional[str] = None
+    approved_by_name: Optional[str] = None
+    reject_reason: Optional[str] = None
+    can_decide: bool = False
+    can_edit: bool = False
+    can_revise: bool = False
+    #: A spare part request's amount (qty x unit price, lines still standing); null on a
+    #: sales-order inquiry and for a reader who may not see its prices.
+    total: Optional[str] = None
 
 
 class OrderInquiryRelatedPOOut(BaseModel):

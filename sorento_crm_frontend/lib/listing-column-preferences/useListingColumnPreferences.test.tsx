@@ -427,7 +427,10 @@ describe('useListingColumnPreferences', () => {
       expect(service.getUserListColumnConfig).toHaveBeenCalled();
     });
     await new Promise((r) => setTimeout(r, 30)); // let the rejection settle
-    expect(screen.getByTestId('ready-state').textContent).toBe('loading');
+    // SPARE-PART-ORDER-REQUEST fix round 5 (D1, owner rule "nothing hangs"): a refused read
+    // now falls back to the defaults, so the grid renders ('ready') instead of sitting on its
+    // skeleton forever. The guard this test kills is unchanged: nothing is written back.
+    expect(screen.getByTestId('ready-state').textContent).toBe('ready');
 
     act(() => {
       screen.getByText('set-page-size-100').click();

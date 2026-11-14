@@ -814,6 +814,10 @@ def test_apply_closed_retires_open_row_and_notes_actioned_row(api):
         for c in row["suggestion"]["components"]
     ), row["suggestion"]["components"]
 
+    # F2 12/13 Nov: a cancel is saved like any change before Confirm
+    from ._cancel_decide import decide_cancelled_rows
+
+    decide_cancelled_rows(db, batch.id)
     result = planning_change_service.apply(db, str(batch.id), world.actor)
     db.commit()
     assert result["failed_orders"] == []

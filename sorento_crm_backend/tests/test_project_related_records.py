@@ -20,6 +20,7 @@ from decimal import Decimal
 import pytest
 
 from app.models.base import company_scope
+from app.models.procurement import PurchaseRequestLine
 from app.models.projects import Project
 
 from ._own_scope_support import acting, contact, sorento, uid, user
@@ -185,7 +186,10 @@ EXPECTED = {
     ),
     "sponsorship_form": dict(
         number="ZZT-SF-0001", status="approved", approval_status="pending",
-        date="2026-04-10", raised_by="Cara Requester", subject="zzt-prr launch event", value=Decimal("1200.00"),
+        # What the form SPONSORS (its lines' Grand total: 150.00 + 2 x 25.00), never the project's
+        # value it also carries (1200.00), as the retired Sponsorship Form tab showed it
+        # (PROJECT-STAGE-ACTIONS, crew pass round 2).
+        date="2026-04-10", raised_by="Cara Requester", subject="zzt-prr launch event", value=Decimal("200.00"),
     ),
     "new_product_application": dict(
         number="NPA-990001", status="completed", approval_status=None,
@@ -239,6 +243,11 @@ def scene():
                     status="approved", approval_status="pending", request_date=date(2026, 4, 10),
                     requested_by="Cara Requester", purpose="zzt-prr launch event",
                     total_project_value=Decimal("1200.00"),
+                    lines=[
+                        PurchaseRequestLine(item_code="ZZT-1", quantity=Decimal("1"), total=Decimal("150.00"), sort_order=0),
+                        # No total: quantity x unit price counts.
+                        PurchaseRequestLine(item_code="ZZT-2", quantity=Decimal("2"), unit_price=Decimal("25.00"), sort_order=1),
+                    ],
                 ),
                 "new_product_application": _npa(
                     db, company_id, p.id, application_no=e["new_product_application"]["number"],

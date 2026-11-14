@@ -482,6 +482,8 @@ export function decisionFromAmendDraft(draft: DraftLine, reason: string): BoardD
  * same thing.
  */
 export function suggestedDecisionFor(contribution: BoardContribution): BoardDecision {
+  // A book-cancelled line has nothing to compose: its suggestion is to accept the cancel.
+  if (isBookCancelled(contribution)) return { verdict: 'approved' };
   return suggestionWithReasons(contribution, { borrow: [] });
 }
 
@@ -582,14 +584,28 @@ export function canQuickSave(
   draft: BoardDraft,
 ): boolean {
   const decision = draft[contribution.key];
+  // OI-WHOLE-SO-CANCEL F2: a cancel the book proposed is saved like any pending change (its
+  // Save accepts the cancel), even where an older decision still names the line.
+  if (isBookCancelled(contribution)) return !decision || Boolean(decision.preMarked);
   return (
     !contribution.covered &&
     !contribution.unplannable &&
-    // A cancelled line has nothing left to decide FOR (R3): the book removed it, and Confirm
-    // retires it. Offering to save the engine's suggestion for it would be offering to
-    // source a quantity nobody is owed.
+    // A line the book removed with nothing pending has nothing left to decide FOR (R3).
     !contribution.cancelled &&
     (!decision || Boolean(decision.preMarked))
+  );
+}
+
+/**
+ * A line the book cancelled that waits on a PENDING planning change (a cancelled or deleted SO,
+ * a removed line): CS decides it like any other change - Save accepts the cancel, Confirm
+ * retires it. Not a line CS transferred to Cancel SO (`cancelled_at`).
+ */
+export function isBookCancelled(
+  contribution: Pick<BoardContribution, 'cancelled' | 'cancelled_at' | 'pending_change_batch_id'>,
+): boolean {
+  return Boolean(
+    contribution.cancelled && !contribution.cancelled_at && contribution.pending_change_batch_id,
   );
 }
 
@@ -744,7 +760,8 @@ export function awaitsCancelSo(
  */
 export function canDecide(contribution: BoardContribution): boolean {
   return (
-    !contribution.unplannable && (!contribution.cancelled || awaitsCancelSo(contribution))
+    !contribution.unplannable &&
+    (!contribution.cancelled || awaitsCancelSo(contribution) || isBookCancelled(contribution))
   );
 }
 

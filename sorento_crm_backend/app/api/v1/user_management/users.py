@@ -550,6 +550,7 @@ def _salesperson_me(db: Session, user) -> Optional[dict]:
     from app.services.phone_signin_service import is_salesperson
     from app.services.portal_form_visibility_service import resolve_visible_form_types
     from app.services.portal_service import PortalService
+    from app.services.requestor_options_service import contact_display_name
 
     if not is_salesperson(db, user):
         return None
@@ -560,6 +561,7 @@ def _salesperson_me(db: Session, user) -> Optional[dict]:
         "portal_kinds": sorted(resolve_visible_form_types(db, contact.id)),
         "portal_slug": PortalService(db).get_or_create_slug(contact),
         "contact_id": str(contact.id),
+        "contact_name": contact_display_name(contact),
     }
 
 

@@ -28,6 +28,9 @@ checked against the quotation, not against the proposals.
 1. Open **Project Sales > Projects** and open the project.
 2. Click the **Proposals** tab. Each proposal is listed with its number, the **Kind** column
    (**Proposal** or **Quotation**) and its latest revision. The project's quotation is listed first.
+   The **Prepared by** column shows who created each proposal, the same name its header prints.
+   Click any column heading to sort by it, and use **Filters > Prepared by** to see only the
+   proposals of one or more salespeople.
 3. Click one to open it. Its **Header** tab shows the letterhead and, under it, the priced lines.
 
 To start a new proposal, use **Add a proposal** on the project's **Proposals** tab.

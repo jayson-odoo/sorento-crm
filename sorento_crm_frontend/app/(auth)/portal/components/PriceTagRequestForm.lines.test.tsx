@@ -284,8 +284,8 @@ describe('PriceTagRequestForm - no line reorder arrows (R3-6, AC-R12)', () => {
   });
 });
 
-describe('PriceTagRequestForm - duplicate product refused inline (R3-7, AC-R12)', () => {
-  it('a product already on the request is offered disabled as Already added and cannot be added twice', async () => {
+describe('PriceTagRequestForm - a product already on the request is offered again (PRICETAG-ALA-CARTE AC-6, AC-7)', () => {
+  it('a product already on the request is offered enabled, with no Already added, and a pick adds a second line of it', async () => {
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Customer');
     openSalesOrderSection();
@@ -302,12 +302,12 @@ describe('PriceTagRequestForm - duplicate product refused inline (R3-7, AC-R12)'
       ),
     );
     const taken = Array.from(secondPicker.options).find((o) => o.value === 'product:prod-uuid-1')!;
-    expect(taken.disabled).toBe(true);
-    expect(taken.textContent).toContain('Already added');
+    expect(taken.disabled).toBe(false);
+    expect(taken.textContent).not.toContain('Already added');
 
     fireEvent.change(secondPicker, { target: { value: 'product:prod-uuid-1' } });
     expect(screen.getAllByLabelText('Search a set or product...')).toHaveLength(2);
-    expect(screen.getAllByRole('button', { name: 'Clear item' })).toHaveLength(1);
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Clear item' })).toHaveLength(2));
   });
 });
 
