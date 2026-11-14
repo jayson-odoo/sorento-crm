@@ -27,6 +27,7 @@ from app.database import get_db
 from app.dependencies import require_any_permission, require_permission
 from app.schemas.common import MAX_PAGE_LIMIT, ListResponse
 from app.schemas.projects import (
+    ProjectOrderChangeNoticeResponse,
     ProjectPurchaseOrderCreate,
     ProjectPurchaseOrderLineCreate,
     ProjectPurchaseOrderLineResponse,
@@ -521,6 +522,37 @@ def list_project_sponsorships(
         from app.services import sponsorship_link_service as links
 
         return _envelope(links.list_sponsorships(db, project_id=project_id))
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+# --------------------------------------------------------------- order change notices
+
+
+@router.get(
+    "/projects/{project_id}/order-change-notices",
+    response_model=ListResponse[ProjectOrderChangeNoticeResponse],
+)
+def list_project_order_change_notices(
+    project_id: str,
+    # The amendment dialog's pick: only the notices an amendment may take (`linkable_clause`).
+    linkable: bool = Query(False),
+    user: dict = Depends(
+        require_any_permission(
+            ["procurement.order_change_notices.view", "procurement.order_change_notices.view_own"]
+        )
+    ),
+    db: Session = Depends(get_db),
+):
+    """That project's order change notices, newest first (OCN-ORDER-CHANGE-NOTICE F1). Gated by
+    the notice's own view permission, like its list; a `.view_own` holder sees their own."""
+    try:
+        validate_uuid_path(project_id, resource="Project")
+        projects.get_project_or_404(db, project_id)
+        from app.services import order_change_notice_service as ocn
+
+        actor = ocn.actor_from_slugs(user["id"], permission_slugs(db, user["id"]))
+        return _envelope(ocn.list_for_project(db, project_id, actor=actor, linkable=linkable))
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 

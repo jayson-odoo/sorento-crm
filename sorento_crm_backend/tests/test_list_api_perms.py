@@ -485,6 +485,8 @@ def test_source_type_readers_cover_every_form_sla_type():
             "procurement.new_product_applications.approve",
             "procurement.new_product_applications.open_code",
         ],
+        # OCN-ORDER-CHANGE-NOTICE: the order change notice's view-all slug.
+        "order_change_notice": ["procurement.order_change_notices.view"],
     }
 
 

@@ -1,7 +1,7 @@
 'use client';
 
 import type { ReactNode } from 'react';
-import { formatDate } from '@/lib/helpers';
+import { formatDateInMalaysia } from '@/lib/helpers';
 
 /** Minimal fields for document-style sign-off (matches Excel footer + comments). */
 export type PurchaseRequestSignoffFields = {
@@ -15,15 +15,17 @@ export type PurchaseRequestSignoffFields = {
   approval_comments?: string | null;
 };
 
-type Variant = 'detailCard' | 'publicCard';
+/**
+ * `decision`: the four-box sign-off the order change notice reads (Decision, Name, Date,
+ * Remarks), over the same approval columns; "Pending" until a decision exists.
+ */
+type Variant = 'detailCard' | 'publicCard' | 'decision';
 
 function formatDateOrDash(value: string | null | undefined): string {
   if (value == null || value === '') return '-';
-  try {
-    return formatDate(new Date(value));
-  } catch {
-    return '-';
-  }
+  // The decision stamp is UTC; the day is Malaysia's, like every other date on the page (a
+  // morning decision in Malaysia is still the previous day in UTC).
+  return formatDateInMalaysia(value) || '-';
 }
 
 /**
@@ -51,6 +53,26 @@ export function PurchaseRequestSignoffFooter({
   // D9: resolve the contact's live name when the requestor FK is set; the stored
   // text stays the point-in-time record and the fallback for legacy FK-less rows.
   const requestedByLabel = request.requested_by_contact_name || request.requested_by || '-';
+
+  if (variant === 'decision') {
+    const decision = isApproved ? 'Approved' : isRejected ? 'Rejected' : 'Pending';
+    const boxes: Array<[string, string]> = [
+      ['Decision', decision],
+      ['Name', hasDecision ? request.approved_by || '-' : '-'],
+      ['Date', hasDecision ? formatDateOrDash(request.approved_at) : '-'],
+      ['Remarks', hasDecision ? comments || '-' : '-'],
+    ];
+    return (
+      <div className="mt-8 grid grid-cols-1 gap-x-10 gap-y-4 border-t border-border pt-6 sm:grid-cols-2">
+        {boxes.map(([label, value]) => (
+          <div key={label} className="min-w-0">
+            <p className="text-sm text-muted-foreground">{label}</p>
+            <p className="min-h-9 whitespace-pre-wrap break-words py-2 text-sm">{value}</p>
+          </div>
+        ))}
+      </div>
+    );
+  }
 
   if (variant === 'publicCard') {
     return (
