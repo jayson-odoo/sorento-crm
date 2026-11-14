@@ -26,6 +26,7 @@ import { Container } from '@/components/common/container';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { PageHeader } from '@/components/common/PageHeader';
 import { PillOverflow } from '@/components/common/PillOverflow';
+import { replaceUrlSearch } from '@/lib/urlSearchState';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { idFilterLabels, joinMulti, multiChipLabel, splitMulti } from '@/lib/list-filters/multiValue';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
@@ -72,22 +73,6 @@ function AccountsCell({ row }: { row: SalesTargetRow }) {
         </ul>
       )}
     />
-  );
-}
-
-/** Keep the tab and team filter in the URL without a navigation (a shareable view). */
-function writeUrl(next: Record<string, string>) {
-  if (typeof window === 'undefined') return;
-  const params = new URLSearchParams(window.location.search);
-  for (const [key, value] of Object.entries(next)) {
-    if (value) params.set(key, value);
-    else params.delete(key);
-  }
-  const search = params.toString();
-  window.history.replaceState(
-    window.history.state,
-    '',
-    `${window.location.pathname}${search ? `?${search}` : ''}`,
   );
 }
 
@@ -156,11 +141,11 @@ export default function SalesTargetsView() {
   const changeTab = (value: string) => {
     const next = tabOf(value);
     setTab(next);
-    writeUrl({ tab: next === 'team' ? '' : next, team: next === 'agent' ? teamFilter : '' });
+    replaceUrlSearch({ tab: next === 'team' ? '' : next, team: next === 'agent' ? teamFilter : '' });
   };
   const changeTeam = (value: string) => {
     setTeamFilter(value);
-    writeUrl({ team: value });
+    replaceUrlSearch({ team: value });
   };
 
   const headerAction = canAdd ? (

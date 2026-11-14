@@ -1688,6 +1688,10 @@ def _code_matched(result: dict[str, Any], tokens: list[str] | None = None, *, ce
         if certificates and isinstance(match, dict) and match.get("entity_type") == "certificate":
             # CLOSED LISTS: a certificate matched exactly (by number, or scheme and number).
             return _has_digit(fragment) and match.get("match_tier") == "exact"
+        if isinstance(match, dict) and match.get("entity_type") == "product_set":
+            # CHATBOT-SET-CODES AC-2b: a registered set typed as its whole code ("qwc605 rl soft")
+            # is matched by code too; its words are the code's, never a described set's.
+            return _has_digit(fragment) and fragment == _fold_code(match.get("canonical_code"))
         return (
             _has_digit(fragment)
             and isinstance(match, dict)

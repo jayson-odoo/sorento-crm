@@ -47,8 +47,6 @@ from tests._pg_fixture import blank_session, unique_code
 from tests.chatbot.agent._seed import seed_contact, seed_user
 from tests.chatbot.agent.test_agent_bulk_grant import dealer, events, fake_phone, local, make_world, state
 from tests.chatbot.agent.test_dealer_access_agent import (
-    ALREADY,
-    ALSO,
     DEMOTE_REFUSED,
     EDIT_OWN,
     MCH_TAG,
@@ -66,8 +64,10 @@ from tests.chatbot.agent.test_dealer_access_agent import (
 BASE = "/api/v1/sales/dealer-access"
 PICK_OWN = "Pick one of your accounts."
 SRT_OWNER_TYPES = ("end_user", "dealer", "cabana_dealer")
+# DEALER-ACCESS-NAMES N2.4 / N2.6 / N5.4: `other_account` is gone; rows carry `editable` and `in_respond`.
 PEOPLE_KEYS = {
-    "contact_id", "name", "phone", "company", "company_name", "accounts", "access", "owner_tag", "other_account",
+    "contact_id", "name", "phone", "company", "company_name", "accounts", "access", "owner_tag", "editable",
+    "in_respond",
 }
 
 
@@ -103,6 +103,26 @@ def jobs(monkeypatch):
     monkeypatch.setattr(queue_service, "enqueue_job", record)
     monkeypatch.setattr(contact_grant, "enqueue_job", record, raising=False)
     return calls
+
+
+@pytest.fixture(autouse=True)
+def _no_respond(monkeypatch):
+    """DEALER-ACCESS-NAMES N5.6: the grant now asks Respond.io inside the request; no client here has an API key and
+    a raw HTTP client fails the test, so nothing ever reaches the real Respond.io."""
+    from app.services import integration_service
+    from app.services.integration_service import RespondClient
+
+    def forbid(*_a, **_k):
+        raise AssertionError("RespondClient._http must not be called")
+
+    monkeypatch.setattr(integration_service, "_resolve_workspace_credentials", lambda *a, **k: None)
+    monkeypatch.setattr(integration_service.settings, "respond_api_key", None, raising=False)
+    monkeypatch.setattr(RespondClient, "_http", staticmethod(forbid))
+
+
+def brief(rows) -> list[dict]:
+    """A refusal row without its `contact` (N4.3 adds it, None for every refusal but "already has access")."""
+    return [{"index": r["index"], "error": r["error"]} for r in rows or []]
 
 
 def respond_jobs(calls) -> list:
@@ -396,7 +416,9 @@ def shared_dealer(db, o):
     )
 
 
-def test_S3_a_shared_dealer_shows_only_my_rows_flagged_other_account_and_leaks_nothing(db):
+def test_S3_N2_3_a_shared_dealer_shows_my_company_rows_with_every_linked_account_marked_mine(db):
+    # Was: only my own account, `other_account: True`, the other salesperson's account never named (privacy rule
+    # S3/S8, reversed by owner answer Q1 (a) in DEALER-ACCESS-NAMES N2.3 / N2.6).
     o = two_sales(db)
     person = shared_dealer(db, o)
 
@@ -408,12 +430,17 @@ def test_S3_a_shared_dealer_shows_only_my_rows_flagged_other_account_and_leaks_n
     assert row["contact_id"] == str(person.id)
     assert row["company"] == "SRT" and row["company_name"]
     assert digits(row["phone"]) == digits(person.phone_number)
-    assert row["accounts"] == [{
+    accounts = {a["id"]: a for a in row["accounts"]}
+    assert set(accounts) == set(ids_of(o.w.cust_a, o.theirs))
+    assert accounts[str(o.w.cust_a.id)] == {
         "id": str(o.w.cust_a.id), "code": o.w.cust_a.customer_code, "name": o.w.cust_a.customer_name,
-        "link_id": link_row(db, person.id, o.w.cust_a.id).id,
-    }]
-    assert row["other_account"] is True
-    assert_no_leak(out, o.theirs, o.theirs_m)
+        "mine": True, "link_id": link_row(db, person.id, o.w.cust_a.id).id,
+    }
+    assert accounts[str(o.theirs.id)]["mine"] is False
+    assert accounts[str(o.theirs.id)].get("link_id") is None
+    assert link_row(db, person.id, o.theirs.id).id not in blob(out)
+    assert row["editable"] is True
+    assert_no_leak(out, o.theirs_m)
 
 
 def test_S3_the_other_salesperson_sees_their_own_two_company_rows_only(db):
@@ -425,10 +452,12 @@ def test_S3_the_other_salesperson_sees_their_own_two_company_rows_only(db):
     assert out["total"] == 2
     by_company = {r["company"]: r for r in out["rows"]}
     assert set(by_company) == {"SRT", "MCH"}
-    assert [a["id"] for a in by_company["SRT"]["accounts"]] == [str(o.theirs.id)]
+    # N2.3: the SRT row also lists salesperson 1's account, marked not mine, without its link id.
+    srt = {a["id"]: a["mine"] for a in by_company["SRT"]["accounts"]}
+    assert srt == {str(o.theirs.id): True, str(o.w.cust_a.id): False}
     assert [a["id"] for a in by_company["MCH"]["accounts"]] == [str(o.theirs_m.id)]
-    assert all(r["other_account"] is True for r in out["rows"])
-    assert_no_leak(out, o.w.cust_a, o.w.twin1, o.w.twin2, o.w.cust_b)
+    assert all("other_account" not in r for r in out["rows"])
+    assert_no_leak(out, o.w.twin1, o.w.twin2, o.w.cust_b)
 
 
 def test_S3_a_contact_linked_only_to_my_accounts_is_not_other_account_and_one_row_per_company(db):
@@ -441,7 +470,7 @@ def test_S3_a_contact_linked_only_to_my_accounts_is_not_other_account_and_one_ro
     assert {r["company"] for r in rows} == {"SRT", "MCH"} and len(rows) == 2
     srt = next(r for r in rows if r["company"] == "SRT")
     assert {a["id"] for a in srt["accounts"]} == set(ids_of(w.cust_a, w.twin1))
-    assert all(r["other_account"] is False and r["contact_id"] == str(person.id) for r in rows)
+    assert all(r["contact_id"] == str(person.id) and r["editable"] is True for r in rows)
 
 
 def test_S3_a_company_row_needs_a_link_to_one_of_my_accounts_of_that_company(db):
@@ -519,17 +548,20 @@ def test_S3_query_matches_name_phone_digits_and_my_account_code(db):
     assert [r["contact_id"] for r in by_code] == [str(named.id)]
 
 
-def test_S3_query_by_the_other_salespersons_code_finds_nothing(db):
+def test_S3_N3_4_query_by_any_account_of_the_row_finds_it_and_a_company_row_i_do_not_have_finds_nothing(db):
+    # Was: the other salesperson's code or name found nothing. N3.4: search matches any of the row's customer codes
+    # OR names, and the SRT row now lists their account (N2.3). The shared dealer has no MCH row under `mine`.
     o = two_sales(db)
-    shared_dealer(db, o)
+    person = shared_dealer(db, o)
 
     out = service().list_people(db, o.s1, query=o.theirs.customer_code)
     by_name = service().list_people(db, o.s1, query=o.theirs.customer_name)
     by_mocha = service().list_people(db, o.s1, query=o.theirs_m.customer_code)
 
-    assert out["total"] == 0 and out["rows"] == []
-    assert by_name["total"] == 0 and by_mocha["total"] == 0
-    assert_no_leak([out, by_name, by_mocha], o.theirs, o.theirs_m)
+    assert [r["contact_id"] for r in out["rows"]] == [str(person.id)]
+    assert [r["contact_id"] for r in by_name["rows"]] == [str(person.id)]
+    assert by_mocha["total"] == 0 and by_mocha["rows"] == []
+    assert_no_leak([out, by_name, by_mocha], o.theirs_m)
 
 
 def test_S3_rows_are_ordered_by_name_then_phone_and_total_counts_rows_across_pages(db):
@@ -571,9 +603,12 @@ def test_S3_http_repeated_company_param_and_no_leak_on_the_shared_dealer(db, api
     resp = api.as_user(o.s1).get(f"{BASE}/people", params=[("company", "SRT"), ("company", "MCH")])
 
     assert resp.status_code == 200, resp.text
-    assert_no_leak(resp.json(), o.theirs, o.theirs_m)
+    # N2.3: their SRT account shows (not mine, no link id); their Mocha account has no row of mine.
+    assert_no_leak(resp.json(), o.theirs_m)
     rows = resp.json()["rows"] if "rows" in resp.json() else _unwrap(resp.json())["rows"]
     assert [r["company"] for r in rows] == ["SRT"]
+    theirs = next(a for a in rows[0]["accounts"] if a["id"] == str(o.theirs.id))
+    assert theirs["mine"] is False and theirs.get("link_id") is None
 
 
 # ================================================================== S4 grant
@@ -598,7 +633,9 @@ def test_S4_a_new_phone_as_owner_creates_the_contact_links_both_accounts_and_hol
     assert after["name"] == "ZZT New Owner"
     assert after["links"] == sorted(ids_of(w.cust_a, w.twin1))
     assert SRT_TAG in tags_of(db, after["id"])
-    assert len(respond_jobs(jobs)) == 1
+    # N5.1: the screen asks Respond.io inside the request and does not also enqueue the worker job.
+    assert respond_jobs(jobs) == []
+    assert row["respond"] == "failed" and row["respond_error"]  # no API key in tests (N5.3)
 
 
 def test_S4_an_employee_grant_holds_no_owner_tag_and_audits_once_per_contact(db):
@@ -669,7 +706,8 @@ def test_S4_one_refused_row_refuses_the_whole_form_and_the_good_phone_is_not_cre
 
     assert err.value.status_code == 422
     rows = refusal_rows(err.value)
-    assert rows == [{"index": 0, "error": STAFF}]
+    assert brief(rows) == [{"index": 0, "error": STAFF}]
+    assert rows[0]["contact"] is None
     assert state(db, good) is None
     assert state(db, staff_contact.phone_number)["links"] == []
 
@@ -683,7 +721,7 @@ def test_S4_a_duplicate_phone_in_the_form_is_refused_on_the_later_row_and_nothin
             person_of(phone, name="ZZT First"), person_of(local(phone), name="ZZT Again"),
         ])
 
-    rows = refusal_rows(err.value)
+    rows = brief(refusal_rows(err.value))
     assert {"index": 1, "error": "Same as row 1."} in rows
     assert all(r["index"] != 0 for r in rows)
     assert state(db, phone) is None
@@ -699,40 +737,49 @@ def test_S4_an_unreadable_phone_is_refused_with_the_plans_own_text(db):
     assert rows[0]["index"] == 0 and "is not a Malaysian mobile number" in rows[0]["error"]
 
 
-def test_S4_a_shared_contact_gets_the_own_link_add_only_and_the_note_also_has_access(db):
+def test_S4_N4_3_a_shared_contact_is_refused_already_has_access_and_nothing_is_linked(db):
+    # Was: silently linked add-only with the note "also has access through another account". N4.3: a phone whose
+    # contact already has ANY customer link is refused for that row, nothing written, with the contact to open.
     o = two_sales(db)
     w = o.w
     person = dealer(db, w, customers=(o.theirs,), name="ZZT Shared Person")
 
-    out = service().grant(db, o.s1, "SRT", ids_of(w.cust_a), [person_of(person.phone_number, role="employee")])
+    with pytest.raises(AppException) as err:
+        service().grant(db, o.s1, "SRT", ids_of(w.cust_a), [person_of(person.phone_number, role="employee")])
 
-    row = out["rows"][0]
-    assert row["created"] is False and str(row["contact_id"]) == str(person.id)
-    assert ALSO in blob(row["notes"])
-    assert links_of(db, person.id) == set(ids_of(o.theirs, w.cust_a))
-    assert_no_leak(out, o.theirs)
+    assert err.value.status_code == 422
+    assert refusal_rows(err.value) == [{
+        "index": 0, "error": "ZZT Shared Person already has access.",
+        "contact": {"id": str(person.id), "name": "ZZT Shared Person", "company": "SRT", "editable": False},
+    }]
+    assert links_of(db, person.id) == {str(o.theirs.id)}
 
 
-def test_S4_promoting_a_shared_contact_is_refused_with_the_office_text(db):
+def test_S4_N4_3_promoting_a_shared_contact_is_refused_already_has_access(db):
+    # Was: the office text (DEMOTE_REFUSED). N4.3 refuses any phone that already has a customer link first.
     o = two_sales(db)
     person = dealer(db, o.w, customers=(o.theirs,), name="ZZT Shared Person")
 
     with pytest.raises(AppException) as err:
         service().grant(db, o.s1, "SRT", ids_of(o.w.cust_a), [person_of(person.phone_number, role="owner")])
 
-    assert refusal_rows(err.value) == [{"index": 0, "error": DEMOTE_REFUSED}]
+    assert brief(refusal_rows(err.value)) == [{"index": 0, "error": "ZZT Shared Person already has access."}]
     assert links_of(db, person.id) == {str(o.theirs.id)}
 
 
-def test_S4_granting_what_is_already_held_is_refused_nothing_to_change(db):
+def test_S4_N4_3_granting_a_phone_i_already_gave_access_is_refused_already_has_access(db):
+    # Was: the plan's "Already has this access; nothing to change." N4.3 answers first: the contact has a link.
     o = two_sales(db)
     phone = fake_phone()
-    service().grant(db, o.s1, "SRT", ids_of(o.w.cust_a), [person_of(phone)])
+    first = service().grant(db, o.s1, "SRT", ids_of(o.w.cust_a), [person_of(phone, name="ZZT Twice")])
 
     with pytest.raises(AppException) as err:
         service().grant(db, o.s1, "SRT", ids_of(o.w.cust_a), [person_of(phone)])
 
-    assert refusal_rows(err.value) == [{"index": 0, "error": ALREADY}]
+    assert refusal_rows(err.value) == [{
+        "index": 0, "error": "ZZT Twice already has access.",
+        "contact": {"id": str(first["rows"][0]["contact_id"]), "name": "ZZT Twice", "company": "SRT", "editable": True},
+    }]
 
 
 def test_S4_a_company_i_am_not_granted_is_refused(db):
@@ -768,7 +815,8 @@ def test_S4_http_grant_happy_path_audits_me_and_returns_rows(db, api, jobs):
     assert SRT_TAG in tags_of(db, after["id"])
     audit = events(db, after["id"])
     assert len(audit) == 1 and str(audit[0].user_id) == str(o.s1)
-    assert len(respond_jobs(jobs)) == 1
+    assert respond_jobs(jobs) == []  # N5.1
+    assert rows[0]["respond"] == "failed" and rows[0]["respond_error"]
 
 
 def test_S4_http_a_refused_row_is_422_with_rows_index_and_error(db, api):
@@ -789,7 +837,7 @@ def test_S4_http_a_refused_row_is_422_with_rows_index_and_error(db, api):
     })
 
     assert resp.status_code == 422, resp.text
-    assert _find_rows(resp.json()) == [{"index": 0, "error": STAFF}]
+    assert brief(_find_rows(resp.json())) == [{"index": 0, "error": STAFF}]
     assert state(db, good) is None
 
 
@@ -1252,7 +1300,7 @@ def test_S8_a_person_linked_to_my_sorento_and_my_mocha_accounts_is_not_another_a
     person = both_companies_person(db, o, "ZZT Both Mine")
 
     rows = person_rows(db, o.s1)
-    assert rows and all(r["other_account"] is False for r in rows)
+    assert rows and all("other_account" not in r and r["editable"] is True for r in rows)  # N2.6
 
     service().update(db, o.s1, str(person.id), "SRT", "owner", ids_of(w.cust_a))
 
