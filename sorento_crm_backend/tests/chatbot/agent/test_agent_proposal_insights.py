@@ -797,3 +797,86 @@ def test_AC_F1_the_default_effort_is_medium():
     from app.services.chatbot.agent import loop
 
     assert loop.DEFAULT_EFFORT == "medium"
+
+
+# ================================================================== Round 2: figures and not available
+
+
+_EVERY_NUMBER = ("every number in figures", "list every number")
+
+
+def _module_strings(module) -> list[str]:
+    """Every string constant in a module's source (adjacent literals are already joined by the parser)."""
+    tree = ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
+    return [n.value for n in ast.walk(tree) if isinstance(n, ast.Constant) and isinstance(n.value, str)]
+
+
+def _answer_desc():
+    from app.services.chatbot.agent.tools import ANSWER_SCHEMA
+
+    return ANSWER_SCHEMA["function"]["description"]
+
+
+def test_R6_the_prompt_asks_only_for_the_key_numbers_in_figures():
+    text = _prompt()
+    low = text.lower()
+    for phrase in _EVERY_NUMBER:
+        assert phrase not in low, phrase
+    assert "key" in low and "table cell" in low
+    assert "Every number in your answer must come from a tool result" in text
+
+
+def test_R6_the_answer_schema_asks_only_for_the_key_numbers_in_figures():
+    low = _answer_desc().lower()
+    for phrase in _EVERY_NUMBER:
+        assert phrase not in low, phrase
+    assert "key" in low and "table cell" in low, low
+
+
+def test_R6_no_loop_instruction_asks_for_every_number_in_figures():
+    """The answer nudge and the final-call instruction are local strings in loop.py: read them off its source."""
+    from app.services.chatbot.agent import loop
+
+    hits = [s for s in _module_strings(loop) for p in _EVERY_NUMBER if p in s.lower()]
+    assert hits == [], hits
+
+
+def test_R7_a_table_of_tool_numbers_verifies_with_only_the_totals_in_figures(db):
+    """Pins that unlisted table cells verify: the verifier reads the text's numbers against the tool results."""
+    from app.models.base import company_scope
+    from tests.chatbot.agent.test_agent_quote_compare import (
+        LINES,
+        _panel_run,
+        _round,
+        _seed_world,
+        _tc,
+        _viewer,
+    )
+
+    world = _seed_world(db)
+    user_id = _viewer(db)
+    table = (
+        "| Code | Qty | Unit price | Line total |\n"
+        "|---|---|---|---|\n"
+        "| C3 | 3 | 100.00 | 300.00 |\n"
+        "| C4 | 4 | 10.00 | 40.00 |\n"
+        "| C5 | 1 | 20.00 | 20.00 |"
+    )
+    text = f"{world.doc_a} totals RM 340.00 and {world.doc_b} totals RM 0.00.\n\n{table}"
+    figures = [{"value": "340.00", "call_id": "c1"}, {"value": "0.00", "call_id": "c1"}]
+    final = _round(_tc("answer", {"text": text, "figures": figures, "not_found": [], "not_checked": []}, "ans"))
+    with company_scope(db, frozenset({world.company_id})):
+        result, _prov, _rec = _panel_run(
+            db, user_id, [_round(_tc(LINES, {"project_id": world.project_id}, "c1")), final, final, final],
+            seed_ids=[world.project_id], company_id=world.company_id,
+        )
+    assert result.status == "answered", (result.status, result.reply_text)
+    assert "not verified" not in result.reply_text, result.reply_text
+    for row in ("| C3 | 3 | 100.00 | 300.00 |", "| C4 | 4 | 10.00 | 40.00 |", "| C5 | 1 | 20.00 | 20.00 |"):
+        assert row in result.reply_text, result.reply_text
+
+
+def test_R8_the_prompt_says_cost_and_margin_are_not_available_in_one_sentence():
+    sentences = re.split(r"(?<=[.!?])\s+|\n", _prompt())
+    hits = [s for s in sentences if "cost" in s.lower() and "margin" in s.lower() and "not available" in s.lower()]
+    assert hits, "no sentence says cost and margin are not available"

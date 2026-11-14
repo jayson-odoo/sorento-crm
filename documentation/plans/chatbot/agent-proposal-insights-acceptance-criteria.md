@@ -115,3 +115,16 @@ Per doc, beside `lines`:
   or fewer AND no scope has lines_not_shown; otherwise end with Reply "table" for the full table.
 - R5 (A1, reuse) One creator-name rule: `prepared_by_of` calls `prepared_by_names`; the lines tool reads all
   creator names in one users query per call.
+
+## Round 2 (lead, 14 Nov, crew live pass: a compare answer took ~7.8k output tokens / ~30 s, a second one timed out at 45 s)
+
+- R6 No instruction tells the model to list every number in figures. The agent prompt fallback (FINISHING), the
+  answer nudge and the final-call instruction in `loop.py`, and ANSWER_SCHEMA's description say: figures holds only
+  the key numbers (totals, gaps) with their call_id, never every table cell. The verifier already checks the
+  text's numbers against the tool results itself. The prompt keeps "Every number in your answer must come from a
+  tool result".
+- R7 A turn whose answer text holds a markdown table with numbers from the tool result (qty, unit prices, line
+  totals) while `figures` lists only the document totals is shown as written: no "(not verified)", status
+  answered.
+- R8 The prompt says no tool returns a quotation's cost or margin, so when asked the agent replies in one plain
+  line that cost and margin are not available, without calling other tools for them.
