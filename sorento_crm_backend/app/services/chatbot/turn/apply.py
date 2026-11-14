@@ -2652,6 +2652,96 @@ def _asked_quantity_placed(
     trace.rules_fired.append("asked_quantity_placed")
 
 
+def _one_set_for_every_line(focus: Focus, slots: list[Any]) -> bool:
+    """Every line of the open question is a part of one same set the conversation holds
+    (the focus row's `set_codes`, written by the resolve gate), joined by the slot's uuid or
+    code."""
+    shared: set[str] | None = None
+    for slot in slots:
+        names = {str(slot.key).strip().casefold(), str(slot.label).strip().casefold()}
+        row = next(
+            (
+                p
+                for p in focus.products or ()
+                if isinstance(p, dict) and _codes_named(p) & names
+            ),
+            None,
+        )
+        codes = {str(c) for c in (row.get("set_codes") or [row.get("set_code")]) if c} if row else set()
+        shared = codes if shared is None else shared & codes
+        if not shared:
+            return False
+    return bool(shared)
+
+
+def _one_number_for_every_line(
+    state: State, verdict: dict[str, Any], trace: Trace, asked: int | None
+) -> None:
+    """CHATBOT-SET-CODES, crew live step 12 (14 Nov 2026): "4" after "How many units for
+    each?" over a set's parts answered only the part the parser bound the one number to
+    (by code or by position). The user typed no product in that message, so the number
+    names no part: it fills every line still owed (`StockQtyTask.fill`, owner ruling 26 Sep
+    F2), written as the parser's own fill items so `_open_question_answer` places them.
+
+    A product the user typed in this message (a verdict entity with a product hint, "8 for
+    QWCY604") keeps the binding to that line alone (STOCK-QTY-PARTIAL-FILL R1), as do
+    quantities bound to two or more lines, a `demand_qty` that is a different number, a
+    line already answered (a revision), and lines that are not the parts of one set (R1:
+    "5 for the 2nd one" answers that line). Reads the open question's lines, the focus rows
+    and the parser's fields only.
+    """
+    if asked is not None or state.pending is not None:
+        return
+    task = _open_point_form_task(state.focus)
+    if task is None:
+        return
+    answer = verdict.get(OPEN_QUESTION_ANSWER)
+    if not isinstance(answer, dict) or answer.get("mode") != "fill":
+        return
+    if any(
+        isinstance(entity, dict)
+        and entity.get("hint") in (None, "product")
+        and entity.get("current_message") is True
+        and _line_number(entity) is None
+        and not str(entity.get("raw") or "").strip().isdigit()
+        for entity in verdict.get("entities") or []
+    ):
+        return
+    slots = list(task.slots)
+    bound: set[int] = set()
+    numbers: set[int] = set()
+    for item in answer.get("items") or []:
+        if not isinstance(item, dict) or item.get("qty") is None:
+            continue
+        index = _placed_line(item, slots)
+        qty = _positive(item.get("qty"))
+        if index is None or qty is None:
+            return
+        bound.add(index)
+        numbers.add(qty)
+    if len(bound) != 1 or len(numbers) != 1:
+        return
+    if any(slots[index].value is not None for index in bound):
+        # "make line 1 5": a revision of a line already answered, not the owed question's answer.
+        return
+    if not _one_set_for_every_line(state.focus, slots):
+        # Lines that are separate products: one line filled is that line (STOCK-QTY-PARTIAL-FILL R1).
+        return
+    (qty,) = numbers
+    demand = verdict.get("demand_qty")
+    if demand is not None and _positive(demand) != qty:
+        return
+    verdict[OPEN_QUESTION_ANSWER] = {
+        **answer,
+        "items": [
+            {"position": index + 1, "code": slot.key, "qty": qty}
+            for index, slot in enumerate(slots)
+            if slot.value is None or index in bound
+        ],
+    }
+    trace.rules_fired.append("one_number_for_every_line")
+
+
 def _open_question_answer(
     state: State, verdict: dict[str, Any], trace: Trace, asked: int | None = None
 ) -> bool:
@@ -3304,6 +3394,7 @@ def _apply(
     state, picked = _open_pick_answer(state, verdict, trace)
     if not picked:
         state = _stock_pick_takes_position_and_quantity(state, verdict, trace)
+    _one_number_for_every_line(state, verdict, trace, asked_qty)
     if not _open_question_answer(state, verdict, trace, asked_qty):
         _asked_quantity_placed(state, verdict, trace, asked_qty)
         # Owner hand test 26 Sep, round 3, and the round 5 ruling ("make the picker not

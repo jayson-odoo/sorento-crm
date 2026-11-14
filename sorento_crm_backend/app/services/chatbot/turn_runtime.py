@@ -3654,6 +3654,32 @@ def _spec_quantities(
         return out
     from app.services.chatbot.turn.task import set_part_quantity
 
+    # CHATBOT-SET-CODES L1 (crew live step 5, 14 Nov 2026): the resolver completes a set code
+    # typed with its last word ("QWC605-RL soft x 1" is the set QWC605-RL-SOFT,
+    # `product_code_family._completed_code`), so the typed token's quantity is keyed by a code
+    # no row carries. Rule 5 below, applied to the set codes: a typed token naming no placed
+    # code or set, that is the prefix of exactly ONE placed set's code, is that set.
+    set_keys = {
+        _token_key(str(c))
+        for e in entities
+        if isinstance(e, dict)
+        for c in e.get("set_codes") or [e.get("set_code")]
+        if c
+    }
+    placed_keys = set_keys | {
+        _token_key(str(e.get(name)))
+        for e in entities
+        if isinstance(e, dict)
+        for name in ("code", "canonical_code")
+        if e.get(name)
+    }
+    for token, quantity in list(by_code.items()):
+        if token in placed_keys:
+            continue
+        completed = [key for key in set_keys if key.startswith(token)]
+        if len(completed) == 1 and completed[0] not in by_code:
+            by_code[completed[0]] = quantity
+
     quantities: dict[str, int] = {}
     for e in entities:
         uuid = e.get("uuid") if isinstance(e, dict) else None
