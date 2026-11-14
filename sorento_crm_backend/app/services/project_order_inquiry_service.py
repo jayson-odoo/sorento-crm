@@ -353,12 +353,16 @@ def mark_purchasing_email_trigger(session) -> None:
     """Mark the ROOT transaction this session is in as one that may email purchasing
     (FP-EMAIL-ONE-TRIGGER, owner 6 Nov 2026).
 
-    Two callers, both a person's press, and no others:
+    Three callers, each a person's press, and no others:
     - the board Confirm (`fulfilment_planning._confirm_with_possible_rejects`, the seam both
       Confirm routes share): THE trigger;
     - Publish amendment (`projects/sales_orders.publish_amendment`): kept as it was by the
       owner (Q4, "not used yet"), an exception named in
-      `documentation/plans/fulfilment/PLAN-email-one-trigger-6nov.md`.
+      `documentation/plans/fulfilment/PLAN-email-one-trigger-6nov.md`;
+    - a spare part request revision's final approval
+      (`spare_part_request_service._approve_revision`, owner 14 Nov, UAC U4.5 of
+      `documentation/plans/purchasing/spare-part-or-b-14nov-acceptance-criteria.md`), only
+      when a qty moved.
     A purchasing handover line any write queues is sent only when the root transaction it was
     queued under carries this mark, and a changed-with-links notice is queued only inside one.
     The mark ends with that transaction, committed or not (`_fire_pending_handover`)."""

@@ -1280,13 +1280,19 @@ def _approve_revision(
     order inquiry email); a row taken to 0 is cancelled the way a line CS cancels is
     (`cancel_row_told`); an unchanged row is left alone. Then the revision closes on the
     same record, oi_no unchanged."""
-    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+    from app.services.project_order_inquiry_service import (
+        ProjectOrderInquiryService,
+        mark_purchasing_email_trigger,
+    )
 
     oi = ProjectOrderInquiryService(db)
     moved = [row for row in rows if _revised(row) != Decimal(row.qty or 0)]
-    # The handover lines are queued as an SO change queues them; whether this approval may
-    # send them is FP-EMAIL-ONE-TRIGGER's call (`mark_purchasing_email_trigger` has only the
-    # owner's two callers), so outside a marked press the drain drops them.
+    if moved:
+        # Owner, 14 Nov ~15:54 (UAC U4.5): a qty that changes after purchasing has seen the
+        # request goes to them in the same order inquiry email an SO change sends. This
+        # approval is the press that changes it, so it marks its transaction
+        # (FP-EMAIL-ONE-TRIGGER's third named trigger); nothing moved, nothing marked.
+        mark_purchasing_email_trigger(db)
     for row in moved:
         new_qty = _revised(row)
         if new_qty <= 0:

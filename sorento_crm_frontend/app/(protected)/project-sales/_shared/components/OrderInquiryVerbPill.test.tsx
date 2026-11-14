@@ -97,7 +97,9 @@ describe('AC-B5-2: no second spelling of the state word - one map, everywhere it
     // cell both go through the shared `OrderInquiryLineStatusPill`, never a pill of their own.
     for (const relative of [
       '../../order-inquiries/[id]/components/orderInquiryHeaderLinesColumns.tsx',
-      '../../../scm/sales-orders/[id]/components/SoLineOrderInquiryCell.tsx',
+      // SPARE-PART-OR-B (U3.1): the SO line's Order inquiry cell is a thin caller of the ONE
+      // shared link cell, which is where the pill now renders.
+      './OrderInquiryLinkCell.tsx',
     ]) {
       const source = readFileSync(require.resolve(relative), 'utf8');
       expect(source).toContain('<OrderInquiryLineStatusPill');
