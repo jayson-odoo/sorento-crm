@@ -16,6 +16,7 @@ from app.models.user import SystemSetting
 from app.services.llm_provider import ChatResult
 from tests._pg_fixture import blank_session
 from tests.chatbot.agent._seed import seed_agent_contact
+from tests.chatbot.agent.test_agent_writes import directory_of
 
 STOCK = "crm_inventory_stock_balance_list"
 
@@ -167,7 +168,8 @@ def test_the_first_call_sees_a_system_prompt_the_user_text_and_only_permitted_to
     assert first["messages"][0]["role"] == "system"
     assert first["messages"][-1] == {"role": "user", "content": "hello there"}
     # the seeded user holds inventory.stock.view and order_management.orders.view
-    names = {t["function"]["name"] for t in first["tools"]}
+    # AGENT-CONTEXT-BUDGET slice 2: a non-core tool is listed in crm_tools_load, and a forbidden one in neither.
+    names = {t["function"]["name"] for t in first["tools"]} | directory_of(first["tools"])
     assert STOCK in names
     assert "crm_procurement_grn_summary" not in names
     for t in first["tools"]:

@@ -45,7 +45,7 @@ from tests._ask_todo_seed import customer as seed_customer
 from tests._mc_lookup_seed import warehouse
 from tests._pg_fixture import blank_session, unique_code
 from tests.chatbot.agent._seed import seed_contact, seed_user
-from tests.chatbot.agent.test_agent_writes import answer_, round_of, run_turn, tc, tool_names
+from tests.chatbot.agent.test_agent_writes import answer_, round_of, run_turn, tc, usable_names
 
 GRANT = "crm_contact_grant"
 BATCH = "crm_batch_propose"
@@ -657,7 +657,7 @@ def test_06_a_turn_with_a_pasted_table_shows_one_preview_table_and_writes_nothin
     # UAC A17: a pasted table carries its dealer names in the user's text.
     result, provider = run_turn(db, w, script, text_=typed_phones(typed_companies("please grant access to these people\nZZT No Such Shop", rows), rows))
 
-    assert BATCH in tool_names(provider)
+    assert BATCH in usable_names(provider)
     assert result.pending_action is not None
     assert len(result.pending_action["lines"]) == 2
     reply = result.reply_text

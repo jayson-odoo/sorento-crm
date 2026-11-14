@@ -3,6 +3,9 @@
 Measured on a seeded compare turn with the real MCP catalogue (53 tools offered to an admin): every round sent
 93,991 characters of tool schemas (~23.5k tokens) beside a 6,842-character system prompt, a 5,972-character page
 note and a 3,431-character tool result. The owner's 3-round turn read 88,995 input tokens.
+
+AGENT-CONTEXT-BUDGET slice 2 retired the narrowing after the lines: step 1 is now the short core set and the list
+only grows, so the lines join after it.
 """
 from __future__ import annotations
 
@@ -22,46 +25,6 @@ from tests.chatbot.agent.test_agent_quote_compare import (  # noqa: F401 - fixtu
 names = lambda s: [x["function"]["name"] for x in s]  # noqa: E731
 
 
-def _schemas(*extra):
-    return [{"type": "function", "function": {"name": n}} for n in
-            (LINES, "crm_query", "crm_describe", "answer", "plan", "crm_inventory_stock_balance_list", *extra)]
-
-
-def test_after_a_quotation_lines_round_that_answered_only_that_tool_and_answer_remain():
-    from app.services.chatbot.agent.loop import narrow_after_query
-
-    schemas = _schemas()
-    ok = [{"name": LINES, "status": "ok", "complete": True}]
-    assert names(narrow_after_query(schemas, [{"name": LINES}], ok)) == [LINES, "answer", "plan"]
-    assert names(narrow_after_query(schemas, [{"name": "plan"}, {"name": LINES}], ok)) == [LINES, "answer", "plan"]
-
-
-def test_a_quotation_lines_round_that_failed_or_ran_beside_another_tool_keeps_every_schema():
-    from app.services.chatbot.agent.loop import narrow_after_query
-
-    schemas = _schemas()
-    assert narrow_after_query(schemas, [{"name": LINES}], [{"name": LINES, "status": "invalid"}]) == schemas
-    both = [{"name": LINES, "status": "ok"}, {"name": "crm_inventory_stock_balance_list", "status": "ok"}]
-    assert narrow_after_query(schemas, [{"name": LINES}, {"name": "crm_inventory_stock_balance_list"}], both) == schemas
-
-
-def test_a_multi_part_question_keeps_every_schema_after_the_lines():
-    from app.services.chatbot.agent.loop import narrow_after_query
-
-    schemas = _schemas()
-    ok = [{"name": LINES, "status": "ok", "complete": True}]
-    assert narrow_after_query(schemas, [{"name": LINES}], ok, plan_parts=2) == schemas
-
-
-def test_a_lookup_with_a_ref_not_found_or_no_document_keeps_every_schema():
-    """Review round 1: the tool answers ok with refs in not_found (another project's quotation), so the model still
-    needs crm_projects_find and the rest."""
-    from app.services.chatbot.agent.loop import narrow_after_query
-
-    schemas = _schemas()
-    assert narrow_after_query(schemas, [{"name": LINES}], [{"name": LINES, "status": "ok"}]) == schemas
-
-
 def test_a_whole_turn_whose_ref_is_not_found_keeps_every_tool_for_the_next_round(db):
     from app.models.base import company_scope
 
@@ -74,10 +37,11 @@ def test_a_whole_turn_whose_ref_is_not_found_keeps_every_tool_for_the_next_round
             seed_ids=[world.project_id], company_id=world.company_id,
         )
     first, second = (names(s["tools"]) for s in prov.seen)
-    assert sorted(second) == sorted(first)
+    # AGENT-CONTEXT-BUDGET slice 2: nothing is taken away; the lines, called before they were loaded, join.
+    assert LINES not in first and second == [*first, LINES], (first, second)
 
 
-def test_a_whole_compare_turn_sends_the_full_tool_list_once_then_only_the_lines_and_answer(db):
+def test_a_whole_compare_turn_opens_on_the_core_set_then_adds_only_the_lines(db):
     from app.models.base import company_scope
 
     world = _seed_world(db)
@@ -89,8 +53,9 @@ def test_a_whole_compare_turn_sends_the_full_tool_list_once_then_only_the_lines_
         )
     assert result.status == "answered", (result.status, result.reply_text)
     first, second = (names(s["tools"]) for s in prov.seen)
-    assert len(first) > 3 and LINES in first
-    assert sorted(second) == sorted([LINES, "answer", "plan"]), second
+    # AGENT-CONTEXT-BUDGET slice 2 (replaces the narrowing of C): step 1 is the core set, the lines join after it.
+    assert "crm_tools_load" in first and "answer" in first and LINES not in first, first
+    assert second == [*first, LINES], second
 
 
 class _KeyProv(Prov):

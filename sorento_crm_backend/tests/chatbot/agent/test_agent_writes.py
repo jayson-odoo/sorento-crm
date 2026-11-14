@@ -205,6 +205,19 @@ def tool_names(provider: Provider, call_index: int = 0) -> set[str]:
     return {t["function"]["name"] for t in (provider.seen[call_index]["tools"] or [])}
 
 
+def directory_of(tools: list[dict] | None) -> set[str]:
+    """The tools `crm_tools_load` lists (AGENT-CONTEXT-BUDGET slice 2): the user may load or call each."""
+    for t in tools or []:
+        if t["function"]["name"] == "crm_tools_load":
+            return {line.split(":", 1)[0] for line in t["function"]["description"].splitlines()[1:] if ":" in line}
+    return set()
+
+
+def usable_names(provider: Provider, call_index: int = 0) -> set[str]:
+    """What the model may use at `call_index`: the tools offered plus the ones crm_tools_load lists."""
+    return tool_names(provider, call_index) | directory_of(provider.seen[call_index]["tools"])
+
+
 def run_turn(db, world: World, script, text_="please update my customer asks", dealer_access: bool = False):
     from app.services.chatbot.agent.loop import run_agent_turn
 
@@ -322,8 +335,8 @@ def test_01_a_write_tool_is_exposed_only_when_the_linked_user_holds_its_slug(db)
 
     _, with_edit = run_turn(db, can, [answer_("Hello.")])
     _, without_edit = run_turn(db, cannot, [answer_("Hello.")])
-    assert UPDATE in tool_names(with_edit) and LIST in tool_names(with_edit)
-    assert UPDATE not in tool_names(without_edit)
+    assert UPDATE in usable_names(with_edit) and LIST in usable_names(with_edit)
+    assert UPDATE not in usable_names(without_edit)
 
 
 def test_01_a_direct_call_to_a_write_the_user_may_not_make_is_denied_and_proposes_nothing(db):
@@ -700,7 +713,7 @@ def test_13_the_confirm_and_cancel_tools_are_not_offered_when_nothing_is_pending
 
     _, provider = run_turn(db, w, [answer_("Hello.")])
 
-    assert UPDATE in tool_names(provider)  # the write tools are there; the confirm pair is not
+    assert UPDATE in usable_names(provider)  # the write tools are there; the confirm pair is not
     assert CONFIRM_ACTION not in tool_names(provider) and CANCEL_ACTION not in tool_names(provider)
 
 

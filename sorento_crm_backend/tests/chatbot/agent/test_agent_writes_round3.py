@@ -23,7 +23,7 @@ from app.services.company_scope import register_company_scope_listeners
 from tests._ask_todo_seed import SORENTO
 from tests._ask_todo_seed import customer as seed_customer
 from tests._pg_fixture import blank_session, unique_code
-from tests.chatbot.agent.test_agent_writes import answer_, make_world as ask_world, proposal_script, tool_names
+from tests.chatbot.agent.test_agent_writes import answer_, make_world as ask_world, proposal_script, usable_names
 from tests.chatbot.agent.test_agent_writes_opportunity import (  # noqa: F401 - helpers, not tests
     ADD_SLUG,
     CREATE,
@@ -229,8 +229,8 @@ def test_r14_the_tool_is_absent_from_a_turn_run_by_another_operator(db):
     _, as_linked = go(db, w, [answer_("Hi.")], operator=w.user_id)
     _, as_chat = go(db, w, [answer_("Hi.")], operator=None)
 
-    assert RECENT in tool_names(as_linked) and RECENT in tool_names(as_chat)  # controls
-    assert RECENT not in tool_names(as_holder)
+    assert RECENT in usable_names(as_linked) and RECENT in usable_names(as_chat)  # controls
+    assert RECENT not in usable_names(as_holder)
 
 
 # ------------------------------------------------------------------ R15: the reference is not a user message

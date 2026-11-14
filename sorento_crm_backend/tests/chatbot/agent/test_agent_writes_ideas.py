@@ -33,7 +33,7 @@ from app.utils.field_encryption import encrypt_secret
 from tests._ideation_ss_fake import SIGNING_SECRET, SS_BASE, FakeSS, blank_embed_settings, configure_embed_settings
 from tests._pg_fixture import blank_session, unique_code
 from tests.chatbot.agent._seed import seed_contact, seed_user
-from tests.chatbot.agent.test_agent_writes import action_row, answer_, round_of, tc, tool_names
+from tests.chatbot.agent.test_agent_writes import action_row, answer_, round_of, tc, usable_names
 from tests.chatbot.agent.test_agent_writes_round1 import Prov, _no_mcp, go, operator_with
 
 CREATE = "crm_idea_create"
@@ -284,8 +284,8 @@ def test_AC_R2_1_the_model_is_shown_the_tools_only_with_the_slug(db, ss):
     stranger = another_world(db, slugs=("inventory.stock.view",))
     _, seen_by_holder = go(db, holder, [answer_("Hi.")])
     _, seen_by_stranger = go(db, stranger, [answer_("Hi.")])
-    assert {CREATE, UPDATE, LIST} <= tool_names(seen_by_holder)
-    assert not ({CREATE, UPDATE, LIST} & tool_names(seen_by_stranger))
+    assert {CREATE, UPDATE, LIST} <= usable_names(seen_by_holder)
+    assert not ({CREATE, UPDATE, LIST} & usable_names(seen_by_stranger))
 
 
 def test_AC_R2_1_a_contact_with_no_linked_user_never_reaches_them(db, ss):
@@ -839,7 +839,7 @@ def test_AC_R2_13_propose_confirm_list_propose_update_confirm_through_a_turn(db,
         db, w, [round_of(tc(CREATE, dict(FIELDS), "c1")), answer_("I have prepared the idea.")],
         text_="I have an idea: the stock list is too long on my phone",
     )
-    assert {CREATE, UPDATE, LIST} <= tool_names(prov1)
+    assert {CREATE, UPDATE, LIST} <= usable_names(prov1)
     assert first.pending_action is not None
     assert posts(ss, CREATE_PATH) == []
     pending = actions.pending_action(db, w.respond_id)

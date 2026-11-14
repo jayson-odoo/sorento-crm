@@ -484,7 +484,7 @@ def test_the_slug_removed_before_confirm_rejects_the_action(db, sends, monkeypat
 
 
 def test_a_turn_lists_then_proposes_an_approval_and_writes_nothing(db, sends):
-    from tests.chatbot.agent.test_agent_writes import PROPOSAL_HEAD, answer_, round_of, run_turn, tc, tool_names
+    from tests.chatbot.agent.test_agent_writes import PROPOSAL_HEAD, answer_, round_of, run_turn, tc, usable_names
 
     w = make_world(db)
     pr = make_request(db, w)
@@ -496,7 +496,7 @@ def test_a_turn_lists_then_proposes_an_approval_and_writes_nothing(db, sends):
 
     result, provider = run_turn(db, w, script, text_="approve the pending showroom request")
 
-    assert {LIST, DECIDE} <= tool_names(provider)
+    assert {LIST, DECIDE} <= usable_names(provider)
     assert result.pending_action is not None
     assert PROPOSAL_HEAD in result.reply_text
     assert f"Approve purchase request {pr.request_number}" in result.reply_text

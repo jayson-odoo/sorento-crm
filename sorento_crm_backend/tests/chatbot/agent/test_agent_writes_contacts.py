@@ -50,7 +50,7 @@ from tests.chatbot.agent.test_agent_writes import (  # noqa: F401 - helpers, not
     round_of,
     run_turn,
     tc,
-    tool_names,
+    usable_names,
 )
 from tests.chatbot.agent.test_agent_writes_opportunity import ctx_of, propose_and_store
 
@@ -684,7 +684,7 @@ def test_a_turn_finds_the_phones_then_proposes_the_role_change_and_writes_nothin
 
     result, provider = run_turn(db, w, script, text_="make this dealer a business owner")
 
-    assert {FIND, UPDATE} <= tool_names(provider)
+    assert {FIND, UPDATE} <= usable_names(provider)
     assert result.pending_action is not None
     assert PROPOSAL_HEAD in result.reply_text
     assert "Employee -> Business owner (Sorento)" in result.reply_text

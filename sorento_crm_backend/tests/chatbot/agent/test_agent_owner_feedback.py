@@ -20,6 +20,7 @@ from app.services.llm_provider import ChatResult
 from app.services.user_service import UserPermissionService
 from tests._pg_fixture import blank_session
 from tests.chatbot.agent._seed import seed_agent_contact
+from tests.chatbot.agent.test_agent_writes import directory_of
 
 OWNER_MESSAGE = "Any sposnroship doem oending approval?"
 LIST_PRS = "crm_purchase_requests_list"
@@ -61,7 +62,8 @@ def _first_call(db, slugs):
         mcp_call=lambda name, args: (_ for _ in ()).throw(AssertionError("no MCP call in this test")), catalog={},
     )
     first = provider.seen[0]
-    names = {t["function"]["name"] for t in first["tools"]}
+    # AGENT-CONTEXT-BUDGET slice 2: what the user may use is offered or listed in crm_tools_load.
+    names = {t["function"]["name"] for t in first["tools"]} | directory_of(first["tools"])
     return first["messages"][0]["content"], names
 
 

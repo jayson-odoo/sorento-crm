@@ -47,7 +47,8 @@ def test_an_agent_turn_has_an_agent_section_with_each_round(db):
         assert r["model"] and r["ms"] is not None and r["prompt_tokens"] == 100 and r["completion_tokens"] == 10
     assert first["stop"] == "tool_calls" and first["called"] == [LINES]
     assert second["stop"] == "answer"
-    assert first["tools_offered"] > second["tools_offered"] == 3  # the narrowed round (C)
+    # AGENT-CONTEXT-BUDGET slice 2: the list only grows; the lines, called directly, join from round 2.
+    assert second["tools_offered"] == first["tools_offered"] + 1
     assert agent["totals"]["prompt_tokens"] == 200 and agent["totals"]["calls"] == 2
 
 
@@ -67,7 +68,7 @@ def test_the_context_sent_to_the_ai_names_the_prompt_page_note_history_and_tools
     assert ctx["system_chars"] > 0
     assert ctx["context_after"] == PAGE_NOTE and ctx["context_after_chars"] == len(PAGE_NOTE)
     assert ctx["history_messages"] == 0
-    assert LINES in ctx["tools"] and "answer" in ctx["tools"]
+    assert "crm_tools_load" in ctx["tools"] and "answer" in ctx["tools"]  # step 1's tools (slice 2: the core set)
     assert ctx["tool_schema_chars"] > 0
 
 
