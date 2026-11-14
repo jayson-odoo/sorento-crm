@@ -319,6 +319,12 @@ def test_r4_3_a_prefix_of_two_codes_shows_both_never_only_the_parsers_pick(sessi
     text = c.say("SRTWC287-S x 3", _corrected("SRTWC287-S", pick, 3))
     for code in TWO:
         assert code in text, f"{code} not shown; only the parser's pick {pick}?: {text!r}"
+    # Round 11 (reviewer): never "Did you mean <pick>?" alone (fails without grounding's SET_ASIDE, measured: staff
+    # then reads 'Did you mean:' with the pick only). An offer, if any, lists every code the raw reaches.
+    assert f"Did you mean {pick}?" not in text, text
+    if "Did you mean" in text:
+        offer = text.split("Did you mean", 1)[1]
+        assert all(code in offer for code in TWO), f"the offer lists only the parser's pick {pick}: {text!r}"
     if who == "dealer":
         assert TICK not in text and "Got stock" not in text, f"answered the parser's pick: {text!r}"
         assert set(TWO) <= set(_option_codes(c)), c.stored_question
