@@ -30,7 +30,9 @@ import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { idFilterLabels, joinMulti, multiChipLabel, splitMulti } from '@/lib/list-filters/multiValue';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useAttachments, useAttachmentTypesList, useBulkRestoreAttachments, useDirectoryTree } from '../hooks/useAttachments';
+import { useAttachments, useAttachmentTypesList, useDirectoryTree } from '../hooks/useAttachments';
+import { useMoveFiles } from '../../attachment-directories/components/useMoveFiles';
+import { summarizeMove } from '../../attachment-directories/components/driveMoveSummary';
 import { resubmitAttachmentWebhook } from '../services/attachmentService';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { attachmentCompanyLabel, type Attachment } from '../types/attachment.types';
@@ -172,7 +174,19 @@ export default function AttachmentBrowser() {
     ],
   );
 
-  const bulkRestoreMutation = useBulkRestoreAttachments();
+  const { restoreFiles, MoveClashDialog } = useMoveFiles();
+  const [isRestoring, setIsRestoring] = useState(false);
+  const restoreSelected = async () => {
+    setIsRestoring(true);
+    try {
+      const summary = summarizeMove(await restoreFiles(selectedDeletableIds), 'restored');
+      if (summary.ok) toast.success(summary.text);
+      else toast.error(summary.text);
+      setRowSelection({});
+    } finally {
+      setIsRestoring(false);
+    }
+  };
 
   const [isResubmittingBulk, setIsResubmittingBulk] = useState(false);
 
@@ -356,11 +370,10 @@ export default function AttachmentBrowser() {
       key: 'bulk-restore',
       label: `Restore selected (${selectedDeletableIds.length})`,
       icon: RotateCcw,
-      disabled: bulkRestoreMutation.isPending,
-      onClick: () =>
-        bulkRestoreMutation.mutate(selectedDeletableIds, {
-          onSuccess: () => setRowSelection({}),
-        }),
+      disabled: isRestoring,
+      // FILES-MOVE-DUPLICATE: the Files window asks about each file whose folder now shows a
+      // file of the same name (Keep both / Rename / Replace / Skip; Cancel restores nothing).
+      onClick: () => void restoreSelected(),
     });
     bulkActions.push({
       key: 'bulk-permanent-delete',
@@ -652,7 +665,7 @@ export default function AttachmentBrowser() {
       folderIds={[]}
       onApplied={() => setRowSelection({})}
     />
-
+    {MoveClashDialog}
     </>
   );
 }

@@ -82,7 +82,9 @@ def _file(db, name, directory_id=None, company_id=None, is_deleted=False, stored
     db.add(
         Attachment(
             id=aid,
-            original_filename=name,
+            # Unique per row: prod allows one active ORIGINAL name per folder (migration 198),
+            # while the visible names under test here may still repeat (renamed files).
+            original_filename=f"{aid[:8]}-{name}",
             stored_filename=name if stored else name,
             file_path=f"attachments/{aid}.bin",
             directory_id=directory_id,

@@ -25,15 +25,15 @@ import {
 } from '@/components/ui/sheet';
 import { useIsMobile } from '@/hooks/use-mobile';
 import {
-  useBulkMoveAttachments,
   useDirectoryTree,
   useMoveDirectory,
-  useUpdateAttachment,
 } from '../../attachments/hooks/useAttachments';
 import type { AttachmentDirectoryTreeNode } from '../../attachments/services/directoryService';
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
 import DirectoryTreeSidebar from './DirectoryTreeSidebar';
 import AttachmentsInFolderPanel from './AttachmentsInFolderPanel';
+import { useMoveFiles } from './useMoveFiles';
+import { summarizeMove } from './driveMoveSummary';
 import { useFolderUrl, type OpenFolder } from './useFolderUrl';
 import BulkAttachmentAccessLevelsDialog, {
   type BulkAccessLevelsScope,
@@ -277,8 +277,7 @@ export default function AttachmentDirectoriesView() {
   const { folderId: selectedId, openFolder: setSelectedId } = useFolderUrl();
   const [accessLevelsScope, setAccessLevelsScope] = useState<BulkAccessLevelsScope>(null);
   const { data: tree = [] } = useDirectoryTree();
-  const updateAttachmentMutation = useUpdateAttachment();
-  const bulkMoveMutation = useBulkMoveAttachments();
+  const { moveFiles, MoveClashDialog } = useMoveFiles();
   const moveDirectoryMutation = useMoveDirectory();
   const selectedFolderName = useMemo(
     () => (selectedId ? findFolderNameById(tree, selectedId) : null),
@@ -370,29 +369,13 @@ export default function AttachmentDirectoriesView() {
     const batchIds = dragData?.attachmentIds && dragData.attachmentIds.length > 1
       ? dragData.attachmentIds
       : [attachmentId];
-    const folderLabel =
-      targetDirectoryId == null
-        ? 'All attachments'
-        : findFolderNameById(tree, targetDirectoryId) ?? 'folder';
-    if (batchIds.length > 1) {
-      bulkMoveMutation.mutate(
-        { attachmentIds: batchIds, directoryId: targetDirectoryId },
-        {
-          onSuccess: ({ updated }) => {
-            toast.success(`Moved ${updated} file(s) to ${folderLabel}`);
-          },
-        }
-      );
-    } else {
-      updateAttachmentMutation.mutate(
-        { attachmentId, data: { directory_id: targetDirectoryId } },
-        {
-          onSuccess: () => {
-            toast.success(`Moved to ${folderLabel}`);
-          },
-        }
-      );
-    }
+    // FILES-MOVE-DUPLICATE: same flow as "Move to...": the others move, a name clash gets the
+    // Rename / Replace / Skip dialog, one notice names what did not move.
+    void moveFiles(batchIds, targetDirectoryId).then((outcome) => {
+      const summary = summarizeMove(outcome);
+      if (summary.ok) toast.success(summary.text);
+      else toast.error(summary.text);
+    });
   };
 
   return (
@@ -416,6 +399,7 @@ export default function AttachmentDirectoriesView() {
         scope={accessLevelsScope}
         onSuccess={() => queryClient.invalidateQueries({ queryKey: ['attachments'] })}
       />
+      {MoveClashDialog}
     </DndContext>
   );
 }

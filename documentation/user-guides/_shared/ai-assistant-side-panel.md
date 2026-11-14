@@ -31,8 +31,14 @@ Records and figures follow your own permissions and your active company: if you 
 * **Projects**, such as which projects are at a stage, one project by its code, its quotations, or the forecast.
 * **Comparing quotations**: on a project's page, ask "compare the two quotations for this project" or name them,
   such as "compare PRJQ-2026-0006 and QT-2026-0004". A sent revision can be named too, such as "compare
-  PRJQ-2026-0007-A and PRJQ-2026-0007-B". The answer is one table: items, quantities, list and quoted prices,
-  discounts, and totals. It shows only the quotations you can open on the project page.
+  PRJQ-2026-0007-A and PRJQ-2026-0007-B". The answer starts with what stands out: each quotation's total and
+  the gap between them, which is cheapest for each item, items or scopes only some quotations have, lines at no
+  charge and items listed twice. Then it shows the full table (one row per line, with quantity, unit price and
+  line total). For big comparisons it gives the findings only and you reply "table" to see the full table. Ask
+  about list price if you want each price against the list price. It shows only the quotations you can open
+  on the project page.
+* **Who prepared a quotation**: ask "who quoted these proposals". The assistant answers with each quotation's
+  Prepared By, the person who created it, and says so when it cannot see who that was.
 * **Order totals**, such as delivered value by customer or average delivery time.
 
 If the question is vague, it may ask you back.

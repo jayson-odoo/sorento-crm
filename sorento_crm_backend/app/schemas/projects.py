@@ -1334,6 +1334,8 @@ class ProjectQuotationResponse(ProjectQuotationBase):
     document_id: Optional[str] = None
     document_no: Optional[str] = None
     document_kind: Optional[str] = None
+    # AGENT-PROPOSAL-INSIGHTS A4: the document creator's name (Prepared By), never the project owner.
+    prepared_by: Optional[str] = None
 
     version_count: int = 0
     # There is no `current_version_id` COLUMN (AC-E3a); this is computed as
