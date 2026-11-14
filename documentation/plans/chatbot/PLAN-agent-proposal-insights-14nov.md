@@ -99,7 +99,8 @@ Per call, beside the documents and lines (no `vs_list`):
 4. **Table**: (a) findings then the full table every time, (b) findings only, table when asked.
    Recommendation: (a) for 2-3 proposals under ~30 lines, findings only with "Reply "table" for the full
    table." when bigger, because a 60-row table buries the findings.
-5. **Prompt shipping path**: the agent prompt edit ships as a new prompt version via a
+5. **DECIDED (crew, 14 Nov 11:45): (a)**, `bump_prompt_to_fallback` migration, owner publishes.
+   **Prompt shipping path**: the agent prompt edit ships as a new prompt version via a
    `bump_prompt_to_fallback` migration (`ai_prompt_seed.py:102`) that you publish, or (b) as a draft version
    you review in Prompts and publish by hand. Recommendation: (a), the existing path for agent prompt edits.
 
