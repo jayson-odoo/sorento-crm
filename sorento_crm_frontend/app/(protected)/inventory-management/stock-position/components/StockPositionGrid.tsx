@@ -28,10 +28,11 @@ import { toast } from '@/lib/toast';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { buildDetailSearch } from '@/lib/listNavQuery';
-import { idFilterLabels, joinMulti, multiValueSummary, splitMulti } from '@/lib/list-filters/multiValue';
+import { idFilterLabels, joinMulti, multiChipLabel, splitMulti } from '@/lib/list-filters/multiValue';
 import { getSuppliersSelect } from '@/services/supplierSelectService';
 import { useBrandSelectQuery } from '@/app/(protected)/master-data-management/shared/hooks/use-brand-select-query';
 import { useStockPosition } from '../hooks/useStockPosition';
+import { useSupplierNames } from '../hooks/useSupplierNames';
 import { exportStockPosition } from '../services/stockPositionService';
 import type { StockPositionRow } from '../services/stockPosition.types';
 
@@ -79,12 +80,12 @@ const stockStatusHref = (row: StockPositionRow) => `/inventory-management/stock-
 
 const DEFAULT_SORTING: SortingState = [{ id: 'item_code', desc: false }];
 
-/** A multi-select filter's trigger: the first two names and a count, never an id. */
-function filterTrigger(chosen: SearchableMultiSelectOption[], none: string) {
+/** A multi-select filter's trigger, as Stock's: "Warehouse: BRW, DC1 +2", "Warehouse: any"; never an id. */
+function filterTrigger(chosen: SearchableMultiSelectOption[], title: string) {
   return chosen.length ? (
-    <span className="block truncate">{multiValueSummary(idFilterLabels(chosen))}</span>
+    <span className="block truncate">{multiChipLabel(title, idFilterLabels(chosen))}</span>
   ) : (
-    <span className="text-muted-foreground">{none}</span>
+    <span className="text-muted-foreground">{title}: any</span>
   );
 }
 
@@ -155,6 +156,9 @@ export default function StockPositionGrid() {
     for (const r of data?.data ?? []) if (r.supplier_id && r.supplier_name) names[r.supplier_id] = r.supplier_name;
     return names;
   }, [data?.data]);
+  const fetchedSupplierNames = useSupplierNames(
+    filters.supplierIds.filter((id) => !pickedSupplierNames.current[id] && !rowSupplierNames[id]),
+  );
 
   const urlSearch = buildDetailSearch(params, {
     supplier_id: supplierIds,
@@ -376,9 +380,13 @@ export default function StockPositionGrid() {
                       fetchOptions={fetchSuppliers}
                       selectedOptions={filters.supplierIds.map((id) => ({
                         value: id,
-                        label: pickedSupplierNames.current[id] ?? rowSupplierNames[id] ?? 'Selected supplier',
+                        label:
+                          pickedSupplierNames.current[id] ??
+                          rowSupplierNames[id] ??
+                          fetchedSupplierNames[id] ??
+                          'Selected supplier',
                       }))}
-                      renderTriggerLabel={(chosen) => filterTrigger(chosen, 'All suppliers')}
+                      renderTriggerLabel={(chosen) => filterTrigger(chosen, 'Supplier')}
                       placeholder="All suppliers"
                       clearable
                       triggerClassName="mt-1"
@@ -393,7 +401,7 @@ export default function StockPositionGrid() {
                         resetPage();
                       }}
                       options={(brands ?? []).map((b) => ({ value: b.id, label: b.brand_name }))}
-                      renderTriggerLabel={(chosen) => filterTrigger(chosen, 'All brands')}
+                      renderTriggerLabel={(chosen) => filterTrigger(chosen, 'Brand')}
                       placeholder="All brands"
                       clearable
                       triggerClassName="mt-1"
@@ -409,7 +417,7 @@ export default function StockPositionGrid() {
                       }}
                       // The report's own warehouse columns: any other location could never match.
                       options={(data?.warehouses ?? []).map((w) => ({ value: w.id, label: w.code }))}
-                      renderTriggerLabel={(chosen) => filterTrigger(chosen, 'All warehouses')}
+                      renderTriggerLabel={(chosen) => filterTrigger(chosen, 'Warehouse')}
                       placeholder="All warehouses"
                       clearable
                       triggerClassName="mt-1"
