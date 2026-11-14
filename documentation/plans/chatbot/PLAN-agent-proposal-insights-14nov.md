@@ -55,14 +55,34 @@ Findings first, in plain WhatsApp-style bullets (the panel and WhatsApp share th
 
 ### C. Example shapes (masked; real rows requested from crew, see data request)
 
-Shapes the code has to handle, from the owner's turn and the schema; to be replaced with 3 masked dev projects:
+Shapes from the masked dev extract (crew, 14 Nov). Codes and qty kept; people are "Salesperson A/B/C";
+prices are left out here on purpose (tests seed their own fake prices). Tables live in schema `projects`
+(`quotation_documents`, `quotations`, `quotation_versions`, `quotation_lines`, `quotation_issues`).
 
-1. **Three proposals, same scopes, price differences**: PRJQ-A (2 scopes, 14 lines), PRJQ-B (same codes,
-   lower unit prices on 4 codes), PRJQ-C (adds 2 codes). Prepared By: A and B "Staff One", C "Staff Two".
-2. **Repeated code + RM 0 lines**: one proposal with SRTWHBWP twice (qty 4 and qty 2) and two accessory lines
-   at RM 0 with list price > 0; another proposal with SRTWHBWP once.
-3. **Issued revision vs current**: PRJQ-B-R1 (issued) vs PRJQ-B current; a scope dropped in the current
-   version; one rate-only line.
+1. **The owner's case shape (project with 4 documents)**:
+   - Doc 1 (Salesperson A): scope UNIT, 2 lines: SRTWC8518-SH qty 1, CB310-CR-PJ qty 1 (no list price).
+   - Doc 2 (Salesperson A): 3 scopes (UNIT 15 lines, LEVEL 9 1 line, Guard House 1 line). In UNIT: SRTWHBWP
+     twice with the same qty 6 (the "duplicated line"), SRTWT907SS twice with qty 6 and qty 5 at different
+     prices, 7 lines at unit price 0 with a list price > 0 (the "100% below list" lines), 3 lines with no list
+     price, one line at qty 0, SRT73-CR in SET while the rest are UNIT.
+   - Doc 3 (Salesperson B): scope UNIT, 1 line: SRTWC8518-SH qty 1 at a lower unit price than docs 1 and 2.
+   - Doc 4 (Salesperson A): no scopes, no lines (must be named as empty, not dropped silently).
+   Findings expected: totals per doc and gap; LEVEL 9 and Guard House only in doc 2; SRTWC8518-SH in all
+   three with doc 3 cheapest per unit and doc 2 at qty 6; CB310-CR-PJ vs CB310-CR-L are different codes;
+   no-charge lines and the repeated SRTWHBWP flagged; Prepared By: docs 1, 2, 4 Salesperson A, doc 3
+   Salesperson B (the owner's "who quoted" case).
+2. **Issued revisions + same code in several docs at list vs discounted**: doc 1 (Salesperson A, issued R1
+   and R2, 1 line SRTWC286-SH discounted), doc 2 (Salesperson B, SRTWC286-SH and SRTWC8518-SH at list),
+   doc 3 (Salesperson B, version 2, issued revision A, 3 lines SRTBT1872-17 qty 4, SRTWB242 qty 10,
+   SRTBT1842-15 qty 10). Findings: SRTWC286-SH much cheaper in doc 1; docs 2 and 3 share no code.
+3. **Same code twice in one doc, test-like docs**: doc 1 (Salesperson A, version 3, issued A and B, 3 lines,
+   2 at RM 0 with no list price), doc 2 (Salesperson C, ZZT-NC-TUB-A twice, qty 5 and 10, same price),
+   doc 3 (Salesperson C, issued A, ZZT-NC-TUB-A qty 10 + ZZT-NC-TAP-B qty 10). Findings: doc 2 and doc 3
+   share ZZT-NC-TUB-A at the same price; doc 2 holds it twice (total qty 15 vs 10); TAP-B only in doc 3.
+
+Edge cases the extract adds: an empty document; a code repeated in one doc at different qty AND price
+(per-code spread must compare per line, not assume one price per code); a line at qty 0; a no-list-price
+line with a unit price (no list comparison possible: shows "-" if ever shown).
 
 ### D. Facts the tool will compute (code, deterministic; the model analyses, it does not add up)
 
