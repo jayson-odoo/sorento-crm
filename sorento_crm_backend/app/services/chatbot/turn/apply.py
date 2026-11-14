@@ -25,6 +25,7 @@ from dataclasses import replace
 from typing import Any
 
 from app.services.chatbot import contracts
+from app.services.chatbot.head import held_family
 from app.services.chatbot.turn import refer
 from app.services.chatbot.turn import task as task_mod
 from app.services.chatbot.turn.chat_state import (
@@ -3116,8 +3117,37 @@ def _stock_pick_requantified(state: State, verdict: dict[str, Any], trace: Trace
     quantity = _stated_quantity(verdict.get("demand_qty"))
     if quantity is None or _names_a_product(verdict):
         return None
-    payload = {**pending.payload, "stock_qty": quantity}
     trace.rules_fired.append("stock_pick_takes_quantity")
+    return _stock_pick_asked_again(state, quantity, trace)
+
+
+def _stock_pick_spec_only(state: State, verdict: dict[str, Any], trace: Trace):
+    """CHATBOT-SET-CODES C (owner, 14 Nov 2026): while a stock pick is open, a reply the
+    parser gave no pick (mode null, no position) and only spec entities ("S trap" that both
+    offered sets hold, or neither) asks the same options again, never a catalogue search.
+    It never makes the pick; a reply naming its own domain, or a product, is a new ask."""
+    pending = state.pending
+    if not _stock_pick(pending) or len(pending.options) < 2:
+        return None
+    answer = verdict.get(OPEN_QUESTION_ANSWER)
+    entities = [e for e in verdict.get("entities") or [] if isinstance(e, dict)]
+    if (
+        (isinstance(answer, dict) and answer.get("mode") is not None)
+        or verdict.get("reference_positions")
+        or not entities
+        or any(str(e.get("hint") or "").strip().lower() not in held_family.SPEC_HINTS for e in entities)
+        or domain_in_message(verdict) is True
+    ):
+        return None
+    trace.rules_fired.append("stock_pick_spec_only_asked_again")
+    return _stock_pick_asked_again(state, _stated_quantity(pending.payload.get("stock_qty")), trace)
+
+
+def _stock_pick_asked_again(state: State, quantity: int | None, trace: Trace):
+    """The open stock pick asked again with the same options, carrying `quantity` (the
+    quantity it already had when None), and nothing fetched."""
+    pending = state.pending
+    payload = {**pending.payload, "stock_qty": quantity} if quantity is not None else dict(pending.payload)
     groups = payload.get("groups")
     if isinstance(groups, list) and len(groups) > 1:
         # Several lists in one message: the number is the quantity of every list that
@@ -3511,6 +3541,9 @@ def _apply(
     requantified = _stock_pick_requantified(state, verdict, trace)
     if requantified is not None:
         return requantified
+    spec_only = _stock_pick_spec_only(state, verdict, trace)
+    if spec_only is not None:
+        return spec_only
     which = _bare_number_over_a_finished_answer(state, verdict, trace)
     if which is not None:
         return which

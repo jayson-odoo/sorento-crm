@@ -146,6 +146,65 @@ def held_spec_lines(db: "Session", held_ids: list[str], hidden: frozenset[str] =
     return ["; ".join(items[:CAP_VALUES_PER_KEY]) for key, items in sorted(by_key.items()) if items][:CAP_HELD_KEYS]
 
 
+#: CHATBOT-SET-CODES C: the most spec notes one offered option carries to the parser.
+CAP_OPTION_NOTES = 3
+SPEC_NOTE_PICKS = ("product_pick",)
+
+
+def option_spec_notes(db: "Session", pending: Any, hidden: frozenset[str] = frozenset()) -> dict[int, str]:
+    """CHATBOT-SET-CODES C: for an open product pick of two or more options, each option's
+    position mapped to the specs the catalogue records for its products ("Trap: S trap"),
+    only the values the offered options do not all hold (a shared part tells nothing
+    apart), at most `CAP_OPTION_NOTES` per option. A contact-hidden key is never named."""
+    from app.models.product_spec import ProductSpecifications
+    from app.services.chatbot.head.candidates import SKIP_KEYS, TYPE_KEYS, _registry
+    from app.services.product_spec_registry import display_spec_value
+
+    options = list(getattr(pending, "options", None) or [])
+    if getattr(pending, "kind", None) not in SPEC_NOTE_PICKS or len(options) < 2:
+        return {}
+    ids_of: dict[int, list[str]] = {}
+    for option in options:
+        members = [m.get("uuid") for m in option.get("members") or [] if isinstance(m, dict) and m.get("uuid")]
+        ids = members or [u for u in (option.get("uuids") or [option.get("uuid")]) if u]
+        ids_of[option.get("position")] = [str(i) for i in ids]
+    every = sorted({i for ids in ids_of.values() for i in ids})
+    if not every:
+        return {}
+    registry = {row.spec_key: row for row in _registry(db, hidden) if row.spec_key not in SKIP_KEYS | TYPE_KEYS}
+    if not registry:
+        return {}
+    stored = {
+        str(product_id): values or {}
+        for product_id, values in db.query(ProductSpecifications.product_id, ProductSpecifications.values)
+        .filter(ProductSpecifications.product_id.in_(every))
+        .all()
+    }
+    held: dict[int, set[tuple[str, Any]]] = {}
+    for position, ids in ids_of.items():
+        pairs: set[tuple[str, Any]] = set()
+        for product_id in ids:
+            for key, entry in stored.get(product_id, {}).items():
+                if key not in registry:
+                    continue
+                raw = entry.get("value") if isinstance(entry, dict) else entry
+                for value in raw if isinstance(raw, list) else [raw]:
+                    if value is not None and not isinstance(value, dict) and str(value).strip():
+                        pairs.add((key, value))
+        held[position] = pairs
+    shared = set.intersection(*held.values())
+    notes: dict[int, str] = {}
+    for position, pairs in held.items():
+        own = sorted(pairs - shared, key=lambda pair: (pair[0], str(pair[1])))[:CAP_OPTION_NOTES]
+        if own:
+            notes[position] = ", ".join(
+                f"{registry[key].label or key}: "
+                f"{display_spec_value(value, dict(getattr(registry[key], 'value_labels', None) or {}))}"
+                for key, value in own
+            )
+    return notes
+
+
 # --------------------------------------------------------------------------- #
 # (a) + (c) File types, certificate kinds and schemes
 # --------------------------------------------------------------------------- #

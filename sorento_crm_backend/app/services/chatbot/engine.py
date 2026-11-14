@@ -6243,6 +6243,18 @@ def _run_stages_body(  # noqa: PLR0915
             if parser_config.closed_lists
             else (None, frozenset(), {})
         )
+        # CHATBOT-SET-CODES C: each option of an open product pick with the specs that tell
+        # it apart, for the parser only (the option's label); the stored options stay as they are.
+        option_notes: dict[int, str] = {}
+        if state_in.pending is not None and state_in.pending.kind in closed_lists_index.SPEC_NOTE_PICKS:
+            pick_hidden = (
+                hidden_spec
+                if parser_config.closed_lists or parser_config.lookup_lists
+                else frozenset(
+                    access_mod._hidden_spec_keys(db, contact_id=str(contact_respond_id), space_id=default_space_id(db))
+                )
+            )
+            option_notes = closed_lists_index.option_spec_notes(db, state_in.pending, pick_hidden)
 
     if span_prep is not None:
         lookup_lines, lookup_event, span_event = _span_lookup(
@@ -6262,7 +6274,7 @@ def _run_stages_body(  # noqa: PLR0915
     # parser answers in `open_question_answer` - the open pick or offer when there is
     # one (it is what the message answers), else the stock question (issue #1293).
     open_question = turn_question.open_question(
-        state_in.pending, state_in.focus.tasks, state_in.focus.required_ask
+        state_in.pending, state_in.focus.tasks, state_in.focus.required_ask, option_notes
     )
     effective_level = memory_intake["effective_level"]
     subject_full = parser.current_subject_line(state_in.focus)
