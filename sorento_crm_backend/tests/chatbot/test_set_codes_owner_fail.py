@@ -76,23 +76,16 @@ def test_t2_one_number_after_how_many_units_applies_to_every_part(session_factor
 # blank before the quantity (test_stock_ask_ht26_r9_r6_all_point_form), kept as is.
 
 
-# The user typed no product code: a one-number answer to the bot's own question applies to every part it listed.
-_NO_ENTITY_SHAPES = [
-    (items, with_demand)
-    for items in ([(None, CISTERN, 4)], [(2, None, 4)], [(1, None, 4)])
-    for with_demand in (True, False)
-]
+# A number bound by POSITION to a line of the bot's own question applies to every part it listed.
+_POSITION_SHAPES = [([(pos, None, 4)], d) for pos in (1, 2) for d in (True, False)]
 
 
 @pytest.mark.parametrize(
     "items,with_demand",
-    _NO_ENTITY_SHAPES,
-    ids=[
-        f"{'code' if i[0][0] is None else 'pos' + str(i[0][0])}-{'demand_qty' if d else 'no_demand_qty'}"
-        for i, d in _NO_ENTITY_SHAPES
-    ],
+    _POSITION_SHAPES,
+    ids=[f"pos{i[0][0]}-{'demand_qty' if d else 'no_demand_qty'}" for i, d in _POSITION_SHAPES],
 )
-def test_t2b_a_one_number_answer_with_no_typed_code_applies_to_every_part_listed(session_factory, monkeypatch, stub_access, items, with_demand):  # noqa: F811
+def test_t2b_a_one_number_bound_by_position_applies_to_every_part_listed(session_factory, monkeypatch, stub_access, items, with_demand):  # noqa: F811
     c = _owner_world(session_factory, monkeypatch, stub_access)
     asked = c.say("QWC604-S-RL stock", stock(product(S_RL)))
     assert "How many units for each?" in asked, asked
@@ -100,6 +93,24 @@ def test_t2b_a_one_number_answer_with_no_typed_code_applies_to_every_part_listed
     text = c.say("4", reply(open_question_answer=answer("fill", items=items), **extra))
     for code in (S_PAN, CISTERN):
         assert f"{code} x 4: {TICK} Got stock." in _lines(text), (code, text)
+
+
+@pytest.mark.parametrize("with_demand", [False, True], ids=["no_demand_qty", "demand_qty"])
+def test_t2b_lock_a_number_bound_by_code_fills_only_that_line(session_factory, monkeypatch, stub_access, with_demand):  # noqa: F811
+    c = _owner_world(session_factory, monkeypatch, stub_access)
+    c.say("QWC604-S-RL stock", stock(product(S_RL)))
+    extra = {"demand_qty": 4} if with_demand else {}
+    text = c.say("QWCY604 4", reply(open_question_answer=answer("fill", items=[(None, CISTERN, 4)]), **extra))
+    assert f"{S_PAN} x 4" not in text, ("the number spread to the other part", text)
+    assert f"{CISTERN} x 4: {TICK} Got stock." in _lines(text), text
+
+
+def test_t2c_lock_a_fill_by_code_with_no_entity_fills_only_that_line(session_factory, monkeypatch, stub_access):  # noqa: F811
+    c = _owner_world(session_factory, monkeypatch, stub_access)
+    c.say("QWC604-S-RL stock", stock(product(S_RL)))
+    text = c.say("8 for QWCY604", reply(open_question_answer=answer("fill", items=[(None, CISTERN, 8)])))
+    assert f"{S_PAN} x 8" not in text, ("the number spread to the other part", text)
+    assert any(CISTERN in line and "8" in line for line in _lines(text)), text
 
 
 @pytest.mark.parametrize("with_demand", [False, True], ids=["no_demand_qty", "demand_qty"])
@@ -139,3 +150,38 @@ def test_l1_dealer_code_plus_completing_word_answers_each_part_at_the_typed_quan
     assert "How many units for each?" not in text, text
     for code in ("QWCX605-RL-SOFT", CISTERN):
         assert f"{code} x 1: {TICK} Got stock." in _lines(text), (code, text)
+
+
+# --------------------------------------------------------------------------- reviewer: quantity to the wrong set, mixed list
+
+
+def test_r1a_a_quantity_typed_for_a_bare_family_word_never_lands_on_another_set(session_factory, monkeypatch, stub_access):  # noqa: F811
+    from tests.chatbot.test_set_codes import _exact_world
+
+    c = _exact_world(session_factory, monkeypatch, stub_access)
+    text = c.say("QWC605 x 3, QWC605-RL-NEW", stock(product("QWC605", 3), product("QWC605-RL-NEW")))
+    assert f"QWCX605-RL-NEW x 3: {TICK} Got stock." not in _lines(text), ("NEW was answered at the other word's x 3", text)
+
+
+def test_r1b_each_set_on_a_two_set_message_gets_its_own_quantity(session_factory, monkeypatch, stub_access):  # noqa: F811
+    """The cistern is shared by the sets, so only the sets' own pans are pinned."""
+    from tests.chatbot._turn_helpers import entity
+    from tests.chatbot.test_set_codes import _exact_world
+
+    c = _exact_world(session_factory, monkeypatch, stub_access)
+    text = c.say(
+        "QWC605-RL soft x 1, QWC605-RL-NEW x 2",
+        stock(product("QWC605-RL", 1), entity("soft", hint="category"), product("QWC605-RL-NEW", 2)),
+    )
+    assert "How many units for each?" not in text, text
+    assert f"QWCX605-RL-SOFT x 1: {TICK} Got stock." in _lines(text), text
+    assert f"QWCX605-RL-NEW x 2: {TICK} Got stock." in _lines(text), text
+
+
+def test_t3_lock_a_number_bound_to_line_1_of_a_mixed_list_fills_only_line_1(session_factory, monkeypatch, stub_access):  # noqa: F811
+    c = _world(session_factory, monkeypatch, stub_access, SETS, extra=["QWX7700"])
+    asked = c.say("QWC604-S-RL stock, QWX7700 stock", stock(product(S_RL), product("QWX7700")))
+    assert "How many units for each?" in asked and "3." in asked, asked
+    text = c.say("4", reply(demand_qty=4, open_question_answer=answer("fill", items=[(1, None, 4)])))
+    assert f"{S_PAN} x 4: {TICK} Got stock." in _lines(text), text
+    assert f"{CISTERN} x 4" not in text and "QWX7700 x 4" not in text, ("the number spread past line 1", text)
