@@ -45,7 +45,7 @@ export function FormatBar({
       role="group"
       aria-label="Text formatting"
     >
-      <div className="w-28">
+      <div className="w-24">
         <SearchableSelect
           size="sm"
           value={text.fontFamily}
@@ -58,6 +58,7 @@ export function FormatBar({
         <Button
           type="button"
           size="icon"
+          className="size-7"
           variant="ghost"
           aria-label="Manage fonts"
           title="Manage fonts"
@@ -70,7 +71,7 @@ export function FormatBar({
         min={1}
         max={400}
         aria-label="Font size"
-        className="h-7 w-16 text-xs"
+        className="h-7 w-14 text-xs"
         value={text.fontSize}
         onValueChange={(size) => {
           if (size !== null && Number.isFinite(size) && size > 0)
@@ -80,6 +81,7 @@ export function FormatBar({
       <Button
         type="button"
         size="icon"
+        className="size-7"
         variant={text.fontWeight >= 600 ? 'primary' : 'outline'}
         aria-label="Bold"
         aria-pressed={text.fontWeight >= 600}
@@ -90,6 +92,7 @@ export function FormatBar({
       <Button
         type="button"
         size="icon"
+        className="size-7"
         variant={text.italic ? 'primary' : 'outline'}
         aria-label="Italic"
         aria-pressed={Boolean(text.italic)}
@@ -108,6 +111,7 @@ export function FormatBar({
           key={align}
           type="button"
           size="icon"
+          className="size-7"
           variant={text.align === align ? 'primary' : 'outline'}
           aria-label={`Align ${align}`}
           aria-pressed={text.align === align}
@@ -119,6 +123,7 @@ export function FormatBar({
       <Button
         type="button"
         size="icon"
+        className="size-7"
         variant={text.uppercase ? 'primary' : 'outline'}
         aria-label="ALL CAPS"
         aria-pressed={Boolean(text.uppercase)}

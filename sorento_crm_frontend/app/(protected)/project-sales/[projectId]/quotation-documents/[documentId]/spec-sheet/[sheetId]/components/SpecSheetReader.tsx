@@ -71,7 +71,9 @@ import type {
 import { CreateSpecSheetDialog } from '../../../components/CreateSpecSheetDialog';
 import { FormatBar } from './FormatBar';
 import { PageRail, type RailPicture } from './PageRail';
-import { ManageFontsDialog, ReaderInspector, type ApplyMode } from './ReaderInspector';
+import { ManageFontsDialog } from '@/app/(protected)/dealer-kit/tag-templates/components/ManageFontsDialog';
+import { useHasPermission } from '@/hooks/usePermissions';
+import { ReaderInspector, type ApplyMode } from './ReaderInspector';
 import { applicableChanges, movedKeys } from './selectionTools';
 import { useSheetEditing } from './useSheetEditing';
 import { COVER, ReaderPage } from './ReaderPage';
@@ -158,8 +160,11 @@ export function SpecSheetReader({
   const blockedBy = missing.filter((m) => m === 'cover' || m === 'page');
   const blocked = blockedBy.length > 0;
   const [picking, setPicking] = React.useState(false);
-  // v3 (AC-C6.1): the one font dialog, opened from the toolbar format row and the Inspector.
+  // v3 (AC-C6.1/C6.2): the one font dialog, opened from the toolbar format row and the Inspector,
+  // only for someone the server lets upload / rename / delete fonts.
   const [fontsOpen, setFontsOpen] = React.useState(false);
+  const canManageFonts = useHasPermission('dealer_kit.library.manage');
+  const openFonts = canManageFonts ? () => setFontsOpen(true) : undefined;
   // Full screen and the two folding side panels: the same FocusShell / FocusToggle /
   // CollapsiblePanel the price tag designer, room designer and page builder use.
   const [focus, setFocus] = React.useState(false);
@@ -505,7 +510,15 @@ export function SpecSheetReader({
     [],
   );
 
-  const activeKey = currentKey ?? pages[0]?.key ?? null;
+  // A removed page is not in the stack: the page that took its place (the next one, else the one
+  // before) is current, so the side bar never reads "Page - of N" (v3 browser F4).
+  const activeKey = React.useMemo(() => {
+    const key = currentKey ?? pages[0]?.key ?? null;
+    const at = pages.findIndex((p) => p.key === key);
+    if (at < 0 || !pages[at].hidden) return key;
+    const shown = (p: SpecSheetPage) => p.key === COVER || !p.hidden;
+    return pages.slice(at + 1).find(shown)?.key ?? [...pages.slice(0, at)].reverse().find(shown)?.key ?? null;
+  }, [currentKey, pages]);
 
   // Only the page being read gets medium pictures, and only once it has stayed current for a
   // moment: a fast scroll asks for nothing, the strip and the other pages keep their thumbnails.
@@ -1003,7 +1016,7 @@ export function SpecSheetReader({
                     <FormatBar
                       layer={selectedLayer}
                       onProps={changeSelectedProps}
-                      onManageFonts={() => setFontsOpen(true)}
+                      onManageFonts={openFonts}
                     />
                   )
                 ) : null
@@ -1206,7 +1219,7 @@ export function SpecSheetReader({
                               mode={applyMode}
                               onModeChange={setApplyMode}
                               onApplyAll={sendToEveryPage}
-                              onManageFonts={() => setFontsOpen(true)}
+                              onManageFonts={openFonts}
                             />
                           ) : (
                             <div
@@ -1261,7 +1274,7 @@ export function SpecSheetReader({
                       mode={applyMode}
                       onModeChange={setApplyMode}
                       onApplyAll={sendToEveryPage}
-                      onManageFonts={() => setFontsOpen(true)}
+                      onManageFonts={openFonts}
                     />
                   </div>
                 )}
@@ -1278,7 +1291,16 @@ export function SpecSheetReader({
           )}
         </FocusShell>
       )}
-      {canEdit && <ManageFontsDialog open={fontsOpen} onClose={() => setFontsOpen(false)} />}
+      {canEdit && canManageFonts && (
+        <ManageFontsDialog
+          open={fontsOpen}
+          onClose={() => setFontsOpen(false)}
+          // A renamed family: every live page follows it, as the designer's open document does.
+          onFamilyRenamed={(oldName, newName) => {
+            for (const ref of controllers.current.values()) ref.current?.renameFontFamily?.(oldName, newName);
+          }}
+        />
+      )}
       {canEdit && picking && (
         <CreateSpecSheetDialog
           open={picking}
