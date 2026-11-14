@@ -928,8 +928,8 @@ def _axis_values(
     """The values an axis prints, in order.
 
     A FIXED axis (the months of the year the period touches, the period's years, the
-    period's months) prints every value whether the data holds it or not; any other axis prints what is present,
-    ranked naturally. The blank bucket is kept and sorts last either way.
+    period's months) prints every value whether the data holds it or not; any other axis
+    prints what is present, ranked naturally. The blank bucket is kept and sorts last either way.
     """
     fixed: Optional[List[str]] = None
     if column.fixed_values == reg.MONTHS_OF_YEAR:
