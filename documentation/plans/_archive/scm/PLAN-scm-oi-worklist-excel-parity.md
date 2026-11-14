@@ -1,6 +1,6 @@
 # PLAN: order inquiries worklist, Excel parity batch (16 Sep 2026)
 
-Status: PR OPEN, awaiting owner go. Lane `feat/oi-worklist-excel-parity` (no migration), stack :3086/:8086 on the shared 0907 dev DB, pytest DB `sorento_oiwp_ci`. Phases 1 to 3 done; reviewer re-pass "ready"; guide committed. After merge: Outline push, drop `sorento_oiwp_ci`, worktree-gc, archive.
+Status: MERGED. PR #951 merged 2026-09-16 06:41Z (81bc9e132), deployed the same day. Lane DB dropped, stack stopped, worktree gc. Follow-ups: #949 (column-config Reset / DELETE), the census spec strips comments for owners but not consumers (one line), Outline publish of supply-chain guides gated by the PARENT_TITLES allowlist.
 
 The purchasing team keeps its order book in `JAN - DEC ORDER 2027.xlsx` (12 sheets, one per
 delivery month, columns SO DATE / S/O NO / ITEM CODE / QTY / TOTAL QTY / DELIVERY DATE /
