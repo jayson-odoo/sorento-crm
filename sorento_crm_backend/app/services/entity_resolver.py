@@ -2133,13 +2133,45 @@ def _prefix_probe_product(db: Session, token: str) -> list[ResolvedEntity]:
     ]
 
 
+def _within_family(rows: list, tokens: list[str]) -> list:
+    """CHATBOT-SET-CODES F2: the set rows a non-exact code token may answer. The family is
+    `product_family.family_code_for` of the set code (the code text before its first dash, the
+    CODE-VARIANTS rule). A token that lies within it ("SRTWC7405", or the part "wc7405") asks for
+    the family, so every set it found is answered (CHATBOT-SET-STOCK). A token that goes past it
+    yet equals no set code ("QWC7405-RL" over QWC7405-RL-P-PJ and QWC7405-RL-S-PJ) names one set
+    nearly: when it found more than one, none is placed here, the caller withholds the token's
+    non-exact product rows too (`_ProbeRows.near`, R2), and the token's close codes are offered
+    instead (`_trgm_product_sets`, the did-you-mean). One set found is kept, as before."""
+    from app.services.product_family import family_code_for
+
+    if len(rows) < 2:
+        return rows
+    folds = [_strip_all_ws(t.lower()) for t in tokens if t]
+
+    def held(product_set: Any) -> bool:
+        family = _strip_all_ws(str(family_code_for(str(product_set.set_code)) or "").lower())
+        return bool(family) and all(f in family for f in folds)
+
+    return [r for r in rows if held(r)]
+
+
+def _without_near_products(hits: list[ResolvedEntity], tokens: list[str]) -> list[ResolvedEntity]:
+    """CHATBOT-SET-CODES R2: `hits` less the product rows whose code is not one of `tokens`
+    (case, dashes and spaces folded), for a token the set probe found only nearly
+    (`_ProbeRows.near`): a product coded exactly as typed is still the answer."""
+    folds = {_strip_all_ws(t.lower()) for t in tokens if t}
+    return [
+        h for h in hits if h.entity_type != "product" or _strip_all_ws(str(h.canonical_code or "").lower()) in folds
+    ]
+
+
 def _prefix_probe_product_set(db: Session, token: str) -> list[ResolvedEntity]:
     """CHATBOT-SET-STOCK: the product sets a code token finds, by the product code rule
     (`_code_prefix_then_substring`: prefix, else substring).
 
     The catalogue prints the family code (SRTWC7405, SRTWC8826) and the sets carry it as their
-    head (SRTWC7405-RL-S-PJ, SRTWC8826-P), while their parts carry a role letter inside it
-    (SRTWCX7405-..., SRTWCY7405-...), so `_prefix_probe_product` finds only the seat cover.
+    head (SRTWC7405-RL-S-PJ, SRTWC8826-P), while their member products may be coded otherwise,
+    so `_prefix_probe_product` can miss them; the set's own code is what is matched here.
     Scoped by the ORM listener as `_probe_product_set`.
     """
     from app.models.product_set import ProductSet
@@ -2150,7 +2182,10 @@ def _prefix_probe_product_set(db: Session, token: str) -> list[ResolvedEntity]:
         token,
         (ProductSet.set_code, ProductSet.id),
     )
-    return [entity for _set, entity in _product_set_entities(db, rows, match_tier=tier)]
+    kept = _within_family(rows, [token])
+    out = _ProbeRows(entity for _set, entity in _product_set_entities(db, kept, match_tier=tier))
+    out.near = len(kept) < len(rows)
+    return out
 
 
 def _prefix_probe_customer_order(db: Session, token: str) -> list[ResolvedEntity]:
@@ -2937,12 +2972,14 @@ def _tier2_fuzzy_lookup(
     When `allowed_entity_types` is provided, probes whose output type is not in the set
     are skipped entirely - keeps per-tool resolution lean.
     """
-    combined: list[ResolvedEntity] = []
+    combined = _ProbeRows()
     for probe, produces in _TIER2_PROBES:
         if allowed_entity_types is not None and produces.isdisjoint(allowed_entity_types):
             continue
         try:
-            combined.extend(_memo_tier2(probe, db, token, regions))
+            hits = _memo_tier2(probe, db, token, regions)
+            combined.near = combined.near or bool(getattr(hits, "near", False))
+            combined.extend(hits)
         except Exception:
             logger.exception("Tier-2 probe %s failed for token=%s", probe.__name__, token)
     return combined
@@ -3099,6 +3136,27 @@ def _drop_unofferable_products(db: Session, hits: list[ResolvedEntity]) -> list[
     from app.models.product import offerable_products
 
     return _keep_products(db, hits, offerable_products())
+
+
+def offerable_product_rows(db: Session, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The serialized product rows (`uuid` dicts) the chat may offer (`offerable_products`,
+    owner Q3), one bounded query; a row with no uuid is dropped. The dict-row twin of
+    `_drop_unofferable_products`, read by the chat's close-code offers and the reference
+    route's kept code fragments (CHATBOT-CLOSE-CODES). Also chat-searchable
+    (`chat_searchable_products`), #2397's defensive net so no caller offers a hidden product."""
+    from app.models.product import chat_searchable_products, offerable_products
+
+    ids = [str(r["uuid"]) for r in rows if isinstance(r, dict) and r.get("uuid")]
+    if not ids:
+        return []
+    with db.begin_nested():
+        kept = {
+            str(pid)
+            for (pid,) in db.query(Product.id)
+            .filter(Product.id.in_(ids), offerable_products(), chat_searchable_products())
+            .all()
+        }
+    return [r for r in rows if isinstance(r, dict) and str(r.get("uuid")) in kept]
 
 
 def _embedding_scope_sql(db: Session) -> tuple[str, dict[str, Any]]:
@@ -4009,8 +4067,17 @@ def _and_probe_product_set(db: Session, tokens: list[str]) -> list[ResolvedEntit
     tier = _and_max_tier_filter(base, counts)
     if tier is None:
         return []
-    rows = base.filter(tier).order_by(ProductSet.set_code, ProductSet.id).limit(AND_MODE_LIMIT).all()
-    out = []
+    matched = base.filter(tier).order_by(ProductSet.set_code, ProductSet.id)
+    # CHATBOT-SET-CODES AC-3: a token that IS a set's code (the exact tier's fold,
+    # `_probe_product_set`) answers that set only, never the longer set codes it is a part
+    # of; the same order `resolve_references` keeps, where an exact set hit leaves the
+    # prefix set tier unrun for the token.
+    folds = [_strip_all_ws(t.lower()) for t in tokens if t]
+    exact = matched.filter(_ws_insensitive_lower(ProductSet.set_code).in_(folds)).all() if folds else []
+    found = exact or matched.limit(AND_MODE_LIMIT).all()
+    rows = found if exact else _within_family(found, tokens)
+    out = _ProbeRows()
+    out.near = len(rows) < len(found)
     for product_set, entity in _product_set_entities(db, rows, match_tier="and"):
         entity.match_blob = product_set.set_code
         out.append(entity)
@@ -4157,6 +4224,10 @@ class _ProbeRows(list):
     """
 
     truncated: bool = False
+    #: CHATBOT-SET-CODES R2: the probe withheld several sets a token only nearly names
+    #: (`_within_family`); the caller withholds that token's non-exact product rows too, so the
+    #: token is offered its close codes rather than answered.
+    near: bool = False
 
 
 def _and_probe_customer(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
@@ -4615,6 +4686,7 @@ def resolve_references_intersection(
 
     hits: list[ResolvedEntity] = []
     truncated_types: set[str] = set()
+    near = False
     for probe, produces in _AND_PROBES:
         if allowed is not None and produces.isdisjoint(allowed):
             continue
@@ -4632,6 +4704,7 @@ def resolve_references_intersection(
         except Exception:
             logger.exception("AND probe %s failed", probe.__name__)
             continue
+        near = near or bool(getattr(rows, "near", False))
         if len(rows) >= AND_MODE_LIMIT or getattr(rows, "truncated", False):
             # The probe's LIMIT bound: rows beyond the cap were cut, so any
             # "word X is absent" claim over this type is incomplete. A probe
@@ -4639,6 +4712,9 @@ def resolve_references_intersection(
             # source hit its cap but dedup shrank the list back under it.
             truncated_types.update(r.entity_type for r in rows)
         hits.extend(rows)
+
+    if near:
+        hits = _without_near_products(hits, clean_tokens)
 
     # No intersection → offer fuzzy "did you mean" neighbours (union across tokens,
     # deduped, capped). Best-effort; pg_trgm absence / probe error never fails AND.
@@ -5716,6 +5792,8 @@ def resolve_references(
             candidates = _tier2_fuzzy_lookup(
                 db, tok, allowed_entity_types=tok_allowed, regions=regions
             )
+            if getattr(candidates, "near", False):
+                candidates = _without_near_products(candidates, [tok])
             if _scope_attachment_types and any(
                 c.entity_type == "attachment_type" for c in candidates
             ):
@@ -5913,6 +5991,7 @@ def resolve_references(
                     existing_types.add(m.entity_type)
             # Tier-2 (prefix / substring) across remaining types.
             if enable_prefix_fallback:
+                near = False
                 for probe, produces in _TIER2_PROBES:
                     if produces.issubset(existing_types):
                         continue
@@ -5923,6 +6002,7 @@ def resolve_references(
                     except Exception:
                         logger.exception("Cross-type tier-2 probe %s failed", probe.__name__)
                         continue
+                    near = near or bool(getattr(hits, "near", False))
                     for m in hits[:PREFIX_LIMIT]:
                         if m.uuid and m.uuid in seen_uuids:
                             continue
@@ -5930,6 +6010,9 @@ def resolve_references(
                         if m.uuid:
                             seen_uuids.add(m.uuid)
                         existing_types.add(m.entity_type)
+                if near:
+                    # CHATBOT-SET-CODES R2: as the tier-2 loop above (`_ProbeRows.near`).
+                    per_token[tok] = _without_near_products(per_token[tok], [tok])
 
     # Mark cross-type-expanded tokens ambiguous when expansion grew them from a
     # single-type confident match into a multi-type candidate union. Without
@@ -6078,7 +6161,12 @@ def resolve_references(
                 family = _drop_unofferable_products(db, family)
             family_ids = {h.uuid for h in family}
             alternatives = family + [h for h in alternatives if h.uuid not in family_ids]
-        tr.alternatives = alternatives[:_ALTERNATIVES_CAP]
+        # CHATBOT-CLOSE-CODES C5 (G6, crew Q5 (a)): the chat ranks the WHOLE close-code list
+        # (every trigram row, `TRGM_LIMIT` per kind) by the parts the customer typed and
+        # offers its first three (`answer.miss_token_candidates`, `_cap3`), so an all-parts
+        # code ranked below the fifth row by similarity alone is still offered. Only the
+        # chat sets `alternatives_offerable_only`; every other caller keeps the cap.
+        tr.alternatives = alternatives if alternatives_offerable_only else alternatives[:_ALTERNATIVES_CAP]
 
     _apply_company_scope(db, resolutions)
     if regions is not None:

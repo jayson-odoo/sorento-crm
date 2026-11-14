@@ -1085,6 +1085,10 @@ class OrderSummaryLocationAllocation(Base, CompanyScopedMixin):
             "warehouse_id",
             unique=True,
         ),
+        # Deleting a recommendation SETs NULL here (FK ON DELETE SET NULL); without this
+        # index every deleted recommendation scans the table (reorder_run_prune,
+        # dbr_0001_retention_settings).
+        Index("ix_scm_order_summary_location_alloc_rec", "reorder_recommendation_id"),
         CheckConstraint(
             "allocated_qty >= 0",
             name="ck_scm_order_summary_location_alloc_qty",

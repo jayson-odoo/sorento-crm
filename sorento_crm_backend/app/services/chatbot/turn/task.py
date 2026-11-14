@@ -25,6 +25,7 @@
 # imports THIS one, for `Focus.tasks`).
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, replace
 from typing import Any, Protocol
 
@@ -94,6 +95,10 @@ class Task:
     #: PR #1247 round 8 (review S1): the number "Is 10 for all 3 products, or for one of
     #: them?" asked about, kept for the ONE next turn so "2" or "all" can place it.
     asked_qty: int | None = None
+    #: CHATBOT-CLOSE-CODES owner F1: the lines a stock pick asked together (`with_owed`: the
+    #: picked code and the codes owed beside it), one question about the pick's ask, so one
+    #: number bound by position fills every owed line (`apply._one_number_for_every_line`).
+    from_pick: bool = False
 
 
 class TaskKind(Protocol):
@@ -262,9 +267,14 @@ class StockQtyTask:
         if verdict.get(ONLY_THESE_LINES) is True:
             slots = [replace(slot, value=None) for slot in slots]
         by_code: dict[str, int] = {}
-        for entity in verdict.get("entities") or []:
-            if not isinstance(entity, dict):
-                continue
+        # A carried entity (`current_message` False) is the parser restating an earlier
+        # product, not a quantity this message placed on it (CHATBOT-CLOSE-CODES F1).
+        current = [
+            entity
+            for entity in verdict.get("entities") or []
+            if isinstance(entity, dict) and entity.get("current_message") is not False
+        ]
+        for entity in current:
             quantity = _number(entity.get("quantity"))
             if quantity is None:
                 continue
@@ -304,7 +314,7 @@ class StockQtyTask:
             if bare is not None:
                 index = slots.index(still_missing[0])
                 slots[index] = replace(still_missing[0], value=bare)
-        elif still_missing and bare is not None and not by_code and not verdict.get("entities"):
+        elif still_missing and bare is not None and not by_code and not current:
             # Owner ruling 26 Sep 2026 (hand test F2, "okay"): one bare number after a
             # question about several products applies to each product still owed.
             # Round 6 (owner console test of round 4, "they can just say one number
@@ -473,6 +483,7 @@ def task_to_wire(task: Task) -> dict[str, Any]:
         ],
         "not_checked": list(task.not_checked),
         **({"asked_qty": task.asked_qty} if task.asked_qty is not None else {}),
+        **({"from_pick": True} if task.from_pick else {}),
     }
 
 
@@ -504,6 +515,7 @@ def task_from_wire(raw: Any) -> Task | None:
             str(name) for name in (raw.get("not_checked") or []) if name is not None
         ),
         asked_qty=_number(raw.get("asked_qty")),
+        from_pick=raw.get("from_pick") is True,
     )
 
 
@@ -990,6 +1002,11 @@ def after_reply(
         ][:MAX_SLOTS]
         if len(labelled) < 2:
             continue
+        # CHATBOT-CLOSE-CODES F2: the parser's code grounding set aside for this token
+        # (`SET_ASIDE_PICK_KEY`) is listed first; order only.
+        suggested = str(entity.get(SET_ASIDE_PICK_KEY) or "").strip().casefold() if isinstance(entity, dict) else ""
+        lead = [pair for pair in labelled if suggested and pair[1].casefold() == suggested]
+        labelled = [*lead, *(pair for pair in labelled if pair not in lead)]
         in_family.update(id(row) for row in group)
         quantity = _number(entity.get("quantity"))
         if quantity is None and len(families) == 1:
@@ -1011,6 +1028,7 @@ def after_reply(
                 "qty": quantity,
                 "count": len(group),
                 "positions": list(range(start, len(options) + 1)),
+                **({SUGGESTED: lead[0][1]} if lead else {}),
             }
         )
 
@@ -1040,8 +1058,37 @@ def after_reply(
 #: yet (`{"options", "groups"}`, the numbers kept), handed on by
 #: `turn/apply.py::_spend_stock_pick` and asked again by `engine._stock_ask_reply`.
 NEXT_PICKS = "next_picks"
+#: CHATBOT-CLOSE-CODES F2: on a which-one list (`groups[]`), the parser's own code listed first,
+#: which a "yes" over a one-list pick answers (`apply._suggested_position`).
+SUGGESTED = "suggested"
+#: CHATBOT-CLOSE-CODES F2: the parser's code `head/grounding` set aside on a product entity because
+#: the raw reaches several codes (`grounding.SET_ASIDE`), so the which-one `after_reply` asks lists
+#: it first; order only. Here, not in `head`, because the turn package imports nothing from it.
+SET_ASIDE_PICK_KEY = "set_aside_pick"
 #: The pick's own quantity per code, one per list (`after_reply`), for `_spend_stock_pick`.
 QTY_BY_CODE = "qty_by_code"
+def set_part_quantity(row: dict[str, Any], typed_for_set: Any) -> int | None:
+    """CHATBOT-SET-CODES B (owner ruling 13 Nov): the quantity a part of a set is asked at, when
+    a quantity was typed (or carried by a pick) for a set it belongs to: that quantity times the
+    part's own quantity in the set (`set_quantities`, the membership table's, 1 when not
+    recorded), rounded UP so a fractional part is never asked at 0 (0.5 x 5 is 3).
+    `typed_for_set(set_code)` is the caller's quantity for that set code, or None.
+    None when no set of the row has one. The one rule the typed ask
+    (`turn_runtime._spec_quantities`) and the pick (`turn/apply._spend_stock_pick`) both use."""
+    per_set = row.get("set_quantities")
+    per_set = per_set if isinstance(per_set, dict) else {}
+    for code in row.get("set_codes") or [row.get("set_code")]:
+        if not code:
+            continue
+        typed = _number(typed_for_set(code))
+        if typed is None:
+            continue
+        per = per_set.get(code)
+        per = per if isinstance(per, (int, float)) and not isinstance(per, bool) and per > 0 else 1
+        return max(1, math.ceil(typed * per))
+    return None
+
+
 #: Codes still owed a quantity while a pick is open (`{"key", "label"}` each): asked by
 #: `engine._stock_ask_reply` once no list is left open, never beside a pick.
 OWED = "owed"
@@ -1075,6 +1122,7 @@ def with_owed(
         opened_at_turn=turn_no,
         touched_at_turn=turn_no,
         slots=tuple(slots[:MAX_SLOTS]),
+        from_pick=True,
     )
     return others + (task,), StockQtyTask().question(task)
 

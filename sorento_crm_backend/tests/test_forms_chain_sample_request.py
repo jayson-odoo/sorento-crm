@@ -5,7 +5,8 @@ tests/_forms_chain_support.py.
 
 A sample request has no reject, revise, undo or SLA (its service emits no form event), and
 nothing reaches the contact on any move, so the chains pin exactly that: draft -> save ->
-submit -> processing -> customer_confirmed -> delivered, the cancel rules, and an empty outbox
+submit -> processing -> delivered (by linking the consignment, owner ruling 11 Nov), the cancel
+rules, and an empty outbox
 throughout.
 """
 from __future__ import annotations
@@ -71,11 +72,13 @@ def test_draft_save_submit_process_confirm_deliver_tells_nobody(world):
     assert c.put(f"{SUB}/{KIND}/{rid}", json={"ship_to_name": "late"}).status_code == 409
 
     assert _move(w, rid, "processing").status_code == 200
-    no_date = _move(w, rid, "customer_confirmed")
-    assert no_date.status_code == 422, no_date.text
-    assert no_date.json()["code"] == "SAMPLE_REQUEST_DATE_REQUIRED"
-    assert _move(w, rid, "customer_confirmed", date="2026-11-20").status_code == 200
-    done = _move(w, rid, "delivered", date="2026-11-25")
+    by_hand = _move(w, rid, "delivered", date="2026-11-25")
+    assert by_hand.status_code == 409, by_hand.text
+    assert by_hand.json()["code"] == "SAMPLE_REQUEST_DELIVERED_BY_CONSIGNMENT"
+    from tests._sample_request_seed import make_consignment
+
+    cg = make_consignment(w.db, SORENTO)
+    done = w.as_user(w.coord).put(f"{SR_BASE}/{rid}/consignment", json={"consignment_order_id": cg.id})
     assert done.status_code == 200, done.text
     assert c.get(f"{SUB}/{KIND}/{rid}").json()["status"] == "delivered"
 

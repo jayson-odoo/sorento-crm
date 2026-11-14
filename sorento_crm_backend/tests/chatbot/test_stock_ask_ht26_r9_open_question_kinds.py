@@ -673,7 +673,11 @@ def test_g_1011_round_7_session(session_factory, monkeypatch, stub_access):
     assert row4.startswith(_answered(("SRTWC286-SH", 10), ("SRTWC286-SH-150", 5)))
     assert "Not checked: " in row4 and "SRTWC286-SH-UF" in row4
     # Row 7: the typo resolves to SRTWC286-SH-150 (resolver), then "5".
+    # CHATBOT-CLOSE-CODES Q2 (a): a lone prefix of one code is offered, not answered (as S08); "yes" takes it.
     assert c.say("check stock SRTWC286-SH-15", stock(product("SRTWC286-SH-15"))) == (
+        "Couldn't find SRTWC286-SH-15. Did you mean SRTWC286-SH-150?"
+    )
+    assert c.say("yes", reply(is_affirmative=True, open_question_answer=answer("yes"))) == (
         "How many units of SRTWC286-SH-150?"
     )
     assert c.say("5", reply(demand_qty=5, open_question_answer=answer("fill", items=[(1, None, 5)]))) == _answered(

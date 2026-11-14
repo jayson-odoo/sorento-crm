@@ -73,20 +73,27 @@ ROUND_CALL_CAP = 60.0
 # replaced by an "omitted" note, never stored in part).
 REASONING_CHARS = 4000
 SIDE_CALL_CAP = 30.0
-#: The final no-tools answer may overrun the turn by this much, so a limit still gets a reply.
-FINAL_GRACE = 10.0
+#: The final no-tools answer may overrun the turn by this much, so a limit still gets a reply. 30 s: a 50-row answer
+#: under load needed over 10 s (crew pass, 14 Nov; owner D4: wait within reason), so a turn ends by max_seconds + 30.
+FINAL_GRACE = 30.0
 #: Below this many seconds left, compaction and the repair round are skipped.
 SIDE_CALL_MIN = 10.0
+#: The least time a tool round needs: one measured 3 to 10 s with today's tool list (crew pass, 14 Nov), so 12 s.
+ROUND_MIN_SECONDS = 12.0
 CATALOG_TTL_SECONDS = 300
 #: After a failed refresh, the last catalogue is served this long before the next try.
 CATALOG_RETRY_SECONDS = 30
 _CATALOG_LOCK = threading.Lock()
 
 
-#: `crm_query` + `crm_describe` calls in one turn (crew pass on d430fe3c, 5 Nov). The entity index in
-#: `crm_query`'s description makes most questions one call; past this the model answers with what it has.
+#: The registry tools (crew pass on d430fe3c, 5 Nov). The entity index in `crm_query`'s description makes most
+#: questions one call.
 QUERY_TOOLS = ("crm_query", "crm_describe")
-MAX_QUERY_CALLS = 3
+#: `crm_query` calls that ran in one turn (TARGET-ACHIEVED-PERF part 2, UAC 7): a runaway stop only, past it the
+#: model answers with what it has. crm_describe and refused calls are free (owner D4, 14 Nov).
+MAX_QUERY_CALLS = 6
+#: A crm_query that ran: its result came back, or it timed out on the database.
+QUERY_RAN = ("ok", "empty", "timeout")
 
 
 #: What a round carries once the question is on the registry path (crew pass on 69b3b479, 5 Nov): every call
@@ -2230,11 +2237,26 @@ def _run(
                 # Confirming acts on the user's own message only: from the second round on, tool
                 # output and document text of this turn have reached the model, so it is not offered.
                 schemas = [s for s in schemas if s.get("function", {}).get("name") != CONFIRM_ACTION]
+            if run.any_tool_result and 0 < remaining() < ROUND_MIN_SECONDS:
+                # UAC 12a: too little time for another round; answer from the results in hand (crew pass, 14 Nov:
+                # a round started with seconds left timed out and the turn ended in an error).
+                reply, _named = forced_final("the time for this question is nearly up")
+                if forced_args is None:
+                    # The final answer failed too (a staff turn gets what it read): UAC 12c, still an error.
+                    status, limit_hit = "limited", "error"
+                break
             try:
                 result = chat(messages, schemas, kind="round", tool_choice="required" if dealer_flow else None)
-            except (_ProviderFailed, TimeoutError):
+            except (_ProviderFailed, TimeoutError) as exc:
                 if not run.any_tool_result:
                     raise
+                if isinstance(exc, TimeoutError) or getattr(exc, "timed_out", False):
+                    # UAC 12b: a round that times out with results in hand still answers from them, as answered.
+                    reply, _named = forced_final("the model did not respond in time")
+                    if forced_args is None:
+                        # The final answer failed too (a staff turn gets what it read): UAC 12c, still an error.
+                        status, limit_hit = "limited", "error"
+                    break
                 status, limit_hit = "limited", "error"
                 reply, named = forced_final("the model call failed")
                 if not named:
@@ -2294,12 +2316,13 @@ def _run(
                         replies[idx] = ToolResult("invalid", message="parts must be 1 to 10 non-empty strings.").to_json(call_id)
                     continue
                 started = clock()
-                if name in QUERY_TOOLS and sum(1 for c in run.tool_calls if c["name"] in QUERY_TOOLS) >= MAX_QUERY_CALLS:
+                ran = sum(1 for c in run.tool_calls if c["name"] == "crm_query" and c["status"] in QUERY_RAN)
+                if name == "crm_query" and ran >= MAX_QUERY_CALLS:
                     # Crew pass on d430fe3c (5 Nov): turns of 7 query calls ran to 161-173k prompt tokens.
                     replies[idx] = ToolResult(
                         "denied",
-                        message=f"At most {MAX_QUERY_CALLS} crm_query/crm_describe calls per question; answer with "
-                                "the results you have and say what is missing.",
+                        message=f"{MAX_QUERY_CALLS} crm_query calls have run for this question, so this one was not "
+                                "run; answer in full from the results you have.",
                     ).to_json(call_id)
                     run.tool_calls.append({"name": name, "status": "denied", "ms": 0})
                     continue
@@ -2369,12 +2392,16 @@ def _run(
                     # The asker's own name as the agent: dropped only when the call finds nothing with it and the
                     # model did not say the question is about them (`query_tools.query_as_asker`; data decides, the
                     # message is never read). crm_query is a user read, so it is run here, not in the branch below.
+                    # An asker with no sales agent of their own: their name is left out before the call runs
+                    # (TARGET-ACHIEVED-PERF UAC 14).
                     from app.models.user import User
+                    from app.services import own_scope
                     from app.services.chatbot.agent.query_tools import query_as_asker
 
                     asker = db.query(User.name).filter(User.id == str(ctx.user_id)).scalar()
                     args, out, self_note = query_as_asker(
-                        args, asker, lambda a: writes.run_user_read(db, ctx, name, a, seen_ids)
+                        args, asker, lambda a: writes.run_user_read(db, ctx, name, a, seen_ids),
+                        has_own_agent=bool(own_scope.me(db, str(ctx.user_id)).agent_ids),
                     )
                 elif name in writes.USER_READS:
                     out = writes.run_user_read(db, ctx, name, args, seen_ids)

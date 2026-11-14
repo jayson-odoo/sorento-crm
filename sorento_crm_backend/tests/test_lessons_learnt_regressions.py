@@ -338,10 +338,15 @@ def test_lesson_123_guard_cases_stay_a_removal(env, case):
 _BACKEND = __import__("pathlib").Path(__file__).resolve().parents[1]
 
 #: Every place allowed to mark a write as a purchasing email trigger: the board Confirm seam
-#: both Confirm routes share, and Publish amendment (the owner's named exception, Q4).
+#: both Confirm routes share, Publish amendment (the owner's named exception, Q4), and a spare
+#: part request revision's final approval (owner, 14 Nov ~15:54: "follow the OI route to also
+#: send order inquiry email of same format to purchasing, when quantity changes after
+#: purchasing seen it"; UAC U4.5 of
+#: documentation/plans/purchasing/spare-part-or-b-14nov-acceptance-criteria.md).
 _PURCHASING_TRIGGER_CALLERS = {
     ("app/api/v1/projects/fulfilment_planning.py", "_confirm_with_possible_rejects"),
     ("app/api/v1/projects/sales_orders.py", "publish_amendment"),
+    ("app/services/spare_part_request_service.py", "_approve_revision"),
 }
 
 #: The heavy guards and what each must keep covering.

@@ -384,11 +384,15 @@ export function OrderInquiryHeadersList() {
         header: ({ column }) => <DataGridColumnHeader title="Doc no" column={column} />,
         size: 140,
         meta: { headerTitle: 'Doc no', skeleton: <Skeleton className="h-4 w-20" /> },
-        cell: ({ row }) => (
-          <span className="block truncate tabular-nums font-medium" title={row.original.inquiry_no}>
-            {row.original.inquiry_no}
-          </span>
-        ),
+        cell: ({ row }) => {
+          // SPARE-PART-OR-B (U3.4): purchasing reads an order request by its OI- number.
+          const number = row.original.oi_no ?? row.original.inquiry_no;
+          return (
+            <span className="block truncate tabular-nums font-medium" title={number}>
+              {number}
+            </span>
+          );
+        },
       },
       {
         // SPARE-PART-ORDER-REQUEST (P3): sorted by the server on `inquiry_type`.

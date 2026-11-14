@@ -647,7 +647,7 @@ def promo_filter(
 
     out: dict[str, list[str]] = {}
     entities = parse_output.get("entities")
-    named_promotions = set(_typed_by_token([e for e in entities or [] if isinstance(e, dict) and e.get("hint") == "promotion"]))
+    named_promotions = set(typed_by_token([e for e in entities or [] if isinstance(e, dict) and e.get("hint") == "promotion"]))
     promotion_ids: list[str] = []
     for r in jsc.array(jsc.get(gate, "resolutions")):
         if isinstance(r, dict) and _token_key(jsc.nullish_str(r.get("token") or r.get("raw"))) in named_promotions:
@@ -671,7 +671,7 @@ def promo_filter(
         for e in entities or []
         if isinstance(e, dict) and e.get("hint") in (None, "", "product") and not e.get("held_family")
     ]
-    typed_product = bool(placed & set(_typed_by_token(product_tokens)))
+    typed_product = bool(placed & set(typed_by_token(product_tokens)))
     terms = [] if typed_product else [t.lower() for t in class_scope_terms(parse_output)]
     if not typed_product:
         # A registry value the grounding placed ("basin cabinet", "gunmetal") narrows too,
@@ -2312,9 +2312,9 @@ def unplaced_tokens(entities: list[Any], resolved: Any) -> dict[str, str]:
     # never takes the reply over for it. A carried PRODUCT code that never resolved is the
     # conversation's subject, and its miss stays one (reviewer round 6): it is what
     # `would_be_unfiltered` reads to stop the zero-uuid tool call (R6), so it is still
-    # counted here. The rows that count are joined by `_typed_by_token` (RESOLVE-SEMANTIC-
+    # counted here. The rows that count are joined by `typed_by_token` (RESOLVE-SEMANTIC-
     # FALLBACK: keyed on the resolver's own token, canonical_code first, raw second).
-    named = _typed_by_token(
+    named = typed_by_token(
         [
             entity
             for entity in jsc.array(entities)
@@ -2331,7 +2331,7 @@ def unplaced_tokens(entities: list[Any], resolved: Any) -> dict[str, str]:
     return {key: raw for key, raw in named.items() if key in missed}
 
 
-def _typed_by_token(entities: list[Any]) -> dict[str, str]:
+def typed_by_token(entities: list[Any]) -> dict[str, str]:
     """`{folded resolver token: the word the customer typed}` for the message's entities.
 
     RESOLVE-SEMANTIC-FALLBACK: the token the resolver was sent is `canonical_code` first,
@@ -2358,6 +2358,7 @@ def _typed_by_token(entities: list[Any]) -> dict[str, str]:
         if key and key not in named:
             named[key] = raw or canonical
     return named
+
 
 
 def named_unplaced(entities: list[Any], resolved: Any) -> dict[str, str]:
@@ -2389,7 +2390,7 @@ def not_checked_tokens(entities: list[Any], resolved: Any) -> dict[str, str]:
     NOT unplaced - it may well exist - which is why it is a separate map and a separate
     sentence, never "I could not find".
     """
-    named = _typed_by_token(entities)
+    named = typed_by_token(entities)
     cut = {_token_key(x) for x in jsc.array(jsc.get(resolved, "truncated_tokens"))}
     return {key: raw for key, raw in named.items() if key in cut}
 
@@ -2405,7 +2406,7 @@ def absorbed_tokens(entities: list[Any], resolved: Any) -> dict[str, str]:
     whose matches is the token itself, has not been answered - it is reported unplaced,
     so the reply says "I could not find SRTSWT3001." rather than nothing.
     """
-    typed = _typed_by_token(entities)
+    typed = typed_by_token(entities)
     if len(typed) < 2:
         return {}
     codes_by_token: dict[str, set[str]] = {}
@@ -3309,6 +3310,8 @@ def candidates_by_kind(
             built["set_code"] = row["set_code"]
             if row.get("set_codes"):
                 built["set_codes"] = list(row["set_codes"])
+            if row.get("set_quantities"):
+                built["set_quantities"] = dict(row["set_quantities"])
         # Finding 3 (owner, hand-pass 1): the gate carries the resolver's own human
         # label as `display_name` - for customers only, by `gate._display_name`'s rule,
         # because a customer's `canonical_code` is an ACCOUNT code the customer never
@@ -3650,11 +3653,61 @@ def _spec_quantities(
         # read anything - so by the time a fetch is built the quantity is always per
         # entity, whichever field the parser happened to fill.
         return out
+    from app.services.chatbot.turn.task import set_part_quantity
+
+    # CHATBOT-SET-CODES L1 (crew live step 5, 14 Nov 2026): the resolver completes a set code
+    # typed with its last word ("QWC605-RL soft x 1" is the set QWC605-RL-SOFT,
+    # `product_code_family._completed_code`), so the typed token's quantity is keyed by a code
+    # no row carries. Rule 5 below, applied to the set codes: a typed token naming no placed
+    # code or set, that is the prefix of exactly ONE placed set's code the parser did not
+    # name itself, is that set. A set named as typed ("QWC605-RL-NEW") is never another
+    # token's completion, with or without a quantity of its own (reviewer, 14 Nov 2026:
+    # "QWC605 x 3, QWC605-RL-NEW" never asks NEW at 3).
+    typed_keys = {
+        _token_key(value)
+        for e in jsc.array(out.get("entities"))
+        if isinstance(e, dict) and e.get("hint") in (None, "product")
+        for value in (e.get("canonical_code"), e.get("raw"))
+        if isinstance(value, str) and value.strip()
+    }
+    set_keys = {
+        _token_key(str(c))
+        for e in entities
+        if isinstance(e, dict)
+        for c in e.get("set_codes") or [e.get("set_code")]
+        if c
+    }
+    placed_keys = set_keys | {
+        _token_key(str(e.get(name)))
+        for e in entities
+        if isinstance(e, dict)
+        for name in ("code", "canonical_code")
+        if e.get(name)
+    }
+    completions = set_keys - typed_keys
+    for token, quantity in list(by_code.items()):
+        if token in placed_keys:
+            continue
+        completed = [key for key in completions if key.startswith(token)]
+        if len(completed) == 1 and completed[0] not in by_code:
+            by_code[completed[0]] = quantity
+
     quantities: dict[str, int] = {}
     for e in entities:
         uuid = e.get("uuid") if isinstance(e, dict) else None
         if not isinstance(uuid, str) or not uuid:
             continue
+        if e.get("set_code"):
+            # CHATBOT-SET-CODES B: a part of a set typed with a quantity is asked at that
+            # quantity times its own quantity in the set. The same part also typed on its
+            # own beside the set asks for the total (the gate keeps it as one entity).
+            part = set_part_quantity(e, lambda code: by_code.get(_token_key(code)))
+            if part is not None:
+                own_code = _token_key(str(e.get("code") or ""))
+                set_keys = {_token_key(str(c)) for c in e.get("set_codes") or [e.get("set_code")] if c}
+                own = by_code.get(own_code, 0) if own_code and own_code not in set_keys else 0
+                quantities[uuid] = part + own
+                continue
         for name in ("code", "canonical_code", "raw"):
             code = e.get(name)
             if not isinstance(code, str) or not code.strip():
@@ -4256,7 +4309,7 @@ def make_tool_runner(
         # that set is not the fetch's subject and never rides it.
         if page_predicate is not None:
             block = page_predicate
-        elif scoped_to_a_resolved_product(spec) and not _spec_is_the_set(spec, compatible_entities):
+        elif not predicate_rides(spec, compatible_entities):
             block = None
             gate.pop("predicate", None)
         else:
@@ -4655,7 +4708,7 @@ def typed_product_unplaced(verdict: Any, unplaced: Mapping[str, str] | None) -> 
     (S-TRAP250MM)-SRTWC8354-SH") was one unplaced product token, and the set tier
     counted 145 water closets off its words: that set is not what the dealer asked for,
     so it is never carried as a `set_page`. Keyed the way `unplaced_tokens` keys its map
-    (`_typed_by_token`: canonical_code first, raw second, folded by
+    (`typed_by_token`: canonical_code first, raw second, folded by
     `turn.state.token_key`, RESOLVE-SEMANTIC-FALLBACK). A brand or category word nobody
     could place is not a miss on the product.
 
@@ -4668,7 +4721,7 @@ def typed_product_unplaced(verdict: Any, unplaced: Mapping[str, str] | None) -> 
     if not unplaced:
         return False
     products = [e for e in jsc.array(jsc.get(verdict, "entities")) if jsc.get(e, "hint") in (None, "product")]
-    return any(key in unplaced for key in _typed_by_token(products))
+    return any(key in unplaced for key in typed_by_token(products))
 
 
 def set_page_carry(
@@ -5802,6 +5855,7 @@ def _spec_row(entity: dict[str, Any]) -> dict[str, Any]:
         # a did-you-mean) keeps the set's code, as the gate's own member rows do.
         **({"set_code": entity["set_code"]} if entity.get("set_code") else {}),
         **({"set_codes": list(entity["set_codes"])} if entity.get("set_codes") else {}),
+        **({"set_quantities": dict(entity["set_quantities"])} if entity.get("set_quantities") else {}),
     }
 
 
@@ -5896,6 +5950,13 @@ def scoped_to_a_resolved_product(spec: FetchSpec) -> bool:
     product from a set's members (the reconciled plan carries a set question's population
     with uuids too), which is why the gate reads it together with `_spec_is_the_set`."""
     return bool(_spec_product_ids(spec))
+
+
+def predicate_rides(spec: FetchSpec, compatible: list[dict[str, Any]]) -> bool:
+    """Does the turn's set predicate ride this fetch? Not when the spec names a resolved
+    product that is not the set the resolver placed this turn (`_spec_is_the_set`): that
+    fetch lists the product, not the browse."""
+    return not (scoped_to_a_resolved_product(spec) and not _spec_is_the_set(spec, compatible))
 
 
 def _spec_is_the_set(spec: FetchSpec, compatible: list[dict[str, Any]]) -> bool:

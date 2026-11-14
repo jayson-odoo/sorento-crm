@@ -12,6 +12,8 @@
 # streaming, its byte lag, WAL archiving fresh and not failing, pg_wal size, newest WAL-G base
 # backup age. EXPECT_REPLICAS=0 while node A runs alone (before node B exists).
 # Cron runs from $HOME, so it cd's to PROJECT_DIR first (compose files are relative).
+# DISK_ONLY=1 runs only the disk check (1) and reports it the same way: for a node where the
+# HA setup is not done yet (runbook db-retention-and-disk.md section 3).
 set -uo pipefail
 
 HC_URL="${HC_URL:-}"
@@ -35,11 +37,27 @@ SHARED_FILES="${SHARED_FILES:-.env .deploy.env docker-compose.yml compose.ha.yml
 # Prints `sha256sum` lines for SHARED_FILES on the peer (e.g. ssh over the private link with a
 # key whose forced command is that sha256sum). Unset = the comparison is skipped.
 PEER_HASH_CMD="${PEER_HASH_CMD:-}"
+DISK_ONLY="${DISK_ONLY:-0}"
 
-cd "$PROJECT_DIR" || { echo "ha-checks: cannot cd to $PROJECT_DIR" >&2; exit 2; }
+if [ "$DISK_ONLY" != "1" ]; then
+  cd "$PROJECT_DIR" || { echo "ha-checks: cannot cd to $PROJECT_DIR" >&2; exit 2; }
+fi
 
 problems=()
 note() { problems+=("$1"); }
+
+# Ping HC_URL with the result and exit: ok, or FAIL with the problems as the body.
+report() {
+  if [ "${#problems[@]}" -eq 0 ]; then
+    echo "ha-checks: ok"
+    [ -n "$HC_URL" ] && curl -fsS -m 10 --retry 3 -o /dev/null "$HC_URL"
+    exit 0
+  fi
+  body=$(printf '%s\n' "${problems[@]}")
+  echo "ha-checks: FAIL"; echo "$body"
+  [ -n "$HC_URL" ] && curl -fsS -m 10 --retry 3 -o /dev/null --data-raw "$body" "$HC_URL/fail"
+  exit 1
+}
 
 # One value from the local Postgres (as the postgres superuser, inside the db container).
 sql() {
@@ -59,6 +77,7 @@ if [ -n "$pct" ] && [ "$pct" -ge "$PRUNE_AT_PCT" ] && [ -d "$SNAPSHOT_DIR" ]; th
   pct=$(disk_pct)
 fi
 if [ -z "$pct" ]; then note "disk: df failed"; elif [ "$pct" -ge "$ALERT_AT_PCT" ]; then note "disk ${pct}% used"; fi
+[ "$DISK_ONLY" = "1" ] && report
 
 # 2. Roles: exactly one primary across the two nodes.
 # shellcheck disable=SC2086
@@ -119,12 +138,4 @@ print(int(min(ages)) if ages else -1)' 2>/dev/null)
   if [ -z "$newest" ] || [ "$newest" -lt 0 ] || [ "$newest" -gt "$MAX_BACKUP_AGE_S" ]; then note "base backup age ${newest:-unknown}s"; fi
 fi
 
-if [ "${#problems[@]}" -eq 0 ]; then
-  echo "ha-checks: ok"
-  [ -n "$HC_URL" ] && curl -fsS -m 10 --retry 3 -o /dev/null "$HC_URL"
-  exit 0
-fi
-body=$(printf '%s\n' "${problems[@]}")
-echo "ha-checks: FAIL"; echo "$body"
-[ -n "$HC_URL" ] && curl -fsS -m 10 --retry 3 -o /dev/null --data-raw "$body" "$HC_URL/fail"
-exit 1
+report

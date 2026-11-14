@@ -76,8 +76,12 @@ class SparePartLineOut(BaseModel):
 class SparePartRequestOut(BaseModel):
     id: str
     inquiry_no: Optional[str] = None
+    #: SPARE-PART-OR-B (U2.6): the OI- number from final approval; null before it.
+    oi_no: Optional[str] = None
     inquiry_type: str
     state: str
+    #: U4.2: an open revision's state (draft / pending_approval / rejected), else null.
+    revision_state: Optional[str] = None
     currency: Optional[str] = None
     needed_by: Optional[date] = None
     default_location: Optional[str] = None
@@ -101,7 +105,11 @@ class SparePartRequestListItem(BaseModel):
 
     id: str
     inquiry_no: Optional[str] = None
+    oi_no: Optional[str] = None
     state: str
+    revision_state: Optional[str] = None
+    #: F6: the open revision's state when there is one, else `state` (the pill and filter).
+    effective_state: Optional[str] = None
     currency: Optional[str] = None
     requested_by: Optional[str] = None
     requested_by_name: Optional[str] = None

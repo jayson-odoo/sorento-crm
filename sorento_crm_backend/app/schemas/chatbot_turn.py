@@ -225,8 +225,11 @@ class ConsolePromptVersion(BaseModel):
     chars: int
     # Item 6: which lineage the body is - "full" (the live-derived body), "compact" (the
     # S1b slim rewrite) or "other". Read off the opening of the template, see
-    # `console_service.prompt_base`. The console defaults to the newest "full".
+    # `console_service.prompt_base`. Shown in the picker only.
     base: str = "other"
+    # CONSOLE-DEFAULT-PROMPT: the version production serves (`ai_prompt_registry.get_prompt`).
+    # The console defaults to it; none is serving on a database with no label.
+    serving: bool = False
 
 
 class ConsoleMediaStatusResponse(BaseModel):

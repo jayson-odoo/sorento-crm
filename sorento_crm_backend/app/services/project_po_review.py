@@ -77,8 +77,6 @@ from app.services.project_po_reading import (  # noqa: F401 - shared vocabulary
     dedup_key,
     successor_po_number,
     _looks_like_code,
-    _squash,
-    _code_tokens,
     _proposed_code,
     classify_annotation,
 )
@@ -259,9 +257,14 @@ class POAnnotationReviewMixin:
                 )
             for line in lines:
                 line.stock_code_raw = code[:180]
-                if line.resolution_source != "manual":
+                if line.resolution_source not in ("manual", "accepted"):
                     line.resolved_product_id, line.resolution_source = self._resolve_product(
-                        line.stock_code_raw, line.description_raw, company_id=line.company_id
+                        line.stock_code_raw,
+                        company_id=line.company_id,
+                        remembered=self._remembered_for_version(
+                            self.get_version(line.po_version_id)
+                        ),
+                        description=line.description_raw,
                     )
                 applied["amended_line_nos"].append(line.line_no)
         elif interpretation == INTERP_AMEND_DESCRIPTION:

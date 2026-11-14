@@ -392,13 +392,18 @@ def _year_as_range(text: str, entries: list[dict]) -> str:
     return text
 
 
-def strip_self_agent(args: dict, user_name: str | None) -> tuple[dict, str | None]:
+def strip_self_agent(
+    args: dict, user_name: str | None, *, has_own_agent: bool = True,
+) -> tuple[dict, str | None]:
     """The asking user's own name is not an agent filter unless the question is about them: crew live round 4,
     "payout per dealer" was first filtered by the asker's own name and found nothing. Whether the user means
     themselves ("my", "saya", their own name, in any language) is the model's `about_self` argument; code only
-    compares the call's agent with the asker's stored name and never reads the message (owner rule 4 Oct, 28 Oct)."""
+    compares the call's agent with the asker's stored name and never reads the message (owner rule 4 Oct, 28 Oct).
+    An asker with no sales agent of their own (`has_own_agent` False): a question about themselves cannot mean an
+    agent, so their name is left out even then (TARGET-ACHIEVED-PERF UAC 14, crew trace f0c0f4c8: "my dealers"
+    filtered by the asker's name found nothing)."""
     own = " ".join(str(user_name or "").split()).lower()
-    if not own or args.get("about_self") is True:
+    if not own or (args.get("about_self") is True and has_own_agent):
         return args, None
 
     words = set(own.split())
@@ -423,6 +428,11 @@ def strip_self_agent(args: dict, user_name: str | None) -> tuple[dict, str | Non
         out["filters"] = keep
     if not dropped:
         return args, None
+    if not has_own_agent:
+        return out, (
+            f"Left out {', '.join(dropped)}: that is your own name and you have no sales agent of your own, so the "
+            "question covers everyone you can see."
+        )
     return out, f"Left out {', '.join(dropped)}: that is your own name, nothing matched it and the question was not about you."
 
 
@@ -439,13 +449,16 @@ def _found_something(out: Any) -> bool:
 _RAN = ("ok", "empty")
 
 
-def query_as_asker(args: dict, user_name: str | None, run) -> tuple[dict, Any, str | None]:
+def query_as_asker(
+    args: dict, user_name: str | None, run, *, has_own_agent: bool = True,
+) -> tuple[dict, Any, str | None]:
     """Run a crm_query for the asking user: (the args that ran, the result, a note or None). A call that names the
     asker's own name (`strip_self_agent`) runs as it is first; only when it finds nothing is the name dropped and the
     call run again (crew live round 4: "payout per dealer" was filtered by the asker's own name). So a colleague who
     shares a word of the asker's name ("payout for Tan" asked by Tan Wei Ming) is answered, the data decides, and
-    the message is never read (review on 8202e048)."""
-    stripped, note = strip_self_agent(args, user_name)
+    the message is never read (review on 8202e048). An asker with no sales agent of their own (TARGET-ACHIEVED-PERF
+    UAC 14): the same, and `about_self` does not keep the name then ("my dealers" cannot mean an agent of theirs)."""
+    stripped, note = strip_self_agent(args, user_name, has_own_agent=has_own_agent)
     first = run(args)
     if note is None or getattr(first, "status", None) not in _RAN or _found_something(first):
         return args, first, None

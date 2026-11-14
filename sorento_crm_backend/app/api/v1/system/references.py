@@ -1532,15 +1532,6 @@ class ResolveReferenceRequest(BaseModel):
             "for SRTWC8088's seat cover, never SRTWC8088-SC)."
         ),
     )
-    alternatives_offerable_only: bool = Field(
-        default=False,
-        description=(
-            "CHATBOT-CODE-MATCH AC-20 / owner Q3: the resolver's `alternatives_offerable_only` - "
-            "a token's did-you-mean `alternatives` (trigram and same-family) hold only products "
-            "the chat may offer (active and not discontinued). Set by the chatbot's resolve only; "
-            "off keeps every other caller's alternatives unchanged."
-        ),
-    )
     understand_phrase: bool = Field(
         default=False,
         description=(
@@ -1688,6 +1679,10 @@ def _code_matched(result: dict[str, Any], tokens: list[str] | None = None, *, ce
         if certificates and isinstance(match, dict) and match.get("entity_type") == "certificate":
             # CLOSED LISTS: a certificate matched exactly (by number, or scheme and number).
             return _has_digit(fragment) and match.get("match_tier") == "exact"
+        if isinstance(match, dict) and match.get("entity_type") == "product_set":
+            # CHATBOT-SET-CODES AC-2b: a registered set typed as its whole code ("qwc605 rl soft")
+            # is matched by code too; its words are the code's, never a described set's.
+            return _has_digit(fragment) and fragment == _fold_code(match.get("canonical_code"))
         return (
             _has_digit(fragment)
             and isinstance(match, dict)
@@ -1789,7 +1784,13 @@ def _restate_resolution(result: dict[str, Any], tr: dict[str, Any], kept: list[A
     ]
 
 
-def _drop_word_code_fragments(result: dict[str, Any], vocabulary: Any) -> None:
+def _drop_word_code_fragments(
+    result: dict[str, Any],
+    vocabulary: Any,
+    *,
+    offer_for: set[str] | frozenset[str] = frozenset(),
+    offerable: Any = None,
+) -> None:
     """CODE-SUBSTRING (crew a59517206 (a)): a WORD token (no ASCII digit) gets no product from a
     code fragment read. A registry word is never a code hit, as a substring or as whole code
     segments. Kept: exact / head_code rows, a row whose code IS the token (separators aside,
@@ -1802,7 +1803,12 @@ def _drop_word_code_fragments(result: dict[str, Any], vocabulary: Any) -> None:
     all (a code fragment). A row with SEVERAL tokens (the AND row) loses its whole-code-word keep
     when ANY of its tokens is a registry word. Each word is checked in the form the probe matched it
     by (as typed when the code holds it, else its `_word_variants` forms). Runs once, early, so every
-    reader of the result sees the same rows."""
+    reader of the result sees the same rows.
+
+    `offer_for` (CHATBOT-CLOSE-CODES C1, G3, owner Q1 (b)): the folded word tokens the caller typed
+    as a PRODUCT code. A dropped row of such a word that is no registry word is still never a
+    match, but it stays a close code: it moves to the token's did-you-mean `alternatives`, the
+    rows `offerable` (a callable over row dicts) leaves, after the alternatives already there."""
     words: list[frozenset[str]] = []
 
     def known(tokens: list[str], code: str) -> bool:
@@ -1840,6 +1846,24 @@ def _drop_word_code_fragments(result: dict[str, Any], vocabulary: Any) -> None:
         # a code that STARTS with the word: a family sibling unless it is a registry word
         return not known(tokens, code)
 
+    def close_codes(owner: dict[str, Any] | None, tokens: list[str], dropped: list[Any]) -> None:
+        if len(tokens) != 1 or _fold_code(tokens[0]) not in offer_for:
+            return
+        rows = [m for m in dropped if isinstance(m, dict) and m.get("entity_type") == "product"]
+        rows = [m for m in rows if not known(tokens, _fold_code(m.get("canonical_code")))]
+        rows = list(offerable(rows)) if callable(offerable) and rows else rows
+        if owner is None:
+            if not rows:
+                return
+            # AND mode: the one token's miss in the per-token shape every miss reader reads
+            # (`code_sizes._single_substring_is_an_offer` writes the same).
+            owner = {"token": tokens[0], "resolved": False, "ambiguous": False, "matches": [], "alternatives": []}
+            result.update({"match_mode": "or", "intersection": [], "by_entity_type": {}, "resolutions": [owner]})
+        have = {str(a.get("uuid")) for a in owner.get("alternatives") or [] if isinstance(a, dict)}
+        added = [m for m in rows if str(m.get("uuid")) not in have]
+        if added:
+            owner["alternatives"] = [*(owner.get("alternatives") or []), *added]
+
     for resolution in result.get("resolutions") or []:
         if not isinstance(resolution, dict) or _has_digit(resolution.get("token")):
             continue
@@ -1847,6 +1871,7 @@ def _drop_word_code_fragments(result: dict[str, Any], vocabulary: Any) -> None:
         keep = [m for m in rows if kept(m, [resolution.get("token")])]
         if len(keep) != len(rows):
             _restate_resolution(result, resolution, keep)
+            close_codes(resolution, [resolution.get("token")], [m for m in rows if m not in keep])
     tokens = [t for t in result.get("tokens") or []]
     if isinstance(result.get("intersection"), list) and not any(_has_digit(t) for t in tokens):
         rows = result["intersection"]
@@ -1854,6 +1879,8 @@ def _drop_word_code_fragments(result: dict[str, Any], vocabulary: Any) -> None:
         if len(keep) != len(rows):
             result["intersection"] = keep
             _rebuild_intersection_fields(result)
+            if not keep and not result.get("resolutions"):
+                close_codes(None, tokens, [m for m in rows if m not in keep])
 
 
 def _drop_word_neighbours(result: dict[str, Any], *, offer_for: set[str] | frozenset[str] = frozenset()) -> None:
@@ -3359,6 +3386,8 @@ def _narrowed_payload(
     payload: "ResolveReferenceRequest",
     exact_kept: list[str] | None = None,
     spec_none: list[dict[str, Any]] | None = None,
+    answered: frozenset[str] = frozenset(),
+    keep_unplaced: bool = False,
 ) -> "ResolveReferenceRequest":
     """The typed codes narrowed to the variants the message picks, two ways: by the words on
     the code's line (`narrow_code_tokens`, PR #833) and by grounded spec values
@@ -3376,7 +3405,9 @@ def _narrowed_payload(
 
     typed = payload
     narrowed = narrow_code_tokens(
-        db, query=payload.query or "", tokens=payload.tokens, allowed_types=payload.allowed_entity_types
+        db, query=payload.query or "", tokens=payload.tokens, allowed_types=payload.allowed_entity_types,
+        **({"answered": answered} if answered else {}),
+        **({"keep_unplaced": True} if keep_unplaced else {}),
     )
     if narrowed is not None:
         payload = payload.model_copy(
@@ -3510,17 +3541,45 @@ def _keep_exact_variants(result: dict[str, Any], picked: list[str]) -> None:
         ]
 
 
+def _not_from_a_request() -> bool:
+    """A route argument no request can set: FastAPI always resolves it to False."""
+    return False
+
+
+def _no_codes_from_a_request() -> frozenset[str]:
+    """A route argument no request can set: FastAPI always resolves it to no codes."""
+    return frozenset()
+
+
 @router.post("/resolve")
 def resolve_reference_post(
     payload: ResolveReferenceRequest,
     current_user: dict = Depends(get_external_api_user),
     db: Session = Depends(get_db),
+    alternatives_offerable_only: bool = Depends(_not_from_a_request),
+    answered_codes: frozenset[str] = Depends(_no_codes_from_a_request),
+    close_code_ask: bool = Depends(_not_from_a_request),
 ):
-    """POST variant for external callers that send JSON body (e.g. n8n HTTP node)."""
+    """POST variant for external callers that send JSON body (e.g. n8n HTTP node).
+
+    `alternatives_offerable_only` (CHATBOT-CODE-MATCH AC-20 / owner Q3; CHATBOT-CLOSE-CODES
+    review): the resolver's own flag, a token's did-you-mean `alternatives` (trigram and
+    same-family) hold only products the chat may offer, and the chat ranks the whole list. No
+    request body or query sets it (`_not_from_a_request`); the chatbot passes it in process
+    (`lanes/business/services._resolve_entity`), so every API caller keeps the capped,
+    unfiltered alternatives.
+
+    `answered_codes` (CHATBOT-CLOSE-CODES AC-37): the folded codes the chat's grounding answered
+    on a stock or incoming ask, kept as typed by the code narrowing (`narrow_code_tokens`).
+    Passed in process the same way; no request sets it. `close_code_ask` (CHATBOT-CLOSE-CODES
+    F4, the same way): the chat's stock or incoming ask, whose typed code that is no catalogue
+    code is never narrowed to a bare family prefix (`narrow_code_tokens`'s `keep_unplaced`)."""
     typed_tokens = list(payload.tokens or [])
     exact_kept: list[str] = []
     spec_none: list[dict[str, Any]] = []
-    payload = _narrowed_payload(db, payload, exact_kept, spec_none)
+    # A direct Python call that omits it holds the `Depends` marker, never a frozenset.
+    answered = answered_codes if isinstance(answered_codes, frozenset) else frozenset()
+    payload = _narrowed_payload(db, payload, exact_kept, spec_none, answered, close_code_ask is True)
     picked_variants = (
         _picked_variants(typed_tokens, payload.tokens)
         if (payload.match_mode or "").strip().lower() == "or"
@@ -3581,7 +3640,8 @@ def resolve_reference_post(
             code_reader=code_reader,
             hint_locked_tokens=payload.hint_locked_tokens,
             brand_tokens=payload.brand_tokens,
-            alternatives_offerable_only=payload.alternatives_offerable_only,
+            # `is True`: a direct Python call that omits it holds the `Depends` marker, never True.
+            alternatives_offerable_only=alternatives_offerable_only is True,
         )
     except EntityPinMismatch as exc:
         raise AppException(
@@ -3599,20 +3659,27 @@ def resolve_reference_post(
     if spec_none and isinstance(result, dict):
         # A size or named spec no variant of the typed code's family holds; the reply says so.
         result["spec_none"] = spec_none
+    # CHATBOT-CODE-MATCH AC-19 (owner Q1 (b), 13 Nov 2026): a word token the caller typed
+    # as a PRODUCT (its own type, positionally parallel) keeps its did-you-mean.
+    typed_products = (
+        {_fold_code(t) for t, kind in zip(payload.tokens, payload.allowed_entity_types) if kind == "product"}
+        if payload.exact_match and payload.tokens and payload.allowed_entity_types
+        and len(payload.tokens) == len(payload.allowed_entity_types)
+        else set()
+    )
     if payload.exact_match:
-        # CHATBOT-CODE-MATCH AC-19 (owner Q1 (b), 13 Nov 2026): a word token the caller typed
-        # as a PRODUCT (its own type, positionally parallel) keeps its trigram did-you-mean.
-        typed_products = (
-            {_fold_code(t) for t, kind in zip(payload.tokens, payload.allowed_entity_types) if kind == "product"}
-            if payload.tokens and payload.allowed_entity_types and len(payload.tokens) == len(payload.allowed_entity_types)
-            else set()
-        )
         _drop_word_neighbours(result, offer_for=typed_products)
     if payload.require or payload.spec_fallback:
         # CODE-SUBSTRING: before Shape B and the spec fallback read the rows.
+        from app.services.entity_resolver import offerable_product_rows
         from app.services.product_spec_search import _search_vocabulary
 
-        _drop_word_code_fragments(result, lambda: _search_vocabulary(db, brands=[]))
+        _drop_word_code_fragments(
+            result,
+            lambda: _search_vocabulary(db, brands=[]),
+            offer_for=typed_products,
+            offerable=lambda rows: offerable_product_rows(db, rows),
+        )
 
     # Shape B: a domain predicate over the described set. This is NOT a fallback -
     # "what faucets have certs" is a different question from "find me a faucet",

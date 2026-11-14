@@ -162,11 +162,18 @@ def test_several_holders_with_no_exact_code_refuse_a_holder_pick(session_factory
     _assert_refused(session_factory, stub_access, monkeypatch, typed, a, ids)
 
 
-def test_a_single_holder_pick_is_kept(session_factory, seeded, stub_access, monkeypatch):
+def test_a_single_holder_pick_is_offered_not_answered(session_factory, seeded, stub_access, monkeypatch):
+    # CHATBOT-CLOSE-CODES Q2 (a) / AC-34: the parser completing a lone prefix to the only code that holds it is not a
+    # direct answer. The pick is kept (not refused) and offered as the did-you-mean; no stock answer line.
     typed, a = "ZZS99902", "ZZS99902A"
-    ids = _seed(session_factory, a)
+    _seed(session_factory, a)
 
-    _assert_kept(session_factory, stub_access, monkeypatch, typed, a, ids)
+    result, _calls, notes = _run(session_factory, stub_access, monkeypatch, typed, a, code_lookup=True)
+    text = _text(result)
+    assert "Couldn't find" in text and typed in text, text
+    assert "Did you mean" in text and a in text, text
+    assert "Stock summary" not in text and "*Product Code:*" not in text, f"answered on the parser's completion: {text!r}"
+    assert not _refused(notes), notes
 
 
 def test_an_exact_code_pick_is_kept_even_with_other_holders(session_factory, seeded, stub_access, monkeypatch):

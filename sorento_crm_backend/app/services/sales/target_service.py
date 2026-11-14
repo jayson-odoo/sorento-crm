@@ -1629,12 +1629,14 @@ def list_all_targets(
     subject: str = "team",
     sales_team_id: Optional[list[str] | str] = None,
     query: Optional[str] = None,
+    target_ids: Optional[Iterable[str]] = None,
 ) -> dict:
     """Targets > Teams and Targets > Agents (the owner's hand test of 27 Sep, "it should show a
     list of team target, that's it"): one row per target of the kind, whatever its dates, with
     the whole range's figures (the sum of its periods' targets and achievements). No date
     filter and no "No target" rows. On the Agents tab the Team filter is the agent's team
-    today, or `none` for agents in no team today."""
+    today, or `none` for agents in no team today. `target_ids`: only those targets (the
+    assistant's `target_list` for a named agent, TARGET-ACHIEVED-PERF part 2)."""
     on = _today()
     company_id = acting_company_id(db)
     team_filter = [sales_team_id] if isinstance(sales_team_id, str) else list(sales_team_id or [])
@@ -1645,6 +1647,8 @@ def list_all_targets(
     team_of_agent: Dict[str, SalesTeam] = {m.sales_agent_id: t for m, t in _covering_on(db, on)}
 
     targets_q = db.query(SalesTarget).filter(SalesTarget.subject_kind == subject)
+    if target_ids is not None:
+        targets_q = targets_q.filter(SalesTarget.id.in_(list(target_ids)))
     if subject == "team" and real_teams:
         targets_q = targets_q.filter(SalesTarget.sales_team_id.in_(real_teams))
     targets = targets_q.all()

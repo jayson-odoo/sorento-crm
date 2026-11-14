@@ -331,7 +331,8 @@ def _domain_of_kind(policy: Policy, kind: str | None) -> str | None:
 
 def _set_option_members(option: dict[str, Any]) -> list[dict[str, Any]]:
     """A picked set option as the options of its member products (`option["members"]`,
-    `answer.set_members_of`), each carrying the set's code; any other option as itself."""
+    `answer.set_members_of`), each carrying the set's code and its own quantity in that set
+    (`set_quantities`, as the gate's member rows do); any other option as itself."""
     members = option.get("members") if option.get("entity_type") == "product_set" else None
     if not isinstance(members, list) or not members:
         return [option]
@@ -344,6 +345,7 @@ def _set_option_members(option: dict[str, Any]) -> list[dict[str, Any]]:
             "uuid": m["uuid"],
             "uuids": [m["uuid"]],
             "set_code": option.get("code"),
+            **({"set_quantities": {option.get("code"): m["quantity"]}} if m.get("quantity") else {}),
         }
         for m in members
         if isinstance(m, dict) and m.get("uuid") and m.get("code")
@@ -856,9 +858,43 @@ def _answer_pending(state: State, decision: Decision, trace: Trace, verdict: dic
         # ELP3754?" is a yes/no over its one option. A yes picks it (the carried quantity
         # rides on the pick, `_spend_stock_pick`); a no refers the dealer to their
         # salesman, with nothing left open - a dealer's stock ask is never escalated.
+        suggested = _suggested_position(pending)
         if decision.answers and decision.why == "affirmative" and len(pending.options) == 1:
             decision = replace(decision, positions=(pending.options[0].get("position"),))
             trace.rules_fired.append("stock_pick_yes")
+        elif decision.answers and decision.why == "affirmative" and not decision.positions and suggested is not None:
+            # CHATBOT-CLOSE-CODES F2: the which-one lists the parser's own code first
+            # (`task.SUGGESTED`); a "yes" over it is that code.
+            decision = replace(decision, positions=(suggested,))
+            trace.rules_fired.append("stock_pick_yes_suggested")
+        elif (
+            decision.answers
+            and decision.why == "affirmative"
+            and not decision.positions
+            and len(pending.options) > 1
+            and not pending.payload.get("did_you_mean")
+        ):
+            # CHATBOT-CLOSE-CODES F2: a "yes" over a which-one list names no code: the list
+            # is asked again as it was, nothing fetched, never referred.
+            groups = pending.payload.get("groups")
+            trace.rules_fired.append("stock_pick_yes_reasked")
+            if isinstance(groups, list) and groups:
+                trace.task_question = task_mod.picks_question(list(pending.options), groups)
+            else:
+                trace.task_question = task_mod.pick_question(
+                    str(pending.payload.get("typed") or ""),
+                    [str(o.get("label")) for o in pending.options if o.get("label")],
+                    pending.payload.get("stock_qty"),
+                    pending.payload.get("count"),
+                    start=min((o.get("position") or 1) for o in pending.options),
+                )
+            focus.domains = ["inventory"]
+            return (
+                focus,
+                pending,
+                Plan(domains=["inventory"], fetch=[], ask=None, denied=[], trace=trace),
+                False,
+            )
         elif (
             decision.answers
             and decision.why == "affirmative"
@@ -978,6 +1014,7 @@ def _answer_pending(state: State, decision: Decision, trace: Trace, verdict: dic
                     "current_message": True,
                     "confident": True,
                     **({"set_code": option["set_code"]} if option.get("set_code") else {}),
+                    **({"set_quantities": dict(option["set_quantities"])} if option.get("set_quantities") else {}),
                 }
                 # Hand pass 12, Group F: `name` only when this option is ONE identity
                 # (a single uuid) - the resolver's own name for the one row it matched.
@@ -2649,6 +2686,118 @@ def _asked_quantity_placed(
     trace.rules_fired.append("asked_quantity_placed")
 
 
+def _one_set_for_every_line(focus: Focus, slots: list[Any]) -> bool:
+    """Every line of the open question is a part of one same set the conversation holds
+    (the focus row's `set_codes`, written by the resolve gate), joined by the slot's uuid or
+    code."""
+    shared: set[str] | None = None
+    for slot in slots:
+        names = {str(slot.key).strip().casefold(), str(slot.label).strip().casefold()}
+        row = next(
+            (
+                p
+                for p in focus.products or ()
+                if isinstance(p, dict) and _codes_named(p) & names
+            ),
+            None,
+        )
+        codes = {str(c) for c in (row.get("set_codes") or [row.get("set_code")]) if c} if row else set()
+        shared = codes if shared is None else shared & codes
+        if not shared:
+            return False
+    return bool(shared)
+
+
+def _one_number_for_every_line(
+    state: State, verdict: dict[str, Any], trace: Trace, asked: int | None
+) -> None:
+    """CHATBOT-SET-CODES, crew live step 12 (14 Nov 2026): "4" after "How many units for
+    each?" over a set's parts answered only the part the parser bound the one number to
+    by position. The user typed no product in that message, so the number names no part:
+    it fills every line still owed (`StockQtyTask.fill`, owner ruling 26 Sep F2), written
+    as the parser's own fill items so `_open_question_answer` places them. A number bound
+    to no line spreads the same way, and so does a number the parser bound to one listed
+    line by copying back that line's own position and code (14 Nov: the question shows
+    both, so the copy names no part).
+
+    A product the user typed in this message (a verdict entity with a product hint, "8 for
+    QWCY604") keeps the binding to that line alone (STOCK-QTY-PARTIAL-FILL R1), as do a
+    number the parser bound by CODE alone or by a code that names a different line than its
+    position (the user named that part), quantities bound to two or more lines, a
+    `demand_qty` that is a different number, a line already answered (a revision), and lines
+    that are not the parts of one set (R1: "5 for the 2nd one" answers that line). Lines a
+    stock pick asked together (`Task.from_pick`, CHATBOT-CLOSE-CODES owner F1: the picked code
+    and the codes owed beside it) spread as a set's parts do. Reads the open question's lines,
+    the focus rows and the parser's fields only.
+    """
+    if asked is not None or state.pending is not None:
+        return
+    task = _open_point_form_task(state.focus)
+    if task is None:
+        return
+    answer = verdict.get(OPEN_QUESTION_ANSWER)
+    if not isinstance(answer, dict) or answer.get("mode") != "fill":
+        return
+    if any(
+        isinstance(entity, dict)
+        and entity.get("hint") in (None, "product")
+        and entity.get("current_message") is True
+        and _line_number(entity) is None
+        and not str(entity.get("raw") or "").strip().isdigit()
+        for entity in verdict.get("entities") or []
+    ):
+        return
+    slots = list(task.slots)
+    bound: set[int] = set()
+    numbers: set[int] = set()
+    for item in answer.get("items") or []:
+        if not isinstance(item, dict) or item.get("qty") is None:
+            continue
+        code = item.get("code")
+        if isinstance(code, str) and code.strip() and (
+            item.get("position") is None
+            or _placed_line({"code": code}, slots)
+            != _placed_line({"position": item.get("position")}, slots)
+        ):
+            # Bound by CODE alone ("QWCY604 4", "8 for QWCY604"), or a code naming another
+            # line than the position: the user named that part (R1). An item that only
+            # repeats the shown line's own position and code is a bind by position.
+            return
+        qty = _positive(item.get("qty"))
+        if qty is None:
+            return
+        numbers.add(qty)
+        if item.get("position") is None:
+            continue  # bound to no line
+        index = _placed_line(item, slots)
+        if index is None:
+            return
+        bound.add(index)
+    if len(bound) > 1 or len(numbers) != 1:
+        return
+    if any(slots[index].value is not None for index in bound):
+        # "make line 1 5": a revision of a line already answered, not the owed question's answer.
+        return
+    if not (task.from_pick or _one_set_for_every_line(state.focus, slots)):
+        # Lines that are separate products the user listed: one line filled is that line
+        # (STOCK-QTY-PARTIAL-FILL R1). The lines a stock pick asked together (`task.with_owed`,
+        # CHATBOT-CLOSE-CODES owner F1) are one question, as a set's parts are.
+        return
+    (qty,) = numbers
+    demand = verdict.get("demand_qty")
+    if demand is not None and _positive(demand) != qty:
+        return
+    verdict[OPEN_QUESTION_ANSWER] = {
+        **answer,
+        "items": [
+            {"position": index + 1, "code": slot.key, "qty": qty}
+            for index, slot in enumerate(slots)
+            if slot.value is None or index in bound
+        ],
+    }
+    trace.rules_fired.append("one_number_for_every_line")
+
+
 def _open_question_answer(
     state: State, verdict: dict[str, Any], trace: Trace, asked: int | None = None
 ) -> bool:
@@ -2929,6 +3078,13 @@ def _bare_number_over_a_finished_answer(
         # A number beside anything of its own, or about another domain ("any promo for
         # 10 units?"), is not this question (review S2).
         return None
+    if _one_set_for_every_line(state.focus, list(task.slots)):
+        # The parts of one set: one number revises every part (owner, 14 Nov 2026).
+        verdict[task_mod.SLOT_QUANTITIES] = {slot.key: quantity for slot in task.slots}
+        verdict["demand_qty"] = None
+        verdict["reference_positions"] = []
+        trace.rules_fired.append("bare_number_over_a_finished_set_revises_every_part")
+        return None
     labels = [str(slot.label) for slot in task.slots]
     trace.rules_fired.append("bare_number_over_a_finished_answer_asks_which")
     trace.task_question = "\n".join(
@@ -2985,6 +3141,21 @@ def _stock_pick_refuses_all(state: State, verdict: dict[str, Any], decision: Any
         ideation=state.ideation,
     )
     return asked, Plan(domains=["inventory"], fetch=[], ask=None, denied=[], trace=trace)
+
+
+def _suggested_position(pending: Any) -> int | None:
+    """The position of the code a one-list stock pick suggests (`task.SUGGESTED` on its only
+    group), else None."""
+    groups = pending.payload.get("groups") if pending is not None else None
+    if not (isinstance(groups, list) and len(groups) == 1 and isinstance(groups[0], dict)):
+        return None
+    wanted = str(groups[0].get(task_mod.SUGGESTED) or "").strip().casefold()
+    if not wanted:
+        return None
+    for option in pending.options:
+        if str(option.get("code") or option.get("label") or "").strip().casefold() == wanted:
+            return option.get("position")
+    return None
 
 
 def _stock_pick_requantified(state: State, verdict: dict[str, Any], trace: Trace):
@@ -3066,11 +3237,22 @@ def _spend_stock_pick(
     for spec in specs:
         stamped = {}
         for e in spec.entities:
-            if not isinstance(e, dict) or not e.get("uuid") or not _row_codes(e) & labels:
+            if not isinstance(e, dict) or not e.get("uuid"):
                 continue
             if e.get("set_code"):
-                # CHATBOT-CODE-MATCH R3: a picked set answers as its exact ask does, whose
-                # member rows carry no quantity of their own.
+                # CHATBOT-CODE-MATCH R3: a picked set answers as its exact ask does. CHATBOT-SET-CODES
+                # B: that ask carries the set's quantity onto each part (`task.set_part_quantity`).
+                def for_set(code: Any) -> Any:
+                    key = str(code or "").strip().casefold()
+                    if key not in labels:
+                        return None
+                    return next((v for v in (by_code.get(key), list_qty.get(key)) if v is not None), quantity)
+
+                part = task_mod.set_part_quantity(e, for_set)
+                if part is not None:
+                    stamped[str(e["uuid"])] = part
+                continue
+            if not _row_codes(e) & labels:
                 continue
             own = next((by_code[c] for c in _row_codes(e) if c in by_code), None)
             if own is None:
@@ -3141,8 +3323,10 @@ def _hand_on_unanswered_lists(asked: Any, specs: list[Any], verdict: dict[str, A
     verdict[task_mod.NEXT_PICKS] = {
         "options": [o for o in asked.options if o.get("position") in positions],
         "groups": open_groups,
-        # CHATBOT-CODE-MATCH R7: a did-you-mean's lists are asked again as one.
-        "did_you_mean": asked.payload.get("did_you_mean") is True,
+        # CHATBOT-CODE-MATCH R7: a did-you-mean's lists are asked again as one. CHATBOT-CLOSE-CODES:
+        # so are offer lists left open beside an answered which-one list (each group's own flag).
+        "did_you_mean": asked.payload.get("did_you_mean") is True
+        or all(g.get("did_you_mean") is True for g in open_groups),
     }
     trace.rules_fired.append("stock_pick_lists_still_open")
 
@@ -3290,6 +3474,7 @@ def _apply(
     state, picked = _open_pick_answer(state, verdict, trace)
     if not picked:
         state = _stock_pick_takes_position_and_quantity(state, verdict, trace)
+    _one_number_for_every_line(state, verdict, trace, asked_qty)
     if not _open_question_answer(state, verdict, trace, asked_qty):
         _asked_quantity_placed(state, verdict, trace, asked_qty)
         # Owner hand test 26 Sep, round 3, and the round 5 ruling ("make the picker not
@@ -3628,6 +3813,11 @@ def _apply(
     # when a fresh answer is too long again.
     named_count = _named_count(verdict)
     carried_set = dict(focus.set_page) if isinstance(focus.set_page, dict) else None
+    answer = verdict.get(OPEN_QUESTION_ANSWER)
+    if task_locked and isinstance(answer, dict) and answer.get("mode") in ("fill", "all", "done"):
+        # A number the parser declared as the answer to the stock task's question never pages
+        # the carried browse, and skips the brand narrowing below; "another 10" still pages it.
+        carried_set = None
     new_state.focus.set_page = None
     # Round 4 R5: a clarify is answered on the very next turn or not at all; the engine
     # re-arms it only when this turn asks another one.

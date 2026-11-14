@@ -155,6 +155,9 @@ class _RowRun:
         self.committed = False
         # The engine's own close (status, stage), applied after the POST.
         self.close: tuple[str, str | None] | None = None
+        # CHATBOT-SPEED: the time this turn spent outside the engine (`queued_ms`, `lookup_ms`), stored with the
+        # send's own time as one `inbox` trace event when the row closes (`_timing_event`).
+        self.timing: dict[str, int] = {}
 
 
 def current_run(turn_id: str | None = None) -> _RowRun | None:
@@ -642,11 +645,25 @@ def _stamp_sending(factory: Callable[[], Any], turn_id: str, claimed_at: Any) ->
     return _set_row(factory, turn_id, claimed_at, stage=SENDING_STAGE, finished_at=func.now())
 
 
-def _finish(factory: Callable[[], Any], turn_id: str, status: str, stage: str | None, claimed_at: Any = None) -> None:
+def _timing_event(timing: dict[str, int]) -> Any:
+    """CHATBOT-SPEED: `trace || [{"kind": "inbox", ...}]`, the turn's time outside the engine as one trace event
+    (measurement only; readers pick events by kind, so nothing else reads it)."""
+    from sqlalchemy import literal
+    from sqlalchemy.dialects.postgresql import JSONB
+
+    event = {"kind": "inbox", "at": trace_mod._now_iso(), **timing}
+    return func.coalesce(ChatbotTurn.trace, literal([], JSONB)).op("||")(literal([event], JSONB))
+
+
+def _finish(
+    factory: Callable[[], Any], turn_id: str, status: str, stage: str | None, claimed_at: Any = None,
+    timing: dict[str, int] | None = None,
+) -> None:
     """The done mark: the engine's own close, applied once the POST has returned."""
     from app.services.chatbot import engine
 
-    if not _set_row(factory, turn_id, claimed_at, status=status, stage=stage, finished_at=func.now()):
+    extra = {"trace": _timing_event(timing)} if timing else {}
+    if not _set_row(factory, turn_id, claimed_at, status=status, stage=stage, finished_at=func.now(), **extra):
         return
     if status in ("done", "failed"):
         db = factory()
@@ -725,10 +742,12 @@ def _post(factory: Callable[[], Any], run: _RowRun, result: Any, status: str, st
     outcome: str | None = None
     actions = engine.split_send_actions(list(result.actions or []))
     actions = _live_failure_wording(factory, run, result, actions)
+    send_ms = 0
     for attempt in range(1, MAX_SEND_ATTEMPTS + 1):
         if not _stamp_sending(factory, run.turn_id, run.claimed_at):
             logger.warning("chatbot inbox: turn %s is no longer this drain's; not posted", run.turn_id)
             return "lost"
+        send_started = time.perf_counter()
         outcome = direct_ingress.send_outcome(
             factory,
             turn_id=run.turn_id,
@@ -738,8 +757,10 @@ def _post(factory: Callable[[], Any], run: _RowRun, result: Any, status: str, st
             branch_kind=result.branch_kind,
             ctx=result.ctx,
         )
+        send_ms += int((time.perf_counter() - send_started) * 1000)
         if outcome == direct_ingress.SEND_OK:
-            _finish(factory, run.turn_id, status, stage, run.claimed_at)
+            timing = {**run.timing, "send_ms": send_ms, "send_attempts": attempt}
+            _finish(factory, run.turn_id, status, stage, run.claimed_at, timing=timing)
             return "done"
         if attempt >= MAX_SEND_ATTEMPTS or not should_resend(outcome):
             break
@@ -997,7 +1018,9 @@ def _run_row(turn_id: str, claimed_at: Any, contact: str, factory: Callable[[], 
         order_key = _row_order_key(stored, row.created_at, engine._now())
         row_age = (engine._now() - row.created_at).total_seconds() if row.created_at is not None else 0.0
         # The takeover flag is read when the row comes up, as the direct-ingress job did.
+        lookup_started = time.perf_counter()
         record = direct_ingress._lookup_contact(db, contact)
+        lookup_ms = int((time.perf_counter() - lookup_started) * 1000)
     finally:
         db.close()
     if not isinstance(record, dict):
@@ -1039,6 +1062,9 @@ def _run_row(turn_id: str, claimed_at: Any, contact: str, factory: Callable[[], 
         return _run_agent_row(turn_id, claimed_at, contact, stored, block, factory, decision)
 
     run = _RowRun(turn_id, contact, order_key, claimed_at, factory)
+    # `row_age` was read right after the claim: the time since the message was stored (after a requeue or a yield this
+    # is the customer's whole wait, earlier attempts included).
+    run.timing = {"queued_ms": max(0, int(row_age * 1000)), "lookup_ms": lookup_ms}
     _local.run = run
     try:
         envelope = Envelope(**{**stored, "contact": block})
@@ -1059,7 +1085,7 @@ def _run_row(turn_id: str, claimed_at: Any, contact: str, factory: Callable[[], 
         _local.run = None
     status, stage = run.close or (str(result.status or "done"), result.stage)
     if result.duplicate or not result.actions:
-        _finish(factory, turn_id, status, stage, claimed_at)
+        _finish(factory, turn_id, status, stage, claimed_at, timing={**run.timing, "send_ms": 0, "send_attempts": 0})
         return "done"
     return _post(factory, run, result, status, stage)
 

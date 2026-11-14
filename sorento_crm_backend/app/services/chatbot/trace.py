@@ -484,6 +484,8 @@ def code_candidates_events(
     question: Any = None,
     shown_codes: list[str] | None = None,
     answered: set[str] | None = None,
+    typed_words: dict[str, str] | None = None,
+    read_codes: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     """CHATBOT-CODE-MATCH R6: one `code_candidates` event per product code this turn missed.
 
@@ -492,42 +494,65 @@ def code_candidates_events(
     resolver's token), `question` the pending question the reply stored, `shown_codes` the
     codes the reply listed (`Answer.shown_codes`), `answered` the codes it answered (folded
     by `token_key`). Per miss: the typed word, the candidates (code, the resolver's match
-    tier and similarity, and each one's own outcome: `offered` when the question's options
-    or the shown codes hold it (the AC-1691 yes/no offer of one code included), else
-    `answered` when the reply answered it, else `not_shown`), the offered ones first in
-    offered order, and the miss's `offered` when any candidate was, else `answered`.
+    tier and similarity, `all_parts` when it holds every typed part in order
+    (`answer.holds_every_typed_part`, the ranking's own test), and each one's own outcome:
+    `offered` when the question's options or the shown codes hold it (the AC-1691 yes/no
+    offer of one code included), else `answered` when the reply answered it, else
+    `not_shown`), the offered ones first in offered order, and the miss's `offered` when any
+    candidate was, `no_candidate` when it had none (CHATBOT-CLOSE-CODES C7), else `answered`.
     Codes only, never a row id.
+
+    CHATBOT-SET-CODES AC-8: `typed_words` is the turn's product words (folded key to the word as
+    typed). A registered set the resolver placed on one of them exactly (its code folded is
+    the word folded) is answered when the reply read every member of it (`read_codes`, the
+    codes a tool that ran read, folded by `token_key`) and did not offer it: one event per such
+    word, its one candidate the set code with its member codes in membership order (the set
+    row's own `display.members`, `entity_resolver._product_set_entities`). Placement alone
+    writes nothing.
     """
+    from app.services.chatbot.lanes.business.answer import holds_every_typed_part
     from app.services.chatbot.turn.state import token_key
 
     resolved = (payload or {}).get("resolved") if isinstance(payload, dict) else None
     resolved = resolved if isinstance(resolved, dict) else {}
     how: dict[str, tuple[Any, Any]] = {}
-    for resolution in resolved.get("resolutions") or []:
+    # The single-token shape keeps its did-you-mean on the result itself.
+    for resolution in [*(resolved.get("resolutions") or []), resolved]:
         if not isinstance(resolution, dict):
             continue
         for match in [*(resolution.get("matches") or []), *(resolution.get("alternatives") or [])]:
             if isinstance(match, dict) and match.get("uuid"):
                 how.setdefault(str(match["uuid"]), (match.get("match_tier"), match.get("similarity")))
-    options = getattr(question, "options", None) or []
-    offered = list(
-        dict.fromkeys(
-            [
-                *(str(o.get("code")) for o in options if isinstance(o, dict) and o.get("code")),
-                *(str(c) for c in shown_codes or [] if c),
-            ]
-        )
-    )
+    options = [o for o in getattr(question, "options", None) or [] if isinstance(o, dict)]
+    payload = getattr(question, "payload", None) or {}
+    groups = [g for g in payload.get("groups") or [] if isinstance(g, dict)]
+    listed = [str(o["code"]) for o in options if o.get("code")]
+    offered_all = list(dict.fromkeys([*listed, *(str(c) for c in shown_codes or [] if c)]))
     answered_keys = set(answered or ())
 
-    def outcome_of(code: str) -> str:
-        if code in offered:
-            return "offered"
-        return "answered" if token_key(code) in answered_keys else "not_shown"
+    def offered_for(typed: str) -> list[str]:
+        """CHATBOT-CLOSE-CODES C7: the codes offered for THIS miss. A stock pick names each
+        list's typed code (`groups[].typed`) and a dealer offer its one typed code, so another
+        list's options (a which-one list, another miss's offer) are never this miss's offer."""
+        key = token_key(typed)
+        if groups:
+            at = {p for g in groups if token_key(g.get("typed")) == key for p in g.get("positions") or []}
+            return [str(o["code"]) for o in options if o.get("code") and o.get("position") in at]
+        if payload.get("did_you_mean") is True and payload.get("typed"):
+            return listed if token_key(payload.get("typed")) == key else []
+        return offered_all
 
     by_key = {token_key(token): rows for token, rows in (suggestions or {}).items()}
     events: list[dict[str, Any]] = []
     for typed in dict.fromkeys((unplaced or {}).values()):
+        offered = offered_for(typed)
+
+        def outcome_of(code: str) -> str:
+            if code in offered:
+                return "offered"
+            # A code listed in another question of this reply was shown, not answered.
+            return "answered" if token_key(code) in answered_keys and code not in listed else "not_shown"
+
         rows = [r for r in by_key.get(token_key(typed)) or [] if isinstance(r, dict) and r.get("code")]
         rows.sort(key=lambda r: offered.index(str(r["code"])) if str(r["code"]) in offered else len(offered))
         candidates = [
@@ -535,15 +560,45 @@ def code_candidates_events(
                 "code": str(r["code"]),
                 "tier": how.get(str(r.get("uuid")), (None, None))[0],
                 "similarity": how.get(str(r.get("uuid")), (None, None))[1],
+                "all_parts": holds_every_typed_part(typed, r["code"]),
                 "outcome": outcome_of(str(r["code"])),
             }
             for r in rows
         ]
+        outcomes = {c["outcome"] for c in candidates}
+        outcome = "offered" if "offered" in outcomes else "answered" if "answered" in outcomes else "no_candidate"
+        events.append({"typed": typed, "candidates": candidates, "outcome": outcome})
+    placed = [
+        match
+        for group in [
+            resolved.get("intersection") or [],
+            *((r.get("matches") or []) for r in resolved.get("resolutions") or [] if isinstance(r, dict)),
+        ]
+        for match in group
+        if isinstance(match, dict) and match.get("entity_type") == "product_set" and match.get("canonical_code")
+    ]
+    words = {key: word for key, word in (typed_words or {}).items() if key not in {token_key(w) for w in (unplaced or {}).values()}}
+    seen: set[str] = set()
+    for match in placed:
+        code = str(match["canonical_code"])
+        word = words.get(token_key(code))
+        if word is None or code in offered_all or token_key(code) in seen:
+            continue
+        display = match.get("display")
+        display = display if isinstance(display, dict) else {}
+        members = [
+            str(m["product_code"]) for m in display.get("members") or [] if isinstance(m, dict) and m.get("product_code")
+        ]
+        if not members or not {token_key(m) for m in members} <= (read_codes or set()):
+            continue
+        seen.add(token_key(code))
         events.append(
             {
-                "typed": typed,
-                "candidates": candidates,
-                "outcome": "offered" if any(c["outcome"] == "offered" for c in candidates) else "answered",
+                "typed": word,
+                "candidates": [
+                    {"code": code, "members": members, "tier": match.get("match_tier"), "outcome": "answered"}
+                ],
+                "outcome": "answered",
             }
         )
     return events

@@ -30,6 +30,11 @@ A saved target keeps its basis. Change it with **Edit** in the gear menu.
 When the chatbot answers "how am I doing on my target", an Invoiced dealer target is the final
 figure; an Ordered dealer target is still marked "provisional, incl. tax".
 
+Ask the AI assistant "how are my dealers' sales this year against their targets?" (or name an
+agent or a dealer, or "and last year?"). Each target comes back with its target, achieved, achieved
+% and what is left to reach it (0 once the target is reached; achieved % shows how far above). The
+figures are the ones on **Sales**, **Targets**.
+
 ## See also
 
 - Sales reports (Invoiced basis): the same billing figure, by agent, customer or product.
