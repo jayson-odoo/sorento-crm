@@ -83,10 +83,14 @@ CATALOG_RETRY_SECONDS = 30
 _CATALOG_LOCK = threading.Lock()
 
 
-#: `crm_query` + `crm_describe` calls in one turn (crew pass on d430fe3c, 5 Nov). The entity index in
-#: `crm_query`'s description makes most questions one call; past this the model answers with what it has.
+#: The registry tools (crew pass on d430fe3c, 5 Nov). The entity index in `crm_query`'s description makes most
+#: questions one call.
 QUERY_TOOLS = ("crm_query", "crm_describe")
-MAX_QUERY_CALLS = 3
+#: `crm_query` calls that ran in one turn (TARGET-ACHIEVED-PERF part 2, UAC 7): a runaway stop only, past it the
+#: model answers with what it has. crm_describe and refused calls are free (owner D4, 14 Nov).
+MAX_QUERY_CALLS = 6
+#: A crm_query that ran: its result came back, or it timed out on the database.
+QUERY_RAN = ("ok", "empty", "timeout")
 
 
 #: What a round carries once the question is on the registry path (crew pass on 69b3b479, 5 Nov): every call
@@ -2289,12 +2293,13 @@ def _run(
                         replies[idx] = ToolResult("invalid", message="parts must be 1 to 10 non-empty strings.").to_json(call_id)
                     continue
                 started = clock()
-                if name in QUERY_TOOLS and sum(1 for c in run.tool_calls if c["name"] in QUERY_TOOLS) >= MAX_QUERY_CALLS:
+                ran = sum(1 for c in run.tool_calls if c["name"] == "crm_query" and c["status"] in QUERY_RAN)
+                if name == "crm_query" and ran >= MAX_QUERY_CALLS:
                     # Crew pass on d430fe3c (5 Nov): turns of 7 query calls ran to 161-173k prompt tokens.
                     replies[idx] = ToolResult(
                         "denied",
-                        message=f"At most {MAX_QUERY_CALLS} crm_query/crm_describe calls per question; answer with "
-                                "the results you have and say what is missing.",
+                        message=f"{MAX_QUERY_CALLS} crm_query calls have run for this question, so this one was not "
+                                "run; answer in full from the results you have.",
                     ).to_json(call_id)
                     run.tool_calls.append({"name": name, "status": "denied", "ms": 0})
                     continue

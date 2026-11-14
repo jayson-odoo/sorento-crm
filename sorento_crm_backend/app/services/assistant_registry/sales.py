@@ -20,8 +20,77 @@ from app.services.assistant_registry.types import EntityDef, FieldDef
 TARGETS_VIEW = "sales.targets.view"
 
 
-def _target_rows(db, user_id: str, own_only: bool, date_from: date, date_to: date, *, limit: int) -> list[dict]:
-    from sqlalchemy import or_, select
+def _narrowing(db, base, agent_ids=None, kinds=None, names=None) -> list:
+    """The targets a question can be answered from (TARGET-ACHIEVED-PERF part 2, UAC 5), as clauses on SalesTarget,
+    applied before the period count and before any figure is computed. `kinds`: the target kinds a kind filter
+    names. `agent_ids` (the agents an agent filter names, `computed.run_computed`): of the `base` targets, those
+    they can be credited on, their agent targets, their teams' targets and every dealer target with ANY counted
+    account of theirs (a dealer row's agent is known only from its accounts), plus every team or dealer target
+    whose own name `names` matches (`_named_targets`: the same field may name a team or a dealer). The rows are
+    still filtered after, so these can only leave out work, never a row."""
+    from sqlalchemy import and_, or_, select
+
+    from app.models.order import Customer
+    from app.models.sales import SalesTargetAccount, SalesTeamMember
+
+    clauses = []
+    if kinds is not None:
+        clauses.append(SalesTarget.subject_kind.in_(sorted(kinds)))
+    if agent_ids is None:
+        return clauses
+    ids = sorted(agent_ids)
+    teams = select(SalesTeamMember.sales_team_id).where(SalesTeamMember.sales_agent_id.in_(ids))
+    dealers = (
+        select(SalesTargetAccount.target_id)
+        .join(Customer, Customer.id == SalesTargetAccount.customer_id)
+        .where(Customer.sales_agent_id.in_(ids))
+    )
+    base = base.filter(*clauses)
+    kept = {row.id for row in base.with_entities(SalesTarget.id).filter(or_(
+        and_(SalesTarget.subject_kind == "agent", SalesTarget.sales_agent_id.in_(ids)),
+        and_(SalesTarget.subject_kind == "team", SalesTarget.sales_team_id.in_(teams)),
+        and_(SalesTarget.subject_kind == "dealer", SalesTarget.id.in_(dealers)),
+    ))}
+    if names is not None:
+        others = [t for t in base.filter(SalesTarget.subject_kind != "agent") if t.id not in kept]
+        kept |= _named_targets(db, others, names)
+    clauses.append(SalesTarget.id.in_(sorted(kept)))
+    return clauses
+
+
+def _named_targets(db, targets, names) -> set[str]:
+    """The team and dealer targets whose own name `names(label, names)` matches, read as their rows print them: a
+    team as "Team X" or X (its names: X), a dealer as the Dealers tab's label or its family name (its names: every
+    counted account's code and name, and the family name), as `_summary_rows` and `_target_list_rows` do."""
+    from app.models.sales import SalesTeam
+    from app.services.ledger_family import ledger_family_label
+    from app.services.sales import target_service as ts
+
+    team_ids = {t.sales_team_id for t in targets if t.subject_kind == "team"}
+    teams = {x.id: x.name for x in db.query(SalesTeam).filter(SalesTeam.id.in_(team_ids))} if team_ids else {}
+    accounts = ts._accounts_by_target(db, [t.id for t in targets if t.subject_kind == "dealer"])
+    kept = set()
+    for target in targets:
+        if target.subject_kind == "team":
+            name = teams.get(target.sales_team_id) or ""
+            labels, said = [f"Team {name}", name], [_norm(name)]
+        else:
+            customers = accounts.get(target.id, [])
+            tab = ts.dealer_label(db, customers)
+            family = ledger_family_label(tab)
+            labels = [tab, family]
+            said = [_norm(x) for c in customers for x in (c.customer_code, c.customer_name) if _norm(x)]
+            said.append(_norm(family))
+        if any(names(label, said) for label in labels):
+            kept.add(target.id)
+    return kept
+
+
+def _target_rows(
+    db, user_id: str, own_only: bool, date_from: date, date_to: date, *, limit: int, agent_ids=None, kinds=None,
+    names=None,
+) -> list[dict]:
+    from sqlalchemy import select
 
     from app.models.sales import SalesTargetPeriod, SalesTeam
     from app.services.sales import target_service as ts
@@ -36,6 +105,7 @@ def _target_rows(db, user_id: str, own_only: bool, date_from: date, date_to: dat
         from app.services import own_scope
 
         mine = [own_scope.sales_target_clause(own_scope.me(db, user_id))]
+    mine += _narrowing(db, db.query(SalesTarget).filter(SalesTarget.id.in_(overlapping), *mine), agent_ids, kinds, names)
     # The session's company scope (stamped by `run_as_user`) narrows SalesTarget and its periods to the user's
     # company. The periods are counted before anything is computed: past `limit` the window is refused.
     periods = (
@@ -153,7 +223,10 @@ def _below(pct) -> bool:
     return not (pct is not None and pct >= 100)
 
 
-def _summary_rows(db, user_id: str, own_only: bool, date_from: date, date_to: date, *, limit: int) -> list[dict]:
+def _summary_rows(
+    db, user_id: str, own_only: bool, date_from: date, date_to: date, *, limit: int, agent_ids=None, kinds=None,
+    names=None,
+) -> list[dict]:
     """`agent_target_summary`: one row per target SUBJECT over the window (AGENT-COMMISSION-ALL, owner 8 Nov): each
     agent, each team, each dealer, deterministic, from `_target_rows` (the target page's own per-period figures) with
     nothing recomputed but sums and counts.
@@ -171,7 +244,9 @@ def _summary_rows(db, user_id: str, own_only: bool, date_from: date, date_to: da
     from app.services.sales import target_service as ts
     from app.services.sales.team_service import agent_label
 
-    periods = _target_rows(db, user_id, own_only, date_from, date_to, limit=limit)
+    periods = _target_rows(
+        db, user_id, own_only, date_from, date_to, limit=limit, agent_ids=agent_ids, kinds=kinds, names=names,
+    )
     dealer_ids = [r["target_id"] for r in periods if r["subject_kind"] == "dealer"]
     accounts = ts._accounts_by_target(db, dealer_ids) if dealer_ids else {}
     agent_ids = {c.sales_agent_id for customers in accounts.values() for c in customers if c.sales_agent_id}
@@ -251,7 +326,7 @@ def _summary_rows(db, user_id: str, own_only: bool, date_from: date, date_to: da
         if not out["_has_commission"]:
             empty.update(dict.fromkeys(("commission", "bonus", "payout"), NO_COMMISSION))
         if whole and not summed and out["_zero"]:
-            empty.update(dict.fromkeys(("target_value", "achieved_value", "achieved_pct"), ZERO_TARGET))
+            empty.update(dict.fromkeys(("target_value", "achieved_value", "achieved_pct", "remaining_value"), ZERO_TARGET))
         out["_empty"] = empty
         out["kinds"] = ", ".join(sorted(out.pop("_kinds")))
         out["target_no"] = ", ".join(sorted(out["targets"]))
@@ -262,6 +337,7 @@ def _summary_rows(db, user_id: str, own_only: bool, date_from: date, date_to: da
         out["achieved_pct"] = (
             ach.achieved_pct(Decimal(str(achieved)), Decimal(str(goal))) if complete and goal else None
         )
+        out["remaining_value"] = _remaining(out["target_value"], out["achieved_value"])
         shares = out.pop("_shares")
         out["account_payouts"] = "; ".join(f"{label} {share:,.2f}" for label, share in shares.items()) or None
         out["_names"] = {k: sorted(v) for k, v in out["_names"].items()}
@@ -300,7 +376,17 @@ def _summary_note(rows: list[dict]) -> str | None:
     return " ".join(parts) or None
 
 
-def _target_list_rows(db, user_id: str, own_only: bool, date_from: date, date_to: date, *, limit: int) -> list[dict]:
+def _remaining(goal, achieved):
+    """What is left to reach the target (UAC 6), 0 once reached: `achieved_pct` says by how much it is over."""
+    if goal is None or achieved is None:
+        return None
+    return round(max(goal - achieved, 0.0), 2)
+
+
+def _target_list_rows(
+    db, user_id: str, own_only: bool, date_from: date, date_to: date, *, limit: int, agent_ids=None, kinds=None,
+    names=None,
+) -> list[dict]:
     """`target_list`: the Targets screens' own rows (`target_service.list_all_targets`, Teams, Agents and Dealers
     tabs: one row per target, its whole range's target, achieved and %), for targets whose range overlaps the
     window. Reached is the screen's green figure (`_below`). An own-only holder gets the Agents tab cut to their own
@@ -309,11 +395,18 @@ def _target_list_rows(db, user_id: str, own_only: bool, date_from: date, date_to
     from app.services.sales import target_service as ts
 
     mine = set(own_scope.me(db, user_id).agent_ids) if own_only else None
+    # Only the targets the question can be answered from reach the achievement statement (UAC 5).
+    target_ids = None
+    if agent_ids is not None:
+        clauses = _narrowing(db, db.query(SalesTarget), agent_ids, names=names)
+        target_ids = {row.id for row in db.query(SalesTarget.id).filter(*clauses)}
+        if not target_ids:
+            return []
     rows = []
     for subject in ("agent", "team", "dealer"):
-        if mine is not None and subject != "agent":
+        if (mine is not None and subject != "agent") or (kinds is not None and subject not in kinds):
             continue
-        for r in ts.list_all_targets(db, subject=subject)["rows"]:
+        for r in ts.list_all_targets(db, subject=subject, target_ids=target_ids)["rows"]:
             if mine is not None and r.get("sales_agent_id") not in mine:
                 continue
             if r["start_date"] > date_to or r["end_date"] < date_from:
@@ -323,6 +416,7 @@ def _target_list_rows(db, user_id: str, own_only: bool, date_from: date, date_to
                 "subject": r["subject_label"], "subject_kind": subject, "period": r["start_date"],
                 "start_date": r["start_date"], "end_date": r["end_date"], "target_value": r["target_value"],
                 "achieved_value": r["achieved_value"], "achieved_pct": r["achieved_pct"],
+                "remaining_value": _remaining(r["target_value"], r["achieved_value"]),
                 "reached": not _below(r["achieved_pct"]),
             })
             if len(rows) > limit:
@@ -417,6 +511,7 @@ register(
         in_index=False,
         list_fields=("period_start", "period_end", "target_value", "achieved_value", "achieved_pct", "payout"),
         compute=_target_rows,
+        kind_field="subject_kind",
         window_field="period",
         # Achievement counts every brand's sales: refused on a brand-scoped contact's turn (security review B1).
         brand_blind=True,
@@ -470,6 +565,9 @@ register(
             ),
             "achieved_value": FieldDef("Achieved (RM)", kind="number"),
             "achieved_pct": FieldDef("Achieved %", kind="number"),
+            "remaining_value": FieldDef(
+                "Remaining (RM)", kind="number", note="Target minus achieved, 0 once reached (achieved % shows any excess).",
+            ),
             "commission": FieldDef("Commission", kind="number"),
             "bonus": FieldDef("Bonus", kind="number"),
             "payout": FieldDef(
@@ -484,6 +582,7 @@ register(
         list_fields=("owner_kind", "target_value", "achieved_value", "achieved_pct", "payout"),
         row_totals=("targets", "commission", "bonus", "payout"),
         compute=_summary_rows,
+        kind_field="owner_kind",
         window_field="period",
         brand_blind=True,
         own_note="You see only your own agents' targets: team and dealer payouts are not visible to you.",
@@ -517,6 +616,9 @@ register(
             "target_value": FieldDef("Target", kind="number"),
             "achieved_value": FieldDef("Achieved", kind="number"),
             "achieved_pct": FieldDef("Achieved %", kind="number"),
+            "remaining_value": FieldDef(
+                "Remaining", kind="number", note="Target minus achieved, 0 once reached (achieved % shows any excess).",
+            ),
             "reached": FieldDef(
                 "Reached", kind="boolean", note="Achieved % shown and at least 100, the Targets screen's green figure.",
             ),
@@ -530,6 +632,7 @@ register(
         pages=("/sales/targets",),
         routes=("GET /api/v1/sales/targets",),
         compute=_target_list_rows,
+        kind_field="subject_kind",
         window_field="period",
         brand_blind=True,
     ),
