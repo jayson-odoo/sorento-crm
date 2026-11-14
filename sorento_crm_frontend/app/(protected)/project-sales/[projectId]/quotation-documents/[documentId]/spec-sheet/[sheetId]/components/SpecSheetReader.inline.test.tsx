@@ -1126,7 +1126,7 @@ describe('thumbnail rail', () => {
     expect(getSpecSheetPreview).toHaveBeenCalledTimes(2);
   });
 
-  it('shows an edited dot and greys a left-out page', async () => {
+  it('shows an edited dot, and a left-out page is listed under Removed pages, not as a thumbnail (v3 AC-C2.3)', async () => {
     getSpecSheet.mockResolvedValue({
       ...detail(),
       pages: detail().pages.map((p) =>
@@ -1142,7 +1142,8 @@ describe('thumbnail rail', () => {
     expect(
       within(screen.getByTestId('spec-rail-k3')).getByLabelText('Edited'),
     ).toBeInTheDocument();
-    expect(screen.getByTestId('spec-rail-k4').className).toMatch(/opacity-50/);
+    expect(screen.queryByTestId('spec-rail-k4')).toBeNull();
+    expect(screen.getByTestId('spec-rail-removed')).toHaveTextContent('CODE-k4');
   });
 });
 
@@ -1346,34 +1347,31 @@ describe('a page that does not move under the pointer', () => {
     expect(header().className).not.toContain('flex-wrap');
     expect(header().className).toContain('h-8');
     fireEvent.mouseEnter(wrap);
-    const actions = await screen.findByTestId('spec-sheet-leave-out-k29');
+    // v3 AC-C2.4: no Leave out button; the floating actions hold the Add accessory picker.
+    const label = await within(wrap).findByText('Add accessory', { selector: 'label' });
     expect(header().className).not.toContain('flex-wrap');
     expect(header().className).toContain('h-8');
-    expect(actions.parentElement!.className).toContain('absolute');
+    expect(label.closest('.absolute')).not.toBeNull();
     fireEvent.mouseLeave(wrap);
   });
 
-  it('the toolbar holds the SAME format bar in every selection state (only hidden), so its height never changes', async () => {
+  it('the one toolbar row keeps its fixed height whether or not the text format controls show (v3 AC-C1.4)', async () => {
     renderReader();
     await screen.findByTestId('spec-page-k29');
-    // Nothing selected: the real bar, invisible and out of the accessibility tree.
-    const hidden = document.querySelector(
-      '[role="group"][aria-label="Text formatting"]',
-    ) as HTMLElement;
-    expect(hidden).not.toBeNull();
-    expect(hidden.className).toContain('invisible');
-    const shape = (el: HTMLElement) =>
-      Array.from(el.querySelectorAll('*')).map((n) => n.tagName).join(',');
-    const before = shape(hidden);
+    const row = () => screen.getByTestId('spec-sheet-toolbar-row');
+    const bar = () => row().firstElementChild as HTMLElement;
+    // Nothing selected: no text format controls at all.
+    expect(screen.queryByRole('group', { name: 'Text formatting' })).toBeNull();
+    expect(bar().className.split(/\s+/)).toContain('h-10');
 
     report(['k1']);
     await screen.findByTestId('live-canvas-k1');
     fireEvent.click(
       within(screen.getByTestId('live-canvas-k1')).getByText('select k1'),
     );
-    const shown = await screen.findByRole('group', { name: 'Text formatting' });
-    expect(shown.className).not.toContain('invisible');
-    expect(shape(shown)).toBe(before);
+    const shown = await within(row()).findByRole('group', { name: 'Text formatting' });
+    expect(shown).toBeInTheDocument();
+    expect(bar().className.split(/\s+/)).toContain('h-10');
   });
 });
 
@@ -1783,11 +1781,23 @@ describe('the page toolbar (B6)', () => {
     'Add Product Slot',
   ];
 
-  it('offers the shared add buttons and Undo / Redo / Delete / Duplicate, and not the price tag only ones', async () => {
+  it('offers the shared add buttons and Undo / Redo, Delete / Duplicate in the More menu, and not the price tag only ones', async () => {
     renderReader();
     await screen.findByTestId('spec-page-k29');
-    for (const name of [...ADDS, 'Undo', 'Redo', 'Delete', 'Duplicate']) {
+    for (const name of [...ADDS, 'Undo', 'Redo']) {
       expect(screen.getByRole('button', { name }), name).toBeInTheDocument();
+    }
+    // v3 AC-C1.3: no visible Delete / Duplicate icons; they are in the toolbar's More menu.
+    for (const name of ['Delete', 'Duplicate']) {
+      expect(screen.queryByRole('button', { name }), name).toBeNull();
+    }
+    const more = within(screen.getByTestId('spec-sheet-toolbar-row')).getAllByRole('button', {
+      name: /^More( actions)?$/,
+    })[0];
+    fireEvent.pointerDown(more, new MouseEvent('pointerdown', { bubbles: true, button: 0 }));
+    const menu = await screen.findByRole('menu');
+    for (const name of ['Delete', 'Duplicate']) {
+      expect(within(menu).getByRole('menuitem', { name: new RegExp(`^${name}`) }), name).toBeInTheDocument();
     }
     for (const name of NOT_ON_A_SPEC_SHEET) {
       expect(screen.queryByRole('button', { name }), name).toBeNull();
@@ -1801,7 +1811,7 @@ describe('the page toolbar (B6)', () => {
     expect(screen.queryByRole('button', { name: 'Add Text' })).toBeNull();
   });
 
-  it('at 375 px the toolbar row scrolls sideways, so Delete / Duplicate / Group / Ungroup stay reachable (SPEC-SHEET-PARITY-B2)', async () => {
+  it('at 375 px the toolbar row scrolls sideways, and Delete / Duplicate / Group / Ungroup stay reachable in More (SPEC-SHEET-PARITY-B2, v3 AC-C1.3/C1.5)', async () => {
     mobile = true;
     renderReader();
     await screen.findByTestId('spec-page-k29');
@@ -1810,8 +1820,11 @@ describe('the page toolbar (B6)', () => {
     for (const cls of ['min-w-0', 'max-w-full', 'overflow-x-auto', '[contain:inline-size]']) {
       expect(row.className.split(/\s+/), cls).toContain(cls);
     }
+    const more = within(row).getAllByRole('button', { name: /^More( actions)?$/ })[0];
+    fireEvent.pointerDown(more, new MouseEvent('pointerdown', { bubbles: true, button: 0 }));
+    const menu = await screen.findByRole('menu');
     for (const name of ['Delete', 'Duplicate', 'Group', 'Ungroup']) {
-      expect(within(row).getByRole('button', { name }), name).toBeInTheDocument();
+      expect(within(menu).getByRole('menuitem', { name: new RegExp(`^${name}`) }), name).toBeInTheDocument();
     }
   });
 

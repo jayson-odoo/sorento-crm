@@ -141,7 +141,8 @@ describe('table context menu', () => {
     );
     const stageHost = container.querySelector('[data-konva="stage"]')!.parentElement!.parentElement!;
     fireEvent.contextMenu(stageHost, { clientX: 10 * CANVAS_PX_PER_MM, clientY: 10 * CANVAS_PX_PER_MM });
-    for (const name of [/Insert row below/, /Insert column right/, /Delete row/, /Delete column/, /Merge cells/]) {
+    // v3 AC-C3.5: "Merge cells" is now "Merge right" beside Merge down.
+    for (const name of [/Insert row below/, /Insert column right/, /Delete row/, /Delete column/, /Merge right/]) {
       expect(screen.getByRole('menuitem', { name })).toBeInTheDocument();
     }
   });

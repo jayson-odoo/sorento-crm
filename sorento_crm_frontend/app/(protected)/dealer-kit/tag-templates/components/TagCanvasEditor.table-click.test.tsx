@@ -121,19 +121,29 @@ function tableLayer(id: string): TagLayer {
 }
 
 describe('clicking a table cell', () => {
-  it('selects the table and drives the Inspector cell pickers', () => {
-    render(<TagCanvasEditor doc={{ width_mm: 80, height_mm: 60, layers: [tableLayer('tbl')] }} onChange={vi.fn()} />);
-    // Layer at (5, 5): columns 30 mm, rows 6 mm. (50, 14) mm is row 2, column 2 (1-based).
+  // v3 AC-C3.4: the Cell row / Cell column boxes are gone; the Inspector shows the picked cell's
+  // Row height and Column width, so distinct sizes identify which cell the click picked.
+  function sizedTable(): TagLayer {
+    const layer = tableLayer('tbl');
+    const props = layer.props as unknown as { rows: { height_mm: number }[]; columns: { width_mm: number }[] };
+    props.rows = [{ height_mm: 6 }, { height_mm: 9 }, { height_mm: 12 }];
+    props.columns = [{ width_mm: 20 }, { width_mm: 40 }];
+    return layer;
+  }
+
+  it('selects the table and drives the Inspector cell section', () => {
+    render(<TagCanvasEditor doc={{ width_mm: 80, height_mm: 60, layers: [sizedTable()] }} onChange={vi.fn()} />);
+    // Layer at (5, 5): columns 20 / 40 mm, rows 6 / 9 / 12 mm. (50, 14) mm is row 2, column 2 (1-based).
     pointer.x = 50 * CANVAS_PX_PER_MM;
     pointer.y = 14 * CANVAS_PX_PER_MM;
     fireEvent.click(screen.getByTestId('layer-tbl'));
-    expect((screen.getByLabelText('Cell row') as HTMLInputElement).value).toBe('2');
-    expect((screen.getByLabelText('Cell column') as HTMLInputElement).value).toBe('2');
+    expect((screen.getByLabelText(/^Row height/) as HTMLInputElement).value).toBe('9');
+    expect((screen.getByLabelText(/^Column width/) as HTMLInputElement).value).toBe('40');
 
     pointer.x = 10 * CANVAS_PX_PER_MM;
     pointer.y = 7 * CANVAS_PX_PER_MM;
     fireEvent.click(screen.getByTestId('layer-tbl'));
-    expect((screen.getByLabelText('Cell row') as HTMLInputElement).value).toBe('1');
-    expect((screen.getByLabelText('Cell column') as HTMLInputElement).value).toBe('1');
+    expect((screen.getByLabelText(/^Row height/) as HTMLInputElement).value).toBe('6');
+    expect((screen.getByLabelText(/^Column width/) as HTMLInputElement).value).toBe('20');
   });
 });
