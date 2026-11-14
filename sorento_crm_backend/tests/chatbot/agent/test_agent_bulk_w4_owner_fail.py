@@ -1051,3 +1051,34 @@ def test_a_plural_answer_counts_as_the_users_word(db):
     answered = [{**r, "companies": ["MCH"], "role": "owner", "access_as_written": "owner"} for r in rows]
     second, _ = screenshot_turn(db, w, [_batch(answered, "b2"), answer_("Done.")], text_="Mocha, both owners", images=False)
     assert second.pending_action is not None, second.reply_text
+
+
+def test_a_single_grant_role_stated_in_the_request_survives_the_company_answer(db):
+    """Review should-fix 1: 'give <phone> owner access' -> 'Sorento or Mocha?' -> 'Mocha' gives the card."""
+    w = make_world(db)
+    c = dealer(db, w, name="ZZT Single Said Owner")
+    args = {**{k: v for k, v in _unsaid(c, 1, companies=()).items() if k != "row"}, "role": "owner",
+            "access_as_written": "owner"}
+    first, _ = screenshot_turn(db, w, [round_of(tc(GRANT, args, "g1")), answer_("Done.")],
+                               text_=f"give {local(c.phone_number)} owner access", images=False)
+    assert first.reply_text.strip() == f"Sorento or Mocha for {c.name}?", first.reply_text
+    second, _ = screenshot_turn(db, w, [round_of(tc(GRANT, {**args, "companies": ["MCH"]}, "g2")), answer_("Done.")],
+                                text_="Mocha", images=False)
+    assert second.pending_action is not None, second.reply_text
+
+
+def test_a_very_short_copied_word_must_be_a_whole_word():
+    """Review should-fix 2: a one-letter copy ('e', 'o') never matches inside another word."""
+    from app.services.chatbot.agent.batch import role_in_users_words
+
+    row = {"role": "employee", "access_as_written": "e"}
+    assert role_in_users_words(row, "Mocha, everyone")["role"] == "unknown"
+    assert role_in_users_words({"role": "owner", "access_as_written": "o"}, "only Mocha")["role"] == "unknown"
+    assert role_in_users_words({"role": "employee", "access_as_written": "E"}, "Mocha, E")["role"] == "employee"
+
+
+def test_a_stated_role_refills_when_the_model_drops_it():
+    """Review nit: the request's role comes back when the answer turn's row lost it."""
+    from app.services.chatbot.agent.batch import role_in_users_words
+
+    assert role_in_users_words({"role": "unknown", "access_as_written": ""}, "Mocha", "owner")["role"] == "owner"

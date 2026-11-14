@@ -162,13 +162,16 @@ def role_in_users_words(args: dict, user_text: str | None, stated: str | None = 
     dealer name and the company must (A17, A18). A copy check, never a word list. Otherwise the role is unsaid again:
     the record decides, or the role is asked (crew re-pass b549042d: 'Mocha' made everyone Employee)."""
     if args.get("role") not in ("owner", "employee"):
-        return args
+        # The answer turn's row lost the role the request gave: it comes back (review nit).
+        return {**args, "role": stated, "access_as_written": stated} if stated else args
     if stated and args["role"] == stated:
         return args  # the role the user gave in the request the question came from (review blocker 1)
     said = " ".join(str(args.get("access_as_written") or "").split()).lower()
     text = " ".join(str(user_text or "").split()).lower()
-    # The start of a word in the message: "owners" holds "owner" (review should-fix).
-    if said and re.search(rf"(?<![0-9a-z]){re.escape(said)}", text):
+    # The start of a word in the message ("owners" holds "owner"); a copy under 3 characters must be a whole word, so
+    # "e" never matches "everyone" (review should-fixes).
+    tail = "" if len(said) >= 3 else "(?![0-9a-z])"
+    if said and re.search(rf"(?<![0-9a-z]){re.escape(said)}{tail}", text):
         return args
     return {**args, "role": "unknown", "access_as_written": ""}
 
