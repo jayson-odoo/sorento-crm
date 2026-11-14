@@ -10,10 +10,10 @@ The pages are designed once by marketing as templates (see "Designing the templa
 2. Click the **Spec sheet** tab (after **Signatures**).
 3. **Revision**: the latest issued revision is picked for you. Pick an older one if the customer is working from it. A quotation that was never sent shows **No issued revision yet**: issue a revision first.
 4. Pick the **Cover template** and the **Page template**. **Single item template** is optional: when set, an item with no accessories uses it; when empty, every page uses the page template.
-5. The pages show as a strip of thumbnails, the cover first, then one page per quoted item in quotation order. Click a thumbnail to open that page large, exactly as it prints (**Previous** / **Next** walk the strip). On the open page:
+5. The pages show as a strip of thumbnails, the cover first, then one page per quoted item in quotation order. Click a thumbnail to open that page large, exactly as it prints. Move between pages in the Pages side bar, which shows "Page N of M" (there is no page counter or page up/down in the toolbar). On the open page:
    - **AREA**: starts as the **Section heading** the line sits under on the **Lines** tab (for example `UNIT`). Click it on the page to type something else, for example `UNIT & PODIUM FACILITIES`; it prints in capitals. Clearing it puts the Section heading back; to print no area, leave the line without a Section heading.
    - **COMMENT** and the marker next to the code: click them on the page to type.
-   - **Leave out**: the page is not printed (for example a sealant); it stays in the strip, greyed, with **Put back**. The quotation is not changed.
+   - **Remove page**: click "..." on a page's thumbnail, or right-click it and choose **Remove page**. Any page can be removed except the cover, accessory pages included. Removed pages are listed at the bottom of the side bar under "Removed pages (N)", each with **Put back**. Nothing is deleted: a removed page does not print or export, and the quotation is not changed.
    - **Add accessory**: puts another quoted item on this page instead of its own page (for example a bottle trap under a basin). A product set (a WC with its angle valve and flexible hose) brings its other parts by itself. If the page template has an Accessories box, each pick prints as a card in it (picture, bold brand and code, spec sheet description), for any number of picks. The picked item's own page leaves the sheet.
    - **Spec sheet description text**: double-click the text on the page to change it for this spec sheet only, then press Ctrl+Enter (Cmd+Enter on a Mac). The product itself and other spec sheets keep their wording. Double-click it again and click **Reset to product text** to go back.
    - **Reset to template**: puts the page back to the template's layout and drops your changes to it.
@@ -23,12 +23,24 @@ The pages are designed once by marketing as templates (see "Designing the templa
 
 ## Adding your own elements to a page
 
-The toolbar above the pages has **Add Text**, **Add Image**, **Add Shape**, **Add Table**, **Add Accessories**, **Add Badge**, and **Undo**, **Redo**, **Delete**, **Duplicate**, **Group** and **Ungroup**. They act on the page you last clicked, so click an empty spot on the page first.
+The editor has one toolbar row: add **Text**, **Shape**, **Image**, **Badge**, **Table** and **Accessories**, then **Undo**, **Redo**, **More** (**Delete**, **Duplicate**, **Group**, **Ungroup**), zoom, **Fit width** and full screen. They act on the page you last clicked, so click an empty spot on the page first.
 
+* When a text is selected, its format controls (font, size, bold, italic, align, ALL CAPS) appear in the same row. The font list and the Inspector's Font Family use the same fonts as the template designer, and **Manage fonts** is available here too.
+* Press Delete or Backspace to remove the selected elements (not while you are typing).
 * A new element is added to that page only and saves by itself. The template is not changed, and other pages are not touched.
 * Set **Apply to** to **Every page** in the Inspector to add the element to every product page at once. The cover gets it only when you add it while on the cover. **Undo** after an Every page add removes it from the page you are on only.
 * To put a value in a text, select it and use **Insert field** in the page's Inspector, for example Page number or Page count.
+* A picture that cannot be loaded shows "Image not available".
 * **Reset to template** brings that page back to the template layout.
+
+### Tables on a spec sheet
+
+* Double-click a cell, or just start typing, to edit it on the page.
+* Click **Insert field**, or type "{", to open the field list; the field goes in at the cursor. While you edit, fields show as chips; once you click away the real value shows.
+* Right-click a cell for **Insert field**, insert row above or below, insert column left or right, delete row or column, **Merge right**, **Merge down**, **Unmerge** and **Header row** (bold, shaded first row).
+* Drag a row's bottom edge or a column's inner edge to resize. **Row height** and **Column width** are also in the Inspector.
+* The **ALL CAPS** switch works on a table or a text.
+* Example, the title block on the right edge: one column, 7 rows: the subject; REF : with Ref; AREA : with Area; PREPARED BY : with Prepared by and Prepared by phone; DATE : with Date; COMMENT :; then a tall empty row.
 
 ## The PowerPoint
 

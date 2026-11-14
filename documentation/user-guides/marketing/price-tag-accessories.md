@@ -66,7 +66,9 @@ The **Add Accessories** button is also on spec sheet templates. There the box pr
 
 Click **Add Table** in the toolbar of a price tag or spec sheet template.
 
-* Right-click a cell for **Insert row below**, **Insert column right**, **Delete row**, **Delete column**, **Merge cells**, **Merge down** and **Unmerge cells**.
+* Double-click a cell, or start typing, to edit it on the page. **Insert field** or typing "{" opens the field list and puts the field at the cursor; fields show as chips while editing.
+* Right-click a cell for **Insert field**, insert row above or below, insert column left or right, delete row or column, **Merge right**, **Merge down**, **Unmerge** and **Header row** (bold, shaded first row).
+* Drag a row's bottom edge or a column's inner edge to resize; **Row height** and **Column width** are also in the Inspector. The **ALL CAPS** switch works on a table or text.
 * Click a cell to edit it in the Inspector: its content (with **Insert field**), border colour and width for each side or for all sides, padding, and fill.
 * A border shared by two cells draws once; changing either cell's side of it changes that line.
 
