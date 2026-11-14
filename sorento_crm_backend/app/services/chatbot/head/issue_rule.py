@@ -13,11 +13,12 @@ BULLET_OLD = "a complaint about existing behaviour (stays portal_link/complaint)
 BULLET_NEW = "a complaint about a product or an order (stays portal_link/complaint);"
 INSERTED_LINE = (
     "    → ALSO ideate: the user REPORTS a problem with the CRM system or the assistant itself (an error, a "
-    "screen or page that does not load, does not work or shows wrong data, an answer from the assistant that "
-    "is wrong). That is an issue to log: domain_hint \"ideate\", intent_hint \"submit_idea\", message_type "
-    "\"business_query\", no routing (null / null). It is never request_for_help, never an IT or support team, "
-    "and never the domain of the screen or data it is about; only an explicit ask for a person to take it "
-    "over is request_for_help."
+    "screen or page that does not load or does not work, an answer from the assistant that is wrong). That "
+    "is an issue to log: domain_hint \"ideate\", intent_hint \"submit_idea\", message_type \"business_query\", "
+    "no routing (null / null). It is never request_for_help, never an IT or support team, and never the "
+    "domain of the screen it is about; only an explicit ask for a person to take it over is "
+    "request_for_help. Asking about or disputing a record's own data (an order's status, a stock figure, a "
+    "price) is not a problem with the system: it stays in its own domain."
 )
 #: Edit 2, a whole line in `== ROUTING ==`.
 ROUTING_OLD = "  - ideate (an idea is never escalated), or none of these this turn -> NO routing: null / null"
