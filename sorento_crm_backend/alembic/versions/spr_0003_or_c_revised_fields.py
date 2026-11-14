@@ -20,7 +20,7 @@ an admin edited is left alone with a logged warning (`oihr_0006._set`). Idempote
 restores `oihr_0012`'s document under the same guard, then drops the two columns.
 
 Revision ID: spr_0003_or_c_revised_fields
-Revises: acpr_0001_project_ac_register
+Revises: srv2_0003_contact_phone_width
 """
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision = "spr_0003_or_c_revised_fields"
-down_revision = "acpr_0001_project_ac_register"
+down_revision = "srv2_0003_contact_phone_width"
 branch_labels = None
 depends_on = None
 
