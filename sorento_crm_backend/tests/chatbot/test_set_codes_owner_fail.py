@@ -76,48 +76,43 @@ def test_t2_one_number_after_how_many_units_applies_to_every_part(session_factor
 # blank before the quantity (test_stock_ask_ht26_r9_r6_all_point_form), kept as is.
 
 
-def _shape_fill_code():
-    return reply(demand_qty=4, open_question_answer=answer("fill", items=[(None, CISTERN, 4)]))
+# The user typed no product code: a one-number answer to the bot's own question applies to every part it listed.
+_NO_ENTITY_SHAPES = [
+    (items, with_demand)
+    for items in ([(None, CISTERN, 4)], [(2, None, 4)], [(1, None, 4)])
+    for with_demand in (True, False)
+]
 
 
-def _shape_fill_position():
-    return reply(demand_qty=4, open_question_answer=answer("fill", items=[(2, None, 4)]))
-
-
-def _shape_entity():
-    return reply(demand_qty=4, entities=[product(CISTERN, 4)])
-
-
-def _shape_stock_demand():
-    return stock(product(CISTERN), demand_qty=4)
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "lead 14 Nov: a number the parser binds to ONE part cannot be told apart from a number typed for that part "
-        "(\"QWCY604 8\") without reading the message (owner 10:07 ruling); the parser's own reading decides, "
-        "recorded for the prompt work (the owner's live turn); the standard qty_for_all reading fills every part (t2)"
-    ),
-)
 @pytest.mark.parametrize(
-    "shape",
-    [_shape_fill_code, _shape_fill_position, _shape_entity, _shape_stock_demand],
-    ids=["fill_by_code", "fill_by_position", "entity_with_qty", "stock_with_demand_qty"],
+    "items,with_demand",
+    _NO_ENTITY_SHAPES,
+    ids=[
+        f"{'code' if i[0][0] is None else 'pos' + str(i[0][0])}-{'demand_qty' if d else 'no_demand_qty'}"
+        for i, d in _NO_ENTITY_SHAPES
+    ],
 )
-def test_t2b_a_number_the_parser_binds_to_the_last_part_still_applies_to_every_part(session_factory, monkeypatch, stub_access, shape):  # noqa: F811
+def test_t2b_a_one_number_answer_with_no_typed_code_applies_to_every_part_listed(session_factory, monkeypatch, stub_access, items, with_demand):  # noqa: F811
     c = _owner_world(session_factory, monkeypatch, stub_access)
     asked = c.say("QWC604-S-RL stock", stock(product(S_RL)))
     assert "How many units for each?" in asked, asked
-    text = c.say("4", shape())
+    extra = {"demand_qty": 4} if with_demand else {}
+    text = c.say("4", reply(open_question_answer=answer("fill", items=items), **extra))
     for code in (S_PAN, CISTERN):
         assert f"{code} x 4: {TICK} Got stock." in _lines(text), (code, text)
 
 
-def test_t2c_lock_a_number_named_for_one_part_without_demand_qty_fills_only_that_line(session_factory, monkeypatch, stub_access):  # noqa: F811
+@pytest.mark.parametrize("with_demand", [False, True], ids=["no_demand_qty", "demand_qty"])
+def test_t2c_t2e_lock_a_code_typed_with_a_number_fills_only_that_line(session_factory, monkeypatch, stub_access, with_demand):  # noqa: F811
+    """STOCK-QTY-PARTIAL-FILL R1: the user typed the code (`QWCY604 8`): only that line is filled. The earlier t2c
+    shape (a fill with no typed entity) is what t2b now spreads, so these carry the typed product entity."""
     c = _owner_world(session_factory, monkeypatch, stub_access)
     c.say("QWC604-S-RL stock", stock(product(S_RL)))
-    text = c.say("8 for QWCY604", reply(open_question_answer=answer("fill", items=[(None, CISTERN, 8)])))
+    extra = {"demand_qty": 8} if with_demand else {}
+    text = c.say(
+        "8 for QWCY604",
+        reply(entities=[product(CISTERN, 8)], open_question_answer=answer("fill", items=[(None, CISTERN, 8)]), **extra),
+    )
     assert f"{S_PAN} x 8" not in text, ("the number spread to the other part", text)
     assert any(CISTERN in line and "8" in line for line in _lines(text)), text
 
@@ -130,3 +125,17 @@ def test_t2d_lock_a_number_typed_beside_one_part_fills_only_that_line(session_fa
     assert "How many units for each?" in asked, asked
     text = c.say("QWCY604 8", stock(product(CISTERN), demand_qty=8))
     assert "QWCX604-S-RL x 8" not in text, text
+
+
+# --------------------------------------------------------------------------- L1: a code plus its completing word keeps the typed quantity
+
+
+def test_l1_dealer_code_plus_completing_word_answers_each_part_at_the_typed_quantity(session_factory, monkeypatch, stub_access):  # noqa: F811
+    from tests.chatbot._turn_helpers import entity
+    from tests.chatbot.test_set_codes import _exact_world
+
+    c = _exact_world(session_factory, monkeypatch, stub_access)
+    text = c.say("QWC605-RL soft x 1", stock(product("QWC605-RL", 1), entity("soft", hint="category")))
+    assert "How many units for each?" not in text, text
+    for code in ("QWCX605-RL-SOFT", CISTERN):
+        assert f"{code} x 1: {TICK} Got stock." in _lines(text), (code, text)
