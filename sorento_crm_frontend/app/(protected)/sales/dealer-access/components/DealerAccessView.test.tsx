@@ -6,7 +6,7 @@
  * be typed into; the network is `apiFetch`, mocked by URL.
  */
 import React from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render as rtlRender, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { DealerAccessRow } from '@/services/dealerAccessService';
@@ -161,7 +161,38 @@ describe('DealerAccessView', () => {
   });
 });
 
-describe('DealerAccessView - DEALER-ACCESS-NAMES', () => {
+/**
+ * jsdom measures every width as 0, so `PillOverflow` would fold every chip after the first into "+N". The N1
+ * tests stub the widths the way `components/common/PillOverflow.test.tsx` does: each pill 100px, the row 2000px,
+ * so every chip renders.
+ */
+const originalOffsetWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetWidth');
+const originalClientWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth');
+
+function stubChipWidths() {
+  Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
+    configurable: true,
+    get(this: HTMLElement) {
+      return (this.textContent ?? '').startsWith('+') ? 60 : 100;
+    },
+  });
+  Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+    configurable: true,
+    get() {
+      return 2000;
+    },
+  });
+}
+
+function restoreChipWidths() {
+  if (originalOffsetWidth) Object.defineProperty(HTMLElement.prototype, 'offsetWidth', originalOffsetWidth);
+  if (originalClientWidth) Object.defineProperty(HTMLElement.prototype, 'clientWidth', originalClientWidth);
+}
+
+describe('DealerAccessView - DEALER-ACCESS-NAMES chips', () => {
+  beforeEach(stubChipWidths);
+  afterEach(restoreChipWidths);
+
   it('N1.1 chips read the customer names, with the code as the hover title', async () => {
     svc.getPeople.mockResolvedValue(page([row()]));
     render(<DealerAccessView />);
@@ -193,6 +224,9 @@ describe('DealerAccessView - DEALER-ACCESS-NAMES', () => {
     expect(within(chips).getAllByText('Kedai Lain').length).toBeGreaterThan(0);
     expect(within(chips).queryByText('Kedai Lain (300-B001)')).toBeNull();
   });
+});
+
+describe('DealerAccessView - DEALER-ACCESS-NAMES', () => {
 
   it('N2.5 a non-editable row has no Edit and no Unlink action', async () => {
     svc.getPeople.mockResolvedValue(
