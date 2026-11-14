@@ -297,6 +297,10 @@ export function POIntakeConfirmClient({
                   onEditAnnotation={intake.editAnnotation}
                   onRejectAnnotation={intake.rejectAnnotation}
                   defaultFlaggedOnly={!confirmed}
+                  suggestionCount={version.suggestion_count ?? 0}
+                  onAcceptSuggestion={(line) => intake.acceptSuggestion(line.id)}
+                  onAcceptAllSuggestions={intake.acceptAllSuggestions}
+                  isAcceptingSuggestions={intake.isAcceptingSuggestions}
                 />
               )}
             </TabsContent>
@@ -367,6 +371,10 @@ function StatusPill({ version }: { version: POVersion }) {
  * separate totals banner. One case is deliberately not alarming: once a handwritten
  * cancellation has been accepted, our sum legitimately drops below the printed total by
  * exactly the cancelled amount, so that gap is named as a fact rather than a fault.
+ *
+ * PO-UPLOAD-MATCHING AC-T2: when no grand total was printed (or read), the "document total" is
+ * only the sum of the amounts read off the lines, so it is labelled that and never compared
+ * with a printed total that does not exist.
  */
 function TotalsMetaLine({
   version,
@@ -390,6 +398,15 @@ function TotalsMetaLine({
   }
 
   const ourSum = ` · Our sum ${formatMyrExact(totals.lines_total)}`;
+
+  if (!totals.printed_total_read) {
+    return (
+      <>
+        {` · Sum of lines read ${formatMyrExact(totals.extracted_total)}`}
+        {ourSum}
+      </>
+    );
+  }
 
   if (difference === null || isMoneyZero(difference)) {
     return (

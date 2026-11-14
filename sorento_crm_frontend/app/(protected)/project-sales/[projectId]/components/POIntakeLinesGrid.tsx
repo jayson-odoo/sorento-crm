@@ -16,6 +16,12 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridTable } from '@/components/ui/data-grid-table';
@@ -36,6 +42,7 @@ import { getProductsForVariantSelect } from '@/app/(protected)/master-data-manag
 import type {
   POAnnotation,
   POAnnotationEditBody,
+  POLineMatchOption,
   POLineUpdateBody,
   POVersionLine,
 } from '../../_shared/types/poIntake.types';
@@ -77,7 +84,14 @@ interface Props {
    * line once it is - a confirmed PO is a record to check against, not a queue to work.
    */
   defaultFlaggedOnly?: boolean;
+  /** PO-UPLOAD-MATCHING: live lines with a suggested product or qty not yet accepted. */
+  suggestionCount?: number;
+  onAcceptSuggestion?: (line: POVersionLine) => Promise<void>;
+  onAcceptAllSuggestions?: () => Promise<void>;
+  isAcceptingSuggestions?: boolean;
 }
+
+type ProductOption = { value: string; label: string; description?: string };
 
 /** The short marker on the row: what the pencil is asking for, not why. */
 function annotationBadgeLabel(note: POAnnotation): string {
@@ -102,9 +116,19 @@ function annotationBadgeLabel(note: POAnnotation): string {
   }
 }
 
-/** A line our arithmetic disagrees with, one with no product, or one that was cancelled. */
+/** A suggested product or a suggested qty that a person has not accepted yet. */
+export function hasSuggestion(line: POVersionLine): boolean {
+  return line.resolution_source === 'suggested' || Boolean(line.qty_suggested);
+}
+
+/**
+ * A line our arithmetic disagrees with, one with no product, one with a suggestion to accept,
+ * or one that was cancelled.
+ */
 export function isFlaggedLine(line: POVersionLine): boolean {
-  return !line.arithmetic_ok || !line.resolved_product_id || line.is_cancelled;
+  return (
+    !line.arithmetic_ok || !line.resolved_product_id || hasSuggestion(line) || line.is_cancelled
+  );
 }
 
 /**
@@ -113,7 +137,10 @@ export function isFlaggedLine(line: POVersionLine): boolean {
  * outstanding would mean accepting a cancellation ADDS to the pile.
  */
 export function lineNeedsAttention(line: POVersionLine): boolean {
-  return !line.is_cancelled && (!line.arithmetic_ok || !line.resolved_product_id);
+  return (
+    !line.is_cancelled &&
+    (!line.arithmetic_ok || !line.resolved_product_id || hasSuggestion(line))
+  );
 }
 
 /**
@@ -165,9 +192,15 @@ export const POIntakeLinesGrid = React.forwardRef<POIntakeLinesGridHandle, Props
       onEditAnnotation,
       onRejectAnnotation,
       defaultFlaggedOnly,
+      suggestionCount = 0,
+      onAcceptSuggestion,
+      onAcceptAllSuggestions,
+      isAcceptingSuggestions,
     },
     ref,
   ) {
+    // The row a right-click landed on, when it has a suggestion to accept.
+    const [menuLine, setMenuLine] = React.useState<POVersionLine | null>(null);
     const rowRefs = React.useRef<Record<string, HTMLElement | null>>({});
     const [confirming, setConfirming] = React.useState<{
       kind: 'cancel' | 'clear-product';
@@ -346,7 +379,7 @@ export const POIntakeLinesGrid = React.forwardRef<POIntakeLinesGridHandle, Props
       setRejectingAnnotation({ note, lineId });
     }, []);
 
-    const fetchProducts = React.useCallback(async (query: string) => {
+    const fetchProducts = React.useCallback(async (query: string): Promise<ProductOption[]> => {
       const rows = await getProductsForVariantSelect(query || undefined);
       return rows.map((row) => ({
         value: row.id,
@@ -587,6 +620,15 @@ export const POIntakeLinesGrid = React.forwardRef<POIntakeLinesGridHandle, Props
                     No product
                   </Badge>
                 )}
+                {hasSuggestion(line) && (
+                  <Badge
+                    variant="info"
+                    className="text-[11px]"
+                    title={suggestionTitle(line)}
+                  >
+                    Suggested
+                  </Badge>
+                )}
                 {line.resolution_source === 'manual' && (
                   <Badge variant="outline" className="text-[11px]">
                     Matched by hand
@@ -652,15 +694,12 @@ export const POIntakeLinesGrid = React.forwardRef<POIntakeLinesGridHandle, Props
                   >
                     {`Product on line ${line.line_no}`}
                   </label>
-                  <SearchableSelect
+                  <LineProductPicker
                     id={`po-line-${line.line_no}-product`}
                     value={line.resolved_product_id ?? ''}
-                    size="sm"
-                    clearable
-                    fetchOptions={fetchProducts}
+                    matchOptions={line.match_options}
+                    fetchProducts={fetchProducts}
                     selectedOption={selected}
-                    placeholder="Not matched"
-                    emptyMessage="No products match"
                     onChange={(value) => {
                       if (!value && line.resolved_product_id) {
                         setConfirming({ kind: 'clear-product', line });
@@ -745,10 +784,13 @@ export const POIntakeLinesGrid = React.forwardRef<POIntakeLinesGridHandle, Props
       columnResizeMode: 'onChange',
     });
 
+    const showAcceptAll = !readOnly && suggestionCount > 0 && Boolean(onAcceptAllSuggestions);
+
     return (
       <div className="min-w-0 space-y-2">
-        {showFilterToggle && (
-          <div className="flex justify-start">
+        {(showFilterToggle || showAcceptAll) && (
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            {showFilterToggle ? (
             <ToggleGroup
               type="single"
               variant="outline"
@@ -763,6 +805,23 @@ export const POIntakeLinesGrid = React.forwardRef<POIntakeLinesGridHandle, Props
                 {`All lines (${lines.length})`}
               </ToggleGroupItem>
             </ToggleGroup>
+            ) : (
+              <span />
+            )}
+            {showAcceptAll && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={isAcceptingSuggestions}
+                onClick={() => void onAcceptAllSuggestions?.()}
+              >
+                {isAcceptingSuggestions && (
+                  <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                )}
+                {`Accept all suggestions (${suggestionCount})`}
+              </Button>
+            )}
           </div>
         )}
 
@@ -781,7 +840,25 @@ export const POIntakeLinesGrid = React.forwardRef<POIntakeLinesGridHandle, Props
             </Button>
           </div>
         ) : (
+          <ContextMenu>
+            <ContextMenuTrigger
+              asChild
+              onContextMenu={(event) => {
+                // Right-click is the row action (owner standing rule: no row icon buttons for
+                // it). Only a row with something to accept opens the menu.
+                const id = (event.target as HTMLElement)
+                  .closest('[data-po-line-id]')
+                  ?.getAttribute('data-po-line-id');
+                const hit = lines.find((item) => item.id === id) ?? null;
+                const actionable =
+                  !readOnly && Boolean(onAcceptSuggestion) && hit !== null && hasSuggestion(hit);
+                setMenuLine(actionable ? hit : null);
+                if (!actionable) event.preventDefault();
+              }}
+            >
+              <div className="min-w-0">
           <DataGrid
+            rowAttributes={(row: POVersionLine) => ({ 'data-po-line-id': row.id })}
             table={table}
             recordCount={visibleLines.length}
             isLoading={false}
@@ -804,6 +881,20 @@ export const POIntakeLinesGrid = React.forwardRef<POIntakeLinesGridHandle, Props
               <DataGridTable />
             </div>
           </DataGrid>
+              </div>
+            </ContextMenuTrigger>
+            {menuLine && (
+              <ContextMenuContent>
+                <ContextMenuItem
+                  disabled={savingLineIds.includes(menuLine.id)}
+                  onSelect={() => void onAcceptSuggestion?.(menuLine)}
+                >
+                  <Check className="size-3.5" aria-hidden />
+                  Accept suggestion
+                </ContextMenuItem>
+              </ContextMenuContent>
+            )}
+          </ContextMenu>
         )}
 
         <AlertDialog
@@ -958,6 +1049,77 @@ export const POIntakeLinesGrid = React.forwardRef<POIntakeLinesGridHandle, Props
     );
   },
 );
+
+/** What the Suggested pill stands for, in the row's own terms. */
+function suggestionTitle(line: POVersionLine): string {
+  const parts: string[] = [];
+  if (line.resolution_source === 'suggested') {
+    parts.push(
+      `Suggested product ${line.resolved_product_code ?? ''}`.trim() +
+        (line.match_confidence ? `, ${line.match_confidence} confidence` : ''),
+    );
+  }
+  if (line.qty_suggested) parts.push(`Suggested quantity ${formatQty(line.qty)}`);
+  return parts.join('. ');
+}
+
+/**
+ * The product picker on one line. The products the matcher offered come first (AC-U3), then
+ * the catalogue search, without repeating an offered product.
+ */
+function LineProductPicker({
+  id,
+  value,
+  matchOptions,
+  fetchProducts,
+  selectedOption,
+  onChange,
+}: {
+  id: string;
+  value: string;
+  matchOptions?: POLineMatchOption[];
+  fetchProducts: (query: string) => Promise<ProductOption[]>;
+  selectedOption?: { value: string; label: string };
+  onChange: (value: string) => void;
+}) {
+  const fetchOptions = React.useCallback(
+    async (query: string) => {
+      const rows = await fetchProducts(query);
+      const needle = query.trim().toLowerCase();
+      const offered: ProductOption[] = (matchOptions ?? [])
+        .filter(
+          (option) =>
+            !needle ||
+            `${option.product_code ?? ''} ${option.product_name ?? ''}`
+              .toLowerCase()
+              .includes(needle),
+        )
+        .map((option) => ({
+          value: option.product_id,
+          label: option.product_code ?? option.product_name ?? 'Product',
+          description: option.product_name ?? undefined,
+        }));
+      if (offered.length === 0) return rows;
+      const offeredIds = new Set(offered.map((option) => option.value));
+      return [...offered, ...rows.filter((row) => !offeredIds.has(row.value))];
+    },
+    [fetchProducts, matchOptions],
+  );
+
+  return (
+    <SearchableSelect
+      id={id}
+      value={value}
+      size="sm"
+      clearable
+      fetchOptions={fetchOptions}
+      selectedOption={selectedOption}
+      placeholder="Not matched"
+      emptyMessage="No products match"
+      onChange={onChange}
+    />
+  );
+}
 
 function describeLine(line: POVersionLine): string {
   const parts = [

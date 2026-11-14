@@ -20,7 +20,27 @@ export type POExtractionState = 'queued' | 'running' | 'done' | 'failed';
  */
 export type POExtractionPhase = POExtractionState | 'partial';
 
-export type POResolutionSource = 'code' | 'description' | 'map' | 'manual' | null;
+/**
+ * `suggested`: the PO line matcher's pick, not yet accepted. `accepted`: a person accepted it.
+ * `description` is only on documents read before PO-UPLOAD-MATCHING.
+ */
+export type POResolutionSource =
+  | 'code'
+  | 'description'
+  | 'map'
+  | 'suggested'
+  | 'accepted'
+  | 'manual'
+  | null;
+
+export type POMatchConfidence = 'high' | 'medium' | 'low';
+
+/** A product the matcher offered for a line; the product picker lists these first. */
+export interface POLineMatchOption {
+  product_id: string;
+  product_code: string | null;
+  product_name: string | null;
+}
 
 export interface POVersionHeader {
   po_number: string | null;
@@ -39,6 +59,11 @@ export interface POVersionTotals {
   lines_total: string;
   arithmetic_passed: number;
   arithmetic_total: number;
+  /**
+   * True when `extracted_total` is a grand total printed on the document; false when it is
+   * only the sum of the line amounts read.
+   */
+  printed_total_read: boolean;
 }
 
 export interface POVersionLine {
@@ -58,6 +83,11 @@ export interface POVersionLine {
   resolution_source: POResolutionSource;
   /** Additive: the page this line was read from, so the viewer can follow the focused row. */
   page_no?: number | null;
+  /** The matcher's confidence in a suggested product. Null on every other line. */
+  match_confidence?: POMatchConfidence | null;
+  match_options?: POLineMatchOption[];
+  /** The qty was worked out from amount / unit price and is not yet accepted. */
+  qty_suggested?: boolean;
 }
 
 export type POAnnotationInterpretation =
@@ -115,6 +145,8 @@ export interface POVersion {
   totals: POVersionTotals;
   lines: POVersionLine[];
   annotations: POAnnotation[];
+  /** Live lines with a suggested product or qty not yet accepted. */
+  suggestion_count?: number;
   confirmed_at: string | null;
   /** Additive. */
   confirmed_by_name?: string | null;
@@ -227,6 +259,11 @@ export interface POIntakeController {
    */
   qtyOverProducts?: QtyOverProduct[] | null;
   clearQtyOver?: () => void;
+  /** Accept one line's suggested product and/or qty (PO-UPLOAD-MATCHING AC-A1). */
+  acceptSuggestion: (lineId: string) => Promise<void>;
+  /** Accept every suggested product and qty on the version (AC-A2). */
+  acceptAllSuggestions: () => Promise<void>;
+  isAcceptingSuggestions: boolean;
   acceptAnnotation: (annotationId: string, note?: string | null) => Promise<void>;
   editAnnotation: (annotationId: string, body: POAnnotationEditBody) => Promise<void>;
   rejectAnnotation: (annotationId: string, note: string) => Promise<void>;

@@ -5,7 +5,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
 import { isQtyOver, type QtyOverProduct } from '../lib/qtyOverQuote';
 import {
+  acceptAllPOSuggestions,
   acceptPOAnnotation,
+  acceptPOLineSuggestion,
   confirmPOVersion,
   editPOAnnotation,
   getPOVersion,
@@ -189,6 +191,36 @@ export function usePOIntakeController(
     [versionId, settle, queryClient],
   );
 
+  /** One line's suggestion: the line shows its saving spinner, like a cell edit. */
+  const acceptSuggestion = React.useCallback(
+    async (lineId: string) => {
+      if (!versionId) return;
+      setSavingLineIds((current) => [...current, lineId]);
+      try {
+        settle(await acceptPOLineSuggestion(versionId, lineId));
+        toast.success('Suggestion accepted');
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : 'Could not accept this suggestion',
+        );
+        queryClient.invalidateQueries({ queryKey: key });
+      } finally {
+        setSavingLineIds((current) => current.filter((id) => id !== lineId));
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [versionId, settle, queryClient],
+  );
+
+  const acceptAllMutation = useMutation({
+    mutationFn: () => acceptAllPOSuggestions(versionId as string),
+    onSuccess: (next) => {
+      settle(next);
+      toast.success('Suggestions accepted');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
   const runAnnotation = React.useCallback(
     async (annotationId: string, action: () => Promise<void>, success: string) => {
       setSavingAnnotationIds((current) => [...current, annotationId]);
@@ -272,6 +304,12 @@ export function usePOIntakeController(
     },
     qtyOverProducts,
     clearQtyOver: () => setQtyOverProducts(null),
+    acceptSuggestion,
+    acceptAllSuggestions: async () => {
+      if (!versionId) return;
+      await acceptAllMutation.mutateAsync().catch(() => undefined);
+    },
+    isAcceptingSuggestions: acceptAllMutation.isPending,
     acceptAnnotation,
     editAnnotation,
     rejectAnnotation,
