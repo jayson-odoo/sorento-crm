@@ -193,6 +193,7 @@ import { getProductTagData, comboOptions } from '../../services/tagDataService';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { toast } from '@/lib/toast';
 import { CanvasToolbar, type CanvasTool, type ToolbarTrailingAction } from './CanvasToolbar';
+import { TableEdgeHandles } from './TableEdgeHandles';
 import { TableToolbarActions } from './TableToolbarActions';
 import { CanvasRulers, RULER_THICKNESS as RULER_BASE } from './CanvasRulers';
 import { LayersPanel } from './LayersPanel';
@@ -5599,6 +5600,23 @@ export function TagCanvasEditor({
                   }}
                 />
               )}
+              {/* v3 (AC-C5.1): the selected table's row / column edges drag, in this same overlay. */}
+              {!editingLayerId &&
+                !embedded?.readOnly &&
+                selectedLayer &&
+                selectedLayer.props.kind === 'table' &&
+                !selectedLayer.locked &&
+                selectedLayer.visible &&
+                !selectedLayer.rotation_deg && (
+                  <TableEdgeHandles
+                    layer={selectedLayer as TagLayer & { props: TableLayerProps }}
+                    drawn={drawnTableRef.current(selectedLayer)}
+                    scale={scale}
+                    originX={RULER_THICKNESS + view.panX}
+                    originY={RULER_THICKNESS + view.panY}
+                    onChange={(next) => updateLayerProps(selectedLayer.id, next)}
+                  />
+                )}
             </div>
           </ContextMenuTrigger>
 

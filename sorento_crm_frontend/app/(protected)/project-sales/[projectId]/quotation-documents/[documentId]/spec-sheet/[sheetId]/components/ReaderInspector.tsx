@@ -34,6 +34,7 @@ export function ReaderInspector({
   mode,
   onModeChange,
   onApplyAll,
+  onManageFonts,
 }: {
   pageKey: string | null;
   layer: TagLayer | null;
@@ -42,13 +43,14 @@ export function ReaderInspector({
   mode: ApplyMode;
   onModeChange: (mode: ApplyMode) => void;
   onApplyAll: (layerId: string, changes: ApplyAllChanges) => void;
+  /** The host's one font dialog (the reader shares it with the toolbar); absent: this opens its own. */
+  onManageFonts?: () => void;
 }) {
   const library = useKitLibrary();
   // Insert field (owner hand test #2331): the template designer's own dialog and registry, so a
   // page offers every field a template can (product, line, doc).
   const [insertOpen, setInsertOpen] = React.useState(false);
-  // v3 (AC-C6.1): Manage fonts opens the template designer's own font dialog on the one kit
-  // library, wired as `TagCanvasEditor` wires it, so an upload is selectable at once in both.
+  // v3 (AC-C6.1): Manage fonts, standalone (no host dialog given): `ManageFontsDialog` below.
   const [fontUploadOpen, setFontUploadOpen] = React.useState(false);
   const textLayer = layer && layer.props.kind === 'text' ? layer : null;
   // A layer bound to a slot, or already showing an override, draws `text_override`: the field
@@ -139,7 +141,7 @@ export function ReaderInspector({
           onUpdateProps={onUpdateProps}
           layers={layers}
           fontOptions={library.fontOptions}
-          onUploadFont={() => setFontUploadOpen(true)}
+          onUploadFont={onManageFonts ?? (() => setFontUploadOpen(true))}
           specSheet
           specKeys={library.specKeys}
           onInsertField={textLayer ? () => setInsertOpen(true) : undefined}
@@ -154,27 +156,39 @@ export function ReaderInspector({
         onCancel={() => setInsertOpen(false)}
         onDone={insert}
       />
-      <FontUploadDialog
-        open={fontUploadOpen}
-        fonts={library.fonts}
-        onCancel={() => {
-          setFontUploadOpen(false);
-          // A delete started in the dialog keeps counting down after it closes: catch up here.
-          void library.reload();
-        }}
-        onUploaded={(asset) => {
-          library.remember(asset);
-          setFontUploadOpen(false);
-        }}
-        onRenamed={(asset) => {
-          library.rename(asset.id, asset.name);
-          void library.reload();
-        }}
-        onDeleted={(id) => {
-          library.forget(id);
-          void library.reload();
-        }}
-      />
+      {!onManageFonts && <ManageFontsDialog open={fontUploadOpen} onClose={() => setFontUploadOpen(false)} />}
     </div>
+  );
+}
+
+/**
+ * v3 (AC-C6.1): Manage fonts on the spec sheet: the template designer's own `FontUploadDialog` on
+ * the one kit library, wired as `TagCanvasEditor` wires it, so an upload is selectable at once in
+ * both designers. One instance per reader (the toolbar format row and the Inspector share it).
+ */
+export function ManageFontsDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const library = useKitLibrary();
+  return (
+    <FontUploadDialog
+      open={open}
+      fonts={library.fonts}
+      onCancel={() => {
+        onClose();
+        // A delete started in the dialog keeps counting down after it closes: catch up here.
+        void library.reload();
+      }}
+      onUploaded={(asset) => {
+        library.remember(asset);
+        onClose();
+      }}
+      onRenamed={(asset) => {
+        library.rename(asset.id, asset.name);
+        void library.reload();
+      }}
+      onDeleted={(id) => {
+        library.forget(id);
+        void library.reload();
+      }}
+    />
   );
 }

@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { AlignCenter, AlignLeft, AlignRight, Bold, CaseUpper, Italic } from 'lucide-react';
+import { AlignCenter, AlignLeft, AlignRight, Bold, CaseUpper, Italic, Settings2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { NumberInput } from '@/components/ui/number-input';
@@ -23,10 +23,13 @@ import { cn } from '@/lib/utils';
 export function FormatBar({
   layer,
   onProps,
+  onManageFonts,
 }: {
   /** The selected layer. Anything but text draws nothing (the toolbar row keeps its fixed height). */
   layer: TagLayer | null;
   onProps: (id: string, changes: Partial<TagLayerProps>) => void;
+  /** v3 (AC-C6.1): open the reader's font dialog, beside the font list. Absent: no button. */
+  onManageFonts?: () => void;
 }) {
   const library = useKitLibrary();
   const active = layer?.props.kind === 'text' ? layer : null;
@@ -51,6 +54,18 @@ export function FormatBar({
           aria-label="Font"
         />
       </div>
+      {onManageFonts && (
+        <Button
+          type="button"
+          size="icon"
+          variant="ghost"
+          aria-label="Manage fonts"
+          title="Manage fonts"
+          onClick={onManageFonts}
+        >
+          <Settings2 className="size-4" />
+        </Button>
+      )}
       <NumberInput
         min={1}
         max={400}

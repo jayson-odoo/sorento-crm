@@ -71,7 +71,7 @@ import type {
 import { CreateSpecSheetDialog } from '../../../components/CreateSpecSheetDialog';
 import { FormatBar } from './FormatBar';
 import { PageRail, type RailPicture } from './PageRail';
-import { ReaderInspector, type ApplyMode } from './ReaderInspector';
+import { ManageFontsDialog, ReaderInspector, type ApplyMode } from './ReaderInspector';
 import { applicableChanges, movedKeys } from './selectionTools';
 import { useSheetEditing } from './useSheetEditing';
 import { COVER, ReaderPage } from './ReaderPage';
@@ -158,6 +158,8 @@ export function SpecSheetReader({
   const blockedBy = missing.filter((m) => m === 'cover' || m === 'page');
   const blocked = blockedBy.length > 0;
   const [picking, setPicking] = React.useState(false);
+  // v3 (AC-C6.1): the one font dialog, opened from the toolbar format row and the Inspector.
+  const [fontsOpen, setFontsOpen] = React.useState(false);
   // Full screen and the two folding side panels: the same FocusShell / FocusToggle /
   // CollapsiblePanel the price tag designer, room designer and page builder use.
   const [focus, setFocus] = React.useState(false);
@@ -998,7 +1000,11 @@ export function SpecSheetReader({
                       }
                     />
                   ) : (
-                    <FormatBar layer={selectedLayer} onProps={changeSelectedProps} />
+                    <FormatBar
+                      layer={selectedLayer}
+                      onProps={changeSelectedProps}
+                      onManageFonts={() => setFontsOpen(true)}
+                    />
                   )
                 ) : null
               }
@@ -1200,6 +1206,7 @@ export function SpecSheetReader({
                               mode={applyMode}
                               onModeChange={setApplyMode}
                               onApplyAll={sendToEveryPage}
+                              onManageFonts={() => setFontsOpen(true)}
                             />
                           ) : (
                             <div
@@ -1254,6 +1261,7 @@ export function SpecSheetReader({
                       mode={applyMode}
                       onModeChange={setApplyMode}
                       onApplyAll={sendToEveryPage}
+                      onManageFonts={() => setFontsOpen(true)}
                     />
                   </div>
                 )}
@@ -1270,6 +1278,7 @@ export function SpecSheetReader({
           )}
         </FocusShell>
       )}
+      {canEdit && <ManageFontsDialog open={fontsOpen} onClose={() => setFontsOpen(false)} />}
       {canEdit && picking && (
         <CreateSpecSheetDialog
           open={picking}

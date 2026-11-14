@@ -115,7 +115,8 @@ function tableLayer(extra: Partial<TagLayer> = {}): TagLayer {
         row.map((text) => ({ text, padding_mm: 1, border: { top: side, right: side, bottom: side, left: side } })),
       ),
       fontFamily: 'DM Sans',
-      fontSize: 10,
+      // 8 pt: one line plus padding is under 6 mm, so no row grows past its set height.
+      fontSize: 8,
       color: '#000000',
       align: 'left',
       verticalAlign: 'middle',
