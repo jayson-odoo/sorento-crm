@@ -780,6 +780,8 @@ export function ItemCodeCell({
    */
   codeOnly?: boolean;
 }) {
+  // UAC G1: a spare part line's own description stands in for the product name.
+  const name = row.line_description || row.product_name;
   return (
     <div className="min-w-0">
       <span className="block truncate font-medium" title={row.item_code ?? ''}>
@@ -795,9 +797,9 @@ export function ItemCodeCell({
           was {row.previous_item_code}
         </span>
       )}
-      {!codeOnly && row.product_name && !sameDisplayText(row.product_name, row.item_code) && (
-        <span className="block truncate text-xs text-muted-foreground" title={row.product_name}>
-          {row.product_name}
+      {!codeOnly && name && !sameDisplayText(name, row.item_code) && (
+        <span className="block truncate text-xs text-muted-foreground" title={name}>
+          {name}
         </span>
       )}
     </div>

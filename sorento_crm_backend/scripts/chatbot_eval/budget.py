@@ -13,6 +13,23 @@ PRICES = {
 }
 
 
+def _seeded_prices() -> None:
+    """CHATBOT-SPEED: the owner-approved app price rows (`analytics_connector/prices.py`, the one place a price lives)
+    for every model this table lacks, e.g. the prod parser's gemini-3.5-flash-lite. A row above wins; a seed with no
+    cached price is skipped (the meter needs all three). Without them a live replay on that model counted US$0 and
+    stopped at its first item (`unpriced_model`)."""
+    try:
+        from app.services.analytics_connector.prices import SEED_PRICES
+    except Exception:  # noqa: BLE001 - run outside the backend: the table above only
+        return
+    for model, (inp, cached, out, _source) in SEED_PRICES.items():
+        if model not in PRICES and cached is not None:
+            PRICES[model] = (float(inp), float(cached), float(out))
+
+
+_seeded_prices()
+
+
 def cost_usd(tokens: dict, model: str) -> float:
     p_in, p_cached, p_out = PRICES[model]
     prompt, cached, output = (int(tokens.get(k, 0) or 0) for k in ("prompt", "cached", "output"))

@@ -20,7 +20,27 @@ export type POExtractionState = 'queued' | 'running' | 'done' | 'failed';
  */
 export type POExtractionPhase = POExtractionState | 'partial';
 
-export type POResolutionSource = 'code' | 'description' | 'map' | 'manual' | null;
+/**
+ * `suggested`: the PO line matcher's pick, not yet accepted. `accepted`: a person accepted it.
+ * `description` is only on documents read before PO-UPLOAD-MATCHING.
+ */
+export type POResolutionSource =
+  | 'code'
+  | 'description'
+  | 'map'
+  | 'suggested'
+  | 'accepted'
+  | 'manual'
+  | null;
+
+export type POMatchConfidence = 'high' | 'medium' | 'low';
+
+/** A product the matcher offered for a line; the product picker lists these first. */
+export interface POLineMatchOption {
+  product_id: string;
+  product_code: string | null;
+  product_name: string | null;
+}
 
 export interface POVersionHeader {
   po_number: string | null;
@@ -39,6 +59,11 @@ export interface POVersionTotals {
   lines_total: string;
   arithmetic_passed: number;
   arithmetic_total: number;
+  /**
+   * True when `extracted_total` is a grand total printed on the document; false when it is
+   * only the sum of the line amounts read.
+   */
+  printed_total_read: boolean;
 }
 
 export interface POVersionLine {
@@ -58,6 +83,14 @@ export interface POVersionLine {
   resolution_source: POResolutionSource;
   /** Additive: the page this line was read from, so the viewer can follow the focused row. */
   page_no?: number | null;
+  /** The matcher's confidence in a suggested product. Null on every other line. */
+  match_confidence?: POMatchConfidence | null;
+  match_options?: POLineMatchOption[];
+  /** The qty was worked out from amount / unit price and is not yet accepted. */
+  qty_suggested?: boolean;
+  /** No amount was printed: the server computes it from qty x unit price and moves it on a
+   *  qty or price edit until an amount is typed. */
+  amount_computed?: boolean;
 }
 
 export type POAnnotationInterpretation =
@@ -92,6 +125,9 @@ export interface POAnnotation {
  */
 export interface POApprovalStamps {
   po_number?: string | null;
+  /** Who issued the PO; the customer accepted codes are remembered for (crew pass item 2). */
+  issuing_party_id?: string | null;
+  issuing_party_name?: string | null;
   status?: string | null;
   approved_by_name?: string | null;
   approved_at?: string | null;
@@ -115,6 +151,8 @@ export interface POVersion {
   totals: POVersionTotals;
   lines: POVersionLine[];
   annotations: POAnnotation[];
+  /** Live lines with a suggested product or qty not yet accepted. */
+  suggestion_count?: number;
   confirmed_at: string | null;
   /** Additive. */
   confirmed_by_name?: string | null;
@@ -139,6 +177,19 @@ export interface POVersion {
   approved_at?: string | null;
   countersigned_by_name?: string | null;
   countersigned_at?: string | null;
+  /** Additive: present on a confirm response only. */
+  confirm_result?: POConfirmResult | null;
+}
+
+/** What a confirm wrote, and whether the codes picked on the document were remembered. */
+export interface POConfirmResult {
+  line_count: number;
+  po_amount: string;
+  model_mismatch_count: number;
+  price_mismatch_count: number;
+  /** `issuer_not_linked`: the chosen issuer has no customer, so nothing was remembered. */
+  codes_not_remembered?: 'issuer_not_linked' | null;
+  codes_not_remembered_party?: string | null;
 }
 
 /**
@@ -227,9 +278,19 @@ export interface POIntakeController {
    */
   qtyOverProducts?: QtyOverProduct[] | null;
   clearQtyOver?: () => void;
+  /** The last confirm was refused for want of an issuer; the sentence goes under the picker. */
+  issuerError?: string | null;
+  clearIssuerError?: () => void;
+  /** Accept one line's suggested product and/or qty (PO-UPLOAD-MATCHING AC-A1). */
+  acceptSuggestion: (lineId: string) => Promise<void>;
+  /** Accept every suggested product and qty on the version (AC-A2). */
+  acceptAllSuggestions: () => Promise<void>;
+  isAcceptingSuggestions: boolean;
   acceptAnnotation: (annotationId: string, note?: string | null) => Promise<void>;
   editAnnotation: (annotationId: string, body: POAnnotationEditBody) => Promise<void>;
   rejectAnnotation: (annotationId: string, note: string) => Promise<void>;
+  /** Re-read the version (after something outside it changed, e.g. the PO's issuer). */
+  refresh?: () => void;
 }
 
 export const PO_INTERPRETATION_LABELS: Record<POAnnotationInterpretation, string> = {

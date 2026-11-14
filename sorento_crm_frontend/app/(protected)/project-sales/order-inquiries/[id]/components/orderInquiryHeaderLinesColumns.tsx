@@ -50,12 +50,18 @@ import type {
   OrderInquiryWorklistRow,
 } from '../../../_shared/types/orderInquiry.types';
 import { SoLineAttachmentsButton } from '../../../_shared/components/SoLineAttachmentsButton';
+import { OrderInquiryLinkCell } from '../../../_shared/components/OrderInquiryLinkCell';
 import {
   LineSplitInfo,
   splitCount,
   splitDateText,
 } from '../../../_shared/components/LineSplitInfo';
 import type { SoLineAttachmentsByLine } from '../../../_shared/services/soLineAttachmentService';
+import { NumberInput } from '@/components/ui/number-input';
+import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
+import { formatMoneyExact } from '../../../_shared/lib/money';
+import { changedFrom } from '../../../_shared/lib/sparePartRequest';
+import type { OrderInquiryType } from '../../../_shared/types/orderInquiry.types';
 import type { LineSplitsPayload } from '../../../_shared/types/lineSplit.types';
 
 /**
@@ -424,6 +430,385 @@ function lineReserveQty(row: OrderInquiryLineRow, field: 'asked_reserve_qty' | '
   return String(total);
 }
 
+/** The chevron that opens a line's splits (if any) and its stock table (AC-RS-40), shared by
+ *  the sales-order and spare part column sets. */
+function stockExpandColumn(): ColumnDef<OrderInquiryLineRow> {
+  return {
+    id: 'expand',
+    header: () => <span className="sr-only">Expand</span>,
+    cell: ({ row }) => (
+      <Button
+        type="button"
+        mode="icon"
+        variant="ghost"
+        size="sm"
+        className="size-6"
+        aria-label={`${row.getIsExpanded() ? 'Hide' : 'Show'} stock for ${
+          row.original.item_code ?? 'this line'
+        }`}
+        aria-expanded={row.getIsExpanded()}
+        onClick={(event) => {
+          event.stopPropagation();
+          row.toggleExpanded();
+        }}
+      >
+        {row.getIsExpanded() ? (
+          <ChevronDown className="size-3.5" aria-hidden />
+        ) : (
+          <ChevronRight className="size-3.5" aria-hidden />
+        )}
+      </Button>
+    ),
+    size: 44,
+    minSize: 44,
+    enableSorting: false,
+    enableResizing: false,
+    enableHiding: false,
+    meta: {
+      headerTitle: 'Expand',
+      expandedContent: (line: OrderInquiryLineRow) => (
+        <div className="px-3 py-2">
+          <LineSplitsList splits={line.splits ?? []} itemCode={line.item_code} />
+          {line.product_id ? (
+            <OrderInquiryStockGrid productId={line.product_id} location={line.location ?? null} />
+          ) : (
+            <p className="text-xs text-muted-foreground">No product resolved for this line yet.</p>
+          )}
+        </div>
+      ),
+    },
+  };
+}
+
+function locationColumn(): ColumnDef<OrderInquiryLineRow> {
+  return {
+    accessorKey: 'location',
+    header: ({ column }) => <DataGridColumnHeader title="Location" column={column} />,
+    size: 130,
+    meta: { headerTitle: 'Location', skeleton: <Skeleton className="h-4 w-16" /> },
+    cell: ({ row }) => <LocationCell row={row.original} />,
+  };
+}
+
+function poColumn(): ColumnDef<OrderInquiryLineRow> {
+  return {
+    id: 'po_number',
+    accessorFn: (row) => lineDocumentsOf(lineOf(row), 'po')[0]?.document ?? '',
+    header: ({ column }) => <DataGridColumnHeader title="PO" column={column} />,
+    size: 200,
+    meta: { headerTitle: 'PO' },
+    cell: ({ row }) => <LineDocumentsCell line={lineOf(row.original)} kind="po" />,
+  };
+}
+
+/** AC-ND-13 (owner ruling 26 Sep, G3): the line's ONE History icon. SPARE-PART-OR-B (U1.3,
+ *  U4.7): a spare part line passes `changed`, which colours the icon when the line moved and
+ *  mutes it otherwise; a sales-order line passes none and keeps its own look. */
+function LineHistoryButton({
+  line,
+  onClick,
+  changed,
+}: {
+  line: OrderInquiryLine;
+  onClick?: (line: OrderInquiryLine) => void;
+  changed?: boolean;
+}) {
+  const tone = changed == null ? '' : changed ? ' text-primary' : ' text-muted-foreground';
+  return (
+    <Button
+      type="button"
+      mode="icon"
+      variant="ghost"
+      size="sm"
+      className={`size-6 shrink-0${tone}`}
+      aria-label="History"
+      title="History"
+      data-changed={changed == null ? undefined : String(changed)}
+      onClick={(event) => {
+        event.stopPropagation();
+        onClick?.(line);
+      }}
+    >
+      <HistoryIcon className="size-3.5" aria-hidden />
+    </Button>
+  );
+}
+
+/** SPARE-PART-ORDER-REQUEST (UAC A3): what the approver changed on a line. */
+export interface SparePartLineEdit {
+  qty?: string;
+  unit_price?: string;
+}
+
+/** Which page a spare part request's lines are read on: its own order request record
+ *  ('request') or the order inquiry purchasing works it on ('inquiry'). */
+export type SparePartView = 'request' | 'inquiry';
+
+/** SPARE-PART-OR-B U3.3b: the order request page hides PO by default (still in Columns; it is
+ *  purchasing's fact and shows on the order inquiry), so its OI column fits the 950 px card. */
+export const SPARE_PART_REQUEST_HIDDEN_COLUMNS: string[] = ['po_number'];
+
+/**
+ * SPARE-PART-OR-B: did this spare part line change? On the order request page (U1.3): its
+ * qty or unit price moved off what was submitted, or a photo was added or removed. On the
+ * order inquiry page (U4.7): only a change after approval, which restated the row
+ * (`previous_qty`).
+ */
+export function sparePartLineChanged(row: OrderInquiryWorklistRow, view: SparePartView): boolean {
+  if (view === 'inquiry') return row.previous_qty != null && row.previous_qty !== '';
+  const photos = (row.photo_changes?.added ?? 0) + (row.photo_changes?.removed ?? 0);
+  return (
+    changedFrom(row.qty, row.submitted_qty) ||
+    changedFrom(row.unit_price, row.submitted_unit_price) ||
+    photos > 0
+  );
+}
+
+/** The approver's own qty / unit price box: commits on blur when the value moved. */
+function ApproverNumberCell({
+  value,
+  label,
+  onCommit,
+}: {
+  value: string | null | undefined;
+  label: string;
+  onCommit: (next: string) => void;
+}) {
+  const initial = value == null || value === '' ? null : Number(value);
+  const [draft, setDraft] = React.useState<number | null>(initial);
+  React.useEffect(() => setDraft(initial), [initial]);
+  return (
+    <NumberInput
+      value={draft}
+      onValueChange={setDraft}
+      min={0}
+      step="any"
+      aria-label={label}
+      className="h-7 w-[4.5rem] text-right tabular-nums"
+      onClick={(event) => event.stopPropagation()}
+      onBlur={() => {
+        if (draft == null || Number.isNaN(draft) || draft < 0 || draft === initial) return;
+        onCommit(String(draft));
+      }}
+    />
+  );
+}
+
+/**
+ * SPARE-PART-ORDER-REQUEST (UAC P4, A3): the Lines tab of a spare part request. The same
+ * renderers as a sales-order inquiry where the fact is the same (stock grid, product,
+ * documents, location, instruction, state, paperclip); no SO line, SO Qty, split or reserve
+ * columns, since the request has no sales order. Unit price and Total in their place, and
+ * while the request is pending approval a decider edits Qty and Unit price in place.
+ *
+ * Review R11: the visible sizes sum within the record page's card at 1280 (950 px), so Total
+ * is never behind a sideways scroll. No Instruction column: every spare part line reads
+ * "Replenish" (UAC P5), so it carried nothing a reader needs.
+ *
+ * Hand-test round 2 (owner 13 Nov, one line per row): the code and the description are two
+ * columns, each one truncated line. The grid is dense (`OrderInquiryLinesTab`), so the sizes
+ * below leave the approver's 72 px Qty / Unit price inputs their room inside 950 px.
+ */
+function sparePartLineColumns({
+  view,
+  qtyEditable,
+  priceEditable,
+  currency,
+  onEditLine,
+  onLineHistoryClick,
+  attachmentsByRow,
+  canEditAttachments,
+}: {
+  view: SparePartView;
+  qtyEditable: boolean;
+  priceEditable: boolean;
+  currency?: string | null;
+  onEditLine?: (row: OrderInquiryWorklistRow, edit: SparePartLineEdit) => void;
+  onLineHistoryClick?: (line: OrderInquiryLine) => void;
+  attachmentsByRow?: SoLineAttachmentsByLine;
+  canEditAttachments: boolean;
+}): ColumnDef<OrderInquiryLineRow>[] {
+  // U3.2: on the order request page each line links to its row on the order inquiry, once
+  // the request is approved (its OI- number); the Sales Order Lines tab's own cell.
+  const orderInquiryColumn: ColumnDef<OrderInquiryLineRow> = {
+    id: 'order_inquiry',
+    accessorFn: (row) => row.oi_no ?? '',
+    header: ({ column }) => <DataGridColumnHeader title="OI" column={column} />,
+    // "OI-2611-0001" whole (fix round 1); the room comes out of State on this view.
+    size: 100,
+    meta: { headerTitle: 'OI', skeleton: <Skeleton className="h-4 w-20" /> },
+    cell: ({ row }) => {
+      const line = lineOf(row.original);
+      return (
+        // A click on the link (or its pill) leaves the row's selection alone.
+        // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions
+        <div
+          className="min-w-0 truncate"
+          title={line.rows.find((r) => r.oi_no)?.oi_no ?? undefined}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <OrderInquiryLinkCell
+            rows={line.rows.filter((r) => Boolean(r.oi_no))}
+            lineId={line.primary.id}
+            numberOnly
+          />
+        </div>
+      );
+    },
+  };
+  return [
+    stockExpandColumn(),
+    buildSelectColumn<OrderInquiryLineRow>({
+      rowLabel: (row) => `Select ${row.original.item_code ?? 'line'}`,
+    }),
+    {
+      accessorKey: 'item_code',
+      header: ({ column }) => <DataGridColumnHeader title="Product code" column={column} />,
+      size: 124,
+      meta: { headerTitle: 'Product code', skeleton: <Skeleton className="h-4 w-20" /> },
+      cell: ({ row }) => (
+        <span className="block min-w-0 truncate">
+          <ItemCodeCell row={row.original} codeOnly />
+        </span>
+      ),
+    },
+    {
+      id: 'line_description',
+      // G1: the requester's own description, else the product's name.
+      accessorFn: (row) => row.line_description || row.product_name || '',
+      header: ({ column }) => <DataGridColumnHeader title="Description" column={column} />,
+      size: 96,
+      meta: { headerTitle: 'Description', skeleton: <Skeleton className="h-4 w-32" /> },
+      cell: ({ row }) => {
+        const description = row.original.line_description || row.original.product_name || '';
+        return (
+          <span className="block min-w-0 truncate" title={description}>
+            {description || '-'}
+          </span>
+        );
+      },
+    },
+    { ...locationColumn(), size: 90 },
+    {
+      accessorKey: 'qty',
+      header: ({ column }) => <DataGridColumnHeader title="Qty" column={column} />,
+      // The approver's 72 px input plus the History icon (U1.2), one line.
+      size: 120,
+      meta: { headerTitle: 'Qty', skeleton: <Skeleton className="h-4 w-10" /> },
+      cell: ({ row }) => {
+        const line = lineOf(row.original);
+        const primary = line.primary;
+        // U1.2 / U1.5: the value (or the input), then the line's one History icon, one line.
+        return (
+          <div className="flex min-w-0 items-center gap-1">
+            {qtyEditable && onEditLine ? (
+              <ApproverNumberCell
+                value={primary.qty}
+                label={`Qty for ${primary.item_code ?? 'this line'}`}
+                onCommit={(qty) => onEditLine(primary, { qty })}
+              />
+            ) : (
+              <span className="min-w-0 truncate tabular-nums" title={formatInquiryQty(primary.qty)}>
+                {formatInquiryQty(primary.qty)}
+              </span>
+            )}
+            <LineHistoryButton
+              line={line}
+              onClick={onLineHistoryClick}
+              changed={sparePartLineChanged(primary, view)}
+            />
+          </div>
+        );
+      },
+    },
+    {
+      id: 'unit_price',
+      accessorFn: (row) => Number(lineOf(row).primary.unit_price ?? 0),
+      header: ({ column }) => <DataGridColumnHeader title="Unit price" column={column} />,
+      size: 100,
+      meta: { headerTitle: 'Unit price', skeleton: <Skeleton className="h-4 w-16" /> },
+      cell: ({ row }) => {
+        const primary = lineOf(row.original).primary;
+        // U1.1: the value only; what it was before lives in the line's History.
+        return priceEditable && onEditLine ? (
+          <ApproverNumberCell
+            value={primary.unit_price}
+            label={`Unit price for ${primary.item_code ?? 'this line'}`}
+            onCommit={(unit_price) => onEditLine(primary, { unit_price })}
+          />
+        ) : (
+          <span
+            className="block max-w-full truncate tabular-nums"
+            title={formatMoneyExact(primary.unit_price, currency)}
+          >
+            {formatMoneyExact(primary.unit_price, currency)}
+          </span>
+        );
+      },
+    },
+    {
+      id: 'line_total',
+      accessorFn: (row) => Number(lineOf(row).primary.line_total ?? 0),
+      header: ({ column }) => <DataGridColumnHeader title="Total" column={column} />,
+      size: 90,
+      meta: { headerTitle: 'Total', skeleton: <Skeleton className="h-4 w-16" /> },
+      cell: ({ row }) => {
+        const total = lineOf(row.original).primary.line_total;
+        return (
+          <span className="block truncate tabular-nums" title={formatMoneyExact(total, currency)}>
+            {formatMoneyExact(total, currency)}
+          </span>
+        );
+      },
+      // D5: the request's amount, over the lines still standing (a cancelled line is 0).
+      footer: ({ table }) => {
+        const rows = table.getPrePaginationRowModel().rows.map((r) => lineOf(r.original).primary);
+        const live = rows.filter((r) => r.state !== 'cancelled');
+        if (live.some((r) => r.line_total == null)) return <span className="text-muted-foreground">-</span>;
+        const sum = live.reduce((acc, r) => acc + Number(r.line_total ?? 0), 0).toFixed(4);
+        return <span className="tabular-nums font-medium">{formatMoneyExact(sum, currency)}</span>;
+      },
+    },
+    { ...poColumn(), size: 80 },
+    {
+      id: 'state',
+      accessorFn: (row) => lineOf(row).state,
+      header: ({ column }) => <DataGridColumnHeader title="State" column={column} />,
+      // The History icon moved to Qty; on the order request page State also gives the OI
+      // column its room (fix round 1), so both views sum to 950 px.
+      size: view === 'request' ? 142 : 162,
+      minSize: view === 'request' ? 142 : 162,
+      meta: { headerTitle: 'State' },
+      cell: ({ row }) => {
+        const line = lineOf(row.original);
+        const primary = line.primary;
+        return (
+          <div className="flex min-w-0 items-center gap-1">
+            <span className="shrink-0">
+              {primary.state === 'draft' ? (
+                // Before final approval the line is nobody's work yet.
+                <span className={`${STATUS_PILL_BASE} ${statusPillClass('draft')}`}>
+                  Not approved yet
+                </span>
+              ) : (
+                <OrderInquiryLineStatusPill line={line} rejectedTestId={`lines-rejected-${primary.id}`} />
+              )}
+            </span>
+            <SoLineAttachmentsButton
+              lineId={primary.id}
+              target={{ kind: 'order_inquiry_row', id: primary.id }}
+              label={`${primary.inquiry_no ?? ''} ${primary.item_code ?? ''}`.trim()}
+              attachments={attachmentsByRow?.[primary.id] ?? []}
+              canEdit={canEditAttachments}
+            />
+          </div>
+        );
+      },
+    },
+    ...(view === 'request' ? [orderInquiryColumn] : []),
+  ];
+}
+
 export function useOrderInquiryHeaderLinesColumns({
   canReserve,
   stagedByRowId,
@@ -436,6 +821,15 @@ export function useOrderInquiryHeaderLinesColumns({
   attachmentsByLine,
   canEditAttachments = false,
   splitSheet,
+  inquiryType = 'sales_order',
+  sparePartView = 'inquiry',
+  headerState,
+  revisionState = null,
+  canEditRevision = false,
+  canDecide = false,
+  onEditLine,
+  currency,
+  attachmentsByRow,
 }: {
   /** AC-RS-83/83c: gates the reserve icons inside the State cell - a viewer without
    * `projects.order_inquiries.reserve` sees the pills only. */
@@ -476,61 +870,51 @@ export function useOrderInquiryHeaderLinesColumns({
     error?: unknown;
     onRetry?: () => void;
   };
+  /** SPARE-PART-ORDER-REQUEST: the inquiry's type; a spare part request gets its own set. */
+  inquiryType?: OrderInquiryType;
+  /** SPARE-PART-OR-B: a spare part request read on its own order request page ('request':
+   *  the OI column) or on the order inquiry ('inquiry', the default: approved figures only;
+   *  the way back to the order request is the page header's link, U3.3). */
+  sparePartView?: SparePartView;
+  /** The header's state: a decider edits Qty / Unit price only while `pending_approval`. */
+  headerState?: string | null;
+  /** U4.3, order request page only: an open revision's state. While one is open only Qty
+   *  changes, by the requester (draft / rejected) or a decider (pending_approval). */
+  revisionState?: string | null;
+  /** The viewer is the requester and may change the revision's qtys (server `can_edit`). */
+  canEditRevision?: boolean;
+  /** The viewer is the current approver (server's `can_decide`). */
+  canDecide?: boolean;
+  /** The approver changed a line's qty or unit price (blur). */
+  onEditLine?: (row: OrderInquiryWorklistRow, edit: SparePartLineEdit) => void;
+  /** The request's currency, for Unit price / Total. */
+  currency?: string | null;
+  /** A spare part request's photos, keyed by ORDER INQUIRY ROW id. */
+  attachmentsByRow?: SoLineAttachmentsByLine;
 } = {}): ColumnDef<OrderInquiryLineRow>[] {
   return React.useMemo<ColumnDef<OrderInquiryLineRow>[]>(() => {
+    if (inquiryType === 'spare_part_request') {
+      const revising = sparePartView === 'request' && revisionState != null;
+      const deciding = canDecide && headerState === 'pending_approval';
+      return sparePartLineColumns({
+        view: sparePartView,
+        qtyEditable: revising
+          ? revisionState === 'pending_approval'
+            ? canDecide
+            : canEditRevision
+          : deciding,
+        priceEditable: !revising && deciding,
+        currency,
+        onEditLine,
+        onLineHistoryClick,
+        attachmentsByRow,
+        canEditAttachments,
+      });
+    }
     const columns: ColumnDef<OrderInquiryLineRow>[] = [
       // `PLAN-oi-request-cs-reserve.md` 3.9 (AC-RS-40): the board's own stock grid, a
       // chevron away - purchasing used to open the fulfilment board just to check BRW.
-      {
-        id: 'expand',
-        header: () => <span className="sr-only">Expand</span>,
-        cell: ({ row }) => (
-          <Button
-            type="button"
-            mode="icon"
-            variant="ghost"
-            size="sm"
-            className="size-6"
-            aria-label={`${row.getIsExpanded() ? 'Hide' : 'Show'} stock for ${
-              row.original.item_code ?? 'this line'
-            }`}
-            aria-expanded={row.getIsExpanded()}
-            onClick={(event) => {
-              event.stopPropagation();
-              row.toggleExpanded();
-            }}
-          >
-            {row.getIsExpanded() ? (
-              <ChevronDown className="size-3.5" aria-hidden />
-            ) : (
-              <ChevronRight className="size-3.5" aria-hidden />
-            )}
-          </Button>
-        ),
-        size: 44,
-        minSize: 44,
-        enableSorting: false,
-        enableResizing: false,
-        enableHiding: false,
-        meta: {
-          headerTitle: 'Expand',
-          expandedContent: (line: OrderInquiryLineRow) => (
-            <div className="px-3 py-2">
-              <LineSplitsList splits={line.splits ?? []} itemCode={line.item_code} />
-              {line.product_id ? (
-                <OrderInquiryStockGrid
-                  productId={line.product_id}
-                  location={line.location ?? null}
-                />
-              ) : (
-                <p className="text-xs text-muted-foreground">
-                  No product resolved for this line yet.
-                </p>
-              )}
-            </div>
-          ),
-        },
-      },
+      stockExpandColumn(),
       buildSelectColumn<OrderInquiryLineRow>({
         rowLabel: (row) => `Select ${row.original.item_code ?? 'line'}`,
       }),
@@ -626,14 +1010,7 @@ export function useOrderInquiryHeaderLinesColumns({
         meta: { headerTitle: 'Supplier', skeleton: <Skeleton className="h-4 w-20" /> },
         cell: ({ row }) => <SupplierCell row={row.original} />,
       },
-      {
-        id: 'po_number',
-        accessorFn: (row) => lineDocumentsOf(lineOf(row), 'po')[0]?.document ?? '',
-        header: ({ column }) => <DataGridColumnHeader title="PO" column={column} />,
-        size: 200,
-        meta: { headerTitle: 'PO' },
-        cell: ({ row }) => <LineDocumentsCell line={lineOf(row.original)} kind="po" />,
-      },
+      poColumn(),
       {
         id: 'spo_number',
         accessorFn: (row) => lineDocumentsOf(lineOf(row), 'spo')[0]?.document ?? '',
@@ -650,13 +1027,7 @@ export function useOrderInquiryHeaderLinesColumns({
       // AC-LT-07: the SAME Suggested column the worklist carries, right after SPO. It
       // reads the primary row's suggestions (S2 wires a line-level read).
       orderInquirySuggestedColumn() as ColumnDef<OrderInquiryLineRow>,
-      {
-        accessorKey: 'location',
-        header: ({ column }) => <DataGridColumnHeader title="Location" column={column} />,
-        size: 130,
-        meta: { headerTitle: 'Location', skeleton: <Skeleton className="h-4 w-16" /> },
-        cell: ({ row }) => <LocationCell row={row.original} />,
-      },
+      locationColumn(),
       {
         accessorKey: 'verb',
         header: ({ column }) => <DataGridColumnHeader title="Instruction" column={column} />,
@@ -723,23 +1094,7 @@ export function useOrderInquiryHeaderLinesColumns({
           // AC-ND-13 (owner ruling 26 Sep, G3): ONE History icon on every line - rows,
           // decisions and reserve history behind one dialog - never gated on a core line
           // or on `canReserve`.
-          const history = (
-            <Button
-              type="button"
-              mode="icon"
-              variant="ghost"
-              size="sm"
-              className="size-6 shrink-0"
-              aria-label="History"
-              title="History"
-              onClick={(event) => {
-                event.stopPropagation();
-                onLineHistoryClick?.(line);
-              }}
-            >
-              <HistoryIcon className="size-3.5" aria-hidden />
-            </Button>
-          );
+          const history = <LineHistoryButton line={line} onClick={onLineHistoryClick} />;
           // #1312 (AC-U6): the same paperclip the fulfilment board carries, on every
           // line that names a core sales-order line - a row raised before AutoCount
           // reconciled it (`core_line_id` null) has nowhere to file a clarification
@@ -803,5 +1158,14 @@ export function useOrderInquiryHeaderLinesColumns({
     attachmentsByLine,
     canEditAttachments,
     splitSheet,
+    inquiryType,
+    sparePartView,
+    headerState,
+    revisionState,
+    canEditRevision,
+    canDecide,
+    onEditLine,
+    currency,
+    attachmentsByRow,
   ]);
 }

@@ -5,7 +5,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
 import { isQtyOver, type QtyOverProduct } from '../lib/qtyOverQuote';
 import {
+  acceptAllPOSuggestions,
   acceptPOAnnotation,
+  acceptPOLineSuggestion,
   confirmPOVersion,
   editPOAnnotation,
   getPOVersion,
@@ -28,6 +30,9 @@ import { resolveExtractionPhase } from '../types/poIntake.types';
 import { POS_KEY, projectKey, PROJECTS_KEY } from './useProjects';
 
 export const PO_VERSION_KEY = 'project-po-version';
+
+/** Confirm's refusal when the PO names no customer to remember its codes for. */
+const ISSUER_REQUIRED = 'po_version_issuer_required';
 export const PO_VERSIONS_KEY = 'project-po-versions';
 
 export const poVersionKey = (versionId: string) => [PO_VERSION_KEY, versionId];
@@ -99,6 +104,9 @@ export function usePOIntakeController(
   const queryClient = useQueryClient();
   const query = usePOVersion(versionId, enabled);
   const [qtyOverProducts, setQtyOverProducts] = React.useState<QtyOverProduct[] | null>(null);
+  // Crew pass 2: Confirm refused because nobody knows whose codes these are. Shown under the
+  // "Issued by" picker, where it is fixed.
+  const [issuerError, setIssuerError] = React.useState<string | null>(null);
   const version = query.data ?? null;
   const poId = version?.purchase_order_id;
 
@@ -148,10 +156,20 @@ export function usePOIntakeController(
       settle(next);
       invalidatePo();
       toast.success('Confirmed. These lines are now the PO.');
+      const outcome = next?.confirm_result;
+      if (outcome?.codes_not_remembered === 'issuer_not_linked') {
+        toast.warning(
+          `Codes were not remembered: ${
+            outcome.codes_not_remembered_party ?? 'the issuer'
+          } is not linked to a customer. Link it under Parties.`,
+        );
+      }
     },
-    // The qty-over soft stop is not a failure: the screen asks for the reason instead.
+    // The qty-over soft stop is not a failure: the screen asks for the reason instead. The
+    // issuer refusal is said once, under the "Issued by" picker, not again as a toast.
     onError: (error: Error) => {
-      if (!isQtyOver(error)) toast.error(error.message);
+      const code = (error as { code?: string | null }).code;
+      if (!isQtyOver(error) && code !== ISSUER_REQUIRED) toast.error(error.message);
     },
   });
 
@@ -188,6 +206,36 @@ export function usePOIntakeController(
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [versionId, settle, queryClient],
   );
+
+  /** One line's suggestion: the line shows its saving spinner, like a cell edit. */
+  const acceptSuggestion = React.useCallback(
+    async (lineId: string) => {
+      if (!versionId) return;
+      setSavingLineIds((current) => [...current, lineId]);
+      try {
+        settle(await acceptPOLineSuggestion(versionId, lineId));
+        toast.success('Suggestion accepted');
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : 'Could not accept this suggestion',
+        );
+        queryClient.invalidateQueries({ queryKey: key });
+      } finally {
+        setSavingLineIds((current) => current.filter((id) => id !== lineId));
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [versionId, settle, queryClient],
+  );
+
+  const acceptAllMutation = useMutation({
+    mutationFn: () => acceptAllPOSuggestions(versionId as string),
+    onSuccess: (next) => {
+      settle(next);
+      toast.success('Suggestions accepted');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
 
   const runAnnotation = React.useCallback(
     async (annotationId: string, action: () => Promise<void>, success: string) => {
@@ -261,17 +309,32 @@ export function usePOIntakeController(
     },
     updateLine,
     confirm: async (qtyOverReason?: string) => {
+      setIssuerError(null);
       try {
         await confirmMutation.mutateAsync(qtyOverReason);
         setQtyOverProducts(null);
         return true;
       } catch (error) {
         if (isQtyOver(error)) setQtyOverProducts(error.products);
+        if ((error as { code?: string | null })?.code === ISSUER_REQUIRED) {
+          setIssuerError(error instanceof Error ? error.message : null);
+        }
         return false;
       }
     },
+    issuerError,
+    clearIssuerError: () => setIssuerError(null),
     qtyOverProducts,
     clearQtyOver: () => setQtyOverProducts(null),
+    refresh: () => {
+      if (versionId) queryClient.invalidateQueries({ queryKey: key });
+    },
+    acceptSuggestion,
+    acceptAllSuggestions: async () => {
+      if (!versionId) return;
+      await acceptAllMutation.mutateAsync().catch(() => undefined);
+    },
+    isAcceptingSuggestions: acceptAllMutation.isPending,
     acceptAnnotation,
     editAnnotation,
     rejectAnnotation,

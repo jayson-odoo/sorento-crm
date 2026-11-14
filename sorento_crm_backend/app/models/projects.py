@@ -344,6 +344,12 @@ class Project(Base, CompanyScopedMixin):
     owner_user_id = Column(
         String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    # The primary lead: the first owner at registration (PROJECT-LEADS-REASSIGN A5). Set once and
+    # never moved by a reassignment, so the Access card can still name the primary after the
+    # project changed hands.
+    primary_owner_user_id = Column(
+        String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
 
     # The PDF's "Final Negotiation": a FLAG, not a funnel rung, so a re-quote during
     # negotiation does not drag the card backwards and corrupt stage durations.
@@ -377,6 +383,16 @@ class Project(Base, CompanyScopedMixin):
     submitted_at = Column(DateTime(timezone=False), nullable=True)
     decided_at = Column(DateTime(timezone=False), nullable=True)
     decided_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    # AC-PROJECT-REGISTER (owner, 13 Nov): the AutoCount project this project became, written
+    # only by a `done` answer. Same names as `ProjectQuotationDocument`, so the shared create path
+    # (`ProjectAutocountWriteService._create`) works on a project as is.
+    autocount_doc_no = Column(String(80), nullable=True)
+    autocount_doc_key = Column(String(80), nullable=True)
+    autocount_book = Column(String(40), nullable=True)
+    # The key + exact body of a create whose outcome is not known yet (write-ahead).
+    autocount_pending_create = Column(JSONB(none_as_null=True), nullable=True)
+    autocount_registered_at = Column(DateTime(timezone=False), nullable=True)
 
     created_by = Column(String(100), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)

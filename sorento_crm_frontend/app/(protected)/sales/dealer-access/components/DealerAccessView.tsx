@@ -1,13 +1,14 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import {
   ColumnDef,
   PaginationState,
   getCoreRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { Filter as FilterIcon, Plus, Unlink } from 'lucide-react';
+import { Filter as FilterIcon, Plus, RefreshCw, Unlink } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardTable } from '@/components/ui/card';
@@ -17,11 +18,12 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Switch } from '@/components/ui/switch';
 import { Container } from '@/components/common/container';
 import LoadErrorState from '@/components/common/LoadErrorState';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { PageHeader } from '@/components/common/PageHeader';
-import { PillOverflow, PillOverflowList } from '@/components/common/PillOverflow';
+import { PillOverflow } from '@/components/common/PillOverflow';
 import { RowActionsMenu } from '@/components/common/RowActionsMenu';
 import type { RecordAction } from '@/components/common/recordActions';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
@@ -30,15 +32,36 @@ import { useIsMobile } from '@/hooks/use-mobile';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
-import type { DealerAccessRole, DealerAccessRow } from '@/services/dealerAccessService';
-import { DEALER_ACCESS_KEY, useDealerAccessPeopleQuery } from '../hooks/useDealerAccessQuery';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
+import { toast } from '@/lib/toast';
+import { replaceUrlSearch } from '@/lib/urlSearchState';
+import type {
+  DealerAccessLinkedAccount,
+  DealerAccessRole,
+  DealerAccessRow,
+} from '@/services/dealerAccessService';
+import { useDealerAccessRespondRetry } from '../hooks/useDealerAccessMutations';
+import {
+  DEALER_ACCESS_KEY,
+  useDealerAccessCustomerSearch,
+  useDealerAccessPeopleQuery,
+} from '../hooks/useDealerAccessQuery';
 import { useMyDealerCompanies } from '../hooks/useMyDealerCompanies';
-import DealerAccessFormDialog, { ACCESS_OPTIONS } from './DealerAccessFormDialog';
+import DealerAccessFormDialog, { ACCESS_OPTIONS, notInRespondText } from './DealerAccessFormDialog';
 
 const rowKey = (row: DealerAccessRow) => `${row.contact_id}:${row.company}`;
 
-/** The Access cell: the owner tag as a pill, or "Employee", and a hint when another account also links them. */
-function AccessCell({ row }: { row: DealerAccessRow }) {
+/** "Not in Respond.io yet" while Respond.io lacks the person (N5.4); nothing otherwise. */
+function RespondCell({ row }: { row: DealerAccessRow }) {
+  return row.in_respond ? null : (
+    <span className="block truncate text-xs text-muted-foreground" title="Not in Respond.io yet">
+      Not in Respond.io yet
+    </span>
+  );
+}
+
+/** The Access cell: the owner tag as a pill, or "Employee". The phone card adds the Respond.io marker below. */
+function AccessCell({ row, withRespond = false }: { row: DealerAccessRow; withRespond?: boolean }) {
   const label = row.access === 'owner' ? (row.owner_tag ?? 'Business Owner') : 'Employee';
   return (
     <span className="flex min-w-0 flex-col items-start gap-0.5">
@@ -49,36 +72,77 @@ function AccessCell({ row }: { row: DealerAccessRow }) {
       ) : (
         <span>{label}</span>
       )}
-      {row.other_account ? (
-        <span className="max-w-full truncate text-xs text-muted-foreground" title="also another account">
-          also another account
-        </span>
-      ) : null}
+      {withRespond ? <RespondCell row={row} /> : null}
     </span>
   );
 }
 
+/** A chip reads the customer's name; two of one row with the same name add their codes (N1.2). */
+function chipLabels(accounts: DealerAccessLinkedAccount[]): string[] {
+  const count = new Map<string, number>();
+  for (const a of accounts) count.set(a.name, (count.get(a.name) ?? 0) + 1);
+  return accounts.map((a) => ((count.get(a.name) ?? 0) > 1 ? `${a.name} (${a.code})` : a.name));
+}
+
 function AccountPills({ row }: { row: DealerAccessRow }) {
+  const labels = chipLabels(row.accounts);
   return (
     <PillOverflow
-      ariaLabel={`Accounts of ${row.name}`}
+      ariaLabel={`Customers of ${row.name}`}
       testId={`dealer-accounts-${rowKey(row)}`}
-      items={row.accounts.map((a) => ({ key: a.id, label: a.code }))}
-      renderPopover={(items) => <PillOverflowList items={items} />}
+      items={row.accounts.map((a, i) => ({ key: a.id, label: labels[i], title: a.code }))}
+      renderPopover={(items) => (
+        <ul className="flex flex-col gap-1 text-sm">
+          {items.map((item) => (
+            <li key={item.key} className="truncate" title={item.title}>
+              {/* A twin's label already carries its code (N1.2): the code shows once. */}
+              {item.title && !item.label.includes(item.title) ? `${item.label} (${item.title})` : item.label}
+            </li>
+          ))}
+        </ul>
+      )}
     />
   );
 }
 
 export default function DealerAccessView() {
+  const params = useSearchParams();
   const {
     value: searchQuery,
     setValue: setSearchQuery,
     debouncedValue: debouncedSearch,
     isSettling,
-  } = useDebouncedSearch();
+  } = useDebouncedSearch(params.get('q') ?? '');
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
-  const [companies, setCompanies] = useState<string[]>([]);
-  const [access, setAccess] = useState<DealerAccessRole[]>([]);
+  // Every filter lives in the address bar (N2.7); "My customers" is on unless `mine=0`.
+  const [mine, setMineState] = useState(() => params.get('mine') !== '0');
+  const [companies, setCompaniesState] = useState<string[]>(() => splitMulti(params.get('company')));
+  const [access, setAccessState] = useState<DealerAccessRole[]>(
+    () => splitMulti(params.get('access')) as DealerAccessRole[],
+  );
+  const [customers, setCustomersState] = useState<string[]>(() => splitMulti(params.get('customer')));
+  const [customerNames, setCustomerNames] = useState<Record<string, string>>({});
+  const setMine = (value: boolean) => {
+    setMineState(value);
+    replaceUrlSearch({ mine: value ? '' : '0' });
+  };
+  const setCompanies = (value: string[]) => {
+    setCompaniesState(value);
+    replaceUrlSearch({ company: joinMulti(value) });
+  };
+  const setAccess = (value: DealerAccessRole[]) => {
+    setAccessState(value);
+    replaceUrlSearch({ access: joinMulti(value) });
+  };
+  const setCustomers = (value: string[]) => {
+    setCustomersState(value);
+    replaceUrlSearch({ customer: joinMulti(value) });
+  };
+  const searchCustomers = useDealerAccessCustomerSearch(mine, companies);
+  // The settled search text rides the address bar too, as `q`.
+  useEffect(() => {
+    replaceUrlSearch({ q: debouncedSearch });
+  }, [debouncedSearch]);
   const [form, setForm] = useState<{ open: boolean; person: DealerAccessRow | null }>({
     open: false,
     person: null,
@@ -88,7 +152,13 @@ export default function DealerAccessView() {
 
   // The API takes one access level; both picked is the same as none.
   const accessFilter = access.length === 1 ? access[0] : '';
-  useResetPageOnFilterChange(setPagination, [debouncedSearch, companies.join(','), accessFilter]);
+  useResetPageOnFilterChange(setPagination, [
+    debouncedSearch,
+    companies.join(','),
+    accessFilter,
+    mine,
+    customers.join(','),
+  ]);
 
   const { data, isLoading, isFetching, isPlaceholderData, isError, error, refetch } =
     useDealerAccessPeopleQuery({
@@ -97,8 +167,22 @@ export default function DealerAccessView() {
       searchQuery: debouncedSearch,
       companies,
       access: accessFilter,
+      mine,
+      customers,
     });
   const rows = useMemo<DealerAccessRow[]>(() => data?.data ?? [], [data]);
+  // A picked customer's chip reads its name: from the search that offered it, else from a row that lists it.
+  const selectedCustomers = customers.map((id) => {
+    const fromRows = rows.flatMap((r) => r.accounts).find((a) => a.id === id);
+    const label = customerNames[id] ?? (fromRows ? `${fromRows.name} (${fromRows.code})` : 'A customer');
+    return { value: id, label };
+  });
+  const fetchCustomerOptions = async (query: string) => {
+    const found = await searchCustomers(query);
+    const options = found.map((c) => ({ value: c.id, label: `${c.name} (${c.code})` }));
+    setCustomerNames((prev) => ({ ...prev, ...Object.fromEntries(options.map((o) => [o.value, o.label])) }));
+    return options;
+  };
   const total = data?.pagination.total ?? 0;
 
   const unlink = useDeferredRowAction({
@@ -109,20 +193,43 @@ export default function DealerAccessView() {
     invalidateKeys: [[...DEALER_ACCESS_KEY]],
   });
 
+  const respondRetry = useDealerAccessRespondRetry();
+
   const openEdit = (person: DealerAccessRow) => setForm({ open: true, person });
 
-  const actionsFor = (row: DealerAccessRow): RecordAction[] => [
-    { key: 'edit', label: 'Edit', run: () => openEdit(row) },
-    ...row.accounts.map(
-      (a): RecordAction => ({
-        key: `unlink-${a.link_id}`,
-        label: `Unlink from ${a.code} ${a.name}`,
-        icon: Unlink,
-        kind: 'destructive',
-        run: () => unlink.run({ id: a.link_id, subject: `${row.name} from ${a.code}` }),
-      }),
-    ),
-  ];
+  // A person I may not change has no actions; clicking them opens the dialog read-only (N2.5).
+  const actionsFor = (row: DealerAccessRow): RecordAction[] =>
+    row.editable
+      ? [
+          { key: 'edit', label: 'Edit', run: () => openEdit(row) },
+          ...(row.in_respond
+            ? []
+            : [
+                {
+                  key: 'respond',
+                  label: 'Try again in Respond.io',
+                  icon: RefreshCw,
+                  run: () =>
+                    respondRetry.mutate(row.contact_id, {
+                      onSuccess: (result) => {
+                        if (result.respond === 'failed') toast.error(notInRespondText(result.respond_error));
+                      },
+                    }),
+                } satisfies RecordAction,
+              ]),
+          ...row.accounts
+            .filter((a) => a.mine && a.link_id)
+            .map(
+              (a): RecordAction => ({
+                key: `unlink-${a.link_id}`,
+                label: `Unlink from ${a.name} (${a.code})`,
+                icon: Unlink,
+                kind: 'destructive',
+                run: () => unlink.run({ id: String(a.link_id), subject: `${row.name} from ${a.name}` }),
+              }),
+            ),
+        ]
+      : [];
 
   const columns = useMemo<ColumnDef<DealerAccessRow>[]>(
     () => [
@@ -161,10 +268,10 @@ export default function DealerAccessView() {
       },
       {
         id: 'accounts',
-        header: 'My accounts',
+        header: 'Customers',
         size: 240,
         cell: ({ row }) => <AccountPills row={row.original} />,
-        meta: { headerTitle: 'My accounts', skeleton: <Skeleton className="h-5 w-32" /> },
+        meta: { headerTitle: 'Customers', skeleton: <Skeleton className="h-5 w-32" /> },
       },
       {
         id: 'access',
@@ -174,19 +281,27 @@ export default function DealerAccessView() {
         meta: { headerTitle: 'Access', skeleton: <Skeleton className="h-5 w-24" /> },
       },
       {
+        id: 'respond',
+        header: 'Respond.io',
+        size: 160,
+        cell: ({ row }) => <RespondCell row={row.original} />,
+        meta: { headerTitle: 'Respond.io', skeleton: <Skeleton className="h-4 w-24" /> },
+      },
+      {
         id: 'actions',
         header: '',
         size: 48,
         enableResizing: false,
-        cell: ({ row }) => (
-          <RowActionsMenu actions={actionsFor(row.original)} ariaLabel={row.original.name} />
-        ),
+        cell: ({ row }) => {
+          const actions = actionsFor(row.original);
+          return actions.length ? <RowActionsMenu actions={actions} ariaLabel={row.original.name} /> : null;
+        },
         meta: { skeleton: <Skeleton className="size-6" /> },
       },
     ],
-    // `unlink.run` is memoised by the hook; `actionsFor` only closes over it and `setForm`.
+    // `unlink.run` and `respondRetry.mutate` are stable; `actionsFor` only closes over them and `setForm`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [unlink.run],
+    [unlink.run, respondRetry.mutate],
   );
 
   const table = useReactTable({
@@ -202,7 +317,7 @@ export default function DealerAccessView() {
     enableColumnResizing: true,
   });
 
-  const filterCount = companies.length + access.length;
+  const filterCount = companies.length + access.length + customers.length + (mine ? 0 : 1);
   const searching = !!debouncedSearch || filterCount > 0;
   const emptyMessage = searching ? (
     'No people match this search.'
@@ -244,6 +359,16 @@ export default function DealerAccessView() {
                 </Button>
               </PopoverTrigger>
               <PopoverContent align="start" className="w-80 space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <Label htmlFor="dealer-access-mine">My customers</Label>
+                  <Switch
+                    id="dealer-access-mine"
+                    aria-label="My customers"
+                    size="sm"
+                    checked={mine}
+                    onCheckedChange={(v) => setMine(v === true)}
+                  />
+                </div>
                 {companyOptions.length > 1 ? (
                   <div className="space-y-1.5">
                     <Label className="text-xs text-muted-foreground">Company</Label>
@@ -258,6 +383,19 @@ export default function DealerAccessView() {
                     />
                   </div>
                 ) : null}
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-muted-foreground">Customer</Label>
+                  <SearchableMultiSelect
+                    aria-label="Customer"
+                    value={customers}
+                    onChange={setCustomers}
+                    fetchOptions={fetchCustomerOptions}
+                    selectedOptions={selectedCustomers}
+                    clearable
+                    size="sm"
+                    placeholder="Any customer"
+                  />
+                </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs text-muted-foreground">Access</Label>
                   <SearchableMultiSelect
@@ -277,8 +415,11 @@ export default function DealerAccessView() {
                     size="sm"
                     disabled={filterCount === 0}
                     onClick={() => {
-                      setCompanies([]);
-                      setAccess([]);
+                      setCompaniesState([]);
+                      setAccessState([]);
+                      setCustomersState([]);
+                      setMineState(true);
+                      replaceUrlSearch({ mine: '', company: '', access: '', customer: '' });
                     }}
                   >
                     Clear all
@@ -390,10 +531,12 @@ function PeopleCards({
                   {row.phone} &middot; {row.company_name}
                 </p>
               </div>
-              <RowActionsMenu actions={actionsFor(row)} ariaLabel={row.name} />
+              {actionsFor(row).length ? (
+                <RowActionsMenu actions={actionsFor(row)} ariaLabel={row.name} />
+              ) : null}
             </div>
             <div className="mt-1.5">
-              <AccessCell row={row} />
+              <AccessCell row={row} withRespond />
             </div>
             <div className="mt-1.5">
               <AccountPills row={row} />

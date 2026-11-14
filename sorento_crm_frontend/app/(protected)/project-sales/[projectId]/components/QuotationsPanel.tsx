@@ -12,6 +12,8 @@ import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { Label } from '@/components/ui/label';
 import { RowActionsMenu } from '@/components/common/RowActionsMenu';
 import { useDeferredBulkAction } from '@/hooks/useDeferredBulkAction';
 import { formatDateInMalaysia } from '@/lib/helpers';
@@ -79,22 +81,40 @@ export function QuotationsPanel({ project }: { project: Project }) {
   const router = useRouter();
   const documents = useQuotationDocuments(project.id);
   const [search, setSearch] = React.useState('');
+  // Prepared By names ticked in Filters; empty = everyone. The row carries the creator's NAME
+  // only (`prepared_by`), so the filter matches on it.
+  const [preparedBy, setPreparedBy] = React.useState<string[]>([]);
+  const preparerOptions = React.useMemo(
+    () =>
+      Array.from(
+        new Set((documents.data ?? []).map((row) => row.prepared_by).filter(Boolean) as string[]),
+      )
+        .sort((a, b) => a.localeCompare(b))
+        .map((name) => ({ value: name, label: name })),
+    [documents.data],
+  );
   // Client-side on purpose: a project's quotations are all in memory and unpaged.
   const rows = React.useMemo(() => {
     const needle = search.trim().toLowerCase();
     // The project's quotation leads the list: it is the one the POs are checked against.
-    const all = [...(documents.data ?? [])].sort(
-      (a, b) => Number(b.kind === 'quotation') - Number(a.kind === 'quotation'),
-    );
+    const all = [...(documents.data ?? [])]
+      .sort((a, b) => Number(b.kind === 'quotation') - Number(a.kind === 'quotation'))
+      .filter((row) => preparedBy.length === 0 || preparedBy.includes(row.prepared_by ?? ''));
     if (!needle) return all;
     return all.filter((row) =>
-      [row.our_ref, row.document_no, row.subject_title, row.recipient_name_snapshot]
+      [
+        row.our_ref,
+        row.document_no,
+        row.subject_title,
+        row.recipient_name_snapshot,
+        row.prepared_by,
+      ]
         .filter(Boolean)
         .join(' ')
         .toLowerCase()
         .includes(needle),
     );
-  }, [documents.data, search]);
+  }, [documents.data, search, preparedBy]);
   const [rowSelection, setRowSelection] = React.useState<RowSelectionState>({});
   const hasQuotation = (documents.data ?? []).some((row) => row.kind === 'quotation');
 
@@ -184,6 +204,23 @@ export function QuotationsPanel({ project }: { project: Project }) {
           ),
         size: 200,
         meta: { headerTitle: 'Recipient' },
+      },
+      {
+        // Who quoted: the document's creator, the same Prepared By its header prints (owner,
+        // 11 Nov: never the project owner, not editable).
+        id: 'prepared_by',
+        accessorFn: (row) => row.prepared_by ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Prepared by" column={column} />,
+        cell: ({ row }) =>
+          row.original.prepared_by ? (
+            <span className="truncate text-sm" title={row.original.prepared_by}>
+              {row.original.prepared_by}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          ),
+        size: 180,
+        meta: { headerTitle: 'Prepared by' },
       },
       {
         id: 'scope_count',
@@ -285,6 +322,31 @@ export function QuotationsPanel({ project }: { project: Project }) {
         <DataGridListToolbar
           table={table}
           exportConfig={{ filename: 'quotations' }}
+          filters={{
+            kind: 'custom',
+            active: preparedBy.length > 0,
+            activeCount: preparedBy.length > 0 ? 1 : 0,
+            activeSummary: {
+              label: `Prepared by: ${preparedBy.join(', ')}`,
+              onClear: () => setPreparedBy([]),
+            },
+            content: (
+              <div className="space-y-4">
+                <div>
+                  <Label htmlFor="proposals-prepared-by-filter">Prepared by</Label>
+                  <SearchableMultiSelect
+                    id="proposals-prepared-by-filter"
+                    value={preparedBy}
+                    onChange={setPreparedBy}
+                    options={preparerOptions}
+                    placeholder="Everyone"
+                    triggerClassName="mt-1"
+                    clearable
+                  />
+                </div>
+              </div>
+            ),
+          }}
           searchSlot={
             <ListSearchInput
               type="search"
@@ -345,11 +407,14 @@ export function QuotationsPanel({ project }: { project: Project }) {
       isLoading={documents.isLoading}
       error={documents.isError ? documents.error : undefined}
       emptyTitle={
-        search.trim() && (documents.data ?? []).length > 0
+        (search.trim() || preparedBy.length > 0) && (documents.data ?? []).length > 0
           ? 'Nothing matches that search'
           : 'Nothing quoted yet'
       }
-      pageResetKey={search}
+      // Every header sorts. The whole project's proposals are in memory (unpaged fetch), so the
+      // grid sorts the full set before it pages and the order holds on page 2.
+      sortable
+      pageResetKey={`${search}|${preparedBy.join(',')}`}
       pageSize={15}
       // The row is the way in, and it goes to the document's own page: a list answers "what do
       // we have", a document answers "what is in this one", and stacking them cramps both.

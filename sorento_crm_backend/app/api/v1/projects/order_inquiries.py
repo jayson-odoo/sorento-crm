@@ -15,17 +15,30 @@ import logging
 import re
 from typing import List, Literal, Optional
 
-from fastapi import APIRouter, Body, Depends, Query, Response
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import (
+    get_current_user_or_api_key,
     require_any_permission,
     require_permission,
+    require_any_permission_with_api_key,
     require_permission_with_api_key,
 )
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.schemas.download import DownloadResponse
+from app.schemas.stock_debt_snapshot import (
+    OiPoChangeIn,
+    OiPoLinkLinkIn,
+    OiPoLinkOptions,
+    OiPoLinkRowsIn,
+    OiPoRelocateIn,
+    OiPoResumeIn,
+    PoLinkResult,
+    OiPoUnlinkIn,
+    PoLinkResults,
+)
 from app.schemas.project_order_inquiry import (
     AcknowledgeResult,
     AcknowledgeRowsRequest,
@@ -86,6 +99,8 @@ from app.services.decision_trail_service import DecisionTrailService
 from app.services.download_service import DownloadService
 from app.services.error_handler import AppException, handle_internal_error, handle_unprocessable
 from app.services import order_inquiry_history_service
+from app.services import spare_part_request_service
+from app.services.stock_read_scope import SPARE_PART_READ
 from app.services.order_inquiry_header_service import OrderInquiryHeaderService
 from app.services.order_inquiry_reserve_service import OrderInquiryReserveService, as_utc
 from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
@@ -112,6 +127,52 @@ ACKNOWLEDGE = "projects.order_inquiries.acknowledge"
 #: whoever may commit stock against a request - separate from `ACKNOWLEDGE`, which is
 #: purchasing's own grant to raise the request in the first place.
 RESERVE = "projects.order_inquiries.reserve"
+#: SPARE-PART-ORDER-REQUEST: a holder of only a spare part grant (create or view) opens the
+#: OI list, page and lines for their own and decidable spare part requests (`_visibility`
+#: narrows every read).
+_VIEW_GATE = require_permission_with_api_key(VIEW)
+_SPARE_PART_GATE = require_any_permission_with_api_key(list(SPARE_PART_READ))
+
+
+def _OI_READ(
+    current_user: dict = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+) -> dict:
+    """The projects view grant, or a spare part grant: the same two gates every other OI
+    read uses, one after the other (module guard and admin shortcut included)."""
+    try:
+        return _VIEW_GATE(current_user=current_user, db=db)
+    except HTTPException:
+        return _SPARE_PART_GATE(current_user=current_user, db=db)
+
+
+def _visibility(db: Session, user: dict):
+    """The header visibility clause for this caller (`spare_part_request_service.
+    visibility_clause`): a pre-approval spare part request only for its requester, its
+    approvers and admins; a create-only requester sees only their own requests."""
+    uid = str(user.get("id") or "")
+    # The same cached check the route's own gate just made (`_OI_READ`).
+    has_view = UserPermissionService(db).check_user_has_permission(uid, VIEW)
+    return spare_part_request_service.visibility_clause(db, uid, has_view=has_view)
+
+
+def _holds_oi_read(db: Session, user: dict) -> bool:
+    """One of the three grants that open every order inquiry's own reads (view, acknowledge,
+    reserve); without them the caller is a spare part requester scoped to their own."""
+    service = UserPermissionService(db)
+    uid = str(user.get("id") or "")
+    return any(service.check_user_has_permission(uid, slug) for slug in (VIEW, ACKNOWLEDGE, RESERVE))
+
+
+def _assert_inquiry_visible(db: Session, inquiry_id: str, user: dict) -> OrderInquiry:
+    inquiry = (
+        db.query(OrderInquiry)
+        .filter(OrderInquiry.id == inquiry_id, _visibility(db, user))
+        .first()
+    )
+    if inquiry is None:
+        raise AppException(404, "This order inquiry no longer exists.", code="oi_header_not_found")
+    return inquiry
 #: Lane B (`PLAN-order-sheet-oi-reports-22sep.md`, AC-B7 / `app/dependencies.py`'s own
 #: rule): a WRITE endpoint - it creates a `user_downloads` row and enqueues a
 #: background render - is never reachable by `X-API-Key` alone, unlike the sync GET it
@@ -464,7 +525,7 @@ def list_order_inquiry_worklist(
             "fetch. An explicit `state` still wins. Off, the response is unchanged."
         ),
     ),
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    _user: dict = Depends(_OI_READ),
     db: Session = Depends(get_db),
 ):
     """Everything purchasing has been told to buy, whoever it belongs to.
@@ -478,12 +539,13 @@ def list_order_inquiry_worklist(
     the worker is serving.
     """
     try:
-        return OrderInquiryWorklistService(db).list_rows(
+        result = OrderInquiryWorklistService(db).list_rows(
             page=page,
             limit=limit,
             sort=sort,
             direction=direction,
             include_cancelled=include_history,
+            visibility=_visibility(db, _user),
             **_worklist_filters(
                 query,
                 delivery_month,
@@ -512,6 +574,9 @@ def list_order_inquiry_worklist(
                 reserve_request=reserve_request,
             ),
         )
+        # SPARE-PART-ORDER-REQUEST (G8): a spare part line's price is supplier cost.
+        spare_part_request_service.mask_row_prices(db, result["data"], str(_user.get("id") or ""))
+        return result
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
@@ -555,12 +620,13 @@ def order_inquiry_worklist_summary(
     dead_document: Optional[Literal["po_cancelled", "spo_withdrawn"]] = Query(None),
     inquiry_no: Optional[list[str]] = Query(None),
     reserve_request: Optional[list[str]] = Query(None),
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    _user: dict = Depends(_OI_READ),
     db: Session = Depends(get_db),
 ):
     """The strip above the list, and the month / supplier / project controls beside it."""
     try:
         return OrderInquiryWorklistService(db).summary(
+            visibility=_visibility(db, _user),
             **_worklist_filters(
                 query,
                 delivery_month,
@@ -1465,14 +1531,18 @@ def commit_order_inquiry_reserve(
     "/order-inquiries/reserve-status/summary", response_model=ReserveStatusSummaryOut
 )
 def order_inquiry_reserve_status_summary(
-    current_user: dict = Depends(require_any_permission([VIEW, ACKNOWLEDGE, RESERVE])),
+    current_user: dict = Depends(
+        require_any_permission([VIEW, ACKNOWLEDGE, RESERVE, *SPARE_PART_READ])
+    ),
     db: Session = Depends(get_db),
 ):
     """OI-STAGED-NOTIFY (AC-SN-31): OIs per reserve status (everyone's) and the caller's
-    own parked requests / notices."""
+    own parked requests / notices. A spare part requester (none of the three OI grants)
+    counts their own requests only."""
     try:
         return OrderInquiryReserveService(db).reserve_status_summary(
-            actor_user_id=current_user["id"]
+            actor_user_id=current_user["id"],
+            visibility=None if _holds_oi_read(db, current_user) else _visibility(db, current_user),
         )
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
@@ -1664,7 +1734,9 @@ def sales_order_line_decision_trail(
 )
 def list_order_inquiry_reserve_requests(
     inquiry_id: str,
-    current_user: dict = Depends(require_any_permission([VIEW, ACKNOWLEDGE, RESERVE])),
+    current_user: dict = Depends(
+        require_any_permission([VIEW, ACKNOWLEDGE, RESERVE, *SPARE_PART_READ])
+    ),
     db: Session = Depends(get_db),
 ):
     """Every reserve request this header has ever raised, newest first - the Lines tab's
@@ -1677,6 +1749,9 @@ def list_order_inquiry_reserve_requests(
     inquiry's own Lines tab at all."""
     try:
         validate_uuid_path(inquiry_id, resource="Order inquiry")
+        if not _holds_oi_read(db, current_user):
+            # A spare part requester: their own request only.
+            _assert_inquiry_visible(db, inquiry_id, current_user)
         requests = (
             db.query(OrderInquiryReserveRequest)
             .filter(OrderInquiryReserveRequest.order_inquiry_id == inquiry_id)
@@ -1708,6 +1783,33 @@ def mark_order_inquiry_rows(
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 
+def _mark_tied_elsewhere(db: Session, row_id: str, candidates: list) -> None:
+    """`tied_elsewhere` per PO-line candidate: AutoCount ties the line to a sales order line other
+    than this row's own (two reads for the whole list, no per-candidate query)."""
+    from app.models.order import SalesOrderLine
+    from app.models.procurement import PurchaseOrderLine
+    from app.models.project_so import OrderInquiryRow, ProjectSalesOrderLine
+
+    own = (
+        db.query(SalesOrderLine.source_ref)
+        .select_from(OrderInquiryRow)
+        .join(ProjectSalesOrderLine, ProjectSalesOrderLine.id == OrderInquiryRow.so_line_id)
+        .join(SalesOrderLine, SalesOrderLine.id == ProjectSalesOrderLine.core_sales_order_line_id)
+        .filter(OrderInquiryRow.id == row_id)
+        .scalar()
+    )
+    own = (own or "").strip()
+    ids = [c["po_line_id"] for c in candidates if c.get("po_line_id")]
+    refs = (
+        {str(i): (r or "").strip() for i, r in db.query(PurchaseOrderLine.id, PurchaseOrderLine.from_so_line_ref)
+         .filter(PurchaseOrderLine.id.in_(ids)).all()}
+        if ids else {}
+    )
+    for candidate in candidates:
+        tied = refs.get(str(candidate.get("po_line_id")), "")
+        candidate["tied_elsewhere"] = bool(tied) and tied != own
+
+
 @router.get(
     "/order-inquiry-rows/{row_id}/po-candidates",
     response_model=OrderInquiryPoCandidatesResponse,
@@ -1730,6 +1832,7 @@ def order_inquiry_po_candidates(
             # (CS holds this route's slug). The PO number and supplier still identify the line.
             for candidate in candidates:
                 candidate["unit_cost"] = None
+        _mark_tied_elsewhere(db, row_id, candidates)
         still_to_link = service.still_to_link_for_row(row_id)
         linkable_qty = service.linkable_qty_for_row(row_id)
         return {
@@ -1802,6 +1905,161 @@ def place_order_inquiry_row_on_po(
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+# --------------------------------------------------------------- PO link (OI-PO-LINK)
+#
+# The Stock Debt link function, driven from ticked Order Inquiry rows (`PoLinkService` with
+# `scope_for_oi_rows`). Same permission and the same Settings switch as Stock Debt.
+
+LINK_PO = "projects.stock_debt.link_po"
+
+
+def _uuid_or_422(value: str, what: str) -> str:
+    """A malformed id in a request body is a 422, never a 500 from the database."""
+    try:
+        return validate_uuid_path(value, resource=what)
+    except AppException:
+        raise AppException(status_code=422, message=f"{what} is not valid.")
+
+
+def _oi_link_scope(db: Session, row_ids: list[str]):
+    from app.services.scm.po_link_service import scope_for_oi_rows
+
+    for row_id in row_ids:
+        _uuid_or_422(row_id, "Order inquiry row")
+    return scope_for_oi_rows(db, row_ids)
+
+
+def _oi_rebook(db: Session, scope, outcomes: list, current_user: dict) -> None:
+    """After a write that changed AutoCount: the book step for exactly the ticked rows that
+    resolved into the scope, so the PO column shows the link now (the same call `auto-place`
+    makes with `row_ids`). Only for a user who may run `auto-place` (its own permission); anyone
+    else sees the link at the next sync."""
+    db.commit()  # AutoCount already changed: keep the read-back whatever the re-run does
+    if not any(o in ("done", "recovered") for o in outcomes) or not scope.row_ids:
+        return
+    if not UserPermissionService(db).check_user_has_permission(current_user["id"], ACTION):
+        return
+    try:
+        ProjectOrderInquiryService(db).auto_place_for_products(
+            None,
+            actor_user_id=current_user["id"],
+            trigger="worklist",
+            row_ids=list(scope.row_ids),
+            redeal_drafts=True,
+            include_awaiting=True,
+        )
+        db.commit()
+    except Exception:  # noqa: BLE001
+        logger.exception("oi po link: the book step re-run failed")
+        db.rollback()
+
+
+@router.post("/order-inquiries/po-link/options", response_model=OiPoLinkOptions)
+def oi_po_link_options(
+    payload: OiPoLinkRowsIn,
+    current_user: dict = Depends(require_permission(LINK_PO)),
+    db: Session = Depends(get_db),
+):
+    from app.api.v1.projects.stock_debt_snapshots import _require_switch
+    from app.services.scm.po_link_service import PoLinkService, actor_of
+
+    _require_switch(db)
+    try:
+        scope = _oi_link_scope(db, payload.row_ids)
+        service = PoLinkService(db, scope, actor_of(db, current_user))
+        return {**service.options(), "lines": service.lines(), "skipped": scope.skipped}
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+def _oi_po_link_write(db: Session, current_user: dict, row_ids: list[str], call, ids=()):
+    """`ids`: (label, value) pairs from the body, checked before anything is read or sent."""
+    from app.api.v1.projects.stock_debt_snapshots import _require_switch
+    from app.services.scm.po_link_service import PoLinkService, actor_of
+
+    _require_switch(db)
+    try:
+        for what, value in ids:
+            _uuid_or_422(value, what)
+        scope = _oi_link_scope(db, row_ids)
+        out = call(PoLinkService(db, scope, actor_of(db, current_user)))
+        results = out["results"] if "results" in out else [out]
+        _oi_rebook(db, scope, [r.get("outcome") for r in results], current_user)
+        return out
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post("/order-inquiries/po-link/link", response_model=PoLinkResults)
+def oi_po_link_link(
+    payload: OiPoLinkLinkIn,
+    current_user: dict = Depends(require_permission(LINK_PO)),
+    db: Session = Depends(get_db),
+):
+    ids = [("Sales order line", l.sales_order_line_id) for l in payload.lines] + [
+        ("PO line", l.po_line_id) for l in payload.lines
+    ]
+    return _oi_po_link_write(
+        db, current_user, payload.row_ids, lambda s: s.link([l.model_dump() for l in payload.lines]), ids
+    )
+
+
+@router.post("/order-inquiries/po-link/unlink", response_model=PoLinkResults)
+def oi_po_link_unlink(
+    payload: OiPoUnlinkIn,
+    current_user: dict = Depends(require_permission(LINK_PO)),
+    db: Session = Depends(get_db),
+):
+    return _oi_po_link_write(
+        db, current_user, payload.row_ids, lambda s: s.unlink(payload.po_line_ids),
+        [("PO line", i) for i in payload.po_line_ids],
+    )
+
+
+@router.post("/order-inquiries/po-link/change", response_model=PoLinkResults)
+def oi_po_link_change(
+    payload: OiPoChangeIn,
+    current_user: dict = Depends(require_permission(LINK_PO)),
+    db: Session = Depends(get_db),
+):
+    ids = [("Sales order line", c.sales_order_line_id) for c in payload.changes] + [
+        ("PO line", c.po_line_id) for c in payload.changes
+    ]
+    ids += [("PO line", c.from_po_line_id) for c in payload.changes if c.from_po_line_id]
+    return _oi_po_link_write(
+        db, current_user, payload.row_ids, lambda s: s.change([c.model_dump() for c in payload.changes]), ids
+    )
+
+
+@router.post("/order-inquiries/po-link/relocate", response_model=PoLinkResult)
+def oi_po_link_relocate(
+    payload: OiPoRelocateIn,
+    current_user: dict = Depends(require_permission(LINK_PO)),
+    db: Session = Depends(get_db),
+):
+    return _oi_po_link_write(
+        db, current_user, payload.row_ids, lambda s: s.relocate(payload.po_line_id),
+        [("PO line", payload.po_line_id)],
+    )
+
+
+@router.post("/order-inquiries/po-link/operations/{operation_id}/resume", response_model=PoLinkResult)
+def oi_po_link_resume(
+    operation_id: str,
+    payload: OiPoResumeIn,
+    current_user: dict = Depends(require_permission(LINK_PO)),
+    db: Session = Depends(get_db),
+):
+    ids = [("PO line", payload.po_line_id)]
+    if payload.sales_order_line_id:
+        ids.append(("Sales order line", payload.sales_order_line_id))
+    return _oi_po_link_write(
+        db, current_user, payload.row_ids,
+        lambda s: s.resume(operation_id, payload.po_line_id, payload.sales_order_line_id), ids,
+    )
 
 
 @router.post("/order-inquiries/auto-place", response_model=AutoPlaceResult)
@@ -1980,6 +2238,7 @@ HeaderListSort = Literal[
     "agent",
     "so_date",
     "status",
+    "inquiry_type",
 ]
 _MAX_HEADER_QUERY_LENGTH = WORKLIST_QUERY_MAX_LENGTH
 
@@ -2025,11 +2284,15 @@ def list_order_inquiry_headers(
             "OR-ed. The reserve emails' button lists exactly the OIs the email covers."
         ),
     ),
+    inquiry_type: Optional[list[str]] = Query(
+        None,
+        description="sales_order and/or spare_part_request; several are OR-ed.",
+    ),
     sort: Optional[HeaderListSort] = Query(None, description="Defaults to raised_at."),
     direction: Optional[Literal["asc", "desc"]] = Query("asc", alias="dir"),
     page: int = Query(1, ge=1),
     limit: int = Query(25, ge=1, le=MAX_PAGE_LIMIT),
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    _user: dict = Depends(_OI_READ),
     db: Session = Depends(get_db),
 ):
     """One row per order inquiry - Documents view, default (AC-LS-01..07)."""
@@ -2050,6 +2313,8 @@ def list_order_inquiry_headers(
             project=project,
             reserve=reserve,
             inquiry_no=inquiry_no,
+            inquiry_type=inquiry_type,
+            visibility=_visibility(db, _user),
             sort=sort,
             direction=direction,
             page=page,
@@ -2068,7 +2333,7 @@ def list_order_inquiry_headers(
 )
 def get_order_inquiry_header(
     inquiry_id: str,
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    _user: dict = Depends(_OI_READ),
     db: Session = Depends(get_db),
 ):
     """The detail page's own header card + Order/Customer blocks + raise history
@@ -2076,7 +2341,19 @@ def get_order_inquiry_header(
     the session's own `do_orm_execute` listener, not a filter written here."""
     try:
         validate_uuid_path(inquiry_id, resource="Order inquiry")
-        return OrderInquiryHeaderService(db).get(inquiry_id)
+        header = OrderInquiryHeaderService(db).get(
+            inquiry_id, visibility=_visibility(db, _user)
+        )
+        if header.inquiry_type == spare_part_request_service.KIND:
+            inquiry = db.query(OrderInquiry).filter(OrderInquiry.id == inquiry_id).one()
+            uid = str(_user.get("id") or "")
+            header.can_decide = spare_part_request_service.can_decide(db, inquiry, uid)
+            header.can_edit = spare_part_request_service.can_edit(inquiry, uid)
+            header.can_revise = spare_part_request_service.can_revise(db, inquiry, uid)
+            header.revision_state = inquiry.revision_state
+            if spare_part_request_service.prices_visible(db, inquiry, uid):
+                header.total = spare_part_request_service.request_total(db, inquiry)
+        return header
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
@@ -2087,7 +2364,7 @@ def get_order_inquiry_header(
 )
 def get_order_inquiry_history(
     inquiry_id: str,
-    _user: dict = Depends(require_permission(VIEW)),
+    _user: dict = Depends(require_any_permission([VIEW, *SPARE_PART_READ])),
     db: Session = Depends(get_db),
 ):
     """The detail page's History tab (STANDARD-HISTORY wave 1, AC-SH-B1 to B6): every
@@ -2101,9 +2378,10 @@ def get_order_inquiry_history(
     company-scope listener before any trail is."""
     try:
         validate_uuid_path(inquiry_id, resource="Order inquiry")
-        if db.query(OrderInquiry.id).filter(OrderInquiry.id == inquiry_id).first() is None:
-            raise AppException(404, "This order inquiry no longer exists.", code="oi_header_not_found")
-        return {"events": order_inquiry_history_service.history(db, inquiry_id)}
+        inquiry = _assert_inquiry_visible(db, inquiry_id, _user)
+        # SPARE-PART-ORDER-REQUEST (G8): a price change is cost, masked like every cost.
+        mask = not spare_part_request_service.prices_visible(db, inquiry, str(_user.get("id") or ""))
+        return {"events": order_inquiry_history_service.history(db, inquiry_id, mask_cost=mask)}
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
@@ -2114,13 +2392,14 @@ def get_order_inquiry_history(
 )
 def get_order_inquiry_related_documents(
     inquiry_id: str,
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    _user: dict = Depends(_OI_READ),
     db: Session = Depends(get_db),
 ):
     """Related PO / Related SPO tabs (AC-DT-03): every document this header's own
     non-cancelled rows are linked to, empty lists when nothing is linked yet."""
     try:
         validate_uuid_path(inquiry_id, resource="Order inquiry")
+        _assert_inquiry_visible(db, inquiry_id, _user)
         return OrderInquiryHeaderService(db).related_documents(inquiry_id)
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))

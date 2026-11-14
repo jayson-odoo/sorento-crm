@@ -141,6 +141,34 @@ export async function retryPOExtraction(versionId: string): Promise<POVersion | 
   return asVersionOrNull(await readJson(response));
 }
 
+/**
+ * PO-UPLOAD-MATCHING AC-A1: accept one line's suggested product and/or qty. An accepted
+ * product is remembered for this customer. Returns the whole version, as a line edit does.
+ */
+export async function acceptPOLineSuggestion(
+  versionId: string,
+  lineId: string,
+): Promise<POVersion | null> {
+  const response = await apiFetch(
+    `${BASE}/purchase-order-versions/${versionId}/lines/${lineId}/accept-suggestion`,
+    { method: 'POST' },
+  );
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Could not accept this suggestion'));
+  return asVersionOrNull(await readJson(response));
+}
+
+/** AC-A2: accept every suggested product and qty on the version in one call. */
+export async function acceptAllPOSuggestions(versionId: string): Promise<POVersion | null> {
+  const response = await apiFetch(
+    `${BASE}/purchase-order-versions/${versionId}/accept-suggestions`,
+    { method: 'POST' },
+  );
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Could not accept the suggestions'));
+  return asVersionOrNull(await readJson(response));
+}
+
 /** 409 while any annotation is still proposed. The message is shown where the button is. */
 export async function confirmPOVersion(
   versionId: string,

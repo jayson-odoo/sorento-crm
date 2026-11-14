@@ -1,7 +1,6 @@
 'use client';
 
 import * as React from 'react';
-import { useLookupSetOptions } from '@/hooks/useLookupSetOptions';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
@@ -47,6 +46,7 @@ import { useHasPermission } from '@/hooks/usePermissions';
 import DetailActions from '@/components/common/DetailActions';
 import { TruncatedTextCell } from '@/components/common/TruncatedTextCell';
 import { useProjectStatusGraph } from '@/app/(protected)/project-sales/_shared/hooks/useProjectStatusGraph';
+import { useLeadSourceLabel } from '@/app/(protected)/project-sales/_shared/hooks/useLeadSourceLabel';
 import type { Project, ProjectPossibleDuplicate } from '../../_shared/types/project.types';
 import {
   projectsPagerQuery,
@@ -62,6 +62,13 @@ import { PARTY_ROLE_DEVELOPER } from '../../_shared/lib/partyRoles';
 import { projectCodeLabel } from '../../_shared/lib/projectCode';
 import { projectDisplayName } from '../../_shared/lib/projectName';
 import { isProjectApproved } from '../../_shared/lib/projectApproval';
+import {
+  useAutocountRegisterAccess,
+  useProjectAutocountRegister,
+  useRegisterProjectInAutocount,
+} from '../../_shared/hooks/useProjectAutocountWrite';
+import { AutocountWriteDialog } from '../../_shared/components/AutocountWriteDialog';
+import type { AutocountWriteResult } from '../../_shared/types/projectAutocountWrite.types';
 import {
   ApprovalStatePill,
   isAwaitingDecision,
@@ -87,6 +94,7 @@ import { QuotationsPanel } from './QuotationsPanel';
 import { SampleRequestsPanel } from './SampleRequestsPanel';
 import { projectTabOriginHref, withReviewOrigin } from '../../_shared/lib/reviewOrigin';
 import { RelatedRecordsPanel, RelatedTabCount } from './RelatedRecordsPanel';
+import { LEGACY_SPONSORSHIP_TAB } from './relatedRecordTypes';
 import { StakeholdersPanel } from './StakeholdersPanel';
 import { TasksPanel } from './TasksPanel';
 
@@ -133,9 +141,6 @@ const STAGE_FORM_ROUTE: Record<string, (projectId: string) => string> = {
   po_received: (id) => `/project-sales/${id}?tab=orders&upload=po`,
 };
 
-/** The retired Sponsorship Form tab; its old links open Related, filtered to sponsorship forms. */
-const LEGACY_SPONSORSHIP_TAB = 'sponsorships';
-
 export function resolveProjectTab(requested: string | null): TabId {
   if (requested === 'samples') return 'sample-requests';
   if (requested === LEGACY_SPONSORSHIP_TAB) return 'related';
@@ -175,6 +180,27 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
   const [existingProject, setExistingProject] = React.useState<ProjectPossibleDuplicate | null>(
     null,
   );
+  // AC-PROJECT-REGISTER: "Register in AutoCount" behind its own switch and the write permission.
+  // Off or not held, nothing renders and the register route is never read (R18).
+  const registerAccess = useAutocountRegisterAccess();
+  const showRegisterItem = Boolean(
+    registerAccess &&
+      project &&
+      project.can_edit &&
+      isProjectApproved(project) &&
+      project.outcome !== 'lost' &&
+      !project.autocount_project_no,
+  );
+  const registerStatus = useProjectAutocountRegister(projectId, showRegisterItem);
+  const register = useRegisterProjectInAutocount();
+  const [registerResult, setRegisterResult] = React.useState<AutocountWriteResult | null>(null);
+  async function pressRegister() {
+    try {
+      setRegisterResult(await register.mutateAsync(projectId));
+    } catch {
+      // Already toasted by the mutation's onError.
+    }
+  }
   // Any change that lands (an approve, an edit, a reject) re-reads the project, and the
   // refusal it answered is then history: the link must not outlive it.
   React.useEffect(() => {
@@ -241,6 +267,13 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
     !waiting &&
     (project.outcome === 'won' || project.outcome === 'lost') &&
     project.status_key !== 'po_received';
+  const offerRegister = showRegisterItem && !registerStatus.data?.registered;
+  const registerReason =
+    registerStatus.data && !registerStatus.data.can_register
+      ? registerStatus.data.reason
+      : registerStatus.error instanceof Error
+        ? registerStatus.error.message
+        : null;
   const hasGearItems =
     !narrowed &&
     (showEditItem ||
@@ -248,7 +281,8 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
       secondaryMoves.length > 0 ||
       showDeleteItem ||
       canMarkWon ||
-      canReopen);
+      canReopen ||
+      offerRegister);
 
   /**
    * Spec In is where quoting starts, so making it opens the new quotation page (owner,
@@ -308,6 +342,12 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
                 statusKey={project.status_key}
                 label={project.status_label}
               />
+            )}
+            {/* AC-PROJECT-REGISTER R17: a stored fact, shown whatever the switch is set to. */}
+            {project.autocount_project_no && (
+              <Badge variant="secondary" appearance="light" title="AutoCount number">
+                {project.autocount_project_no}
+              </Badge>
             )}
             {project.is_critical && (
               <Badge variant="destructive" className="gap-1">
@@ -424,6 +464,18 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
                     Re-open
                   </DropdownMenuItem>
                 )}
+                {offerRegister && (
+                  <DropdownMenuItem
+                    disabled={!registerStatus.data?.can_register || register.isPending}
+                    onSelect={() => void pressRegister()}
+                    className="flex flex-col items-start gap-0.5"
+                  >
+                    <span>Register in AutoCount</span>
+                    {registerReason ? (
+                      <span className="text-xs text-muted-foreground">{registerReason}</span>
+                    ) : null}
+                  </DropdownMenuItem>
+                )}
                 {/* An unapproved registration is Rejected, not deleted, unless a manager
                     removes it (security S2): the server refuses anyone else with 403. */}
                 {showDeleteItem && (
@@ -516,10 +568,9 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
           ))}
         </TabsList>
         <TabsContent value="overview">
-          {/* One even grid: every card in a row is the same height and the columns line up
-              (owner, 13 Oct: "aligned and nicer"). Critical runs full width under it, because
-              it carries its own actions and notes and reads badly squeezed into a column. */}
-          <div className="grid gap-4 md:grid-cols-2 [&>*]:h-full">
+          {/* One column, every card full width, at every width (owner, 14 Nov,
+              PROJECT-LEADS-REASSIGN C1): the Access card's leads list needs the room. */}
+          <div className="grid gap-4">
             <Section title="The development">
               <div className="min-w-0 sm:col-span-2">
                 <dt className="text-xs text-muted-foreground">Project title</dt>
@@ -647,6 +698,19 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
       )}
       {reassigning && (
         <ReassignProjectDialog project={project} onDone={() => setReassigning(false)} />
+      )}
+
+      {registerAccess && (
+        <AutocountWriteDialog
+          open={registerResult !== null}
+          onOpenChange={(open) => {
+            if (!open) setRegisterResult(null);
+          }}
+          title="Register in AutoCount"
+          result={registerResult}
+          onRetry={() => void pressRegister()}
+          retrying={register.isPending}
+        />
       )}
 
       {rejecting && (
@@ -821,10 +885,7 @@ function RejectProjectDialog({
  */
 function SourceCard({ project }: { project: Project }) {
   // The project's own lead source (PS-REGISTRATION-V3), labelled from its editable list.
-  const sources = useLookupSetOptions('project_lead_source');
-  const options = Array.isArray(sources.data) ? sources.data : [];
-  const sourceLabel =
-    options.find((o) => o.value === project.lead_source)?.label ?? labelise(project.lead_source);
+  const sourceLabel = useLeadSourceLabel(project.lead_source);
   return (
     <Card>
       <CardHeader>
@@ -890,13 +951,6 @@ function formatMyr(value: string): string {
   const amount = Number(value);
   if (Number.isNaN(amount)) return value;
   return `RM ${amount.toLocaleString('en-MY', { maximumFractionDigits: 2 })}`;
-}
-
-/** A stored code ("tender_notice") as a readable phrase. No dictionary to drift. */
-function labelise(value?: string | null): string | null {
-  if (!value) return null;
-  const words = value.replace(/[_-]+/g, ' ').trim();
-  return words ? words.charAt(0).toUpperCase() + words.slice(1) : null;
 }
 
 function formatDate(iso?: string | null): string | null {

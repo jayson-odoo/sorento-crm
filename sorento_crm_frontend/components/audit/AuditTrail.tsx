@@ -214,23 +214,26 @@ function AuditTrailEntries({
                       <p data-testid="audit-action" className="break-words text-sm font-medium">
                         {entry.title}
                       </p>
-                      <p className="mt-0.5 flex flex-wrap items-baseline gap-x-1.5 text-sm text-muted-foreground">
+                      {/* One value per element, no joining dots (owner standing rule). */}
+                      <p className="mt-0.5 flex flex-wrap items-baseline gap-x-3 text-sm text-muted-foreground">
                         <span>{when}</span>
-                        {who ? <span>· {who}</span> : null}
-                        {many ? (
+                        {who ? (
                           <>
-                            <span aria-hidden>·</span>
-                            <Button
-                              type="button"
-                              variant="link"
-                              size="sm"
-                              className="h-auto p-0"
-                              aria-expanded={isOpen}
-                              onClick={() => toggle(entry.id)}
-                            >
-                              {isOpen ? 'Hide' : `Show ${entry.lines.length} lines`}
-                            </Button>
+                            {' '}
+                            <span>{who}</span>
                           </>
+                        ) : null}
+                        {many ? (
+                          <Button
+                            type="button"
+                            variant="link"
+                            size="sm"
+                            className="h-auto p-0"
+                            aria-expanded={isOpen}
+                            onClick={() => toggle(entry.id)}
+                          >
+                            {isOpen ? 'Hide' : `Show ${entry.lines.length} lines`}
+                          </Button>
                         ) : null}
                       </p>
                       {shown.length > 0 ? (

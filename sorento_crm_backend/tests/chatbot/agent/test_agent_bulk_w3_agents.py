@@ -688,3 +688,127 @@ def test_r2_a_written_customer_name_re_sent_as_a_code_is_still_refused(db):
     sneaky = {**first, "customer_code": stem}
     steps, skipped, _ = propose_rows(db, w, [sneaky], previous_waiting=waiting, user_text="row 2: X")
     assert steps == [] and "pick from the list" in reason_of(skipped, 1)
+
+
+# ------------------------------------------------------------------ W4 lane: a re-sent row with fewer cells keeps its reason
+
+
+def _nosuch_table(db, w):
+    """Row 1 waits for a customer pick; row 2 is not changed: its agent does not exist."""
+    new = agent_(db, w.srt, "SEAN")
+    names = f"ZZT Yee {uuid.uuid4().hex[:4]}"
+    pick = customer_(db, w.srt, f"{names} One")
+    customer_(db, w.srt, f"{names} Two")
+    cust = customer_(db, w.srt, "ZZT Quebec Shop")
+    table = [
+        {**row_(name=names, agent=new.sales_agent), "row": 1},
+        {**row_(customer=cust.customer_code, agent="NOSUCH 77"), "row": 2},
+    ]
+    first = say(db, w, table, "assign these sales agents").reply_text
+    assert NEEDS in first and 'No sales agent named "NOSUCH 77"' in first
+    return table, pick
+
+
+def test_w4_a_not_changed_row_re_sent_with_fewer_cells_keeps_its_earlier_reason(db):
+    """Crew W3 live (1 of 5 tries): on the pick follow-up the model re-sent row 2 without its agent cell, and the row
+    read 'Name the sales agent.' instead of its real reason."""
+    w = world(db)
+    table, pick = _nosuch_table(db, w)
+    fewer = [{**table[0], "customer_code": pick.customer_code}, {k: v for k, v in table[1].items() if k != "agent"}]
+    second = say(db, w, fewer, f"row 1: {pick.customer_code}").reply_text
+    not_changed = second.split(NOT_CHANGED, 1)[1]
+    assert 'No sales agent named "NOSUCH 77"' in not_changed
+    assert "Name the sales agent." not in second
+
+
+def _two_waiting_table(db, w):
+    """Rows 1 and 3 wait for a customer pick; row 2 is not changed: its agent does not exist."""
+    new = agent_(db, w.srt, "SEAN")
+    picks = []
+    rows = []
+    for n in (1, 3):
+        names = f"ZZT Yee {uuid.uuid4().hex[:4]}"
+        picks.append(customer_(db, w.srt, f"{names} One"))
+        customer_(db, w.srt, f"{names} Two")
+        rows.append({**row_(name=names, agent=new.sales_agent), "row": n})
+    cust = customer_(db, w.srt, "ZZT Sierra Shop")
+    table = [rows[0], {**row_(customer=cust.customer_code, agent="NOSUCH 77"), "row": 2}, rows[1]]
+    assert NEEDS in say(db, w, table, "assign these sales agents").reply_text
+    return table, picks
+
+
+def test_w4_the_kept_reason_survives_a_third_turn(db):
+    """Review B1: the second follow-up re-sends the same short row; the reason must still be the earlier one."""
+    from tests.chatbot.agent.test_agent_bulk_v2 import stored
+
+    w = world(db)
+    table, (p1, p3) = _two_waiting_table(db, w)
+    short = {k: v for k, v in table[1].items() if k != "agent"}
+    r2 = say(db, w, [{**table[0], "customer_code": p1.customer_code}, short, table[2]], f"row 1: {p1.customer_code}")
+    assert 'No sales agent named "NOSUCH 77"' in r2.reply_text.split(NOT_CHANGED, 1)[1]
+    kept = [s for s in stored(db, r2).get("batch_skipped") or [] if s["row"] == 2]
+    assert kept and kept[0]["reason"].startswith('No sales agent named "NOSUCH 77"')
+
+    third = [{**table[0], "customer_code": p1.customer_code}, short, {**table[2], "customer_code": p3.customer_code}]
+    r3 = say(db, w, third, f"row 3: {p3.customer_code}").reply_text
+    assert 'No sales agent named "NOSUCH 77"' in r3.split(NOT_CHANGED, 1)[1]
+    assert "Name the sales agent." not in r3
+
+
+def test_w4_a_re_sent_row_with_a_changed_value_that_still_fails_shows_its_new_reason(db):
+    """Review B2: a changed cell is the user's correction, even with another cell dropped: checked on the new value."""
+    w = world(db)
+    table, pick = _nosuch_table(db, w)
+    changed = {"row": 2, "company": "SRT", "agent": "NOSUCH 88"}
+    second = say(db, w, [{**table[0], "customer_code": pick.customer_code}, changed], f"row 1: {pick.customer_code}")
+    not_changed = second.reply_text.split(NOT_CHANGED, 1)[1]
+    assert "NOSUCH 77" not in not_changed
+    assert "Give the customer code" in not_changed and "NOSUCH 88" in not_changed
+
+
+def test_w4_outside_the_pick_follow_up_the_same_short_row_gets_its_own_reason(db):
+    """Review B3: the same row (same customer, same number) sent short on a turn that answers no waiting row."""
+    w = world(db)
+    table, _ = _nosuch_table(db, w)
+    short = {k: v for k, v in table[1].items() if k != "agent"}
+    second = say(db, w, [short], "just row 2 then").reply_text
+    assert "Name the sales agent." in second and "NOSUCH 77" not in second
+
+
+def test_w4_a_row_whose_key_changed_is_not_listed_twice(db):
+    """Review (outside the fix): row 2's company was corrected on the follow-up, so its key changed; the earlier
+    copy of row 2 must not be carried next to the re-checked one."""
+    w = world(db)
+    new = agent_(db, w.srt, "SEAN")
+    names = f"ZZT Yee {uuid.uuid4().hex[:4]}"
+    pick = customer_(db, w.srt, f"{names} One")
+    customer_(db, w.srt, f"{names} Two")
+    cust = customer_(db, w.srt, "ZZT Tango Shop", agent=new)
+    table = [{**row_(name=names, agent=new.sales_agent), "row": 1},
+             {**row_(company="BADCO", customer=cust.customer_code, agent=new.sales_agent), "row": 2}]
+    first = say(db, w, table, "assign these").reply_text
+    assert 'No company "BADCO"' in first
+    fixed = [{**table[0], "customer_code": pick.customer_code}, {**table[1], "company": "SRT"}]
+    second = say(db, w, fixed, f"row 1: {pick.customer_code}").reply_text
+    not_changed = second.split(NOT_CHANGED, 1)[1]
+    assert "Already under" in not_changed and "BADCO" not in not_changed
+    assert not_changed.count("| 2 |") == 1
+
+
+def test_w4_a_re_sent_row_with_a_new_value_is_checked_again(db):
+    """A changed cell is the user's correction, not a dropped one: the row is checked on its new value."""
+    w = world(db)
+    table, pick = _nosuch_table(db, w)
+    fixed_agent = agent_(db, w.srt, "FIX")
+    again = [{**table[0], "customer_code": pick.customer_code}, {**table[1], "agent": fixed_agent.sales_agent}]
+    second = say(db, w, again, f"row 1: {pick.customer_code}, row 2 agent {fixed_agent.sales_agent}").reply_text
+    assert "NOSUCH 77" not in second and NOT_CHANGED not in second
+
+
+def test_w4_a_new_table_with_a_dropped_cell_gets_its_own_reason(db):
+    """Outside the pick follow-up of the same table nothing is kept: a fresh one-row request is checked as sent."""
+    w = world(db)
+    table, _ = _nosuch_table(db, w)
+    cust = customer_(db, w.srt, "ZZT Romeo Shop")
+    second = say(db, w, [{**row_(customer=cust.customer_code), "row": 3}], "and this one").reply_text
+    assert "Name the sales agent." in second and "NOSUCH 77" not in second

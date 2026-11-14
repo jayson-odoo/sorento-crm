@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
+from typing import Optional
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import (
@@ -868,6 +869,20 @@ class SOAmendment(Base, CompanyScopedMixin):
 INQUIRY_RAISED = "raised"
 INQUIRY_ACTIONED = "actioned"
 INQUIRY_CANCELLED = "cancelled"
+#: SPARE-PART-ORDER-REQUEST (`PLAN-spare-part-order-request-12nov.md`): the states a
+#: spare part request's HEADER holds before its final approval, and the state its ROWS hold
+#: until then. Purchasing never sees a header in one of these states; a `draft` row is out
+#: of every purchasing read (`oi_row_visibility.live_row_clause`) and every committed-demand
+#: reader (they count `raised` / `partly_linked` only).
+INQUIRY_DRAFT = "draft"
+INQUIRY_PENDING_APPROVAL = "pending_approval"
+INQUIRY_REJECTED = "rejected"
+INQUIRY_PRE_APPROVAL_STATES = (INQUIRY_DRAFT, INQUIRY_PENDING_APPROVAL, INQUIRY_REJECTED)
+#: What an inquiry was raised from: a sales order (every inquiry before this lane), or a
+#: spare part request a requester raised with no sales order behind it.
+INQUIRY_TYPE_SALES_ORDER = "sales_order"
+INQUIRY_TYPE_SPARE_PART = "spare_part_request"
+INQUIRY_TYPES = (INQUIRY_TYPE_SALES_ORDER, INQUIRY_TYPE_SPARE_PART)
 #: A raised ORDER/RESERVE_AND_ORDER row tagged onto a specific outstanding supplier PO
 #: line (PLAN-demo-followups-19aug-ladder-v2.md section G, "identify which outstanding
 #: PO has quantity to fulfil this order inquiry, tag it"). `committed_v`'s confirmed leg
@@ -941,6 +956,10 @@ IV_ORDER_BACK = "ORDER_BACK"
 #: stored value. Bound to the new value rather than deleted, so a reader written against
 #: the old spelling keeps meaning the same thing while it is renamed; nothing writes it.
 IV_BORROW_SHORTFALL = IV_ORDER_BACK
+#: A spare part request's row (crew ruling 12 Nov 2026): buying work for purchasing like
+#: ORDER, but never customer demand - `scm.committed_v` and the reorder plan count
+#: ORDER / ORDER_BACK only, so stock replenished this way enters SCM through the PO alone.
+IV_REPLENISH = "REPLENISH"
 
 
 class OrderInquiry(Base, CompanyScopedMixin):
@@ -966,13 +985,38 @@ class OrderInquiry(Base, CompanyScopedMixin):
     # in an old email still finds its OI (search matches it too). NULL for every header
     # born after that migration.
     legacy_inquiry_no = Column(String(20), nullable=True)
+    #: SPARE-PART-OR-B (U2): the OI- number a spare part request takes at its final approval,
+    #: from the same OI- series sales-order inquiries number in (`next_inquiry_no` reads both
+    #: columns). Its `inquiry_no` stays the OR- number the requester knows it by. NULL on
+    #: every sales-order inquiry and on a request not yet approved.
+    oi_no = Column(String(20), nullable=True)
+    # Required for a sales-order inquiry (`ck_order_inquiries_type_needs_so`); a spare part
+    # request has none.
     project_sales_order_id = Column(
-        UUID(as_uuid=False), ForeignKey("projects.sales_orders.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=False), ForeignKey("projects.sales_orders.id", ondelete="CASCADE"), nullable=True
+    )
+    inquiry_type = Column(
+        String(32), nullable=False, server_default=INQUIRY_TYPE_SALES_ORDER,
+        default=INQUIRY_TYPE_SALES_ORDER,
     )
     amendment_id = Column(
         UUID(as_uuid=False), ForeignKey("projects.so_amendments.id", ondelete="SET NULL"), nullable=True
     )
     state = Column(String(16), nullable=False, server_default=INQUIRY_RAISED)
+    # SPARE-PART-ORDER-REQUEST: the request's own fields. NULL on every sales-order inquiry.
+    currency = Column(String(3), nullable=True)
+    requested_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    needed_by = Column(Date, nullable=True)
+    default_location = Column(String(80), nullable=True)
+    reason = Column(Text, nullable=True)
+    submitted_at = Column(DateTime(timezone=False), nullable=True)
+    approved_at = Column(DateTime(timezone=False), nullable=True)
+    approved_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    reject_reason = Column(Text, nullable=True)
+    #: SPARE-PART-OR-B (U4.2): a revision of an approved spare part request, open on the same
+    #: record while `state` stays raised / actioned for purchasing: `draft` |
+    #: `pending_approval` | `rejected`, NULL when none is open.
+    revision_state = Column(String(16), nullable=True)
     # The FIRST raise (R5) - written once, at insert, and never re-stamped by a
     # reconfirm since S1 (`523_oi_monthly_no_raises`). Every later raise/reconfirm is
     # its own row on `OrderInquiryRaise` instead; these two columns stay the header's
@@ -983,6 +1027,14 @@ class OrderInquiry(Base, CompanyScopedMixin):
 
     __table_args__ = (
         UniqueConstraint("company_id", "inquiry_no", name="uq_project_order_inquiry_no"),
+        CheckConstraint(
+            "inquiry_type IN ('sales_order', 'spare_part_request')",
+            name="ck_order_inquiries_type",
+        ),
+        CheckConstraint(
+            "inquiry_type <> 'sales_order' OR project_sales_order_id IS NOT NULL",
+            name="ck_order_inquiries_type_needs_so",
+        ),
         Index("ix_project_order_inquiries_order", "project_sales_order_id"),
         # One inquiry per publish, enforced by the database rather than by remembering
         # to check: republishing must not double what purchasing is told to buy.
@@ -1000,6 +1052,13 @@ class OrderInquiry(Base, CompanyScopedMixin):
             unique=True,
             postgresql_where=text("amendment_id IS NOT NULL"),
         ),
+        Index(
+            "uq_order_inquiries_company_oi_no",
+            "company_id",
+            "oi_no",
+            unique=True,
+            postgresql_where=text("oi_no IS NOT NULL"),
+        ),
         {"schema": "projects"},
     )
 
@@ -1009,43 +1068,75 @@ class OrderInquiry(Base, CompanyScopedMixin):
 #: flat `OI-000001` (six digits, no month) migration `523_oi_monthly_no_raises`
 #: renumbers - the old value survives on `legacy_inquiry_no`.
 INQUIRY_NO_PREFIX = "OI-"
+#: SPARE-PART-ORDER-REQUEST (owner hand test, 13 Nov): an Order Request has its OWN series,
+#: `OR-2611-0001`, per company per month, independent of the OI- one.
+ORDER_REQUEST_NO_PREFIX = "OR-"
 INQUIRY_NO_DIGITS = 4
 #: Every date this file numbers by is Asia/Kuala_Lumpur (R3): a header raised at
 #: 2026-09-30 17:30 UTC is already 1 Oct there, and must number under October.
 _MY_TZ = ZoneInfo("Asia/Kuala_Lumpur")
 
 
-def _inquiry_no_prefix(ref_date) -> str:
-    """`OI-2609-` for any `date`/`datetime` in September 2026."""
-    return f"{INQUIRY_NO_PREFIX}{ref_date:%y%m}-"
+def _inquiry_no_prefix(ref_date, inquiry_type: str = INQUIRY_TYPE_SALES_ORDER) -> str:
+    """`OI-2609-` for any `date`/`datetime` in September 2026; `OR-2609-` for an Order
+    Request (`inquiry_type` `spare_part_request`)."""
+    series = ORDER_REQUEST_NO_PREFIX if inquiry_type == INQUIRY_TYPE_SPARE_PART else INQUIRY_NO_PREFIX
+    return f"{series}{ref_date:%y%m}-"
 
 
-def next_inquiry_no(bind, company_id, ref_date) -> str:
+def next_inquiry_no(bind, company_id, ref_date, inquiry_type: str = INQUIRY_TYPE_SALES_ORDER) -> str:
     """The next inquiry number for one company, for one MONTH: the highest already
     issued in that month, plus one.
 
     HIGHEST plus one, never the count: a number that has been issued is in somebody's
     email, so a departed inquiry must not hand it to a different one. Scoped to the
     month's own prefix rather than the whole series, so October opens at `-0001` no
-    matter how many September numbers already exist (R3).
+    matter how many September numbers already exist (R3). The prefix also carries the
+    series (OI- or OR-), so each series counts only its own numbers.
 
     Per COMPANY, matching `uq_project_order_inquiry_no` and `provisional_ref` one table
     over. `bind` is whatever can execute a statement - the flush's own Connection when this
     runs from the stamp below, a Session when a caller asks directly - so the number is
     minted by ONE piece of code however it is reached.
     """
-    prefix = _inquiry_no_prefix(ref_date)
+    prefix = _inquiry_no_prefix(ref_date, inquiry_type)
     table = OrderInquiry.__table__
-    latest = bind.execute(
-        select(table.c.inquiry_no)
-        .where(table.c.company_id == company_id,
-               table.c.inquiry_no.like(f"{prefix}%"))
-        .order_by(func.length(table.c.inquiry_no).desc(), table.c.inquiry_no.desc())
-        .limit(1)
-    ).scalar()
-    tail = (latest or "")[len(prefix):]
-    highest = int(tail) if tail.isdigit() else 0
+    # Two writers minting in the same company and month take turns: the read-highest-plus-one
+    # below is serialised per (company, prefix) for the rest of the transaction, so a
+    # concurrent approval and SO raise cannot both read the same highest number. The schema
+    # is part of the key (one in production): a scratch test schema never waits on another.
+    bind.execute(
+        select(
+            func.pg_advisory_xact_lock(
+                func.hashtext(
+                    func.concat(func.current_schema(), f":order_inquiry_no:{company_id}:{prefix}")
+                )
+            )
+        )
+    )
+    # SPARE-PART-OR-B (U2.4): the OI- series is also issued as a spare part request's
+    # `oi_no`, so both columns count; the OR- series lives in `inquiry_no` only.
+    columns = [table.c.inquiry_no]
+    if prefix.startswith(INQUIRY_NO_PREFIX):
+        columns.append(table.c.oi_no)
+    highest = 0
+    for column in columns:
+        latest = bind.execute(
+            select(column)
+            .where(table.c.company_id == company_id, column.like(f"{prefix}%"))
+            .order_by(func.length(column).desc(), column.desc())
+            .limit(1)
+        ).scalar()
+        tail = (latest or "")[len(prefix):]
+        if tail.isdigit():
+            highest = max(highest, int(tail))
     return f"{prefix}{highest + 1:0{INQUIRY_NO_DIGITS}d}"
+
+
+def numbering_date(moment: Optional[datetime]):
+    """The Asia/Kuala_Lumpur date a naive-UTC moment numbers under (R3); now when None."""
+    ref_moment = moment if moment is not None else datetime.utcnow()
+    return ref_moment.replace(tzinfo=timezone.utc).astimezone(_MY_TZ).date()
 
 
 @event.listens_for(OrderInquiry, "before_insert")
@@ -1068,10 +1159,9 @@ def _stamp_inquiry_no(_mapper, connection, target) -> None:
     """
     if getattr(target, "inquiry_no", None):
         return
-    raised_at = getattr(target, "raised_at", None)
-    ref_moment = raised_at if raised_at is not None else datetime.utcnow()
-    ref_date = ref_moment.replace(tzinfo=timezone.utc).astimezone(_MY_TZ).date()
-    target.inquiry_no = next_inquiry_no(connection, target.company_id, ref_date)
+    ref_date = numbering_date(getattr(target, "raised_at", None))
+    inquiry_type = getattr(target, "inquiry_type", None) or INQUIRY_TYPE_SALES_ORDER
+    target.inquiry_no = next_inquiry_no(connection, target.company_id, ref_date, inquiry_type)
 
 
 #: The two things `OrderInquiryRaise.kind` can be (R5): the header's FIRST raise, and
@@ -1241,6 +1331,23 @@ class OrderInquiryRow(Base, CompanyScopedMixin):
     #: the "was X" beside the new code. Same writer and same overwrite rule as the two
     #: columns above.
     previous_item_code = Column(String(120), nullable=True)
+    #: SPARE-PART-ORDER-REQUEST: a spare part request's line names its catalogue product
+    #: itself (it has no sales order line to read one off), its description and unit price,
+    #: and the qty / unit price the requester SUBMITTED, kept when an approver changes them
+    #: ("was ..."). NULL on every sales-order inquiry row.
+    product_id = Column(
+        UUID(as_uuid=False), ForeignKey("products.id", ondelete="SET NULL"), nullable=True
+    )
+    description = Column(Text, nullable=True)
+    unit_price = Column(Numeric(15, 4), nullable=True)
+    requested_qty = Column(Numeric(15, 4), nullable=True)
+    requested_unit_price = Column(Numeric(15, 4), nullable=True)
+    #: SPARE-PART-OR-B (U4.2): the qty a revision of the approved request proposes, while
+    #: the revision is open; `qty` stays the approved figure purchasing works to until the
+    #: revision's final approval restates it. NULL when no revision is open.
+    revised_qty = Column(Numeric(15, 4), nullable=True)
+    #: The order the requester entered a spare part request's lines in (1-based).
+    line_no = Column(Integer, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     #: PLAN-scm-supplied-with-companions.md section 3.2. DERIVED, never typed - the one
     #: writer is `ProjectOrderInquiryService.derive_bundles`. How much of THIS row's

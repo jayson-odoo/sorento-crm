@@ -1,0 +1,1386 @@
+"""Order Inquiry rows link to PO lines through the SHARED Stock Debt link function (OI-PO-LINK).
+
+Plan: `documentation/plans/scm/PLAN-oi-po-link-11nov.md`; contract: the AC ids in
+`oi-po-link-11nov-acceptance-criteria.md`.
+
+WRITTEN BEFORE THE IMPLEMENTATION (Phase 2, red first). The fake Shared Service, the PO / SO
+seeding and the permission plumbing are reused from `test_stock_debt_po_link.py`; this module
+adds the Order Inquiry chain (project SO -> project SO line -> core SO line, OI header, OI rows).
+
+Postgres only, every chain seeded here, everything rolled back.
+"""
+from __future__ import annotations
+
+import importlib
+import json
+import uuid
+from datetime import date
+from decimal import Decimal
+
+import pytest
+from sqlalchemy import text
+
+from tests.scm.conftest import SORENTO_COMPANY_ID, requires_pg
+from tests.scm.test_stock_debt_po_link import (  # noqa: F401  (fake_ss is a fixture)
+    ALL_ON,
+    DB,
+    LINK,
+    SNAP,
+    FakeSS,
+    MemoryStore,
+    _client,
+    _done_split,
+    _keys_sent,
+    _po_line,
+    _switch,
+    fake_ss,
+)
+from tests.scm.test_stock_debt_routes import VIEW, _demand, _months_ahead, _product, _supplier, _u, _warehouse
+
+pytestmark = requires_pg
+
+OI = "/api/v1/project-sales/order-inquiries"
+PO_LINKS = "/api/v1/autocount/po-links"
+UNLINK = "/api/v1/autocount/po-links/unlink"
+PROJECTS_VIEW = "projects.projects.view"
+
+_REFUSED = (422, {
+    "operationId": "op-r", "outcome": "refused", "errorCode": "FIELD_REQUIRED",
+    "message": "PurchaseAgent is required.", "warnings": [], "document": None,
+})
+_TIMEOUT = (504, {"code": "TIMEOUT", "message": "slow"})
+
+
+@pytest.fixture(autouse=True)
+def attempt_memory(monkeypatch):
+    """Refusal attempts live in Redis in production; here a dict, so no run leaks into the next.
+    Patched on whichever module owns `attempt_store`, old or new."""
+    from app.services import autocount_idempotency as idem
+
+    store = MemoryStore()
+    monkeypatch.setattr(idem, "_down_until", 0.0)
+    monkeypatch.setattr(idem, "_client", lambda: store)
+    for name in ("app.services.scm.stock_debt_po_link_service", "app.services.scm.po_link_service"):
+        try:
+            module = importlib.import_module(name)
+        except ImportError:
+            continue
+        monkeypatch.setattr(module, "attempt_store", lambda: store, raising=False)
+    return store
+
+
+# --------------------------------------------------------------------------- seeding
+
+
+def _oi_world(scm_app, *, permissions=(VIEW, LINK, PROJECTS_VIEW), snapshot=False):
+    """One product; two AutoCount SO lines (120 at MWH, 30 at MWH); an open PO line of 500 at HQ;
+    an OI header whose rows sit on those lines (two rows on the first line, one on the second)
+    plus one row with no AutoCount line."""
+    from app.models.project_so import (
+        ACK_ACKNOWLEDGED,
+        INQUIRY_RAISED,
+        IV_ORDER,
+        OrderInquiry,
+        OrderInquiryRow,
+        ProjectSalesOrder,
+        ProjectSalesOrderLine,
+        SO_STATUS_DRAFT,
+    )
+    from app.services.project_service import register_project
+
+    c, db = _client(scm_app, permissions=permissions)
+    app, _db, gcu, _gcuak = scm_app
+    uid = app.dependency_overrides[gcu]()["id"]
+    marker = f"ZZTOI{_u()[:5]}".upper()
+    hq = _warehouse(db, f"HQ{marker[-4:]}")
+    mwh = _warehouse(db, f"MW{marker[-4:]}")
+    product = _product(db, f"{marker}-A")
+    order, so_line = _demand(db, product, mwh, qty=120, required_date=_months_ahead(1), so_number=f"{marker}-SO")
+    order.order_date = date(2026, 10, 20)
+    order.source_system, order.source_ref = "autocount", f"{DB}:11988"
+    so_line.source_system, so_line.source_ref, so_line.line_no = "autocount", f"{DB}:11988:11990", 140
+    order2, other = _demand(db, product, mwh, qty=30, required_date=_months_ahead(1), so_number=f"{marker}-SO2")
+    order2.order_date = date(2026, 10, 21)
+    order2.source_system, order2.source_ref = "autocount", f"{DB}:11999"
+    other.source_system, other.source_ref, other.line_no = "autocount", f"{DB}:11999:12001", 10
+    po, po_line = _po_line(db, product, hq, qty=500, received=0, doc_key=12008, dtl_key=12009)
+
+    from app.services.project_seed_service import seed_numbering_rule
+
+    # A freshly bootstrapped database has no project numbering rule (rolled back with the session).
+    seed_numbering_rule(db)
+    project = register_project(
+        db, company_id=SORENTO_COMPANY_ID, actor_user_id=uid, developer_party_id=None,
+        title=f"{marker} Residences",
+    )
+    pso = ProjectSalesOrder(
+        id=_u(), company_id=SORENTO_COMPANY_ID, project_id=project.id, area_group="TOWER",
+        provisional_ref=f"ZZT-PSO-{_u()[:8]}", autocount_doc_no=f"SO{_u()[:6].upper()}",
+        status=SO_STATUS_DRAFT, grouping_origin="area",
+    )
+    db.add(pso)
+    db.flush()
+    inquiry = OrderInquiry(
+        id=_u(), company_id=SORENTO_COMPANY_ID, project_sales_order_id=pso.id,
+        inquiry_no=f"OI-ZZ-{_u()[:6]}", state=INQUIRY_RAISED,
+    )
+    db.add(inquiry)
+    db.flush()
+
+    def project_line(core, n):
+        row = ProjectSalesOrderLine(
+            id=_u(), company_id=SORENTO_COMPANY_ID, project_sales_order_id=pso.id,
+            core_sales_order_line_id=core.id if core is not None else None,
+            line_no=n, product_id=product.id, qty=Decimal("10"),
+        )
+        db.add(row)
+        db.flush()
+        return row
+
+    def oi_row(pline, qty="10"):
+        row = OrderInquiryRow(
+            id=_u(), company_id=SORENTO_COMPANY_ID, order_inquiry_id=inquiry.id,
+            so_line_id=pline.id, item_code=product.product_code, qty=Decimal(qty),
+            verb=IV_ORDER, state=INQUIRY_RAISED, ack_state=ACK_ACKNOWLEDGED,
+        )
+        db.add(row)
+        db.flush()
+        return row
+
+    p1, p2, p_none = project_line(so_line, 1), project_line(other, 2), project_line(None, 3)
+    rows = {"a": oi_row(p1), "b": oi_row(p1, "5"), "c": oi_row(p2), "none": oi_row(p_none)}
+    world = {
+        "c": c, "db": db, "uid": uid, "marker": marker, "product": product, "hq": hq, "mwh": mwh,
+        "so": order, "so_line": so_line, "other": other, "po": po, "po_line": po_line,
+        "inquiry": inquiry, "rows": rows, "pso": pso,
+    }
+    if snapshot:
+        resp = c.post(SNAP, json={"name": f"{marker} snap", "filters": {"query": marker, "only_debt": False}})
+        assert resp.status_code == 201, resp.text
+        sid = resp.json()["id"]
+        data = c.get(f"{SNAP}/{sid}/rows", params={"limit": 200}).json()["data"]
+        world["sid"] = sid
+        world["snap_row_id"] = next(r["row_id"] for r in data if r["product_code"] == f"{marker}-A")
+    db.flush()
+    return world
+
+
+def _ids(w, *keys):
+    return [w["rows"][k].id for k in keys]
+
+
+def _item(w, line="so_line", qty=120, po_line="po_line"):
+    return {"sales_order_line_id": w[line].id, "po_line_id": w[po_line].id, "qty": qty}
+
+
+def _oi_link(w, lines, rows=("a", "b", "c")):
+    return w["c"].post(f"{OI}/po-link/link", json={"row_ids": _ids(w, *rows), "lines": lines})
+
+
+def _snap_link(w, lines):
+    return w["c"].post(
+        f"{SNAP}/{w['sid']}/rows/{w['snap_row_id']}/po-link/link", json={"lines": lines}
+    )
+
+
+def _two_step_answer():
+    """Plan 55 split, cumulative: each call cuts the original row and adds one linked row."""
+    state = {"orig": 500, "details": []}
+
+    def answer(request):
+        import json as _json
+
+        body = _json.loads(request.content)
+        state["orig"] -= int(body["qty"])
+        new_key = 12080 if body["soDtlKey"] == 11990 else 12081
+        state["details"].append(
+            {"DtlKey": new_key, "Location": "MWH", "Qty": body["qty"], "FromSODtlKey": body["soDtlKey"]}
+        )
+        return 200, {
+            "operationId": f"op-{new_key}", "actionId": None, "outcome": "done", "errorCode": None,
+            "message": "", "warnings": [], "docKey": 12008, "docNo": "202609-S0029", "replacedLines": [],
+            "document": {"DocKey": 12008, "DocNo": "202609-S0029", "Details": [
+                {"DtlKey": 12009, "Location": "HQ", "Qty": state["orig"], "FromSODtlKey": None},
+                *state["details"],
+            ]},
+        }
+
+    return answer
+
+
+# --------------------------------------------------------------------------- AC-1 shared function
+
+
+def test_the_shared_service_module_exists_with_both_scope_builders():
+    mod = importlib.import_module("app.services.scm.po_link_service")
+    for name in ("PoLinkService", "PoLinkScope", "scope_for_snapshot_row", "scope_for_oi_rows"):
+        assert hasattr(mod, name), name
+    from app.services.scm.stock_debt_po_link_service import StockDebtPoLinkService  # still importable
+
+    assert issubclass(StockDebtPoLinkService, mod.PoLinkService) or StockDebtPoLinkService is mod.PoLinkService
+
+
+def test_stock_debt_and_order_inquiry_send_the_identical_body_for_the_same_pair(scm_app, fake_ss):
+    """AC-1: one function. An unknown answer keeps the idempotency key, so the whole request
+    (body AND key) of the two screens can be compared."""
+    w = _oi_world(scm_app, snapshot=True)
+    fake_ss.answers[PO_LINKS] = _TIMEOUT
+    item = _item(w)
+    assert _snap_link(w, [item]).status_code == 200
+    assert _oi_link(w, [item], rows=("a",)).status_code == 200
+    snap_body, oi_body = fake_ss.bodies(PO_LINKS)
+    assert oi_body == snap_body
+    k1, k2 = _keys_sent(fake_ss)
+    assert k1 and k1 == k2
+
+
+# --------------------------------------------------------------------------- AC-4 / AC-5 options
+
+
+def test_oi_options_have_one_line_per_distinct_so_line_and_name_the_skipped_rows(scm_app, fake_ss):
+    w = _oi_world(scm_app)
+    resp = w["c"].post(f"{OI}/po-link/options", json={"row_ids": _ids(w, "a", "b", "c", "none")})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    # Rows a and b share one SO line: one line, not two.
+    assert sorted(l["sales_order_line_id"] for l in body["lines"]) == sorted([w["so_line"].id, w["other"].id])
+    first = next(l for l in body["lines"] if l["sales_order_line_id"] == w["so_line"].id)
+    assert first["so_number"] == w["so"].so_number and first["line_no"] == 140
+    assert {"open_qty", "po_links"} <= set(first)
+    # Same shape as Stock Debt's options.
+    assert {"capabilities", "po_lines", "so_books"} <= set(body)
+    assert any(p["po_line_id"] == w["po_line"].id for p in body["po_lines"])
+    assert body["capabilities"]["split_link"]["enabled"] is True
+    # The row with no AutoCount SO line is named, with the plain reason.
+    skipped = json.dumps(body["skipped"])
+    assert w["inquiry"].inquiry_no in skipped and w["product"].product_code in skipped
+    assert "Not in AutoCount yet" in skipped
+
+
+def _add_second_product(w):
+    """A second product on the same OI: its own AutoCount SO line (doc 12500, dtl 12501, 5 at MWH),
+    project SO line, OI row, and an open PO line of 300 at HQ (doc 12400, dtl 12401)."""
+    from app.models.project_so import (
+        ACK_ACKNOWLEDGED, INQUIRY_RAISED, IV_ORDER, OrderInquiryRow, ProjectSalesOrderLine,
+    )
+
+    db = w["db"]
+    product2 = _product(db, f"{w['marker']}-B")
+    order_b, line_b = _demand(
+        db, product2, w["mwh"], qty=5, required_date=_months_ahead(1), so_number=f"{w['marker']}-SOB")
+    order_b.order_date = date(2026, 10, 22)
+    order_b.source_system, order_b.source_ref = "autocount", f"{DB}:12500"
+    line_b.source_system, line_b.source_ref, line_b.line_no = "autocount", f"{DB}:12500:12501", 20
+    po_b, po_line_b = _po_line(db, product2, w["hq"], qty=300, received=0, doc_key=12400, dtl_key=12401)
+    pl = ProjectSalesOrderLine(
+        id=_u(), company_id=SORENTO_COMPANY_ID, project_sales_order_id=w["pso"].id,
+        core_sales_order_line_id=line_b.id, line_no=9, product_id=product2.id, qty=Decimal("5"),
+    )
+    db.add(pl)
+    db.flush()
+    row_b = OrderInquiryRow(
+        id=_u(), company_id=SORENTO_COMPANY_ID, order_inquiry_id=w["inquiry"].id, so_line_id=pl.id,
+        item_code=product2.product_code, qty=Decimal("5"), verb=IV_ORDER, state=INQUIRY_RAISED,
+        ack_state=ACK_ACKNOWLEDGED,
+    )
+    db.add(row_b)
+    db.flush()
+    w["rows"]["b2"] = row_b
+    w.update(product2=product2, so_line_b=line_b, so_b=order_b, po_b=po_b, po_line_b=po_line_b)
+    return w
+
+
+def test_oi_options_accept_rows_of_more_than_one_product(scm_app, fake_ss):
+    """AC-HT1-a (rewrites test_oi_options_refuse_rows_of_more_than_one_product)."""
+    w = _add_second_product(_oi_world(scm_app))
+    resp = w["c"].post(f"{OI}/po-link/options", json={"row_ids": _ids(w, "a", "c", "b2")})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert sorted(l["sales_order_line_id"] for l in body["lines"]) == sorted(
+        [w["so_line"].id, w["other"].id, w["so_line_b"].id])
+    by_po = {p["po_line_id"]: p for p in body["po_lines"]}
+    assert w["po_line"].id in by_po and w["po_line_b"].id in by_po
+    assert by_po[w["po_line"].id]["product_id"] == w["product"].id
+    assert by_po[w["po_line_b"].id]["product_id"] == w["product2"].id
+    assert body["so_products"] == {
+        w["so_line"].id: w["product"].id,
+        w["other"].id: w["product"].id,
+        w["so_line_b"].id: w["product2"].id,
+    }
+
+
+def test_oi_link_of_two_products_sends_each_so_line_to_its_own_products_po_line(scm_app, fake_ss):
+    """AC-HT1-b happy path."""
+    w = _add_second_product(_oi_world(scm_app))
+
+    def answer(request):
+        body = json.loads(request.content)
+        if body["poDtlKey"] == 12009:
+            return _batch_answer(links=((11988, 11990, 4, 12080),))(request)
+        reply = _batch_answer(links=((12500, 12501, 3, 12481),))(request)
+        reply[1]["docKey"] = 12400
+        return reply
+
+    fake_ss.answers[BATCH] = answer
+    resp = _oi_link(
+        w,
+        [_item(w, "so_line", 4, "po_line"),
+         {"sales_order_line_id": w["so_line_b"].id, "po_line_id": w["po_line_b"].id, "qty": 3}],
+        rows=("a", "b2"),
+    )
+    assert resp.status_code == 200, resp.text
+    bodies = fake_ss.bodies(BATCH)
+    assert sorted((b["poDtlKey"], [l["soDtlKey"] for l in b["links"]][0]) for b in bodies) == [
+        (12009, 11990), (12401, 12501)]
+
+
+def test_oi_link_refuses_a_po_line_of_another_product_and_sends_nothing(scm_app, fake_ss):
+    """AC-HT1-b refusal: PO line of product B for an SO line of product A."""
+    w = _add_second_product(_oi_world(scm_app))
+    resp = _oi_link(w, [_item(w, "so_line", 4, "po_line"),
+                        {"sales_order_line_id": w["so_line"].id, "po_line_id": w["po_line_b"].id, "qty": 1}],
+                    rows=("a", "b2"))
+    assert resp.status_code == 422, resp.text
+    assert "different product" in resp.text and w["po_b"].po_number in resp.text
+    assert not [r for r in fake_ss.calls if r.url.path in (PO_LINKS, BATCH, UNLINK)]
+    resp = _oi_link(w, [{"sales_order_line_id": w["so_line"].id, "po_line_id": w["po_line_b"].id, "qty": 1}],
+                    rows=("a", "b2"))
+    assert resp.status_code == 422, resp.text
+    assert not [r for r in fake_ss.calls if r.url.path in (PO_LINKS, BATCH, UNLINK)]
+
+
+def test_oi_change_to_a_po_line_of_another_product_is_refused_and_sends_nothing(scm_app, fake_ss):
+    """AC-HT1-b on /change (reviewer, 14 Nov): the SO line of product A, covered by one PO line of
+    A, cannot be changed to product B's PO line; refused before the unlink half is sent."""
+    w = _add_second_product(_oi_world(scm_app))
+    _po_line(w["db"], w["product"], w["hq"], qty=20, so_ref=w["so_line"].source_ref, doc_key=12100, dtl_key=12101)
+    w["db"].flush()
+    resp = w["c"].post(f"{OI}/po-link/change", json={
+        "row_ids": _ids(w, "a", "b2"),
+        "changes": [{"sales_order_line_id": w["so_line"].id, "po_line_id": w["po_line_b"].id}],
+    })
+    assert resp.status_code == 422, resp.text
+    assert "different product" in resp.text and w["po_b"].po_number in resp.text
+    assert not [r for r in fake_ss.calls if r.url.path in (PO_LINKS, BATCH, UNLINK)]
+
+
+def test_oi_options_with_only_rows_outside_autocount_are_refused(scm_app, fake_ss):
+    w = _oi_world(scm_app)
+    resp = w["c"].post(f"{OI}/po-link/options", json={"row_ids": _ids(w, "none")})
+    assert resp.status_code == 422
+
+
+# --------------------------------------------------------------------------- AC-6 / AC-7 link
+
+
+def test_oi_link_sends_one_write_per_so_line_and_the_worklist_names_the_po(scm_app, fake_ss):
+    # The rebook needs the auto-place grant too (security review, lead sign-off).
+    w = _oi_world(scm_app, permissions=(VIEW, LINK, PROJECTS_VIEW, "projects.order_inquiry.action"))
+    fake_ss.answers[PO_LINKS] = _two_step_answer()
+    resp = _oi_link(w, [_item(w, "so_line", 120), _item(w, "other", 30)])
+    assert resp.status_code == 200, resp.text
+    results = resp.json()["results"]
+    assert [r["outcome"] for r in results] == ["done", "done"]
+
+    bodies = fake_ss.bodies(PO_LINKS)
+    assert [(b["soDtlKey"], b["qty"]) for b in bodies] == [(11990, 120), (12001, 30)]
+    assert all(b["poDocKey"] == 12008 and b["poDtlKey"] == 12009 for b in bodies)
+
+    from app.models.procurement import PurchaseOrderLine
+
+    db = w["db"]
+    db.expire_all()
+    refs = {
+        r.source_ref: r.from_so_line_ref
+        for r in db.query(PurchaseOrderLine).filter(PurchaseOrderLine.source_ref.in_(
+            [f"{DB}:12008:12080", f"{DB}:12008:12081"]))
+    }
+    assert refs == {f"{DB}:12008:12080": f"{DB}:11988:11990", f"{DB}:12008:12081": f"{DB}:11999:12001"}
+
+    # AC-7: the OI book step re-ran in the same request, so the worklist row names the PO.
+    listing = w["c"].get(OI, params={"query": w["marker"], "limit": 100})
+    assert listing.status_code == 200, listing.text
+    by_id = {r["id"]: r for r in listing.json()["data"]}
+    assert by_id[w["rows"]["a"].id]["po_number"] == w["po"].po_number
+    assert by_id[w["rows"]["c"].id]["po_number"] == w["po"].po_number
+
+
+def test_oi_partial_link_sends_the_split_body_and_applies_both_rows(scm_app, fake_ss):
+    w = _oi_world(scm_app)
+    fake_ss.answers[PO_LINKS] = _done_split
+    resp = _oi_link(w, [_item(w, "so_line", 120)], rows=("a",))
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["results"][0]["outcome"] == "done"
+    (body,) = fake_ss.bodies(PO_LINKS)
+    assert body["qty"] == 120 and body["poDtlKey"] == 12009 and body["soDtlKey"] == 11990
+    assert body["soDocDate"] == "2026-10-20"
+
+    from app.models.procurement import PurchaseOrderLine
+
+    db = w["db"]
+    db.expire_all()
+    assert db.get(PurchaseOrderLine, w["po_line"].id).qty_ordered == Decimal("380")
+    linked = db.query(PurchaseOrderLine).filter(PurchaseOrderLine.source_ref == f"{DB}:12008:12080").one()
+    assert linked.qty_ordered == Decimal("120") and linked.from_so_line_ref == f"{DB}:11988:11990"
+
+
+# --------------------------------------------------------------------------- AC-6 refusals
+
+
+def test_oi_link_refuses_an_so_line_that_is_not_among_the_ticked_rows(scm_app, fake_ss):
+    w = _oi_world(scm_app)
+    resp = _oi_link(w, [_item(w, "other", 10)], rows=("a", "b"))  # `other` belongs to row c
+    assert resp.status_code == 422
+    assert fake_ss.bodies(PO_LINKS) == []
+
+
+def test_oi_link_refuses_a_po_line_that_is_already_linked(scm_app, fake_ss):
+    w = _oi_world(scm_app)
+    w["po_line"].from_so_line_ref = f"{DB}:1:2"
+    w["db"].flush()
+    resp = _oi_link(w, [_item(w, "so_line", 10)])
+    assert resp.status_code == 422
+    assert fake_ss.bodies(PO_LINKS) == []
+
+
+def test_oi_link_refuses_more_than_the_po_line_has_free_summed_over_the_request(scm_app, fake_ss):
+    w = _oi_world(scm_app)
+    w["po_line"].qty_ordered = Decimal("100")
+    w["db"].flush()
+    resp = _oi_link(w, [_item(w, "so_line", 80), _item(w, "other", 30)])
+    assert resp.status_code == 422
+    assert fake_ss.bodies(PO_LINKS) == []
+
+
+# --------------------------------------------------------------------------- AC-8 retry
+
+
+def test_oi_retry_after_a_refusal_is_a_new_attempt(scm_app, fake_ss):
+    w = _oi_world(scm_app)
+    fake_ss.answers[PO_LINKS] = _REFUSED
+    first = _oi_link(w, [_item(w)], rows=("a",))
+    assert first.status_code == 200, first.text
+    result = first.json()["results"][0]
+    assert result["outcome"] == "refused" and result["error_code"] == "FIELD_REQUIRED"
+    assert "PurchaseAgent is required." in result["message"]
+    fake_ss.answers[PO_LINKS] = _done_split
+    assert _oi_link(w, [_item(w)], rows=("a",)).json()["results"][0]["outcome"] == "done"
+    k1, k2 = _keys_sent(fake_ss)
+    assert k1 and k2 and k1 != k2
+
+
+@pytest.mark.parametrize("answer", [
+    _TIMEOUT,
+    (502, {"operationId": "op-v", "outcome": "vendor_error", "errorCode": "VENDOR_ERROR", "message": ""}),
+])
+def test_oi_unknown_outcome_keeps_the_key(scm_app, fake_ss, answer):
+    w = _oi_world(scm_app)
+    fake_ss.answers[PO_LINKS] = answer
+    _oi_link(w, [_item(w)], rows=("a",))
+    _oi_link(w, [_item(w)], rows=("a",))
+    k1, k2 = _keys_sent(fake_ss)
+    assert k1 and k1 == k2
+
+
+# --------------------------------------------------------------------------- AC-9 unlink / change
+
+
+def _linked_world(scm_app):
+    w = _oi_world(scm_app)
+    # A second PO line already linked to the first SO line (20 of its 120).
+    _po, linked = _po_line(w["db"], w["product"], w["hq"], qty=20, so_ref=w["so_line"].source_ref,
+                           doc_key=12100, dtl_key=12101)
+    w["linked"] = linked
+    w["db"].flush()
+    return w
+
+
+_UNLINK_DONE = (200, {
+    "operationId": "op-u", "actionId": None, "outcome": "done", "errorCode": None, "message": "",
+    "warnings": [], "docKey": 12100, "docNo": "202609-S0030",
+    "document": {"DocKey": 12100, "Details": [{"DtlKey": 12101, "Location": "HQ", "Qty": 20, "FromSODtlKey": None}]},
+})
+
+
+def test_oi_unlink_sends_the_linked_po_row(scm_app, fake_ss):
+    w = _linked_world(scm_app)
+    fake_ss.answers[UNLINK] = _UNLINK_DONE
+    resp = w["c"].post(f"{OI}/po-link/unlink", json={
+        "row_ids": _ids(w, "a", "b", "c"), "po_line_ids": [w["linked"].id]})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["results"][0]["outcome"] == "done"
+    (body,) = fake_ss.bodies(UNLINK)
+    assert (body["poDocKey"], body["poDtlKey"]) == (12100, 12101)
+
+
+def test_oi_change_unlinks_first_then_links(scm_app, fake_ss):
+    w = _linked_world(scm_app)
+    fake_ss.answers[UNLINK] = _UNLINK_DONE
+    fake_ss.answers[PO_LINKS] = _done_split
+    resp = w["c"].post(f"{OI}/po-link/change", json={
+        "row_ids": _ids(w, "a", "b", "c"),
+        "changes": [{"sales_order_line_id": w["so_line"].id, "po_line_id": w["po_line"].id}],
+    })
+    assert resp.status_code == 200, resp.text
+    writes = [r.url.path for r in fake_ss.calls if r.url.path in (UNLINK, PO_LINKS)]
+    assert writes == [UNLINK, PO_LINKS]
+    assert {r.get("action") for r in resp.json()["results"]} >= {"unlink", "link"}
+
+
+# --------------------------------------------------------------------------- AC-10 switch + permission
+
+
+def test_switch_off_refuses_every_oi_po_link_route_and_sends_nothing(scm_app, fake_ss):
+    w = _oi_world(scm_app)
+    _switch(w["db"], False)
+    rows = _ids(w, "a")
+    calls = [
+        w["c"].post(f"{OI}/po-link/options", json={"row_ids": rows}),
+        w["c"].post(f"{OI}/po-link/link", json={"row_ids": rows, "lines": [_item(w, qty=10)]}),
+        w["c"].post(f"{OI}/po-link/unlink", json={"row_ids": rows, "po_line_ids": [w["po_line"].id]}),
+        w["c"].post(f"{OI}/po-link/change", json={"row_ids": rows, "changes": [
+            {"sales_order_line_id": w["so_line"].id, "po_line_id": w["po_line"].id}]}),
+    ]
+    for resp in calls:
+        assert resp.status_code == 403, resp.text
+        assert "switched off" in resp.text
+    assert fake_ss.calls == []
+
+
+def test_without_the_link_permission_every_oi_po_link_route_is_403(scm_app, fake_ss):
+    w = _oi_world(scm_app, permissions=(VIEW, PROJECTS_VIEW))
+    rows = _ids(w, "a")
+    calls = [
+        w["c"].post(f"{OI}/po-link/options", json={"row_ids": rows}),
+        w["c"].post(f"{OI}/po-link/link", json={"row_ids": rows, "lines": [_item(w, qty=10)]}),
+        w["c"].post(f"{OI}/po-link/unlink", json={"row_ids": rows, "po_line_ids": [w["po_line"].id]}),
+        w["c"].post(f"{OI}/po-link/change", json={"row_ids": rows, "changes": [
+            {"sales_order_line_id": w["so_line"].id, "po_line_id": w["po_line"].id}]}),
+    ]
+    assert [r.status_code for r in calls] == [403, 403, 403, 403]
+    assert fake_ss.bodies(PO_LINKS) == []
+
+
+# --------------------------------------------------------------------------- AC-3a / AC-3b actor trace
+
+
+def _actor_name(w):
+    return w["db"].execute(text("SELECT name FROM users WHERE id = :i"), {"i": w["uid"]}).scalar()
+
+
+def _assert_actor_headers(w, fake_ss, path):
+    from urllib.parse import quote
+
+    sent = fake_ss.headers(path)
+    assert sent, f"no call reached {path}"
+    for h in sent:
+        assert h.get("X-Request-ID")
+        assert h.get("X-Acting-User-Id") == w["uid"]
+        assert h.get("X-Acting-User-Name") == quote(_actor_name(w), safe="")
+        assert h.get("X-Actor-User-Id") is None and h.get("X-Actor-Name") is None
+
+
+def test_one_press_carries_one_request_id_on_every_call(scm_app, fake_ss):
+    w = _oi_world(scm_app)
+    fake_ss.answers[PO_LINKS] = _two_step_answer()
+    assert _oi_link(w, [_item(w, "so_line", 120), _item(w, "other", 30)]).status_code == 200
+    ids = [h.get("X-Request-ID") for h in fake_ss.headers(PO_LINKS)]
+    assert len(ids) == 2 and ids[0] and ids[0] == ids[1]
+    _assert_actor_headers(w, fake_ss, PO_LINKS)
+
+
+def test_a_name_with_a_space_and_a_non_ascii_character_is_percent_encoded(scm_app, fake_ss):
+    w = _oi_world(scm_app)
+    w["db"].execute(text("UPDATE users SET name = :n WHERE id = :i"), {"n": "Nur Aisyah Zoë", "i": w["uid"]})
+    w["db"].flush()
+    fake_ss.answers[PO_LINKS] = _TIMEOUT
+    assert _oi_link(w, [_item(w, qty=10)], rows=("a",)).status_code == 200
+    (h,) = fake_ss.headers(PO_LINKS)
+    assert h["X-Acting-User-Name"] == "Nur%20Aisyah%20Zo%C3%AB"
+    assert h["X-Acting-User-Id"] == w["uid"]
+
+
+def test_actor_headers_ride_every_write_from_both_screens(scm_app, fake_ss):
+    w = _oi_world(scm_app, snapshot=True)
+    fake_ss.answers[PO_LINKS] = _TIMEOUT
+    assert _snap_link(w, [_item(w, qty=10)]).status_code == 200
+    _assert_actor_headers(w, fake_ss, PO_LINKS)
+    fake_ss.calls.clear()
+    assert _oi_link(w, [_item(w, qty=10)], rows=("a",)).status_code == 200
+    _assert_actor_headers(w, fake_ss, PO_LINKS)
+
+    fake_ss.calls.clear()
+    w2 = _linked_world(scm_app)
+    fake_ss.answers[UNLINK] = _UNLINK_DONE
+    w2["c"].post(f"{OI}/po-link/unlink", json={"row_ids": _ids(w2, "a"), "po_line_ids": [w2["linked"].id]})
+    _assert_actor_headers(w2, fake_ss, UNLINK)
+
+
+def test_every_write_logs_one_audit_event_on_the_po_line(scm_app, fake_ss):
+    from app.models.audit import AuditLog
+
+    w = _oi_world(scm_app)
+    fake_ss.answers[PO_LINKS] = _done_split
+    assert _oi_link(w, [_item(w, qty=120)], rows=("a",)).status_code == 200
+    request_id = fake_ss.headers(PO_LINKS)[0].get("X-Request-ID")
+    db = w["db"]
+    db.flush()
+    events = (
+        db.query(AuditLog)
+        .filter(AuditLog.event == "scm.po_line.crm_link_write", AuditLog.entity_id == w["po_line"].id)
+        .all()
+    )
+    assert len(events) == 1
+    (event,) = events
+    assert event.entity_type == "purchase_order_lines"
+    assert event.user_id == w["uid"]
+    new = event.new_values
+    assert new["request_id"] == request_id
+    assert new["operation_id"] == "op-1"
+    assert new["outcome"] == "done" and new["qty"] in (120, 120.0, "120")
+    assert new["action"]
+
+
+# --------------------------------------------------------------------------- unlink merges into the free row
+
+
+@pytest.mark.parametrize("route", ["oi", "stock_debt"])
+def test_unlink_merges_the_freed_qty_into_the_existing_free_row_of_the_same_po(scm_app, fake_ss, route):
+    """Row A (linked, 4) is unlinked while row B (free, 6) sits on the same PO: AutoCount answers
+    one row of 10 under B's DtlKey, A's DtlKey is re-pointed to it (`replacedLines`). The CRM ends
+    with ONE open line (B's ref, qty 10, no link) and no open line left under A's ref."""
+    from app.models.procurement import PurchaseOrderLine
+
+    w = _oi_world(scm_app, snapshot=(route == "stock_debt"))
+    db = w["db"]
+    row_b = w["po_line"]  # free, dtl 12009
+    row_b.qty_ordered = Decimal("6")
+    _po, row_a = _po_line(db, w["product"], w["hq"], qty=4, so_ref=w["so_line"].source_ref,
+                          doc_key=12008, dtl_key=12101, po=w["po"])
+    db.flush()
+    a_ref, b_ref = row_a.source_ref, row_b.source_ref
+
+    fake_ss.answers[UNLINK] = (200, {
+        "operationId": "op-m", "actionId": None, "outcome": "done", "errorCode": None, "message": "",
+        "warnings": [], "docKey": 12008, "docNo": "202609-S0029",
+        "replacedLines": [{"oldDtlKey": 12101, "newDtlKey": 12009}],
+        "document": {"DocKey": 12008, "DocNo": "202609-S0029", "Details": [
+            {"DtlKey": 12009, "ItemCode": "X", "Location": "HQ", "Qty": 10, "FromSODtlKey": 0},
+        ]},
+    })
+    if route == "oi":
+        resp = w["c"].post(f"{OI}/po-link/unlink", json={
+            "row_ids": _ids(w, "a", "b", "c"), "po_line_ids": [row_a.id]})
+    else:
+        resp = w["c"].post(
+            f"{SNAP}/{w['sid']}/rows/{w['snap_row_id']}/po-link/unlink", json={"po_line_ids": [row_a.id]})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["results"][0]["outcome"] == "done"
+
+    db.flush()
+    db.expire_all()
+    open_lines = (
+        db.query(PurchaseOrderLine)
+        .filter(PurchaseOrderLine.purchase_order_id == w["po"].id, PurchaseOrderLine.line_status == "open")
+        .all()
+    )
+    on_b = [l for l in open_lines if l.source_ref == b_ref]
+    assert len(on_b) == 1, [(l.source_ref, l.qty_ordered, l.line_status, l.from_so_line_ref) for l in db.query(PurchaseOrderLine).filter(PurchaseOrderLine.purchase_order_id == w["po"].id)]
+    assert on_b[0].qty_ordered == Decimal("10") and on_b[0].from_so_line_ref is None
+    assert not [l for l in open_lines if l.source_ref == a_ref and l.from_so_line_ref]
+
+
+# --------------------------------------------------------------------------- the rebook after a done write
+
+ACTION = "projects.order_inquiry.action"
+
+
+def _record_rebook(monkeypatch):
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+    seen: list = []
+
+    def fake(self, product_ids, **kwargs):
+        seen.append(kwargs.get("row_ids"))
+        return {}
+
+    monkeypatch.setattr(ProjectOrderInquiryService, "auto_place_for_products", fake)
+    return seen
+
+
+def test_without_the_order_inquiry_action_grant_the_link_works_and_no_rebook_runs(scm_app, fake_ss, monkeypatch):
+    w = _oi_world(scm_app)  # link_po but NOT projects.order_inquiry.action
+    seen = _record_rebook(monkeypatch)
+    fake_ss.answers[PO_LINKS] = _done_split
+    resp = _oi_link(w, [_item(w, "so_line", 120)], rows=("a",))
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["results"][0]["outcome"] == "done"
+    assert seen == []
+
+
+def test_the_rebook_gets_only_the_rows_that_resolved_into_scope(scm_app, fake_ss, monkeypatch):
+    w = _oi_world(scm_app, permissions=(VIEW, LINK, PROJECTS_VIEW, ACTION))
+    seen = _record_rebook(monkeypatch)
+    fake_ss.answers[PO_LINKS] = _done_split
+    stranger = _u()  # a row id that exists nowhere
+    resp = w["c"].post(f"{OI}/po-link/link", json={
+        "row_ids": [w["rows"]["a"].id, w["rows"]["none"].id, stranger],
+        "lines": [_item(w, "so_line", 120)],
+    })
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["results"][0]["outcome"] == "done"
+    assert len(seen) == 1 and sorted(seen[0]) == [w["rows"]["a"].id]
+
+
+# --------------------------------------------------------------------------- key bytes, audit, resume
+
+
+def test_the_intent_key_bytes_are_the_pre_lane_ones_for_a_stored_quantity():
+    """Pinned: sha256 of `path|k=v...|rowQty=<stored 4-decimal string>` as before this lane."""
+    from types import SimpleNamespace
+
+    from app.services.scm.po_link_service import PoLinkService
+
+    body = {"companyCode": "X", "poDocKey": 12008, "poDtlKey": 12009, "soDocKey": 1, "soDtlKey": 2, "qty": 5}
+    expected = "0d18e2595856b93a38bd0086e121ce554d7d42342dd6a0a8509945d141d587be"
+    stored = SimpleNamespace(qty_ordered=Decimal("10.0000"), from_so_line_ref=None)
+    in_memory = SimpleNamespace(qty_ordered=Decimal("10"), from_so_line_ref=None)
+    assert PoLinkService._intent_key("po-links", body, stored) == expected
+    assert PoLinkService._intent_key("po-links", body, in_memory) == expected
+
+
+def test_a_failing_audit_write_never_fails_a_done_write_and_keeps_the_earlier_event(scm_app, fake_ss, monkeypatch):
+    from app.models.audit import AuditLog
+    from app.services import audit_service
+    from app.services.scm import po_link_history
+
+    w = _oi_world(scm_app)
+    real = audit_service.log_audit
+    calls = {"n": 0}
+
+    def flaky(*args, **kwargs):
+        if kwargs.get("event") == po_link_history.EVENT_CRM_WRITE:
+            calls["n"] += 1
+            if calls["n"] == 2:
+                raise RuntimeError("audit down")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(po_link_history.audit_service, "log_audit", flaky)
+    fake_ss.answers[PO_LINKS] = _two_step_answer()
+    resp = _oi_link(w, [_item(w, "so_line", 120), _item(w, "other", 30)])
+    assert resp.status_code == 200, resp.text
+    assert [r["outcome"] for r in resp.json()["results"]] == ["done", "done"]
+    assert [r["so_line_no"] for r in resp.json()["results"]] == [140, 10]  # request order
+    w["db"].flush()
+    events = (
+        w["db"].query(AuditLog)
+        .filter(AuditLog.event == po_link_history.EVENT_CRM_WRITE, AuditLog.entity_id == w["po_line"].id)
+        .all()
+    )
+    assert len(events) == 1
+
+
+def test_a_resume_that_recovers_reruns_the_book_step_for_the_in_scope_rows(scm_app, fake_ss, monkeypatch):
+    w = _oi_world(scm_app, permissions=(VIEW, LINK, PROJECTS_VIEW, ACTION))
+    seen = _record_rebook(monkeypatch)
+    fake_ss.answers["/api/v1/autocount/write-operations/op-1/resume"] = (200, {
+        "operationId": "op-1", "outcome": "recovered", "errorCode": None, "message": "", "warnings": [],
+        "document": None,
+    })
+    resp = w["c"].post(f"{OI}/po-link/operations/op-1/resume", json={
+        "row_ids": [w["rows"]["a"].id, w["rows"]["none"].id],
+        "po_line_id": w["po_line"].id, "sales_order_line_id": w["so_line"].id,
+    })
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["outcome"] == "recovered"
+    assert len(seen) == 1 and seen[0] == [w["rows"]["a"].id]
+
+
+def test_a_malformed_id_in_a_body_is_a_422_and_nothing_is_sent(scm_app, fake_ss):
+    w = _oi_world(scm_app)
+    resp = w["c"].post(f"{OI}/po-link/link", json={
+        "row_ids": _ids(w, "a"), "lines": [{"sales_order_line_id": "nope", "po_line_id": w["po_line"].id, "qty": 1}]})
+    assert resp.status_code == 422
+    resp = w["c"].post(f"{OI}/po-link/unlink", json={"row_ids": _ids(w, "a"), "po_line_ids": ["x"]})
+    assert resp.status_code == 422
+    assert fake_ss.calls == []
+
+
+def test_the_worklist_says_which_rows_are_in_autocount(scm_app, fake_ss):
+    w = _oi_world(scm_app)
+    listing = w["c"].get(OI, params={"query": w["marker"], "limit": 100})
+    assert listing.status_code == 200, listing.text
+    by_id = {r["id"]: r for r in listing.json()["data"]}
+    flags = {k: by_id[w["rows"][k].id]["in_autocount"] for k in ("a", "b", "c", "none")}
+    assert flags == {"a": True, "b": True, "c": True, "none": False}
+
+
+def test_oi_options_lines_carry_the_location_and_delivery_date_like_stock_debt(scm_app, fake_ss):
+    """D1: the dialog's Location and Delivery date columns read `location_code` / `delivery_date`
+    on each line; Order Inquiry left them out, so the dialog showed "-"."""
+    w = _oi_world(scm_app)
+    resp = w["c"].post(f"{OI}/po-link/options", json={"row_ids": _ids(w, "a", "c")})
+    assert resp.status_code == 200, resp.text
+    first = next(l for l in resp.json()["lines"] if l["sales_order_line_id"] == w["so_line"].id)
+    assert "location_code" in first and "delivery_date" in first, sorted(first)
+    assert first["location_code"] == w["mwh"].warehouse_code
+    assert first["delivery_date"] == w["so_line"].required_date.isoformat()
+
+
+# --------------------------------------------------------------------------- Shared Service batch op
+
+BATCH = "/api/v1/autocount/po-links/batch"
+_KEY_A, _KEY_B = ("11990", 4), ("12001", 3)  # (soDtlKey, qty) of the two SO lines of the world
+
+
+def _batch_answer(links=((11988, 11990, 4, 12080), (11999, 12001, 3, 12081)), skipped=(), outcome="done"):
+    """SS's batch answer: one PO line (12009 of 500), `links` = (soDocKey, soDtlKey, qty, new poDtlKey)."""
+    linked = sum(q for _d, _s, q, _p in links)
+
+    def answer(request):
+        done = outcome == "done"
+        return 200, {
+            "operationId": "op-batch", "actionId": None, "outcome": outcome, "errorCode": None,
+            "message": "", "warnings": [], "docKey": 12008, "docNo": "202609-S0029", "replacedLines": [],
+            "links": [
+                {"soDocKey": d, "soDtlKey": s, "qty": str(q), "poDtlKey": p} for d, s, q, p in links
+            ] if done else [],
+            "freeLine": {"poDtlKey": 12009, "qty": str(500 - linked)} if done else None,
+            "skipped": [{"soDtlKey": s, "code": c} for s, c in skipped],
+            "document": {"DocKey": 12008, "DocNo": "202609-S0029", "Details": [
+                {"DtlKey": 12009, "Location": "HQ", "Qty": 500 - linked, "FromSODtlKey": 0},
+                *[{"DtlKey": p, "Location": "MWH", "Qty": q, "FromSODtlKey": s} for _d, s, q, p in links],
+            ]},
+        }
+
+    return answer
+
+
+def test_two_so_lines_on_one_po_line_go_in_one_batch_call(scm_app, fake_ss):
+    w = _oi_world(scm_app)
+    fake_ss.answers[BATCH] = _batch_answer()
+    resp = _oi_link(w, [_item(w, "so_line", 4), _item(w, "other", 3)])
+    assert resp.status_code == 200, resp.text
+    assert [r["outcome"] for r in resp.json()["results"]] == ["done", "done"]
+    (body,) = fake_ss.bodies(BATCH)
+    assert (body["poDocKey"], body["poDtlKey"]) == (12008, 12009)
+    assert body["expectedLastModified"] is None
+    assert [(l["soDtlKey"], l["qty"]) for l in body["links"]] == [(11990, 4), (12001, 3)]
+    assert all(isinstance(l["qty"], (int, float)) for l in body["links"])
+    assert len(_keys_sent(fake_ss, BATCH)) == 1 and _keys_sent(fake_ss, BATCH)[0]
+    assert fake_ss.bodies(PO_LINKS) == []
+
+    from app.models.procurement import PurchaseOrderLine
+
+    db = w["db"]
+    db.expire_all()
+    refs = {
+        r.source_ref: (r.from_so_line_ref, r.qty_ordered)
+        for r in db.query(PurchaseOrderLine).filter(PurchaseOrderLine.purchase_order_id == w["po"].id)
+    }
+    assert refs[f"{DB}:12008:12080"] == (f"{DB}:11988:11990", Decimal("4"))
+    assert refs[f"{DB}:12008:12081"] == (f"{DB}:11999:12001", Decimal("3"))
+    assert refs[f"{DB}:12008:12009"] == (None, Decimal("493"))
+
+
+def test_two_po_lines_in_one_request_are_two_batch_calls_in_request_order(scm_app, fake_ss):
+    w = _oi_world(scm_app)
+    _po2, po_line2 = _po_line(w["db"], w["product"], w["hq"], qty=500, doc_key=12200, dtl_key=12201)
+    w["db"].flush()
+
+    def answer(request):
+        body = json.loads(request.content)
+        if body["poDtlKey"] == 12009:
+            return _batch_answer(links=((11988, 11990, 4, 12080),))(request)
+        reply = _batch_answer(links=((11999, 12001, 3, 12281),))(request)
+        reply[1]["docKey"] = 12200
+        return reply
+
+    fake_ss.answers[BATCH] = answer
+    resp = _oi_link(w, [
+        _item(w, "so_line", 4, "po_line"),
+        {"sales_order_line_id": w["other"].id, "po_line_id": po_line2.id, "qty": 3},
+    ])
+    assert resp.status_code == 200, resp.text
+    assert [b["poDtlKey"] for b in fake_ss.bodies(BATCH)] == [12009, 12201]
+    assert [r["outcome"] for r in resp.json()["results"]] == ["done", "done"]
+    assert fake_ss.bodies(PO_LINKS) == []
+
+
+def test_a_skipped_line_is_named_in_plain_words_and_the_valid_line_stays_linked(scm_app, fake_ss):
+    w = _oi_world(scm_app)
+    fake_ss.answers[BATCH] = _batch_answer(
+        links=((11988, 11990, 4, 12080),), skipped=[(12001, "QTY_ABOVE_OUTSTANDING")])
+    resp = _oi_link(w, [_item(w, "so_line", 4), _item(w, "other", 3)])
+    assert resp.status_code == 200, resp.text
+    first, second = resp.json()["results"]
+    assert first["outcome"] == "done"
+    assert second["outcome"] in ("skipped", "refused")
+    assert w["other"].source_ref and f"{w['marker']}-SO2" in second["message"] and "line 10" in second["message"]
+    assert "QTY_ABOVE_OUTSTANDING" not in json.dumps(second)
+
+    from app.models.procurement import PurchaseOrderLine
+
+    w["db"].expire_all()
+    linked = w["db"].query(PurchaseOrderLine).filter(PurchaseOrderLine.source_ref == f"{DB}:12008:12080").one()
+    assert linked.from_so_line_ref == f"{DB}:11988:11990" and linked.qty_ordered == Decimal("4")
+
+
+@pytest.mark.parametrize("answer,same_key", [
+    ((422, {"operationId": "op-r", "outcome": "refused", "errorCode": "FIELD_REQUIRED",
+            "message": "PurchaseAgent is required.", "warnings": [], "links": [], "freeLine": None,
+            "skipped": [], "document": None}), False),
+    ((502, {"operationId": "op-v", "outcome": "vendor_error", "errorCode": "VENDOR_ERROR",
+            "message": "", "links": [], "freeLine": None, "skipped": []}), True),
+])
+def test_a_whole_batch_refusal_refuses_every_line_and_the_key_follows_the_outcome(scm_app, fake_ss, answer, same_key):
+    w = _oi_world(scm_app)
+    fake_ss.answers[BATCH] = answer
+    lines = [_item(w, "so_line", 4), _item(w, "other", 3)]
+    first = _oi_link(w, lines)
+    assert first.status_code == 200, first.text
+    assert [r["outcome"] for r in first.json()["results"]] == [answer[1]["outcome"]] * 2
+    _oi_link(w, lines)
+    k1, k2 = _keys_sent(fake_ss, BATCH)
+    assert k1 and k2 and (k1 == k2) is same_key
+
+
+def test_a_404_from_the_batch_route_falls_back_to_the_per_line_writes(scm_app, fake_ss):
+    w = _oi_world(scm_app)  # no BATCH answer: FakeSS answers 404 like an SS not yet deployed
+    fake_ss.answers[PO_LINKS] = _two_step_answer()
+    resp = _oi_link(w, [_item(w, "so_line", 120), _item(w, "other", 30)])
+    assert resp.status_code == 200, resp.text
+    assert [r["outcome"] for r in resp.json()["results"]] == ["done", "done"]
+    assert len(fake_ss.bodies(BATCH)) >= 1
+    assert [(b["soDtlKey"], b["qty"]) for b in fake_ss.bodies(PO_LINKS)] == [(11990, 120), (12001, 30)]
+
+
+def test_a_single_line_group_also_goes_through_batch(scm_app, fake_ss):
+    w = _oi_world(scm_app)
+    fake_ss.answers[BATCH] = _batch_answer(links=((11988, 11990, 4, 12080),))
+    resp = _oi_link(w, [_item(w, "so_line", 4)], rows=("a",))
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["results"][0]["outcome"] == "done"
+    assert len(fake_ss.bodies(BATCH)) == 1 and fake_ss.bodies(PO_LINKS) == []
+
+
+def test_try_again_on_a_skipped_line_sends_only_that_line_under_a_new_key(scm_app, fake_ss):
+    w = _oi_world(scm_app)
+    fake_ss.answers[BATCH] = _batch_answer(
+        links=((11988, 11990, 4, 12080),), skipped=[(12001, "QTY_ABOVE_OUTSTANDING")])
+    first = _oi_link(w, [_item(w, "so_line", 4), _item(w, "other", 3)])
+    assert [r["outcome"] for r in first.json()["results"]] == ["done", "skipped"]
+    fake_ss.answers[BATCH] = _batch_answer(links=((11999, 12001, 3, 12081),))
+    again = _oi_link(w, [_item(w, "other", 3)], rows=("c",))
+    assert again.status_code == 200, again.text
+    assert again.json()["results"][0]["outcome"] == "done"
+    first_body, second_body = fake_ss.bodies(BATCH)
+    assert [l["soDtlKey"] for l in first_body["links"]] == [11990, 12001]
+    assert [l["soDtlKey"] for l in second_body["links"]] == [12001]
+    k1, k2 = _keys_sent(fake_ss, BATCH)
+    assert k1 and k2 and k1 != k2
+
+
+def test_every_line_skipped_gives_each_line_its_own_plain_reason(scm_app, fake_ss):
+    w = _oi_world(scm_app)
+    fake_ss.answers[BATCH] = (422, {
+        "operationId": "op-s", "actionId": None, "outcome": "refused", "errorCode": "ALL_LINKS_SKIPPED",
+        "message": "No link could be made.", "warnings": [], "links": [], "freeLine": None,
+        "skipped": [
+            {"soDocKey": 11988, "soDtlKey": 11990, "code": "ITEM_MISMATCH"},
+            {"soDocKey": 11999, "soDtlKey": 12001, "code": "DOC_CANCELLED"},
+        ],
+        "document": None,
+    })
+    resp = _oi_link(w, [_item(w, "so_line", 4), _item(w, "other", 3)])
+    assert resp.status_code == 200, resp.text
+    first, second = resp.json()["results"]
+    assert [first["outcome"], second["outcome"]] == ["skipped", "skipped"]
+    assert "the PO line is a different item" in first["message"]
+    assert "the sales order is cancelled" in second["message"]
+    text = json.dumps([first, second])
+    assert "ITEM_MISMATCH" not in text and "DOC_CANCELLED" not in text and "ALL_LINKS_SKIPPED" not in text
+    k1, = _keys_sent(fake_ss, BATCH)
+    _oi_link(w, [_item(w, "so_line", 4), _item(w, "other", 3)])
+    assert len(set(_keys_sent(fake_ss, BATCH))) == 2  # refused released the key: a new attempt
+
+
+# --------------------------------------------------------------------------- batch: review round 5
+
+
+def test_a_batch_answer_from_ss_with_an_outcome_never_falls_back_to_per_line_writes(scm_app, fake_ss):
+    """S1: only a route that is missing (the client raised, no operationId) falls back. A
+    NOT_FOUND vendor_error WITH an operationId may have touched AutoCount: no per-line retry."""
+    w = _oi_world(scm_app)
+    fake_ss.answers[BATCH] = (404, {
+        "operationId": "op-1", "outcome": "vendor_error", "errorCode": "NOT_FOUND", "message": "",
+        "links": [], "freeLine": None, "skipped": [],
+    })
+    lines = [_item(w, "so_line", 4), _item(w, "other", 3)]
+    resp = _oi_link(w, lines)
+    assert resp.status_code == 200, resp.text
+    assert [r["outcome"] for r in resp.json()["results"]] == ["vendor_error", "vendor_error"]
+    assert fake_ss.bodies(PO_LINKS) == []
+    _oi_link(w, lines)
+    k1, k2 = _keys_sent(fake_ss, BATCH)
+    assert k1 and k1 == k2
+
+
+def test_after_a_partial_batch_the_replace_hint_still_pairs_the_free_row(scm_app, fake_ss):
+    """S2: one line is skipped, so the free row keeps 496, not 500 - 7. The hint must match it
+    (and the ingest pairs the re-keyed free row with the same CRM line)."""
+    from app.services.scm import po_replace_hint
+
+    w = _oi_world(scm_app)
+    fake_ss.answers[BATCH] = _batch_answer(
+        links=((11988, 11990, 4, 12080),), skipped=[(12001, "QTY_ABOVE_OUTSTANDING")])
+    assert _oi_link(w, [_item(w, "so_line", 4), _item(w, "other", 3)]).status_code == 200
+    hints = po_replace_hint.lookup([w["po_line"].source_ref])
+    assert w["po_line"].source_ref in hints
+    assert po_replace_hint.matches(hints[w["po_line"].source_ref], {"qty_ordered": Decimal("496"), "from_so_line_ref": None})
+
+
+def test_the_result_reports_the_qty_ss_linked_not_the_qty_asked(scm_app, fake_ss):
+    """S3: SS answers links[].qty as a decimal string; that is what the result says."""
+    w = _oi_world(scm_app)
+    fake_ss.answers[BATCH] = _batch_answer(links=((11988, 11990, 2, 12080),))
+    resp = _oi_link(w, [_item(w, "so_line", 4)], rows=("a",))
+    assert resp.status_code == 200, resp.text
+    (result,) = resp.json()["results"]
+    assert result["outcome"] == "done" and result["qty"] == 2
+
+
+def test_worklist_rows_say_whether_a_po_link_is_tied_in_autocount(scm_app, fake_ss):
+    """The document view's lines (the worklist listing filtered to one OI) carry `in_autocount_link`:
+    true only when a linked PO line's `from_so_line_ref` equals the line's AutoCount SO line ref."""
+    from app.models.project_so import OrderInquiryLink
+
+    w = _oi_world(scm_app)
+    db = w["db"]
+    _p, tied = _po_line(db, w["product"], w["hq"], qty=20, so_ref=w["so_line"].source_ref,
+                        doc_key=12100, dtl_key=12101)
+    _p2, untied = _po_line(db, w["product"], w["hq"], qty=20, so_ref=None, doc_key=12200, dtl_key=12201)
+    for row, po_line in ((w["rows"]["a"], tied), (w["rows"]["c"], untied)):
+        db.add(OrderInquiryLink(
+            id=_u(), company_id=SORENTO_COMPANY_ID, row_id=row.id, po_line_id=po_line.id,
+            document=po_line.purchase_order.po_number, qty=Decimal("5"),
+        ))
+    db.flush()
+
+    listing = w["c"].get(OI, params={"query": w["marker"], "limit": 100})
+    assert listing.status_code == 200, listing.text
+    by_id = {r["id"]: r for r in listing.json()["data"]}
+    assert {k: by_id[w["rows"][k].id].get("in_autocount_link", "MISSING") for k in ("a", "c", "none")} == {
+        "a": True, "c": False, "none": False,
+    }
+
+
+# --------------------------------------------------------------------------- Change PO on a line with 2+ PO lines (owner, 13 Nov)
+
+
+def _two_covering_world(scm_app, route):
+    """The SO line is covered by two PO lines (20 and 15); a free 500 line is the target."""
+    w = _oi_world(scm_app, snapshot=(route == "stock_debt"))
+    ref = w["so_line"].source_ref
+    _p1, first = _po_line(w["db"], w["product"], w["hq"], qty=20, so_ref=ref, doc_key=12100, dtl_key=12101)
+    _p2, second = _po_line(w["db"], w["product"], w["hq"], qty=15, so_ref=ref, doc_key=12300, dtl_key=12301)
+    w["first"], w["second"] = first, second
+    w["db"].flush()
+    return w
+
+
+def _post_change(w, route, item):
+    if route == "oi":
+        return w["c"].post(f"{OI}/po-link/change", json={"row_ids": _ids(w, "a", "b", "c"), "changes": [item]})
+    return w["c"].post(f"{SNAP}/{w['sid']}/rows/{w['snap_row_id']}/po-link/change", json={"changes": [item]})
+
+
+def _change_item(w, **extra):
+    return {"sales_order_line_id": w["so_line"].id, "po_line_id": w["po_line"].id, **extra}
+
+
+@pytest.mark.parametrize("route", ["oi", "stock_debt"])
+def test_change_on_a_line_with_two_po_lines_needs_from_po_line_id(scm_app, fake_ss, route):
+    w = _two_covering_world(scm_app, route)
+    resp = _post_change(w, route, _change_item(w))
+    assert resp.status_code == 422
+    assert "Pick which PO to change." in resp.text
+    assert fake_ss.bodies(UNLINK) == [] and fake_ss.bodies(PO_LINKS) == []
+
+
+@pytest.mark.parametrize("route", ["oi", "stock_debt"])
+def test_change_refuses_a_from_po_line_that_does_not_cover_the_line(scm_app, fake_ss, route):
+    w = _two_covering_world(scm_app, route)
+    resp = _post_change(w, route, _change_item(w, from_po_line_id=w["po_line"].id))  # the free target, not covering
+    assert resp.status_code == 422
+    assert fake_ss.bodies(UNLINK) == [] and fake_ss.bodies(PO_LINKS) == []
+
+
+@pytest.mark.parametrize("route", ["oi", "stock_debt"])
+def test_change_unlinks_the_named_po_line_first_and_leaves_the_other_one_alone(scm_app, fake_ss, route):
+    w = _two_covering_world(scm_app, route)
+    fake_ss.answers[UNLINK] = (200, {
+        "operationId": "op-u", "actionId": None, "outcome": "done", "errorCode": None, "message": "",
+        "warnings": [], "docKey": 12300, "docNo": "202609-S0031",
+        "document": {"DocKey": 12300, "Details": [{"DtlKey": 12301, "Location": "HQ", "Qty": 15, "FromSODtlKey": 0}]},
+    })
+    fake_ss.answers[PO_LINKS] = _done_split
+    resp = _post_change(w, route, _change_item(w, from_po_line_id=w["second"].id))
+    assert resp.status_code == 200, resp.text
+    writes = [r.url.path for r in fake_ss.calls if r.url.path in (UNLINK, PO_LINKS, BATCH)]
+    assert writes[0] == UNLINK and len(writes) >= 2
+    (unlink_body,) = fake_ss.bodies(UNLINK)
+    assert (unlink_body["poDocKey"], unlink_body["poDtlKey"]) == (12300, 12301)
+    sent_qty = [b["qty"] for b in fake_ss.bodies(PO_LINKS)] + [
+        l["qty"] for b in fake_ss.bodies(BATCH) for l in b["links"]
+    ]
+    assert sent_qty == [15]  # the named line's open balance
+
+    w["db"].expire_all()
+    assert w["first"].from_so_line_ref == w["so_line"].source_ref  # untouched, no SS call for it
+
+
+def test_change_naming_the_same_so_line_twice_is_refused_even_when_one_names_from_po_line_id(scm_app, fake_ss):
+    w = _two_covering_world(scm_app, "oi")
+    resp = w["c"].post(f"{OI}/po-link/change", json={"row_ids": _ids(w, "a", "b", "c"), "changes": [
+        _change_item(w),
+        _change_item(w, from_po_line_id=w["second"].id),
+    ]})
+    assert resp.status_code == 422
+    assert "Name each sales order line once." in resp.text
+    assert fake_ss.bodies(UNLINK) == [] and fake_ss.bodies(PO_LINKS) == []
+
+
+def test_po_candidates_say_which_lines_are_tied_to_another_so_line(scm_app, fake_ss):
+    """The CRM link popup (poLinesOnly) must not offer a PO line AutoCount ties to another SO line."""
+    w = _oi_world(scm_app, permissions=(VIEW, LINK, PROJECTS_VIEW, ACTION))
+    _p, elsewhere = _po_line(w["db"], w["product"], w["hq"], qty=20, so_ref=w["other"].source_ref,
+                             doc_key=12100, dtl_key=12101)
+    _p2, own = _po_line(w["db"], w["product"], w["hq"], qty=20, so_ref=w["so_line"].source_ref,
+                        doc_key=12200, dtl_key=12201)
+    w["db"].flush()
+    resp = w["c"].get(f"/api/v1/project-sales/order-inquiry-rows/{w['rows']['a'].id}/po-candidates")
+    assert resp.status_code == 200, resp.text
+    flags = {c["po_line_id"]: c.get("tied_elsewhere", "MISSING") for c in resp.json()["candidates"] if c["po_line_id"]}
+    assert flags.get(w["po_line"].id) is False
+    assert flags.get(elsewhere.id) is True
+    assert flags.get(own.id) is False
+
+
+# --------------------------------------------------------------------------- db3 run on 1d0d2480b (crew, 13 Nov)
+
+
+def _merge_world(scm_app, route):
+    """Row A (4, linked to the SO line) and row B (6, free) on one PO, plus the free 500 target
+    on another PO: AutoCount merges an unlinked A into B (`replacedLines`, one row of 10)."""
+    w = _oi_world(scm_app, snapshot=(route == "stock_debt"))
+    db = w["db"]
+    _po, row_b = _po_line(db, w["product"], w["hq"], qty=6, so_ref=None, doc_key=12200, dtl_key=12209)
+    _po2, row_a = _po_line(db, w["product"], w["hq"], qty=4, so_ref=w["so_line"].source_ref,
+                           doc_key=12200, dtl_key=12201, po=_po)
+    w["row_a"], w["row_b"] = row_a, row_b
+    db.flush()
+    return w
+
+
+_MERGED_UNLINK = (200, {
+    "operationId": "op-m2", "actionId": None, "outcome": "done", "errorCode": None, "message": "",
+    "warnings": [], "docKey": 12200, "docNo": "202609-S0040",
+    "replacedLines": [{"oldDtlKey": 12201, "newDtlKey": 12209}],
+    "document": {"DocKey": 12200, "DocNo": "202609-S0040", "Details": [
+        {"DtlKey": 12209, "ItemCode": "X", "Location": "HQ", "Qty": 10, "FromSODtlKey": 0},
+    ]},
+})
+
+
+@pytest.mark.parametrize("route", ["oi", "stock_debt"])
+def test_unlinked_card_shows_the_qty_that_was_unlinked_not_the_free_row_it_merged_into(scm_app, fake_ss, route):
+    """db3 step 8: R2's 5 merged into PO A's free row (12) and the card said "(12)"; it says 5."""
+    w = _merge_world(scm_app, route)
+    fake_ss.answers[UNLINK] = _MERGED_UNLINK
+    if route == "oi":
+        resp = w["c"].post(f"{OI}/po-link/unlink", json={
+            "row_ids": _ids(w, "a", "b", "c"), "po_line_ids": [w["row_a"].id]})
+    else:
+        resp = w["c"].post(
+            f"{SNAP}/{w['sid']}/rows/{w['snap_row_id']}/po-link/unlink", json={"po_line_ids": [w["row_a"].id]})
+    assert resp.status_code == 200, resp.text
+    (result,) = resp.json()["results"]
+    assert result["outcome"] == "done"
+    assert result["qty"] == 4
+
+
+@pytest.mark.parametrize("route", ["oi", "stock_debt"])
+def test_change_unlink_card_shows_the_unlinked_qty(scm_app, fake_ss, route):
+    """db3 step 7: R1's 4 merged into PO A's free row (3 + 4 = 7) and the card said "(7)"."""
+    w = _merge_world(scm_app, route)
+    fake_ss.answers[UNLINK] = _MERGED_UNLINK
+    fake_ss.answers[PO_LINKS] = _done_split
+    resp = _post_change(w, route, _change_item(w))
+    assert resp.status_code == 200, resp.text
+    unlinked = [r for r in resp.json()["results"] if r.get("action") == "unlink"]
+    assert [r["qty"] for r in unlinked] == [4]
+
+
+@pytest.mark.parametrize("route", ["oi", "stock_debt"])
+def test_change_holds_no_uncommitted_po_line_writes_while_the_link_half_is_sent(scm_app, fake_ss, route):
+    """db3 step 7 / 10: the unlink half's read-back was flushed but not committed when the link
+    half went out, so the Shared Service's push of the link read-back to the CRM PO ingest
+    waited on those PO-line row locks until the CRM's own 60 s timeout, and the screen said
+    "Not linked ... Could not reach AutoCount" for a link that had landed. Every write the CRM
+    has flushed is committed before an AutoCount write is sent."""
+    from sqlalchemy import event
+
+    w = _merge_world(scm_app, route)
+    db = w["db"]
+    db.commit()  # the seeded world is not the request's own work
+    state = {"pending": False, "at_send": []}
+
+    def flushed(session, ctx):
+        state["pending"] = True
+
+    # Only the session's own commit() ends the request transaction; the savepoints the audit
+    # write opens and releases inside it fire `after_commit` too, so that event cannot tell.
+    real_commit = db.commit
+
+    def commit():
+        real_commit()
+        state["pending"] = False
+
+    def unlink(request):
+        state["at_send"].append(("unlink", state["pending"]))
+        return _MERGED_UNLINK
+
+    def link(request):
+        state["at_send"].append(("link", state["pending"]))
+        return _done_split(request)
+
+    fake_ss.answers[UNLINK] = unlink
+    fake_ss.answers[PO_LINKS] = link
+    fake_ss.answers[BATCH] = (404, {"code": "NOT_FOUND", "message": "no route"})
+    event.listen(db, "after_flush", flushed)
+    db.commit = commit
+    try:
+        resp = _post_change(w, route, _change_item(w))
+    finally:
+        event.remove(db, "after_flush", flushed)
+        del db.commit
+    assert resp.status_code == 200, resp.text
+    assert [kind for kind, _ in state["at_send"]] == ["unlink", "link"]
+    assert state["at_send"] == [("unlink", False), ("link", False)], state["at_send"]
+    linked = [r for r in resp.json()["results"] if r.get("action") == "link"]
+    assert [r["outcome"] for r in linked] == ["done"]
+
+
+# --------------------------------------------------------------------------- AC-HT2b plain skip reasons
+
+
+_PO_NOT_FOUND_CODES = ["PO_ROW_NOT_FOUND", "PO_NOT_FOUND", "PO_LINE_NOT_FOUND", "DOC_NOT_FOUND"]
+
+
+@pytest.mark.parametrize("code", _PO_NOT_FOUND_CODES)
+def test_every_line_skipped_with_a_po_not_found_code_names_the_po(scm_app, fake_ss, code):
+    w = _oi_world(scm_app)
+    fake_ss.answers[BATCH] = (422, {
+        "operationId": "op-s", "actionId": None, "outcome": "refused", "errorCode": "ALL_LINKS_SKIPPED",
+        "message": "No link could be made.", "warnings": [], "links": [], "freeLine": None,
+        "skipped": [
+            {"soDocKey": 11988, "soDtlKey": 11990, "code": code},
+            {"soDocKey": 11999, "soDtlKey": 12001, "code": code},
+        ],
+        "document": None,
+    })
+    resp = _oi_link(w, [_item(w, "so_line", 4), _item(w, "other", 3)])
+    assert resp.status_code == 200, resp.text
+    for result in resp.json()["results"]:
+        assert "is not in AutoCount" in result["message"], result["message"]
+        assert w["po"].po_number in result["message"]
+    for raw in _PO_NOT_FOUND_CODES + ["ALL_LINKS_SKIPPED"]:
+        assert raw not in json.dumps(resp.json()["results"])
+
+
+def test_a_done_batch_with_a_po_row_not_found_skip_names_the_po(scm_app, fake_ss):
+    w = _oi_world(scm_app)
+    fake_ss.answers[BATCH] = _batch_answer(
+        links=((11988, 11990, 4, 12080),), skipped=[(12001, "PO_ROW_NOT_FOUND")])
+    resp = _oi_link(w, [_item(w, "so_line", 4), _item(w, "other", 3)])
+    assert resp.status_code == 200, resp.text
+    first, second = resp.json()["results"]
+    assert first["outcome"] == "done"
+    assert "is not in AutoCount" in second["message"] and w["po"].po_number in second["message"]
+    assert "PO_ROW_NOT_FOUND" not in json.dumps(second)
+
+
+def test_a_skipped_line_with_its_own_message_shows_that_message(scm_app, fake_ss):
+    w = _oi_world(scm_app)
+    answer = _batch_answer(links=((11988, 11990, 4, 12080),))
+
+    def with_message(request):
+        status, body = answer(request)
+        body["skipped"] = [{"soDtlKey": 12001, "code": "WEIRD_CODE", "message": "The PO row is locked by another user."}]
+        return status, body
+
+    fake_ss.answers[BATCH] = with_message
+    resp = _oi_link(w, [_item(w, "so_line", 4), _item(w, "other", 3)])
+    assert resp.status_code == 200, resp.text
+    second = resp.json()["results"][1]
+    assert "The PO row is locked by another user." in second["message"]
+    assert "WEIRD_CODE" not in json.dumps(second)
+
+
+def test_a_skipped_line_with_an_unknown_code_and_no_message_keeps_the_generic_words(scm_app, fake_ss):
+    w = _oi_world(scm_app)
+    fake_ss.answers[BATCH] = _batch_answer(
+        links=((11988, 11990, 4, 12080),), skipped=[(12001, "WEIRD_CODE")])
+    resp = _oi_link(w, [_item(w, "so_line", 4), _item(w, "other", 3)])
+    assert resp.status_code == 200, resp.text
+    second = resp.json()["results"][1]
+    assert "AutoCount did not accept it" in second["message"]
+    assert "WEIRD_CODE" not in json.dumps(second)
+
+
+# --------------------------------------------------------------------------- owner finding 3 (crew 12:35, 14 Nov)
+
+#: The real Shared Service answer of the owner's refused press on db3 (op c05543d8): the WHOLE
+#: operation refused, errorCode DOC_NOT_FOUND, and an empty message.
+_DOC_NOT_FOUND = (422, {
+    "operationId": "op-dnf", "actionId": None, "outcome": "refused", "errorCode": "DOC_NOT_FOUND",
+    "message": "", "warnings": [], "links": [], "freeLine": None, "skipped": [], "document": None,
+})
+
+
+@pytest.mark.parametrize("route", ["oi", "stock_debt"])
+def test_a_whole_refusal_doc_not_found_names_the_po_in_plain_words(scm_app, fake_ss, route):
+    w = _oi_world(scm_app, snapshot=(route == "stock_debt"))
+    fake_ss.answers[BATCH] = _DOC_NOT_FOUND
+    line = _item(w, "so_line", 4)
+    resp = _oi_link(w, [line]) if route == "oi" else _snap_link(w, [line])
+    assert resp.status_code == 200, resp.text
+    (result,) = resp.json()["results"]
+    assert result["outcome"] == "refused"
+    assert result["message"] == f"PO {w['po'].po_number} was not found in AutoCount. Nothing was changed."
+    assert "DOC_NOT_FOUND" not in result["message"]
+
+
+def test_a_per_line_refusal_doc_not_found_names_the_po_in_plain_words(scm_app, fake_ss):
+    """The same answer on the per-line route (an SS without the batch route)."""
+    w = _oi_world(scm_app)
+    fake_ss.answers[PO_LINKS] = _DOC_NOT_FOUND
+    resp = _oi_link(w, [_item(w, "so_line", 4)])
+    assert resp.status_code == 200, resp.text
+    (result,) = resp.json()["results"]
+    assert result["message"] == f"PO {w['po'].po_number} was not found in AutoCount. Nothing was changed."
+
+
+def test_a_whole_refusal_with_its_own_message_keeps_that_message(scm_app, fake_ss):
+    w = _oi_world(scm_app)
+    fake_ss.answers[BATCH] = (422, {**_DOC_NOT_FOUND[1], "message": "PurchaseAgent is required."})
+    (result,) = _oi_link(w, [_item(w, "so_line", 4)]).json()["results"]
+    assert result["message"] == "PurchaseAgent is required."
+
+
+def test_a_whole_refusal_with_an_unknown_code_and_no_message_stays_empty_for_the_screen_default(scm_app, fake_ss):
+    w = _oi_world(scm_app)
+    fake_ss.answers[BATCH] = (422, {**_DOC_NOT_FOUND[1], "errorCode": "SOMETHING_NEW"})
+    (result,) = _oi_link(w, [_item(w, "so_line", 4)]).json()["results"]
+    assert result["message"] == ""

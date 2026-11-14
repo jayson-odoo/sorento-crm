@@ -32,7 +32,7 @@ beforeEach(() => {
 });
 
 describe('PortalVerifyCard - slug mode', () => {
-  it('renders OTP state with masked phone, auto-fires OTP', async () => {
+  it('renders OTP state with masked phone, sends nothing until Send code is pressed', async () => {
     mockSlugInfo.mockResolvedValue({
       contact_id: 'c1',
       space_id: 's1',
@@ -45,7 +45,10 @@ describe('PortalVerifyCard - slug mode', () => {
     render(<PortalVerifyCard slug="SLUG123456" />);
 
     await waitFor(() => expect(screen.getByText(/\+60••••1234/)).toBeTruthy());
-    // Auto-fire happened once
+    // SIGNIN-2FA-NOT-ROLE AC-10: no send on mount; the Send code button sends exactly one.
+    await new Promise((r) => setTimeout(r, 100));
+    expect(mockRequestOtp).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Send code' }));
     await waitFor(() => expect(mockRequestOtp).toHaveBeenCalledTimes(1));
     // "Not your number?" available on the slug tree
     expect(screen.getByTestId('not-your-number')).toBeTruthy();

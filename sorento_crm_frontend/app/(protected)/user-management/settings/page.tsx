@@ -331,6 +331,8 @@ export default function Page() {
     orderChangeNoticeRequireProject: Boolean(settings?.orderChangeNoticeRequireProject),
     // Off is the shipped state (AC-QTSO-CRM).
     projectAutocountWriteEnabled: Boolean(settings?.projectAutocountWriteEnabled),
+    // Off is the shipped state (AC-PROJECT-REGISTER).
+    projectAutocountRegisterEnabled: Boolean(settings?.projectAutocountRegisterEnabled),
     stockDebtPoLinkEnabled: Boolean(settings?.stockDebtPoLinkEnabled),
     priceTagGuardedClasses: settings?.priceTagGuardedClasses ?? [],
     purchaseRequestDefaultApproverUserId:
@@ -411,6 +413,7 @@ export default function Page() {
       sampleRequestRequireProject: Boolean(settings.sampleRequestRequireProject),
       orderChangeNoticeRequireProject: Boolean(settings.orderChangeNoticeRequireProject),
       projectAutocountWriteEnabled: Boolean(settings.projectAutocountWriteEnabled),
+      projectAutocountRegisterEnabled: Boolean(settings.projectAutocountRegisterEnabled),
       stockDebtPoLinkEnabled: Boolean(settings.stockDebtPoLinkEnabled),
       priceTagGuardedClasses: settings.priceTagGuardedClasses ?? [],
       purchaseRequestDefaultApproverUserId:
@@ -473,6 +476,7 @@ export default function Page() {
         sample_request_require_project: values.sampleRequestRequireProject,
         order_change_notice_require_project: values.orderChangeNoticeRequireProject,
         project_autocount_write_enabled: values.projectAutocountWriteEnabled,
+        project_autocount_register_enabled: values.projectAutocountRegisterEnabled,
         stock_debt_po_link_enabled: values.stockDebtPoLinkEnabled,
         price_tag_guarded_classes: values.priceTagGuardedClasses,
         purchase_request_default_approver_user_id:
@@ -1355,6 +1359,28 @@ export default function Page() {
 
               <FormField
                 control={form.control}
+                name="projectAutocountRegisterEnabled"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormControl>
+                      <div className="flex items-center space-x-2 rounded-lg bg-accent/60 p-4">
+                        <Switch
+                          id="project-autocount-register-enabled"
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                        />
+                        <Label htmlFor="project-autocount-register-enabled">
+                          AutoCount project registration
+                        </Label>
+                      </div>
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
                 name="stockDebtPoLinkEnabled"
                 render={({ field }) => (
                   <FormItem>
@@ -1366,7 +1392,7 @@ export default function Page() {
                           onCheckedChange={field.onChange}
                         />
                         <Label htmlFor="stock-debt-po-link-enabled">
-                          AutoCount links from Stock Debt
+                          AutoCount PO links (Stock Debt, Order Inquiries)
                         </Label>
                       </div>
                     </FormControl>

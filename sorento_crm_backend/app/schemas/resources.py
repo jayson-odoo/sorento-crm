@@ -223,6 +223,11 @@ class AttachmentUpdate(BaseModel):
     stored_filename: Optional[str] = None
     target_entity_type: Optional[str] = None
     target_field_keys: Optional[list[str]] = None
+    # FILES-MOVE-DUPLICATE: how a move or rename answers a same-name file in the folder.
+    # Omitted = 409 naming the file and the folder. "keep" = go ahead (same names are allowed).
+    # "replace" = the file there goes to Trash. "rename" = move under `stored_filename`
+    # (visible name only; DB only, the stored object and its URL never change).
+    on_conflict: Optional[Literal["keep", "replace", "rename"]] = None
 
     @model_validator(mode="after")
     def _check_field_linkage_template(self):
@@ -280,10 +285,55 @@ class AttachmentReorderRequest(BaseModel):
         return v
 
 
+class AttachmentMoveResolution(BaseModel):
+    """What to do with one file whose name is already in the target folder."""
+    action: Literal["keep", "skip", "replace", "rename"]
+    # Rename only: the new name; omitted = a free "name (1).ext" style name.
+    name: Optional[str] = None
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _clean_name(cls, v):
+        if v is None:
+            return None
+        s = str(v).strip()
+        if not s:
+            return None
+        if any(ch in s for ch in ("/", "\\", "\x00")) or any(ord(ch) < 32 for ch in s) or len(s) > 255:
+            raise ValueError("The new name cannot contain / or \\ and must be at most 255 characters.")
+        return s
+
+
+class AttachmentsBulkRestoreRequest(BaseModel):
+    """Restore many files from Trash; same check-first rules as a bulk move."""
+    attachment_ids: list[str]
+    check_only: bool = False
+    resolutions: dict[str, "AttachmentMoveResolution"] = {}
+
+    @field_validator("attachment_ids")
+    @classmethod
+    def at_least_one(cls, v: list[str]) -> list[str]:
+        if not v:
+            raise ValueError("At least one attachment ID is required")
+        if len(v) > 1000:
+            raise ValueError("Restore at most 1000 files at a time.")
+        for aid in v:
+            try:
+                uuid.UUID(str(aid))
+            except ValueError:
+                raise ValueError("One of the files could not be found.") from None
+        return v
+
+
 class AttachmentsBulkMoveRequest(BaseModel):
     """Move many attachments into the same target folder in one transaction."""
     attachment_ids: list[str]
     directory_id: Optional[str] = None
+    # FILES-MOVE-DUPLICATE: True = write nothing, return every name conflict (asked about
+    # before anything moves, so Cancel leaves everything in place).
+    check_only: bool = False
+    # {attachment_id: resolution} for the files that clash; a clashing file without one is skipped.
+    resolutions: dict[str, AttachmentMoveResolution] = {}
 
     @field_validator("attachment_ids")
     @classmethod
@@ -293,8 +343,23 @@ class AttachmentsBulkMoveRequest(BaseModel):
         return v
 
 
+class AttachmentNotMoved(BaseModel):
+    """A file a bulk move left where it was, with what the clash dialog needs."""
+    attachment_id: str
+    file_name: str
+    folder_name: str
+    message: str
+    existing_file_name: Optional[str] = None
+    suggested_name: Optional[str] = None
+
+
 class AttachmentsBulkMoveResponse(BaseModel):
     updated: int
+    # One bad file never fails the batch: every other file moves and these are named.
+    not_moved: list[AttachmentNotMoved] = []
+    # Of `updated`: how many moved under a new name / replaced the file already there.
+    renamed: int = 0
+    replaced: int = 0
 
 
 class UploadedByUser(BaseModel):

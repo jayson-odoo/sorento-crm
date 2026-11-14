@@ -294,6 +294,8 @@ PERMISSION_REGISTRY.extend([
     {"slug": "procurement.new_product_applications.create", "name": "Create New Product Applications", "description": "Raise, submit, revise and cancel your own new product applications."},
     {"slug": "procurement.new_product_applications.approve", "name": "Approve New Product Applications", "description": "Approve or reject a submitted new product application, and revise one. Approvers are told when one is submitted."},
     {"slug": "procurement.new_product_applications.open_code", "name": "Open Codes for New Product Applications", "description": "Purchasing grant: link each line of an approved application to the product AutoCount sent, or close it as not opening. Told when one is approved."},
+    {"slug": "procurement.spare_part_requests.view", "name": "View Order Requests", "description": "Open the Order Requests list and the requests you can decide on as an approver of their current stage in Form SLA configuration."},
+    {"slug": "procurement.spare_part_requests.create", "name": "Create Order Requests", "description": "Raise, edit, submit and revise your own order requests, and open them on the Order Inquiries page. Approval runs on the order request stages in Form SLA configuration."},
 ])
 # OCN-ORDER-CHANGE-NOTICE: the order change notice, on the purchase request's approval chain.
 # Seeded and granted (from the matching purchase request slug holders) by migration
@@ -762,10 +764,10 @@ PERMISSION_REGISTRY.extend([
     },
     {
         "slug": "projects.stock_debt.link_po",
-        "name": "Link PO lines from Stock Debt",
+        "name": "Link PO lines in AutoCount (Stock Debt, Order Inquiries)",
         "description": (
-            "Link, unlink or move a purchase order line to a sales order line from a Stock "
-            "Debt snapshot. Writes to AutoCount."
+            "Link, unlink, change or move a purchase order line to a sales order line from a "
+            "Stock Debt snapshot or from ticked Order Inquiry rows. Writes to AutoCount."
         ),
     },
     {

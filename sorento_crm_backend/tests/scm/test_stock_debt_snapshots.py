@@ -76,6 +76,8 @@ FROZEN_OI = {
     "oi_id", "inquiry_no", "row_id", "qty", "delivery_date", "stock_location", "verb",
     "state",
 }
+#: A line's cover, read live (STOCKDEBT-LIVE-ACTIONS); everything else on it stays frozen.
+LIVE_COVER = {"assigned_qty", "assigned_source", "assigned_from", "status", "short_qty", "lent_qty"}
 HEADER_KEYS = {
     "id", "name", "filters", "filters_label", "months", "tba_month", "totals", "row_count",
     "decided_count", "created_by_name", "created_at", "can_delete", "prev_id", "next_id",
@@ -747,7 +749,7 @@ def test_rows_query_decision_filter_paging_and_stored_order(scm_app):
 # --------------------------------------------------------------------------- AC-11
 
 
-def test_a_snapshot_is_never_recomputed(scm_app):
+def test_a_snapshot_keeps_its_orders_and_quantities_frozen(scm_app):
     """AC-11: cancel an SO, change a quantity, add a new SO line after the snapshot; the
     header, the rows and the lines are unchanged field for field."""
     app, db = _client(scm_app)
@@ -780,7 +782,19 @@ def test_a_snapshot_is_never_recomputed(scm_app):
         )
 
     assert live_now["total"] != before[1][0]["total"], "the live board must have moved"
-    assert after == before
+    # STOCKDEBT-LIVE-ACTIONS (owner, 11 Nov): the header, the rows and every line's sales
+    # order figures stay frozen; the cover of a line still in the book is today's.
+    assert after[:2] == before[:2]
+    assert [_strip(line, LIVE_COVER) for line in after[2]] == [
+        _strip(line, LIVE_COVER) for line in before[2]
+    ]
+    far = lambda lines: next(l for l in lines if l["so_number"] == f"{marker}-SO-far")  # noqa: E731
+    # Today: near is cancelled and the new 77 line, due first, takes 77 of the 100 on hand,
+    # so far is covered by 23 (it was 70). Short = frozen outstanding 200 less that 23.
+    assert far(before[2])["assigned_qty"] == 70
+    assert far(after[2])["assigned_qty"] == 23
+    assert far(after[2])["open_qty"] == 200, "frozen outstanding"
+    assert far(after[2])["short_qty"] == 177
 
 
 # --------------------------------------------------------------------------- AC-12

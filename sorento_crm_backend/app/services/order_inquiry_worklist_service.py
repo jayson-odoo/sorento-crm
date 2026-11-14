@@ -69,7 +69,9 @@ from app.models.project_so import (
     DECISION_ACTIVE,
     INQUIRY_ACTIONED,
     INQUIRY_CANCELLED,
+    INQUIRY_DRAFT,
     INQUIRY_PLACED,
+    INQUIRY_PRE_APPROVAL_STATES,
     INQUIRY_RAISED,
     INQUIRY_PARTLY_LINKED,
     IV_ORDER,
@@ -641,6 +643,8 @@ _LATEST_ANSWERED_QTY = (
 #: line is cancelled, NULL-safe - a row whose mirror names no core line reads False here,
 #: not NULL, so `~_LINE_CANCELLED` in a WHERE clause still matches it instead of silently
 #: dropping it.
+_LINK_PSOL = aliased(ProjectSalesOrderLine)
+_LINK_SOL = aliased(SalesOrderLine)
 _LINE_CANCELLED = case(
     (SalesOrderLine.line_status == "cancelled", True), else_=False
 )
@@ -1035,6 +1039,8 @@ _COLUMNS = (
     # second opinion about which inquiry a row belongs to. The S/O no cannot stand in for
     # it: an amendment raises a SECOND inquiry on the same sales order.
     OrderInquiry.inquiry_no.label("inquiry_no"),
+    # SPARE-PART-OR-B (U2.7): a spare part request's OI- number, off the same header.
+    OrderInquiry.oi_no.label("oi_no"),
     # PLAN-oi-bundled-row-host-change.md: the key `_host_changes_for_rows` groups a
     # bundled row's HOST rows by, on the SAME order inquiry header.
     OrderInquiryRow.order_inquiry_id.label("order_inquiry_id"),
@@ -1062,6 +1068,15 @@ _COLUMNS = (
     _SO_NUMBER.label("so_number"),
     Product.id.label("product_id"),
     Product.product_name.label("product_name"),
+    # SPARE-PART-ORDER-REQUEST: what kind of inquiry the row is on, and a spare part
+    # request's money and submitted figures (null on a sales-order row). The submitted
+    # pair is `submitted_*` on this payload: `requested_qty` below already means the open
+    # reserve request's qty.
+    OrderInquiry.inquiry_type.label("inquiry_type"),
+    OrderInquiryRow.unit_price.label("unit_price"),
+    OrderInquiryRow.requested_qty.label("submitted_qty"),
+    OrderInquiryRow.requested_unit_price.label("submitted_unit_price"),
+    OrderInquiryRow.description.label("row_description"),
     _CUSTOMER_NAME.label("customer_name"),
     Project.id.label("project_id"),
     _PROJECT_TITLE.label("project_title"),
@@ -1110,6 +1125,23 @@ _COLUMNS = (
     # PLAN-oi-cancelled-line-used-confirm.md (AC-CL-1): off the SAME `SalesOrderLine`
     # outer join the location fallback already uses - no second join for this.
     _LINE_CANCELLED.label("line_cancelled"),
+    # OI-PO-LINK: the row's SO line carries an AutoCount ref (`{db}:{DocKey}:{DtlKey}`), so the
+    # PO link can act on it. Same outer join, no extra read.
+    case((func.btrim(SalesOrderLine.source_ref).op("~")(r"^[^:]+:[0-9]+:[0-9]+$"), True), else_=False).label("in_autocount"),
+    # OI-PO-LINK: a PO link of this row that AutoCount ties to the row's own SO line
+    # (`from_so_line_ref` equals its ref), so Unlink... goes through AutoCount for it.
+    select(OrderInquiryLink.id)
+    .select_from(OrderInquiryLink)
+    .join(PurchaseOrderLine, PurchaseOrderLine.id == OrderInquiryLink.po_line_id)
+    .join(_LINK_PSOL, _LINK_PSOL.id == OrderInquiryRow.so_line_id)
+    .join(_LINK_SOL, _LINK_SOL.id == _LINK_PSOL.core_sales_order_line_id)
+    .where(
+        OrderInquiryLink.row_id == OrderInquiryRow.id,
+        func.btrim(PurchaseOrderLine.from_so_line_ref) == func.btrim(_LINK_SOL.source_ref),
+    )
+    .correlate(OrderInquiryRow)
+    .exists()
+    .label("in_autocount_link"),
     _WAITING_FOR_CS.label("waiting_for_cs"),
     _SO_CANCELLED.label("so_cancelled"),
     _PREVIOUS_SO_LINE_QTY.label("previous_so_line_qty"),
@@ -1575,6 +1607,9 @@ class OrderInquiryWorklistService:
         # filter above decides", unchanged for the list page's own export; an EMPTY list
         # means "no rows" (AC-C5), not "no filter".
         row_ids: Optional[Sequence[str]] = None,
+        # SPARE-PART-ORDER-REQUEST: the caller's own header visibility clause
+        # (`spare_part_request_service.visibility_clause`); None = no pre-approval header.
+        visibility: Any = None,
     ):
         """Every inquiry row in the company, with everything a column needs beside it.
 
@@ -1587,7 +1622,8 @@ class OrderInquiryWorklistService:
             self.db.query(OrderInquiryRow.id)
             .select_from(OrderInquiryRow)
             .join(OrderInquiry, OrderInquiry.id == OrderInquiryRow.order_inquiry_id)
-            .join(
+            # OUTER: a spare part request has no sales order (SPARE-PART-ORDER-REQUEST).
+            .outerjoin(
                 ProjectSalesOrder,
                 ProjectSalesOrder.id == OrderInquiry.project_sales_order_id,
             )
@@ -1607,7 +1643,12 @@ class OrderInquiryWorklistService:
                 ProjectSalesOrderLine,
                 ProjectSalesOrderLine.id == OrderInquiryRow.so_line_id,
             )
-            .outerjoin(Product, Product.id == ProjectSalesOrderLine.product_id)
+            # A spare part request's row names its product itself (no sales order line).
+            .outerjoin(
+                Product,
+                Product.id
+                == func.coalesce(ProjectSalesOrderLine.product_id, OrderInquiryRow.product_id),
+            )
             # The LOCATION fallback: the line's own core sales order line, then the
             # fulfilment warehouse on that line. Joined on primary keys throughout, so
             # neither join can multiply a row.
@@ -1665,7 +1706,19 @@ class OrderInquiryWorklistService:
             # one rule the Documents tab counts by (`oi_row_visibility`). A cancelled row is
             # listed only when the State filter asks for it; a used row never is.
             # `include_cancelled` (the OI page's `include_history` fetch) reads both as History.
-            base = base.filter(live_row_clause())
+            # A spare part request's `draft` rows are its lines on its own OI page only.
+            base = base.filter(
+                or_(live_row_clause(), OrderInquiryRow.state == INQUIRY_DRAFT)
+                if inquiry_id
+                else live_row_clause()
+            )
+        # SPARE-PART-ORDER-REQUEST (P1): a request before its final approval reaches only
+        # whom `visibility` admits (the OI page of its requester / approver / an admin);
+        # every purchasing read (list, facets, counts, exports, matrix) names nobody.
+        if visibility is None:
+            base = base.filter(OrderInquiry.state.notin_(INQUIRY_PRE_APPROVAL_STATES))
+        else:
+            base = base.filter(visibility)
         project_ids = multi_values(project_id)
         if project_ids:
             base = base.filter(ProjectSalesOrder.project_id.in_(project_ids))
@@ -2049,7 +2102,9 @@ class OrderInquiryWorklistService:
         ordering = column.desc().nulls_last() if descending else column.asc().nulls_last()
         rows = (
             base.with_entities(*_COLUMNS)
-            .order_by(ordering, OrderInquiryRow.id.asc())
+            # A spare part request's rows tie on their date and keep the order they were
+            # entered in (`line_no`, NULL on a sales-order row, so those are unchanged).
+            .order_by(ordering, OrderInquiryRow.line_no.asc().nulls_last(), OrderInquiryRow.id.asc())
             .offset((page - 1) * limit)
             .limit(limit)
             .all()
@@ -2078,26 +2133,39 @@ class OrderInquiryWorklistService:
         oi_service = ProjectOrderInquiryService(self.db)
         open_qty = oi_service.open_qty_by_row(rows)
         reserve_labels = oi_service.reserve_labels_for_rows([row.id for row in rows])
-        return {
-            "data": [
-                self._serialize(
-                    row,
-                    product_by_row,
-                    link_candidates,
-                    flow,
-                    links,
-                    bundle_map,
-                    anchor_headline_by_id,
-                    host_changes_by_row_id,
-                    suggested_links,
-                    raise_events_by_row,
-                    splits_by_line,
-                    split_views,
-                    open_qty,
-                    reserve_labels,
+        # SPARE-PART-ORDER-REQUEST (G2): the approver's photo changes, one read per page.
+        from app.services.spare_part_request_service import KIND as _SPR, photo_changes
+
+        spr_changes = photo_changes(
+            self.db, {row.order_inquiry_id for row in rows if row.inquiry_type == _SPR}
+        )
+        data = [
+            self._serialize(
+                row,
+                product_by_row,
+                link_candidates,
+                flow,
+                links,
+                bundle_map,
+                anchor_headline_by_id,
+                host_changes_by_row_id,
+                suggested_links,
+                raise_events_by_row,
+                splits_by_line,
+                split_views,
+                open_qty,
+                reserve_labels,
+            )
+            for row in rows
+        ]
+        for item, row in zip(data, rows):
+            if row.inquiry_type == _SPR:
+                item["photo_changes"] = (
+                    spr_changes.get(str(row.order_inquiry_id), {}).get(str(row.id))
+                    or {"added": 0, "removed": 0}
                 )
-                for row in rows
-            ],
+        return {
+            "data": data,
             "pagination": {"total": total, "page": page, "limit": limit},
             "empty": total == 0,
         }
@@ -2779,6 +2847,7 @@ class OrderInquiryWorklistService:
             # OI-BULK-RESERVE v4: the header's id, so the Lines page can commit per order inquiry.
             "order_inquiry_id": row.order_inquiry_id,
             "inquiry_no": row.inquiry_no,
+            "oi_no": row.oi_no,
             "so_date": row.so_date,
             "so_number": row.so_number,
             "item_code": row.item_code,
@@ -2789,6 +2858,25 @@ class OrderInquiryWorklistService:
             "product_id": row.product_id,
             "product_name": row.product_name,
             "qty": _qty_str(_dec(row.qty)),
+            "inquiry_type": row.inquiry_type,
+            "unit_price": _qty_str(row.unit_price) if row.unit_price is not None else None,
+            "line_total": (
+                _qty_str(_dec(row.qty) * _dec(row.unit_price))
+                if row.unit_price is not None
+                else None
+            ),
+            "submitted_qty": (
+                _qty_str(row.submitted_qty) if row.submitted_qty is not None else None
+            ),
+            "submitted_unit_price": (
+                _qty_str(row.submitted_unit_price)
+                if row.submitted_unit_price is not None
+                else None
+            ),
+            # Hand-test round G1: what the requester called a spare part (null otherwise).
+            "line_description": (
+                row.row_description if row.inquiry_type == "spare_part_request" else None
+            ),
             "delivery_date": row.delivery_date,
             "project_customer": project_customer_label(
                 row.customer_name, row.project_title, row.is_pre_order
@@ -2896,6 +2984,8 @@ class OrderInquiryWorklistService:
             # PLAN-oi-cancelled-line-used-confirm.md (AC-CL-1): true only when the line
             # itself is cancelled - `closed` and `open` both read false.
             "line_cancelled": bool(row.line_cancelled),
+            "in_autocount": bool(row.in_autocount),
+            "in_autocount_link": bool(row.in_autocount_link),
             # OI-WHOLE-SO-CANCEL v2 (AC-V2-2/4b/5).
             "waiting_for_cs": bool(row.waiting_for_cs),
             "so_cancelled": bool(row.so_cancelled),
