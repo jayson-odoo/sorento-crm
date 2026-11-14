@@ -32,7 +32,12 @@ from app.api.v1.projects._common import permission_slugs
 from app.services.scm.demand_class import DEMAND_CLASSES
 from app.services.scm.so_party_payload import attach_donor_parties
 from app.database import get_db
-from app.dependencies import require_permission, require_permission_with_api_key
+from app.services.stock_read_scope import SPARE_PART_READ, quantities_only, reads_documents
+from app.dependencies import (
+    require_any_permission_with_api_key,
+    require_permission,
+    require_permission_with_api_key,
+)
 from app.models.product import Product
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.schemas.project_board import (
@@ -1075,7 +1080,11 @@ def get_stock_detail(
         ),
     ),
     request: Request = None,
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    # SPARE-PART-ORDER-REQUEST (B3): a spare part requester or approver reads a line's stock too (the
+    # line's stock table, UAC R3). Quantities and document numbers only; no cost is on it.
+    _user: dict = Depends(
+        require_any_permission_with_api_key([VIEW, *SPARE_PART_READ])
+    ),
     db: Session = Depends(get_db),
 ):
     """One product at one location: On Hand, SO Qty, SPO Qty, Available, and the documents.
@@ -1108,11 +1117,17 @@ def get_stock_detail(
         # parameter - rather than handing the typo to the query.
         wanted = parse_uuid_list([line_ids], param_name="line_ids") or []
         with widen_if_requested(db, request, _user, company_scope):
-            return FulfilmentBoardService(
+            detail = FulfilmentBoardService(
                 db, reveal_eta_delay=staff_may_see_clearance(db, _user)
             ).stock_detail(
                 product_id, warehouse_id, line_ids=wanted, group=group
             )
+        if reads_documents(db, _user, (VIEW,)):
+            return detail
+        # SPARE-PART-ORDER-REQUEST (C1): a spare part requester gets quantities only.
+        return quantities_only(
+            detail, ("sales_orders", "incoming", "holds"), nested={"locations": ("incoming",)}
+        )
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 

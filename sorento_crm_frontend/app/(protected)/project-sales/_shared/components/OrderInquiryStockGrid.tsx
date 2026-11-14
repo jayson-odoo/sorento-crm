@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { isAccessDenied } from '@/lib/api-client';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useWarehouseByCode } from '@/app/(protected)/inventory-management/warehouses/hooks/useWarehouses';
 import { CellStockTable } from '../../fulfilment-planning/components/CellStockTable';
@@ -125,9 +126,11 @@ export function OrderInquiryStockGrid({
   if (detail.isError) {
     return (
       <p className="rounded-lg border border-destructive/30 px-3 py-2 text-xs text-destructive">
-        {detail.error instanceof Error
-          ? detail.error.message
-          : 'The stock position could not be loaded.'}
+        {isAccessDenied(detail.error)
+          ? 'You do not have access to this stock position.'
+          : detail.error instanceof Error
+            ? detail.error.message
+            : 'The stock position could not be loaded.'}
       </p>
     );
   }

@@ -186,9 +186,9 @@ describe('AC-RF-23 inquiry_no filter', () => {
     searchParamsValue = `inquiry_no=${NUMBERS}`;
     renderList();
     await screen.findByText('OI-2610-001');
-    const sortable = screen.getAllByRole('columnheader').find((h) => /^OI no/i.test(h.textContent ?? ''));
+    const sortable = screen.getAllByRole('columnheader').find((h) => /^Doc no/i.test(h.textContent ?? ''));
     expect(sortable).toBeTruthy();
-    fireEvent.click(within(sortable as HTMLElement).getByRole('button', { name: /oi no/i }));
+    fireEvent.click(within(sortable as HTMLElement).getByRole('button', { name: /doc no/i }));
     await waitFor(() => expect(lastParams().sort).toBe('inquiry_no'));
     expect(sentInquiryNo(lastParams())).toBe(NUMBERS);
     expect(lastReplaceQuery().get('inquiry_no')).toBe(NUMBERS);

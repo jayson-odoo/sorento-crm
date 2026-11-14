@@ -82,7 +82,9 @@ from app.models.project_so import (
     INQUIRY_CANCELLED,
     INQUIRY_LINK_STATES,
     INQUIRY_PARTLY_LINKED,
+    INQUIRY_DRAFT,
     INQUIRY_PLACED,
+    INQUIRY_PRE_APPROVAL_STATES,
     INQUIRY_RAISED,
     IV_ADVANCE,
     IV_ALREADY_INBOUND,
@@ -92,6 +94,7 @@ from app.models.project_so import (
     IV_ORDER,
     IV_ORDER_BACK,
     IV_PRE_ORDERED,
+    IV_REPLENISH,
     IV_RESERVE_AND_ORDER,
     OI_RAISE_RAISED,
     OI_RAISE_RECONFIRMED,
@@ -401,7 +404,10 @@ _COVERING_VERBS = (IV_PRE_ORDERED, IV_ALREADY_INBOUND)
 # may name an `spo_allocations` row (part 2 section 4b) that objection is answered: an
 # order back is exactly the row that should be able to name the shipping order it is owed
 # against, and it is the ONLY verb allowed to.
-_LINKABLE_VERBS = (IV_ORDER, IV_RESERVE_AND_ORDER, IV_ORDER_BACK)
+#
+# `REPLENISH` (SPARE-PART-ORDER-REQUEST, crew ruling 12 Nov 2026): a raised spare part
+# request's row is buying work exactly like ORDER, so purchasing links its PO to it.
+_LINKABLE_VERBS = (IV_ORDER, IV_RESERVE_AND_ORDER, IV_ORDER_BACK, IV_REPLENISH)
 #: The verbs whose links may name an SPO allocation. EVERY linkable verb since R5
 #: (`PLAN-scm-oi-draft-links.md`, captain 27 Aug 2026): "SPO link is always one, always SPO
 #: first then PO". It was the order back alone while an SPO was read as the document a
@@ -1648,6 +1654,21 @@ def _record_cancel(
         root_entity_id=str(order_id) if order_id else None,
         skip_flush=True,
     )
+
+
+def _refuse_draft_rows(rows) -> None:
+    """SPARE-PART-ORDER-REQUEST: a `draft` row belongs to a spare part request still waiting
+    for approval, so it is nobody's work yet: purchasing cannot mark, acknowledge or reject it."""
+    drafts = [row for row in rows if row.state == INQUIRY_DRAFT]
+    if drafts:
+        raise AppException(
+            status_code=409,
+            message=(
+                f"{len(drafts)} of those rows belong to an order request that is not "
+                "approved yet."
+            ),
+            code="order_inquiry_row_not_approved",
+        )
 
 
 def _rows_named(rows, row_ids) -> List[Any]:
@@ -8559,7 +8580,7 @@ class ProjectOrderInquiryService:
                 # A borrow shortfall is buying work too: the donor is oversold and
                 # somebody has to buy the hole (PLAN 13.11).
                 OrderInquiryRow.verb.in_(
-                    [IV_ORDER, IV_RESERVE_AND_ORDER, IV_ORDER_BACK]
+                    [IV_ORDER, IV_RESERVE_AND_ORDER, IV_ORDER_BACK, IV_REPLENISH]
                 ),
             )
             .scalar()
@@ -9579,6 +9600,7 @@ class ProjectOrderInquiryService:
                 message=f"{len(missing)} of those rows no longer exist.",
                 code="order_inquiry_row_not_found",
             )
+        _refuse_draft_rows(rows)
         now = datetime.utcnow()
         for row in rows:
             # A row this bulk action moves OFF `placed` (section G) drops its PO tag too:
@@ -9655,6 +9677,7 @@ class ProjectOrderInquiryService:
         "N after <date>".
         """
         rows = self._rows_or_404(row_ids)
+        _refuse_draft_rows(rows)
         gone = [row for row in rows if row.state == INQUIRY_CANCELLED]
         if gone:
             raise AppException(
@@ -10171,6 +10194,7 @@ class ProjectOrderInquiryService:
 
     def _assert_rejectable(self, row: OrderInquiryRow) -> None:
         """Whether this row is one a refusal can be about, said before anything is written."""
+        _refuse_draft_rows([row])
         if row.state not in (INQUIRY_RAISED, INQUIRY_PARTLY_LINKED, INQUIRY_PLACED):
             raise AppException(
                 status_code=422,
@@ -10364,6 +10388,10 @@ class ProjectOrderInquiryService:
                 self.db.query(OrderInquiry).filter(OrderInquiry.id == inquiry_id).first()
             )
             if inquiry is None:
+                continue
+            # A spare part request before its final approval: its state is the approval's,
+            # never its rows' (they are all `draft` until then).
+            if inquiry.state in INQUIRY_PRE_APPROVAL_STATES:
                 continue
             states = {
                 state
@@ -14773,12 +14801,14 @@ class ProjectOrderInquiryService:
         placement, so only CANCELLED - a row nobody can point at a document any more -
         is refused.
         """
+        # A spare part request's line before final approval is nobody's work yet.
+        _refuse_draft_rows([row])
         if row.verb not in _LINKABLE_VERBS:
             raise AppException(
                 status_code=409,
                 message=(
-                    "Only an ORDER, RESERVE & ORDER or ORDER BACK row can be linked to a "
-                    "document."
+                    "Only an ORDER, RESERVE & ORDER, ORDER BACK or REPLENISH row can be "
+                    "linked to a document."
                 ),
                 code="order_inquiry_not_placeable_verb",
             )

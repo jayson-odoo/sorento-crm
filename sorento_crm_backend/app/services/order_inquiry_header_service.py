@@ -29,8 +29,12 @@ from app.models.project_so import (
     ACK_AWAITING,
     ACK_CHANGED,
     INQUIRY_CANCELLED,
+    INQUIRY_DRAFT,
+    INQUIRY_PRE_APPROVAL_STATES,
+    INQUIRY_TYPES,
     IV_ORDER,
     IV_ORDER_BACK,
+    IV_REPLENISH,
     IV_RESERVE_AND_ORDER,
     OrderInquiry,
     OrderInquiryLink,
@@ -118,7 +122,7 @@ _AGENT_NAME = func.coalesce(SalesAgent.person_label, SalesAgent.sales_agent)
 
 #: The Lines tab's buy verbs (`isInquiryBuyRow`, `_shared/lib/orderInquiryWorklist.ts`):
 #: the only rows whose `qty` is in the Requested footer, and so in `qty_total` (G10).
-_BUY_VERBS = (IV_ORDER, IV_ORDER_BACK, IV_RESERVE_AND_ORDER)
+_BUY_VERBS = (IV_ORDER, IV_ORDER_BACK, IV_RESERVE_AND_ORDER, IV_REPLENISH)
 
 HeaderSort = Literal[
     "raised_at",
@@ -132,6 +136,7 @@ HeaderSort = Literal[
     "agent",
     "so_date",
     "status",
+    "inquiry_type",
 ]
 HeaderState = Literal["outstanding", "completed", "all"]
 
@@ -161,13 +166,14 @@ class OrderInquiryHeaderService:
     # ------------------------------------------------------------------ shared query
 
     def _joined(self):
-        """The one join chain every reader below starts from. Every join past
-        `OrderInquiry`/`ProjectSalesOrder` is OUTER and keyed on a primary key, so it
-        can only narrow a 1:1 lookup, never fan a header out into more than one row."""
+        """The one join chain every reader below starts from. Every join is OUTER and
+        keyed on a primary key, so it can only narrow a 1:1 lookup, never fan a header out
+        into more than one row. The sales order is OUTER too: a spare part request has
+        none (SPARE-PART-ORDER-REQUEST)."""
         return (
             self.db.query(OrderInquiry)
             .select_from(OrderInquiry)
-            .join(
+            .outerjoin(
                 ProjectSalesOrder,
                 ProjectSalesOrder.id == OrderInquiry.project_sales_order_id,
             )
@@ -229,7 +235,11 @@ class OrderInquiryHeaderService:
         per_line = (
             self.db.query(
                 OrderInquiryRow.order_inquiry_id.label("order_inquiry_id"),
-                func.bool_or(live_row_clause()).label("has_live"),
+                # A spare part request's `draft` rows are its lines until it is approved
+                # (only its requester and approvers can see it then).
+                func.bool_or(
+                    or_(live_row_clause(), OrderInquiryRow.state == INQUIRY_DRAFT)
+                ).label("has_live"),
                 func.bool_or(
                     and_(
                         live_row_clause(),
@@ -316,6 +326,8 @@ class OrderInquiryHeaderService:
         project: Optional[str | List[str]] = None,
         inquiry_no: Optional[str | List[str]] = None,
         state: HeaderState = "outstanding",
+        inquiry_type: Optional[str | List[str]] = None,
+        visibility: Any = None,
     ):
         """`agg` is ALWAYS the caller's own `_rows_agg()` instance, never one built in
         here: `list()` needs to sort by `lines_total` / `qty_total` / `status`, which
@@ -403,6 +415,22 @@ class OrderInquiryHeaderService:
                 code="invalid_state_filter",
             )
 
+        # SPARE-PART-ORDER-REQUEST (P1): a request before its final approval is listed
+        # only for whom `visibility` admits (its requester, its approvers, an admin); a
+        # caller that names nobody never sees one.
+        if visibility is None:
+            base = base.filter(OrderInquiry.state.notin_(INQUIRY_PRE_APPROVAL_STATES))
+        else:
+            base = base.filter(visibility)
+        types = multi_values(inquiry_type)
+        if types:
+            unknown = [t for t in types if t not in INQUIRY_TYPES]
+            if unknown:
+                raise AppException(
+                    422, f"'{unknown[0]}' is not an inquiry type.", code="invalid_inquiry_type"
+                )
+            base = base.filter(OrderInquiry.inquiry_type.in_(types))
+
         # RESERVE-EMAIL-FULL-TABLE: exact OI nos (never a prefix), the reserve emails' button.
         numbers = multi_values(inquiry_no, capped=False)
         if numbers:
@@ -459,6 +487,8 @@ class OrderInquiryHeaderService:
         return OrderInquiryHeaderOut(
             id=inquiry.id,
             inquiry_no=inquiry.inquiry_no,
+            inquiry_type=inquiry.inquiry_type,
+            state=inquiry.state,
             legacy_inquiry_no=inquiry.legacy_inquiry_no,
             raised_at=inquiry.raised_at,
             raised_by_name=row.raised_by_name,
@@ -492,6 +522,8 @@ class OrderInquiryHeaderService:
         project: Optional[str | List[str]] = None,
         reserve: Optional[str] = None,
         inquiry_no: Optional[str | List[str]] = None,
+        inquiry_type: Optional[str | List[str]] = None,
+        visibility: Any = None,
         sort: Optional[str] = None,
         direction: Optional[str] = "asc",
         page: int = 1,
@@ -526,6 +558,7 @@ class OrderInquiryHeaderService:
             "project": _PROJECT_TITLE,
             "agent": _AGENT_NAME,
             "so_date": _SO_DATE,
+            "inquiry_type": OrderInquiry.inquiry_type,
             # The words the header's own status reads, so the sort groups them as shown.
             "status": case(
                 (
@@ -540,6 +573,7 @@ class OrderInquiryHeaderService:
         base = self._base(
             agg=agg, state=state, query=query, raised_by=raised_by, agent=agent,
             project=project, reserve=reserve, inquiry_no=inquiry_no,
+            inquiry_type=inquiry_type, visibility=visibility,
         )
         total = int(
             base.with_entities(func.count(OrderInquiry.id)).order_by(None).scalar() or 0
@@ -556,9 +590,9 @@ class OrderInquiryHeaderService:
             items=[self._serialize(row) for row in rows], total=total, page=page, limit=limit
         )
 
-    def get(self, inquiry_id: str) -> OrderInquiryHeaderDetailOut:
+    def get(self, inquiry_id: str, *, visibility: Any = None) -> OrderInquiryHeaderDetailOut:
         row = (
-            self._base(agg=self._rows_agg(), state="all")
+            self._base(agg=self._rows_agg(), state="all", visibility=visibility)
             .filter(OrderInquiry.id == inquiry_id)
             .first()
         )
@@ -583,8 +617,27 @@ class OrderInquiryHeaderService:
             OrderInquiryRaiseHistoryEntryOut(kind=raise_row.kind, by_name=name, at=raise_row.raised_at)
             for raise_row, name in raises
         ]
+        from app.services.project_service import resolve_user_names
+
+        inquiry: OrderInquiry = row[0]
+        names = resolve_user_names(
+            self.db, {u for u in (inquiry.requested_by, inquiry.approved_by) if u}
+        )
         return OrderInquiryHeaderDetailOut(
-            **header.model_dump(), order_type=order_type, raise_history=raise_history
+            **header.model_dump(),
+            order_type=order_type,
+            raise_history=raise_history,
+            currency=inquiry.currency,
+            needed_by=inquiry.needed_by,
+            default_location=inquiry.default_location,
+            reason=inquiry.reason,
+            requested_by=inquiry.requested_by,
+            requested_by_name=names.get(str(inquiry.requested_by)) if inquiry.requested_by else None,
+            submitted_at=inquiry.submitted_at,
+            approved_at=inquiry.approved_at,
+            approved_by=inquiry.approved_by,
+            approved_by_name=names.get(str(inquiry.approved_by)) if inquiry.approved_by else None,
+            reject_reason=inquiry.reject_reason,
         )
 
     def related_documents(self, inquiry_id: str) -> OrderInquiryRelatedDocumentsOut:
