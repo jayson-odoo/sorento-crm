@@ -40,7 +40,7 @@ export default async function RootLayout({
   children: ReactNode;
 }) {
   return (
-    <html className={cn('h-full', inter.variable)} suppressHydrationWarning>
+    <html lang="en" className={cn('h-full', inter.variable)} suppressHydrationWarning>
       <body className="antialiased font-sans flex h-full text-base text-foreground bg-background">
         {/* Snapshot the guide-target hash before Next.js hydration strips it.
             Consumed by GuideTargetSpotlight via sessionStorage. */}

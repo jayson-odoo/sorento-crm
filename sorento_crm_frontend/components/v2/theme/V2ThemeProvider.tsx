@@ -43,14 +43,22 @@ export function V2ThemeProvider({
   const hex = themeInputHex(theme);
   const [applied, setApplied] = useState(false);
   // next-themes owns the `dark` class in v1; remember its state so a switch back to v1 restores it.
-  const v1Dark = useRef<boolean | null>(null);
+  const v1Theme = useRef<{ dark: boolean; light: boolean; scheme: string } | null>(null);
 
   useLayoutEffect(() => {
     const html = document.documentElement;
-    if (v1Dark.current === null) v1Dark.current = html.classList.contains('dark');
+    if (v1Theme.current === null) {
+      v1Theme.current = {
+        dark: html.classList.contains('dark'),
+        light: html.classList.contains('light'),
+        scheme: html.style.colorScheme,
+      };
+    }
     const { tokens } = generateTheme(hex, effective);
     for (const name of THEME_VARIABLES) html.style.setProperty(name, tokens[name.slice(2) as keyof typeof tokens]);
     html.classList.toggle('dark', effective === 'dark');
+    html.classList.toggle('light', effective === 'light');
+    html.style.colorScheme = effective;
     setApplied(true);
   }, [hex, effective]);
 
@@ -58,7 +66,12 @@ export function V2ThemeProvider({
     () => () => {
       const html = document.documentElement;
       for (const name of THEME_VARIABLES) html.style.removeProperty(name);
-      if (v1Dark.current !== null) html.classList.toggle('dark', v1Dark.current);
+      const v1 = v1Theme.current;
+      if (v1) {
+        html.classList.toggle('dark', v1.dark);
+        html.classList.toggle('light', v1.light);
+        html.style.colorScheme = v1.scheme;
+      }
     },
     [],
   );

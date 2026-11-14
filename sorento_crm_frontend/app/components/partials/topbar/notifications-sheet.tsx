@@ -202,9 +202,10 @@ export function NotificationsSheet({ trigger }: { trigger: ReactNode }) {
   return (
     <>
       <Sheet open={open} onOpenChange={setOpen} modal={false}>
-        <SheetTrigger asChild>
-          <span className="relative inline-flex">
-            {trigger}
+        {/* The trigger itself is the SheetTrigger child, so the button semantics land on the button
+            (a span with type="button" fails axe aria-allowed-attr); the dot sits beside it. */}
+        <span className="relative inline-flex">
+          <SheetTrigger asChild>{trigger}</SheetTrigger>
             {showUnreadDot && (
               <span
                 className="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-medium text-destructive-foreground"
@@ -213,8 +214,7 @@ export function NotificationsSheet({ trigger }: { trigger: ReactNode }) {
                 {unreadCount > 99 ? '99+' : unreadCount}
               </span>
             )}
-          </span>
-        </SheetTrigger>
+        </span>
         {/* Passive utility panel: no scrim (D8). */}
         <SheetContent overlay={false} className="p-0 gap-0 sm:w-[500px] sm:max-w-none inset-5 start-auto h-auto rounded-lg p-0 sm:max-w-none [&_[data-slot=sheet-close]]:top-4.5 [&_[data-slot=sheet-close]]:end-5">
           <SheetHeader className="mb-0 flex flex-row items-center gap-2 space-y-0 px-3 py-3 pe-12 text-start border-b border-border">
