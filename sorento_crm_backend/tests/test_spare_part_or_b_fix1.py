@@ -9,7 +9,9 @@ F1 BLOCKER: a revision on a row purchasing has LINKED restates the links exactly
    the link to 6 and the row reads placed; 10 -> 12 leaves the row not fully placed (2 open).
 F2 Kill gaps: (a) nothing moved -> no `mark_purchasing_email_trigger`; (b) a row revised to 0
    goes through `ProjectOrderInquiryService.cancel_row_told` (cancel record + handover cancel
-   item); (c) `restate_row` is called once per moved row.
+   item); (c) `_settle_row_in_place` is called once per moved row (SPARE-PART-OR-B C, C4.4:
+   the revision settles through the SO path, `restate_row` is no longer an OR path; lead
+   sign-off 14 Nov).
 F3 `next_inquiry_no` takes a TRANSACTION-scoped advisory lock keyed on company + prefix
    (checked through `pg_locks` of this backend inside the test's transaction).
 F4 OR detail while a revision is open: `lines[].total` and header `total` use revised_qty.
@@ -268,7 +270,12 @@ def test_F2b_a_row_revised_to_zero_goes_through_cancel_row_told(staged, handover
     assert dec(told[0][2]["qty"]) == Decimal("4")
 
 
-def test_F2c_restate_row_once_per_moved_row(staged, handovers, monkeypatch):
+def _settled_ids(settles) -> list:
+    """`_settle_row_in_place(self, inquiry, entry, rows, need, ...)`: the one row handed over."""
+    return [str(args[3][0].id) for args, _kw in settles]
+
+
+def test_F2c_settle_row_in_place_once_per_moved_row(staged, handovers, monkeypatch):
     from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 
     w = staged
@@ -278,21 +285,22 @@ def test_F2c_restate_row_once_per_moved_row(staged, handovers, monkeypatch):
     inquiry = _submit(w, inquiry)
     row_a = row_for(w.db, inquiry, w.product_a)
     row_b = row_for(w.db, inquiry, w.product_b)
+    settles = _spy(monkeypatch, ProjectOrderInquiryService, "_settle_row_in_place")
     restates = _spy(monkeypatch, ProjectOrderInquiryService, "restate_row")
     approve(w, inquiry, w.stage1.tier1)
-    restated = sorted(str(args[1].id) for args, _kw in restates)
-    assert restated == sorted([str(row_a.id), str(row_b.id)])
+    assert sorted(_settled_ids(settles)) == sorted([str(row_a.id), str(row_b.id)])
+    assert not restates, "no second path for an order request"
 
 
-def test_F2c_an_unchanged_row_is_not_restated(staged, handovers, monkeypatch):
+def test_F2c_an_unchanged_row_is_not_settled(staged, handovers, monkeypatch):
     from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 
     w = staged
     inquiry = _pending_revision(w, qty="12")
     row_a = row_for(w.db, inquiry, w.product_a)
-    restates = _spy(monkeypatch, ProjectOrderInquiryService, "restate_row")
+    settles = _spy(monkeypatch, ProjectOrderInquiryService, "_settle_row_in_place")
     approve(w, inquiry, w.stage1.tier1)
-    assert [str(args[1].id) for args, _kw in restates] == [str(row_a.id)]
+    assert _settled_ids(settles) == [str(row_a.id)]
 
 
 # =============================================================================

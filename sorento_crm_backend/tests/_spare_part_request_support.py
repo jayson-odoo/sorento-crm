@@ -170,21 +170,26 @@ TWO_STAGES = [
 
 
 def add_stages(w, stages) -> SimpleNamespace:
-    """Configure the approval chain; every stage member holds VIEW + CREATE. The requester
-    is ALSO a member of stage 1 (its tier-2 team), for A2 "never the requester"."""
+    """Configure the approval chain; every stage member holds VIEW + CREATE. In a chain of
+    two or more levels the requester is ALSO a member of stage 1 (its tier-2 team), for A2
+    "never the requester". Never of the FINAL level's team: that would make them an approver
+    whose own Submit raises at once (SPARE-PART-OR-B C, C1.1 / C1.2; lead sign-off 14 Nov)."""
     from app.models.access import AgentTeam, TeamMember
 
     chain = sla_chain(w.db, KIND, [dict(s) for s in stages])
     for stage in chain.stages:
         role_grant(w.db, stage.tier1, VIEW, CREATE)
         role_grant(w.db, stage.tier2, VIEW, CREATE)
-    first = chain.stages[0]
-    tier2_team = (
-        w.db.query(AgentTeam)
-        .filter(AgentTeam.code == first.team_set, AgentTeam.tier == 2)
-        .one()
-    )
-    w.db.add(TeamMember(id=uid(), team_id=tier2_team.team_id, user_id=w.requester, sort_order=1))
+    if len(chain.stages) > 1:
+        first = chain.stages[0]
+        tier2_team = (
+            w.db.query(AgentTeam)
+            .filter(AgentTeam.code == first.team_set, AgentTeam.tier == 2)
+            .one()
+        )
+        w.db.add(
+            TeamMember(id=uid(), team_id=tier2_team.team_id, user_id=w.requester, sort_order=1)
+        )
     w.db.commit()
     w.chain = chain
     w.stage1 = chain.stages[0]

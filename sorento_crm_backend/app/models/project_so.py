@@ -1346,6 +1346,13 @@ class OrderInquiryRow(Base, CompanyScopedMixin):
     #: the revision is open; `qty` stays the approved figure purchasing works to until the
     #: revision's final approval restates it. NULL when no revision is open.
     revised_qty = Column(Numeric(15, 4), nullable=True)
+    #: SPARE-PART-OR-B C (C4.1): the product and the line delivery date that revision
+    #: proposes, NULL when it proposes none; `product_id` / `delivery_date` stay the approved
+    #: values until the revision's final approval settles the row.
+    revised_product_id = Column(
+        UUID(as_uuid=False), ForeignKey("products.id", ondelete="SET NULL"), nullable=True
+    )
+    revised_delivery_date = Column(Date, nullable=True)
     #: The order the requester entered a spare part request's lines in (1-based).
     line_no = Column(Integer, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)

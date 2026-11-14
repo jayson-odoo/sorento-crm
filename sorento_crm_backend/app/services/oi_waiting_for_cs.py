@@ -4,16 +4,21 @@ An order inquiry row is waiting for CS exactly while its SO line has a PENDING p
 row in an UNAPPLIED batch. Derived, no column: it clears by itself when CS's Confirm applies
 the batch, or when a later batch supersedes the pending row. Purchasing cannot acknowledge a
 waiting row, the system's own auto-confirm skips it, and `ack=to_confirm` leaves it out.
+
+SPARE-PART-OR-B C (C4.2 / C4.3): an order request row waits the same way while a revision is
+open on its header (draft, pending approval or rejected) and that revision moved the row: its
+qty, product or delivery date differs, or it is to be removed (`revised_qty` 0). The revision's
+final approval is the request's CS Confirm; it settles the row and clears the revision fields.
 """
 from __future__ import annotations
 
 from typing import Any, Iterable, Set
 
-from sqlalchemy import exists
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, exists, or_
+from sqlalchemy.orm import Session, aliased
 
 from app.models.planning_change import PlanningChangeBatch, PlanningChangeRow
-from app.models.project_so import OrderInquiryRow
+from app.models.project_so import OrderInquiry, OrderInquiryRow
 from app.services.planning_change_service import PLANNING_CHANGE_STATE_PENDING
 
 WAITING_FOR_CS_MESSAGE = "Waiting for CS to confirm the sales order change"
@@ -30,9 +35,34 @@ def pending_change_clause(so_line_id: Any):
     )
 
 
+_REVISED_HEADER = aliased(OrderInquiry)
+
+
+def revision_moved_clause(row: Any = OrderInquiryRow):
+    """SQL: an open revision of the row's order request moved the row (C4.2)."""
+    return and_(
+        or_(
+            and_(row.revised_qty.isnot(None), row.revised_qty != row.qty),
+            and_(
+                row.revised_product_id.isnot(None),
+                row.revised_product_id.is_distinct_from(row.product_id),
+            ),
+            and_(
+                row.revised_delivery_date.isnot(None),
+                row.revised_delivery_date.is_distinct_from(row.delivery_date),
+            ),
+        ),
+        exists().where(
+            _REVISED_HEADER.id == row.order_inquiry_id,
+            _REVISED_HEADER.revision_state.isnot(None),
+        ),
+    )
+
+
 def waiting_for_cs_clause(row: Any = OrderInquiryRow):
-    """SQL EXISTS: the row is waiting for CS. `row` is the mapped class or an alias."""
-    return exists().where(*pending_change_clause(row.so_line_id))
+    """SQL: the row is waiting for CS, on an SO change or an order request revision. `row`
+    is the mapped class or an alias."""
+    return or_(exists().where(*pending_change_clause(row.so_line_id)), revision_moved_clause(row))
 
 
 def waiting_row_ids(db: Session, row_ids: Iterable[str]) -> Set[str]:
@@ -47,6 +77,11 @@ def waiting_row_ids(db: Session, row_ids: Iterable[str]) -> Set[str]:
     applying = db.info.get(APPLYING_LINE_IDS_KEY) or set()
     query = db.query(OrderInquiryRow.id).filter(OrderInquiryRow.id.in_(ids), waiting_for_cs_clause())
     if applying:
-        query = query.filter(OrderInquiryRow.so_line_id.notin_(list(applying)))
+        query = query.filter(
+            or_(
+                OrderInquiryRow.so_line_id.is_(None),
+                OrderInquiryRow.so_line_id.notin_(list(applying)),
+            )
+        )
     found = query.all()
     return {str(r[0]) for r in found}

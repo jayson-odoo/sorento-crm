@@ -223,13 +223,29 @@ def test_U4_3_a_unit_price_change_during_a_revision_is_409(staged):
     w.db.rollback()
 
 
-def test_U4_3_the_edit_form_during_a_revision_is_409(staged):
+def test_U4_3_the_edit_form_during_a_revision_saves_the_revision_only(staged):
+    """SPARE-PART-OR-B C (C4.1, lead sign-off 14 Nov): Revise opens the same edit form; its
+    save writes the revision fields only, the header and the approved values stand."""
     w = staged
     inquiry = _revise(w, raised(w))
-    with pytest.raises(AppException) as excinfo:
-        svc().update(w.db, reload(w.db, inquiry), body(w, reason="Another reason"), w.requester)
-    assert excinfo.value.status_code == 409
-    w.db.rollback()
+    row_a = row_for(w.db, inquiry, w.product_a)
+    lines = []
+    for row in rows_of(w.db, inquiry):
+        lines.append(
+            {
+                "id": str(row.id), "product_id": str(row.product_id),
+                "stock_location": row.stock_location,
+                "qty": "12" if row.id == row_a.id else str(row.qty),
+                "unit_price": str(row.unit_price),
+            }
+        )
+    svc().update(w.db, reload(w.db, inquiry), body(w, reason="Another reason", lines=lines), w.requester)
+    w.db.commit()
+    inquiry = reload(w.db, inquiry)
+    assert inquiry.reason == "Spare parts for the service van", "the header is not revised"
+    row = row_for(w.db, inquiry, w.product_a)
+    assert dec(row.qty) == Decimal("10"), "qty stands until the re-approval"
+    assert dec(row.revised_qty) == Decimal("12")
 
 
 def test_U4_3_each_change_is_audited_old_to_new(staged):

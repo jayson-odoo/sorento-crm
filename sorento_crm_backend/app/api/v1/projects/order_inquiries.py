@@ -2364,6 +2364,13 @@ def get_order_inquiry_header(
 )
 def get_order_inquiry_history(
     inquiry_id: str,
+    view: Optional[str] = Query(
+        None,
+        description=(
+            "`inquiry`: the OI page's read; an order request shows only what happened from "
+            "its first raise on (SPARE-PART-OR-B C, C3.4). Omitted: the whole life."
+        ),
+    ),
     _user: dict = Depends(require_any_permission([VIEW, *SPARE_PART_READ])),
     db: Session = Depends(get_db),
 ):
@@ -2381,7 +2388,11 @@ def get_order_inquiry_history(
         inquiry = _assert_inquiry_visible(db, inquiry_id, _user)
         # SPARE-PART-ORDER-REQUEST (G8): a price change is cost, masked like every cost.
         mask = not spare_part_request_service.prices_visible(db, inquiry, str(_user.get("id") or ""))
-        return {"events": order_inquiry_history_service.history(db, inquiry_id, mask_cost=mask)}
+        return {
+            "events": order_inquiry_history_service.history(
+                db, inquiry_id, mask_cost=mask, view=view
+            )
+        }
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 

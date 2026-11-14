@@ -1706,9 +1706,17 @@ class OrderInquiryWorklistService:
             # one rule the Documents tab counts by (`oi_row_visibility`). A cancelled row is
             # listed only when the State filter asks for it; a used row never is.
             # `include_cancelled` (the OI page's `include_history` fetch) reads both as History.
-            # A spare part request's `draft` rows are its lines on its own OI page only.
+            # A spare part request's `draft` rows are its lines on its own OI page only, and
+            # only before its approval: a line a revision adds stays a draft purchasing never
+            # sees until the re-approval raises it (SPARE-PART-OR-B C, C4.1).
             base = base.filter(
-                or_(live_row_clause(), OrderInquiryRow.state == INQUIRY_DRAFT)
+                or_(
+                    live_row_clause(),
+                    and_(
+                        OrderInquiryRow.state == INQUIRY_DRAFT,
+                        OrderInquiry.state.in_(INQUIRY_PRE_APPROVAL_STATES),
+                    ),
+                )
                 if inquiry_id
                 else live_row_clause()
             )

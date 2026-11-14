@@ -86,6 +86,7 @@ from app.models.project_so import (
     INQUIRY_PLACED,
     INQUIRY_PRE_APPROVAL_STATES,
     INQUIRY_RAISED,
+    INQUIRY_TYPE_SPARE_PART,
     IV_ADVANCE,
     IV_ALREADY_INBOUND,
     IV_CANCEL_BALANCE,
@@ -2988,12 +2989,22 @@ class ProjectOrderInquiryService:
         entry: Dict[str, Any],
         rows: Sequence[OrderInquiryRow],
         need: Decimal,
-        decision: Any,
+        decision: Any = None,
         *,
         actor_user_id: Optional[str] = None,
         line_change: Optional[Dict[str, Any]] = None,
     ) -> bool:
         """A planning change moved THIS line: update its one row rather than replace it.
+
+        `decision` is the supply decision the board Confirm settles under. None is the one
+        other caller, a spare part request revision's final approval (SPARE-PART-OR-B C,
+        C4.4: "the re-approval is CS Confirm"): it hands over the request's ONE row (a
+        REPLENISH row, raised / partly linked / placed / actioned) with its approved new
+        qty, and `entry` names the revision's `required_date`, `item_code` and `product_id`.
+        With no decision nothing is filed under one, no fully received document redirects
+        the row (the goods landed for this very request), and a placed or actioned row with
+        no link is settled rather than declined: there is no netting path behind it to raise
+        the difference instead.
 
         Part 3's own rule (AC-P3-5): the sales order book moved a line the plan already
         told purchasing about, so what changed is the instruction's quantity and date -
@@ -3025,12 +3036,18 @@ class ProjectOrderInquiryService:
         lose the netting that says 5 of it is already bought. The caller's own path nets
         `placed` off the need and raises only the difference, which is the right answer.
         """
+        settles_request = decision is None
         live = [
             row
             for row in rows
             if row.state
-            in (INQUIRY_RAISED, INQUIRY_PARTLY_LINKED, INQUIRY_PLACED)
-            and row.verb in (IV_ORDER, IV_ORDER_BACK)
+            in (
+                (INQUIRY_RAISED, INQUIRY_PARTLY_LINKED, INQUIRY_PLACED, INQUIRY_ACTIONED)
+                if settles_request
+                else (INQUIRY_RAISED, INQUIRY_PARTLY_LINKED, INQUIRY_PLACED)
+            )
+            and row.verb
+            in ((IV_ORDER, IV_ORDER_BACK, IV_REPLENISH) if settles_request else (IV_ORDER, IV_ORDER_BACK))
             and not row.redirected_to_pool
         ]
         if len(live) != 1:
@@ -3039,7 +3056,7 @@ class ProjectOrderInquiryService:
         # REV nit (17 Sep): one query, read once - `links` below used to be a
         # second, identical `_links_of(row.id)` call.
         links = self._links_of(row.id)
-        if row.state in (INQUIRY_PLACED, INQUIRY_ACTIONED) and not links:
+        if row.state in (INQUIRY_PLACED, INQUIRY_ACTIONED) and not links and not settles_request:
             return False
 
         # AC-RL-10 to AC-RL-14 (`PLAN-oi-replan-received-links.md`, S2): a FULLY
@@ -3047,7 +3064,7 @@ class ProjectOrderInquiryService:
         # already shipped to somebody else's order, and settling this row onto them
         # would silently understate what purchasing still has to buy. Checked before
         # the over-cover step below, on the row's own links as they stand right now.
-        if links:
+        if links and not settles_request:
             redirected = self._redirect_row_if_received(row, links, decision)
             if redirected:
                 return False
@@ -3082,7 +3099,8 @@ class ProjectOrderInquiryService:
             # Review round 2 Blocking 4 (AC-LT-18): a settled-in-place row this branch
             # cancels holds no capacity for anyone else's row a moment longer.
             self._drop_suggested_links([row])
-            self._retire_settled_cancel_balance(rows, decision, actor_user_id=actor_user_id)
+            if not settles_request:
+                self._retire_settled_cancel_balance(rows, decision, actor_user_id=actor_user_id)
             self.db.flush()
             if had_links:
                 # S4: a row that carried supply and is now zeroed out is exactly what
@@ -3181,10 +3199,15 @@ class ProjectOrderInquiryService:
             row.delivery_date = required_date
         if entry.get("stock_location"):
             row.stock_location = entry.get("stock_location")
-        row.supply_decision_id = decision.id
+        if not settles_request:
+            row.supply_decision_id = decision.id
         row.order_inquiry_id = inquiry.id
         if product_moved:
             row.item_code = new_item_code
+            if settles_request and entry.get("product_id"):
+                # A request's row names its catalogue product itself (no SO line to read
+                # one off), so the product moves with its code.
+                row.product_id = entry["product_id"]
         if changed:
             # One rule for all three "was" columns (review S5): every REAL settle says what
             # THIS change moved and nothing older, so the Was / Now table on a re-flagged
@@ -3220,7 +3243,8 @@ class ProjectOrderInquiryService:
             # is free to change what nobody has read, and marking it would ask purchasing to
             # re-read something they never read.
             self._amended_by_cs(row)
-        self._retire_settled_cancel_balance(rows, decision, actor_user_id=actor_user_id)
+        if not settles_request:
+            self._retire_settled_cancel_balance(rows, decision, actor_user_id=actor_user_id)
         self.refresh_link_state([row])
         self.db.flush()
         if changed:
@@ -4919,13 +4943,24 @@ class ProjectOrderInquiryService:
         # READ when the seam gave no actor, but `project_sales_order_id` is needed either
         # way, so there is nothing to save by asking twice.
         inquiry_scalars = (
-            self.db.query(OrderInquiry.raised_by, OrderInquiry.project_sales_order_id)
+            self.db.query(
+                OrderInquiry.raised_by,
+                OrderInquiry.project_sales_order_id,
+                OrderInquiry.inquiry_type,
+            )
             .filter(OrderInquiry.id == row.order_inquiry_id)
             .first()
         )
         resolved_actor_id = actor_user_id or (inquiry_scalars[0] if inquiry_scalars else None)
         pso_id = inquiry_scalars[1] if inquiry_scalars else None
-        facts = self._handover_order_facts(pso_id) if pso_id else {}
+        if pso_id:
+            facts = self._handover_order_facts(pso_id)
+        elif inquiry_scalars and inquiry_scalars[2] == INQUIRY_TYPE_SPARE_PART:
+            # SPARE-PART-OR-B C (C2.2): an order request has no sales order; its header row
+            # names the request itself in the same four slots.
+            facts = self._handover_request_facts(str(row.order_inquiry_id))
+        else:
+            facts = {}
         so_number = facts.get("so_number")
         # A row `_settle_row_in_place`'s zero-need branch cancels never has its OWN `qty`
         # column zeroed (that column is the record of what it once asked for) - the
@@ -5017,6 +5052,9 @@ class ProjectOrderInquiryService:
             "so_number": so_number,
             "customer": facts.get("customer"),
             "project": facts.get("project"),
+            #: SPARE-PART-OR-B C (C2.4): the header row is an order request's, so the
+            #: template reads OR NO / OR DATE / REQUESTER / REASON over it.
+            "is_order_request": bool(facts.get("is_order_request")),
             #: FULFIL-SO-REMARK: see `so_remark_rules`; `so_remark` is stamped by
             #: `stamp_so_remark` when the Confirm carried the planner's own text.
             **self._mockup_facts(facts, core_line_id),
@@ -6046,6 +6084,40 @@ class ProjectOrderInquiryService:
         self._handover_order_facts_cache[pso_id] = facts
         return facts
 
+    def _handover_request_facts(self, inquiry_id: str) -> Dict[str, Any]:
+        """SPARE-PART-OR-B C (C2.2): an order request's header facts in the slots
+        `_handover_order_facts` fills for a sales order: the OR number, the day it was
+        submitted (dd/mm/yyyy, Malaysia), the requester and the reason ("-" when blank).
+        Memoised in the same per-instance cache (keyed by the inquiry id)."""
+        if inquiry_id in self._handover_order_facts_cache:
+            return self._handover_order_facts_cache[inquiry_id]
+        from app.models.user import User
+
+        found = (
+            self.db.query(
+                OrderInquiry.inquiry_no,
+                OrderInquiry.submitted_at,
+                OrderInquiry.reason,
+                User.name,
+                User.email,
+            )
+            .outerjoin(User, User.id == OrderInquiry.requested_by)
+            .filter(OrderInquiry.id == inquiry_id)
+            .first()
+        )
+        facts: Dict[str, Any] = {}
+        if found is not None:
+            inquiry_no, submitted_at, reason, name, email = found
+            facts = {
+                "so_number": inquiry_no,
+                "so_date": fmt_date(submitted_at) or None,
+                "customer": name or email,
+                "project": (reason or "").strip() or "-",
+                "is_order_request": True,
+            }
+        self._handover_order_facts_cache[inquiry_id] = facts
+        return facts
+
     def _handover_actor(self, user_id: Optional[str]) -> Optional[Dict[str, str]]:
         """`{name, email}` for the handover's `actor` context key, or `None` (AC-H18).
 
@@ -6478,9 +6550,9 @@ class ProjectOrderInquiryService:
         actor_user_id: Optional[str] = None,
         borrow_hole: Optional[bool] = None,
     ) -> Dict[str, Any]:
-        """THE restate of one live row to a new qty (and date): the borrow-hole Confirm
-        (`_restate_borrow_hole`) and a spare part request's approved revision
-        (SPARE-PART-OR-B U4.5) both go through here.
+        """THE restate of one live row to a new qty (and date) for the borrow-hole Confirm
+        (`_restate_borrow_hole`). A spare part request's approved revision settles through
+        `_settle_row_in_place` instead (SPARE-PART-OR-B C, C4.4: one path with the SO).
 
         Moved: the SAME row takes the new figures, keeps the old ones in `previous_qty` /
         `previous_delivery_date` for the Was / Now table, appends "Was N ..." to
@@ -6674,7 +6746,7 @@ class ProjectOrderInquiryService:
         (`_record_cancel`), a linked row fires `order_inquiry_changed_with_links`, and the
         handover email prints the cancel. A line CS transferred to Cancel SO
         (`retire_rows_for_cancelled_lines`) and a spare part request line a revision took
-        to 0 (SPARE-PART-OR-B U4.5) both go through here."""
+        to 0 or removed (SPARE-PART-OR-B U4.5, C4.4) both go through here."""
         was_qty = _dec(row.qty)
         links = self._links_of(row.id)
         if links:
@@ -15422,18 +15494,22 @@ def _build_handover_context(
         if first_inquiry_id is None and item.get("order_inquiry_id"):
             first_inquiry_id = item["order_inquiry_id"]
 
-        if pso_id not in seen_pso:
-            seen_pso.add(pso_id)
-            orders.append(
-                {
-                    "so_number": so_number,
-                    # OI-EMAIL-PRINT: the SO date prints once here, not on every line.
-                    "so_date": (item.get("line") or {}).get("so_date"),
-                    "customer": item.get("customer"),
-                    "project": item.get("project"),
-                    "remark": _so_remark_of(pending, pso_id, flags_by_pso[pso_id]),
-                }
-            )
+        # SPARE-PART-OR-B C (C2.3): an order request has no sales order, so its own header
+        # is its row in the summary table: two requests are two rows, two SOs unchanged.
+        order_key = pso_id or item.get("order_inquiry_id")
+        if order_key not in seen_pso:
+            seen_pso.add(order_key)
+            order = {
+                "so_number": so_number,
+                # OI-EMAIL-PRINT: the SO date prints once here, not on every line.
+                "so_date": (item.get("line") or {}).get("so_date"),
+                "customer": item.get("customer"),
+                "project": item.get("project"),
+                "remark": _so_remark_of(pending, pso_id, flags_by_pso[pso_id]),
+            }
+            if item.get("is_order_request"):
+                order["is_order_request"] = True
+            orders.append(order)
         if so_number and so_number not in seen_so:
             seen_so.add(so_number)
             so_numbers.append(so_number)

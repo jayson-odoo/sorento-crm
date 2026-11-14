@@ -25,6 +25,8 @@ class SparePartLineIn(BaseModel):
     stock_location: Optional[str] = Field(None, max_length=80)
     qty: Optional[Decimal] = None
     unit_price: Optional[Decimal] = None
+    #: SPARE-PART-OR-B C (C5.1): the line's own delivery date; the header's when omitted.
+    delivery_date: Optional[date] = None
 
 
 class SparePartRequestIn(BaseModel):
@@ -60,6 +62,8 @@ class SparePartLineOut(BaseModel):
     item_code: Optional[str] = None
     description: Optional[str] = None
     stock_location: Optional[str] = None
+    #: SPARE-PART-OR-B C (C5.1): the line's delivery date (an open revision's, on this page).
+    delivery_date: Optional[date] = None
     qty: str = "0"
     #: The prices are the expected supplier COST: null for a reader who may not see them
     #: (`spare_part_request_service.prices_visible`).

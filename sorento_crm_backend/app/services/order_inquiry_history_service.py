@@ -124,7 +124,43 @@ class _Rows:
         }
 
 
-def history(db: Session, inquiry_id: str, *, mask_cost: bool = False) -> List[dict]:
+#: SPARE-PART-OR-B C (C3.4): the OI page's read of an order request's History.
+VIEW_INQUIRY = "inquiry"
+
+
+def _first_raise_at(db: Session, inquiry_id: str) -> Optional[datetime]:
+    """When an order request was FIRST raised to purchasing; None for any other inquiry (a
+    sales-order inquiry reads its whole history on every page)."""
+    from sqlalchemy import func
+
+    from app.models.project_so import INQUIRY_TYPE_SPARE_PART, OrderInquiry
+
+    kind = db.query(OrderInquiry.inquiry_type).filter(OrderInquiry.id == inquiry_id).scalar()
+    if kind != INQUIRY_TYPE_SPARE_PART:
+        return None
+    return (
+        db.query(func.min(OrderInquiryRaise.raised_at))
+        .filter(OrderInquiryRaise.order_inquiry_id == inquiry_id)
+        .scalar()
+    )
+
+
+def history(
+    db: Session, inquiry_id: str, *, mask_cost: bool = False, view: Optional[str] = None
+) -> List[dict]:
+    """Every event, newest first. `view="inquiry"` (C3.3, the OI page): an order request
+    reads only what happened from its first raise on, nothing before purchasing saw it."""
+    events = _history(db, inquiry_id, mask_cost=mask_cost)
+    if view != VIEW_INQUIRY:
+        return events
+    first_raise = _first_raise_at(db, inquiry_id)
+    if first_raise is None:
+        return events
+    cut = _iso(first_raise)
+    return [event for event in events if event.get("at") and event["at"] >= cut]
+
+
+def _history(db: Session, inquiry_id: str, *, mask_cost: bool = False) -> List[dict]:
     rows = _Rows(db, inquiry_id)
     events: List[dict] = []
     events += _raises(db, inquiry_id, rows)
@@ -181,6 +217,7 @@ _EDIT_FIELD_LABEL = (
     ("stock_location", "Location"),
     ("qty", "Qty"),
     ("unit_cost", "Unit price"),
+    ("delivery_date", "Delivery date"),
 )
 
 

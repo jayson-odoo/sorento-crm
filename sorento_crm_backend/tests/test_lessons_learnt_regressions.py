@@ -347,6 +347,11 @@ _PURCHASING_TRIGGER_CALLERS = {
     ("app/api/v1/projects/fulfilment_planning.py", "_confirm_with_possible_rejects"),
     ("app/api/v1/projects/sales_orders.py", "publish_amendment"),
     ("app/services/spare_part_request_service.py", "_approve_revision"),
+    # Owner ruling 14 Nov 18:42 (UAC C2.1 of
+    # documentation/plans/purchasing/spare-part-or-c-14nov-acceptance-criteria.md): a spare
+    # part request's final approval, or an approver's own Submit, emails purchasing like the
+    # FP confirm does.
+    ("app/services/spare_part_request_service.py", "_raise_to_purchasing"),
 }
 
 #: The heavy guards and what each must keep covering.

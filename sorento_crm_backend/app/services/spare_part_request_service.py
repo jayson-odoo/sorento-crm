@@ -155,18 +155,51 @@ def _open_stages(db: Session, inquiry_id: str) -> list:
     return FormSLAOrchestrator(db).active_trackers_for_source(KIND, str(inquiry_id))
 
 
-def _on_stage_team(db: Session, tracker, user_id: str, company_id: Optional[str]) -> bool:
+def _on_team(
+    db: Session, agent_id: Any, team_set_code: Optional[str], user_id: str, company_id: Optional[str]
+) -> bool:
+    """THE membership read: the user sits on some tier of the agent's team set."""
     from app.services.user_service import AccessAgentService
 
-    if not tracker.agent_id:
+    if not agent_id:
         return False
     tier = AccessAgentService(db).get_user_tier_in_team_set(
-        str(tracker.agent_id),
-        str(user_id),
-        team_set_code=tracker.team_set_code,
-        company_id=tracker.company_id or company_id,
+        str(agent_id), str(user_id), team_set_code=team_set_code, company_id=company_id
     )
     return tier is not None
+
+
+def _on_stage_team(db: Session, tracker, user_id: str, company_id: Optional[str]) -> bool:
+    return _on_team(
+        db, tracker.agent_id, tracker.team_set_code, user_id, tracker.company_id or company_id
+    )
+
+
+def is_final_approver(db: Session, user_id: Optional[str], company_id: Optional[str]) -> bool:
+    """SPARE-PART-OR-B C (C1.1): an admin, or a member of the team of the FINAL configured
+    approval level (an active level whose next level is not an active one). Such a user's own
+    request skips approval: their Submit raises it (C1.2), their revision applies at Submit
+    (C1.3). Deciding on someone else's request is still `can_decide` (C1.5)."""
+    from app.models.access import AccessAgent
+    from app.models.sla import FormSLAConfig
+
+    if not user_id:
+        return False
+    if is_admin(db, user_id):
+        return True
+    configs = (
+        db.query(FormSLAConfig)
+        .filter(FormSLAConfig.source_entity_type == KIND, FormSLAConfig.is_active.is_(True))
+        .all()
+    )
+    active = {str(c.id) for c in configs}
+    for config in configs:
+        if config.next_config_id and str(config.next_config_id) in active:
+            continue
+        agent = db.query(AccessAgent.id).filter(AccessAgent.code == config.agent_code).first()
+        if agent is not None and _on_team(db, agent[0], config.team_set_code, user_id, company_id):
+            return True
+    return False
 
 
 def in_revision(inquiry: OrderInquiry) -> bool:
@@ -370,10 +403,18 @@ def request_total(db: Session, inquiry: OrderInquiry, *, revised: bool = False) 
     `revised`: at the open revision's qtys (the order request page); purchasing's reads keep
     the approved qty."""
     rows = _rows(db, inquiry)
+    # A line a revision adds is a draft row until the re-approval (C4.1): only the order
+    # request page counts it.
+    approved = inquiry.state in _APPROVED
     return (
         _num(
             sum(
-                (_line_total(r, revised=revised) for r in rows if r.state != INQUIRY_CANCELLED),
+                (
+                    _line_total(r, revised=revised)
+                    for r in rows
+                    if r.state != INQUIRY_CANCELLED
+                    and (revised or not approved or r.state != INQUIRY_DRAFT)
+                ),
                 _ZERO,
             )
         )
@@ -391,7 +432,9 @@ def detail(db: Session, inquiry: OrderInquiry, user_id: Optional[str]) -> Dict[s
     names = resolve_user_names(
         db, {u for u in (inquiry.requested_by, inquiry.approved_by) if u}
     )
-    product_ids = {str(r.product_id) for r in rows if r.product_id}
+    product_ids = {str(r.product_id) for r in rows if r.product_id} | {
+        str(r.revised_product_id) for r in rows if r.revised_product_id
+    }
     products = {
         str(p.id): p
         for p in (
@@ -402,17 +445,31 @@ def detail(db: Session, inquiry: OrderInquiry, user_id: Optional[str]) -> Dict[s
     total = request_total(db, inquiry, revised=revising)
     lines = []
     for row in rows:
-        product = products.get(str(row.product_id)) if row.product_id else None
-        # U4.6: the OR page reads the revision's qty while one is open.
+        # U4.6 / C4.1: the OR page reads the revision's qty, product and date while one is
+        # open; purchasing's reads keep the approved values.
+        product_id = (
+            row.revised_product_id if revising and row.revised_product_id else row.product_id
+        )
+        product = products.get(str(product_id)) if product_id else None
         qty = row.revised_qty if revising and row.revised_qty is not None else row.qty
+        delivery_date = (
+            row.revised_delivery_date
+            if revising and row.revised_delivery_date is not None
+            else row.delivery_date
+        )
         lines.append(
             {
                 "id": str(row.id),
-                "product_id": str(row.product_id) if row.product_id else None,
+                "product_id": str(product_id) if product_id else None,
                 "product_name": product.product_name if product else None,
-                "item_code": row.item_code,
+                "item_code": (
+                    product.product_code
+                    if product is not None and product_id != row.product_id
+                    else row.item_code
+                ),
                 "description": row.description,
                 "stock_location": row.stock_location,
+                "delivery_date": delivery_date,
                 "qty": _num(qty) or "0",
                 "unit_price": _num(row.unit_price) if show_prices else None,
                 "total": (_num(_line_total(row, revised=revising)) or "0") if show_prices else None,
@@ -645,10 +702,30 @@ def _product(db: Session, product_id: Any, index: int):
     return product
 
 
-def _replace_lines(db: Session, inquiry: OrderInquiry, lines: Iterable[Dict[str, Any]]) -> None:
+def _line_date(
+    line: Dict[str, Any], row: Optional[OrderInquiryRow], header: Optional[date], previous: Optional[date]
+) -> Optional[date]:
+    """C5.1 / C5.4: a line's own delivery date; one sent blank keeps a row's own date unless
+    that row was on the previous header date, which then moves with the header."""
+    own = _date(line.get("delivery_date"), "delivery_date")
+    if own is not None:
+        return own
+    if row is not None and row.delivery_date is not None and row.delivery_date != previous:
+        return row.delivery_date
+    return header
+
+
+def _replace_lines(
+    db: Session,
+    inquiry: OrderInquiry,
+    lines: Iterable[Dict[str, Any]],
+    *,
+    previous_date: Optional[date] = None,
+) -> None:
     """The form's lines replace the request's: a line naming an existing row id updates that
     row in place (its photos stay with it), every other line is a new row, and a row the form
-    no longer lists is removed with its photos."""
+    no longer lists is removed with its photos. `previous_date` is the header delivery date
+    before this save (C5.4)."""
     from app.services.entity_attachment_service import EntityAttachmentService
     from app.services.so_line_attachments import OI_ROW
 
@@ -662,32 +739,100 @@ def _replace_lines(db: Session, inquiry: OrderInquiry, lines: Iterable[Dict[str,
         unit_price = _decimal(line.get("unit_price"), "unit_price")
         location = _text(line.get("stock_location"), 80) or inquiry.default_location
         row = existing.get(str(line.get("id") or ""))
+        delivery_date = _line_date(line, row, inquiry.needed_by, previous_date)
         if row is None:
-            row = OrderInquiryRow(
-                company_id=inquiry.company_id,
-                order_inquiry_id=inquiry.id,
-                verb=IV_REPLENISH,
-                state=INQUIRY_DRAFT,
-                ack_state=ACK_AWAITING,
-            )
-            db.add(row)
+            row = _new_row(db, inquiry)
         if row.id:
             kept.add(str(row.id))
-        row.product_id = str(product.id)
-        row.item_code = product.product_code
-        # G1: the line's own description, the product's name when the form sends none.
-        row.description = _text(line.get("description"), 4000) or product.product_name or product.description
-        row.stock_location = location
-        row.qty = qty if qty is not None else _ZERO
-        row.unit_price = unit_price
-        row.delivery_date = inquiry.needed_by
-        row.state = INQUIRY_DRAFT
-        row.line_no = index  # D3: the order the lines were entered in
+        _write_line(row, line, product, qty, unit_price, location, delivery_date, index)
     for row_id, row in existing.items():
         if row_id not in kept:
             EntityAttachmentService(db).delete_links_for_entity(OI_ROW.entity_type, row_id)
             db.delete(row)
     db.flush()
+
+
+def _new_row(db: Session, inquiry: OrderInquiry) -> OrderInquiryRow:
+    row = OrderInquiryRow(
+        company_id=inquiry.company_id,
+        order_inquiry_id=inquiry.id,
+        verb=IV_REPLENISH,
+        state=INQUIRY_DRAFT,
+        ack_state=ACK_AWAITING,
+    )
+    db.add(row)
+    return row
+
+
+def _write_line(row, line, product, qty, unit_price, location, delivery_date, index) -> None:
+    row.product_id = str(product.id)
+    row.item_code = product.product_code
+    # G1: the line's own description, the product's name when the form sends none.
+    row.description = _text(line.get("description"), 4000) or product.product_name or product.description
+    row.stock_location = location
+    row.qty = qty if qty is not None else _ZERO
+    row.unit_price = unit_price
+    row.delivery_date = delivery_date
+    row.state = INQUIRY_DRAFT
+    row.line_no = index  # D3: the order the lines were entered in
+
+
+def _save_revision(db: Session, inquiry: OrderInquiry, data: Dict[str, Any], actor: str) -> OrderInquiry:
+    """C4.1: the edit form's save while a revision is a draft (or rejected). An existing line
+    writes the revision fields only (`revised_qty`, `revised_product_id`,
+    `revised_delivery_date`; NULL product / date when unchanged), so `qty`, `item_code`,
+    `product_id` and `delivery_date` stand for purchasing until the re-approval settles them.
+    A new line is a draft row purchasing never sees; a live row the form no longer lists is
+    marked to cancel (`revised_qty` 0) and stays live until then. The header is not revised."""
+    from app.services.entity_attachment_service import EntityAttachmentService
+    from app.services.so_line_attachments import OI_ROW
+
+    inquiry = _lock(db, inquiry)
+    if inquiry.revision_state not in _EDITABLE:
+        raise _conflict("This revision is waiting for approval.")
+    before = _snapshot(db, inquiry, revised=True)
+    existing = {str(r.id): r for r in _rows(db, inquiry) if r.state != INQUIRY_CANCELLED}
+    kept: Set[str] = set()
+    for index, line in enumerate(data.get("lines") or [], start=1):
+        if not isinstance(line, dict):
+            raise _invalid("lines", f"Line {index} is not a line.")
+        product = _product(db, line.get("product_id"), index)
+        qty = _decimal(line.get("qty"), "qty")
+        row = existing.get(str(line.get("id") or ""))
+        if row is not None and row.state != INQUIRY_DRAFT:
+            kept.add(str(row.id))
+            own_date = _date(line.get("delivery_date"), "delivery_date")
+            row.revised_qty = qty if qty is not None else _ZERO
+            row.revised_product_id = (
+                str(product.id) if str(product.id) != str(row.product_id or "") else None
+            )
+            row.revised_delivery_date = (
+                own_date if own_date is not None and own_date != row.delivery_date else None
+            )
+            continue
+        # A line this revision adds (new, or added by an earlier save of it).
+        location = _text(line.get("stock_location"), 80) or inquiry.default_location
+        delivery_date = _line_date(line, row, inquiry.needed_by, inquiry.needed_by)
+        if row is None:
+            row = _new_row(db, inquiry)
+        unit_price = _decimal(line.get("unit_price"), "unit_price")
+        _write_line(row, line, product, qty, unit_price, location, delivery_date, index)
+        db.flush()
+        kept.add(str(row.id))
+    for row_id, row in existing.items():
+        if row_id in kept:
+            continue
+        if row.state == INQUIRY_DRAFT:
+            EntityAttachmentService(db).delete_links_for_entity(OI_ROW.entity_type, row_id)
+            db.delete(row)
+            continue
+        row.revised_qty = _ZERO
+        row.revised_product_id = None
+        row.revised_delivery_date = None
+    db.flush()
+    _audit_edit(db, inquiry, before, _snapshot(db, inquiry, revised=True), actor)
+    db.flush()
+    return inquiry
 
 
 def create(db: Session, data: Dict[str, Any], actor: str) -> OrderInquiry:
@@ -715,7 +860,7 @@ def update(db: Session, inquiry: OrderInquiry, data: Dict[str, Any], actor: str)
     if not is_requester(inquiry, actor):
         raise _forbidden("Only the requester can edit this request.")
     if in_revision(inquiry):
-        raise _conflict(_REVISION_ONLY_QTY)
+        return _save_revision(db, inquiry, data, actor)
     if inquiry.state not in _REQUESTER_EDITABLE:
         raise _conflict("Only a draft, pending or rejected request can be edited.")
     restart = inquiry.state == INQUIRY_PENDING_APPROVAL
@@ -724,8 +869,9 @@ def update(db: Session, inquiry: OrderInquiry, data: Dict[str, Any], actor: str)
         if inquiry.state != INQUIRY_PENDING_APPROVAL:
             raise _conflict("This request was decided while you were editing it.")
     before = _snapshot(db, inquiry)
+    previous_date = inquiry.needed_by
     _apply_header(inquiry, data)
-    _replace_lines(db, inquiry, data.get("lines") or [])
+    _replace_lines(db, inquiry, data.get("lines") or [], previous_date=previous_date)
     after = _snapshot(db, inquiry)
     if not restart:
         _audit_edit(db, inquiry, before, after, actor)
@@ -739,36 +885,51 @@ def update(db: Session, inquiry: OrderInquiry, data: Dict[str, Any], actor: str)
 
 _HEADER_LABELS = (
     ("currency", "Currency"),
-    ("needed_by", "Needed by"),
+    ("needed_by", "Delivery date"),
     ("default_location", "Default location"),
     ("reason", "Reason"),
 )
 #: A line's audited fields. The price goes under the COST key `unit_cost` (it is the expected
 #: supplier cost), so every History reader masks it like any cost.
-_LINE_AUDIT_FIELDS = ("product", "description", "stock_location", "qty", "unit_cost")
+_LINE_AUDIT_FIELDS = ("product", "description", "stock_location", "qty", "unit_cost", "delivery_date")
 
 
-def _snapshot(db: Session, inquiry: OrderInquiry) -> Dict[str, Any]:
+def _snapshot(db: Session, inquiry: OrderInquiry, *, revised: bool = False) -> Dict[str, Any]:
+    """The request as History compares it. `revised`: an open revision's proposed qty,
+    product and delivery date per line (C4.1)."""
+    from app.models.product import Product
     from app.utils.date_format import fmt_date
 
     db.flush()
+    rows = _rows(db, inquiry)
+    codes: Dict[str, str] = {}
+    wanted = {str(r.revised_product_id) for r in rows if revised and r.revised_product_id}
+    if wanted:
+        codes = {
+            str(pid): code
+            for pid, code in db.query(Product.id, Product.product_code).filter(Product.id.in_(wanted))
+        }
+
+    def line(row: OrderInquiryRow) -> Dict[str, Any]:
+        code = codes.get(str(row.revised_product_id)) if revised and row.revised_product_id else None
+        day = row.revised_delivery_date if revised and row.revised_delivery_date else row.delivery_date
+        return {
+            "row_id": str(row.id),
+            "item_code": code or row.item_code,
+            "product": code or row.item_code,
+            "description": row.description,
+            "stock_location": row.stock_location,
+            "qty": _plain(_revised(row) if revised else row.qty),
+            "unit_cost": _plain(row.unit_price),
+            "delivery_date": fmt_date(day) if day else None,
+        }
+
     return {
         "currency": inquiry.currency,
         "needed_by": fmt_date(inquiry.needed_by) if inquiry.needed_by else None,
         "default_location": inquiry.default_location,
         "reason": inquiry.reason,
-        "lines": {
-            str(row.id): {
-                "row_id": str(row.id),
-                "item_code": row.item_code,
-                "product": row.item_code,
-                "description": row.description,
-                "stock_location": row.stock_location,
-                "qty": _plain(row.qty),
-                "unit_cost": _plain(row.unit_price),
-            }
-            for row in _rows(db, inquiry)
-        },
+        "lines": {str(row.id): line(row) for row in rows},
     }
 
 
@@ -827,6 +988,11 @@ def _validate_submit(db: Session, inquiry: OrderInquiry) -> List[OrderInquiryRow
             raise _invalid("lines", f"Line {index}: the unit price cannot be negative.")
         if not row.stock_location:
             raise _invalid("lines", f"Line {index}: choose a location.")
+        if row.delivery_date is None:
+            # C5.2: the header date fills a blank line.
+            row.delivery_date = inquiry.needed_by
+        if row.delivery_date is None:
+            raise _invalid("lines", f"Line {index}: choose a delivery date.")
     return rows
 
 
@@ -871,7 +1037,8 @@ def _void_stages(db: Session, inquiry: OrderInquiry, reason: str) -> None:
 
 def submit(db: Session, inquiry: OrderInquiry, actor: str) -> OrderInquiry:
     """R5 / A1: Draft or Rejected -> Pending approval at the first configured stage. A
-    revision (U4.4) goes to approval the same way, once a qty has changed."""
+    revision (U4.4) goes to approval the same way, once a line has changed. An approver's own
+    request skips approval (C1.2 / C1.3): Submit raises it, or applies its revision."""
     if not is_requester(inquiry, actor):
         raise _forbidden("Only the requester can submit this request.")
     # Read the state under the row lock: a concurrent decision or revise is seen, not raced.
@@ -881,6 +1048,8 @@ def submit(db: Session, inquiry: OrderInquiry, actor: str) -> OrderInquiry:
     if inquiry.state not in _EDITABLE:
         raise _conflict("Only a draft or rejected request can be submitted.")
     rows = _validate_submit(db, inquiry)
+    if is_final_approver(db, actor, inquiry.company_id):
+        return _raise_by_approver(db, inquiry, rows, actor)
     _assert_has_stage(db)
     was_rejected = inquiry.state == INQUIRY_REJECTED
     _audit(
@@ -891,18 +1060,62 @@ def submit(db: Session, inquiry: OrderInquiry, actor: str) -> OrderInquiry:
     return inquiry
 
 
+def _raise_by_approver(
+    db: Session, inquiry: OrderInquiry, rows: List[OrderInquiryRow], actor: str
+) -> OrderInquiry:
+    """C1.2: an approver's Submit is their own approval: no level opens, and the request goes
+    through the same final-approval step an approval takes (`_raise_to_purchasing`)."""
+    for row in rows:
+        row.requested_qty = row.qty
+        row.requested_unit_price = row.unit_price
+    inquiry.submitted_at = datetime.utcnow()
+    inquiry.reject_reason = None
+    db.flush()
+    _void_stages(db, inquiry, "Raised by approver")
+    _raise_to_purchasing(db, inquiry, rows, actor)
+    _audit(db, inquiry, "SPR_APPROVED", "Raised by approver", actor)
+    db.flush()
+    return inquiry
+
+
+def _moved(row: OrderInquiryRow) -> bool:
+    """C4.2: an open revision proposes something else for the row: another qty (0 = remove
+    it), product or delivery date."""
+    return (
+        _revised(row) != Decimal(row.qty or 0)
+        or (
+            row.revised_product_id is not None
+            and str(row.revised_product_id) != str(row.product_id or "")
+        )
+        or (
+            row.revised_delivery_date is not None
+            and row.revised_delivery_date != row.delivery_date
+        )
+    )
+
+
 def _submit_revision(db: Session, inquiry: OrderInquiry, actor: str) -> OrderInquiry:
     """U4.4: a revision draft (or a rejected one) to approval, through the same Form SLA
-    submit as a first submit; 422 when no line's qty moved."""
+    submit as a first submit; 422 when nothing moved and no line was added. An approver's own
+    revision is applied at once (C1.3)."""
     if inquiry.revision_state not in _EDITABLE:
         raise _conflict("This revision is already waiting for approval.")
     rows = _live_rows(db, inquiry)
     if not rows:
         return _close_empty_revision(db, inquiry, actor)
-    if not any(_revised(row) != Decimal(row.qty or 0) for row in rows):
-        raise _invalid("lines", "Nothing changed. Change a quantity before submitting.")
+    added = [row for row in rows if row.state == INQUIRY_DRAFT]
+    if not added and not any(_moved(row) for row in rows):
+        raise _invalid("lines", "Nothing changed. Change a line before submitting.")
     if not any(_revised(row) > 0 for row in rows):
         raise _invalid("lines", "Every line is at 0. Change a quantity above 0.")
+    for row in added:
+        if row.delivery_date is None:
+            row.delivery_date = inquiry.needed_by
+    if is_final_approver(db, actor, inquiry.company_id):
+        _void_stages(db, inquiry, "Revised by approver")
+        _audit(db, inquiry, "SPR_APPROVED", "Revised by approver", actor)
+        db.flush()
+        return _approve_revision(db, inquiry, rows, actor)
     _assert_has_stage(db)
     was_rejected = inquiry.revision_state == INQUIRY_REJECTED
     _audit(
@@ -918,10 +1131,7 @@ def _close_empty_revision(db: Session, inquiry: OrderInquiry, actor: str) -> Ord
     """Lead rule (fix round 1): purchasing cancelled every line while the revision was open,
     so there is nothing left to revise. Submit closes it quietly: nothing goes to approval
     and nobody is told; History says why."""
-    for row in _rows(db, inquiry):
-        row.revised_qty = None
-    inquiry.revision_state = None
-    inquiry.reject_reason = None
+    _clear_revision(db, inquiry)
     _void_stages(db, inquiry, "Revision closed: no lines left")
     _audit(
         db, inquiry, "SPR_REVISION_CLOSED",
@@ -929,6 +1139,15 @@ def _close_empty_revision(db: Session, inquiry: OrderInquiry, actor: str) -> Ord
     )
     db.flush()
     return inquiry
+
+
+def _clear_revision(db: Session, inquiry: OrderInquiry) -> None:
+    for row in _rows(db, inquiry):
+        row.revised_qty = None
+        row.revised_product_id = None
+        row.revised_delivery_date = None
+    inquiry.revision_state = None
+    inquiry.reject_reason = None
 
 
 def _live_rows(db: Session, inquiry: OrderInquiry) -> List[OrderInquiryRow]:
@@ -1281,8 +1500,23 @@ def approve(
         return inquiry  # the next (or a parallel) level decides; its team is told by the SLA machinery
     if revising:
         return _approve_revision(db, inquiry, rows, actor)
+    _raise_to_purchasing(db, inquiry, rows, actor)
+    return inquiry
 
-    from app.services.project_order_inquiry_service import _record_cancel
+
+def _raise_to_purchasing(
+    db: Session, inquiry: OrderInquiry, rows: List[OrderInquiryRow], actor: str
+) -> None:
+    """The final approval (A6, or an approver's own Submit, C1.2): raised with its OI number,
+    lines with qty go to purchasing, lines at 0 are cancelled. Purchasing is told as an FP
+    confirm tells them (C2.1): this press marks its transaction as a purchasing email trigger
+    and each raised row queues its raised line, so the email goes at commit, plus the
+    "Order inquiry" notice."""
+    from app.services.project_order_inquiry_service import (
+        ProjectOrderInquiryService,
+        _record_cancel,
+        mark_purchasing_email_trigger,
+    )
 
     now = datetime.utcnow()
     inquiry.state = INQUIRY_RAISED
@@ -1310,31 +1544,50 @@ def approve(
     # History's "Raised" entry is this raise row (the same one every OI raise writes); no
     # second audit line for the same moment.
     db.flush()
+    if to_buy:
+        # Owner, 14 Nov 18:42 (UAC C2.1): the approval emails purchasing like the FP confirm.
+        mark_purchasing_email_trigger(db)
+        oi = ProjectOrderInquiryService(db)
+        oi.prime_oi_dates(to_buy)
+        for row in to_buy:
+            oi._record_handover(row, kind="raised", actor_user_id=str(actor))  # noqa: SLF001
     _notify_purchasing(db, inquiry, to_buy)
-    return inquiry
 
 
 def _approve_revision(
     db: Session, inquiry: OrderInquiry, rows: List[OrderInquiryRow], actor: str
 ) -> OrderInquiry:
-    """U4.5: the revision's final approval. Each row whose qty moved is restated through the
-    SO-change path (`restate_row`: previous_qty, "Was N", back to purchasing as changed, the
-    order inquiry email); a row taken to 0 is cancelled the way a line CS cancels is
-    (`cancel_row_told`); an unchanged row is left alone. Then the revision closes on the
-    same record, oi_no unchanged."""
+    """U4.5 / C4.4: the revision's final approval (or an approver's own revision at Submit,
+    C1.3) is the request's CS Confirm. Each row the revision moved settles through the SO
+    path's own `_settle_row_in_place` (qty, delivery date, product, previous_*, the "Was"
+    note, link trim, changed / To order, the order inquiry email's settled line); a row taken
+    to 0 or removed is cancelled the way a line CS cancels is (`cancel_row_told`); a line the
+    revision added is raised with its own raised line; an unmoved row is left alone. Then the
+    revision closes on the same record, oi_no unchanged."""
+    from app.models.product import Product
     from app.services.project_order_inquiry_service import (
         ProjectOrderInquiryService,
         mark_purchasing_email_trigger,
     )
 
     oi = ProjectOrderInquiryService(db)
-    moved = [row for row in rows if _revised(row) != Decimal(row.qty or 0)]
-    if moved:
-        # Owner, 14 Nov ~15:54 (UAC U4.5): a qty that changes after purchasing has seen the
+    added = [row for row in rows if row.state == INQUIRY_DRAFT]
+    moved = [row for row in rows if row.state != INQUIRY_DRAFT and _moved(row)]
+    if moved or any(_revised(row) > 0 for row in added):
+        # Owner, 14 Nov ~15:54 (UAC U4.5): a line that changes after purchasing has seen the
         # request goes to them in the same order inquiry email an SO change sends. This
         # approval is the press that changes it, so it marks its transaction
-        # (FP-EMAIL-ONE-TRIGGER's third named trigger); nothing moved, nothing marked.
+        # (FP-EMAIL-ONE-TRIGGER); nothing moved, nothing marked.
         mark_purchasing_email_trigger(db)
+    product_ids = {str(row.revised_product_id) for row in moved if row.revised_product_id}
+    codes = {
+        str(pid): code
+        for pid, code in (
+            db.query(Product.id, Product.product_code).filter(Product.id.in_(product_ids))
+            if product_ids
+            else []
+        )
+    }
     for row in moved:
         new_qty = _revised(row)
         if new_qty <= 0:
@@ -1342,15 +1595,28 @@ def _approve_revision(
                 row, cause="revised_to_zero", stamp="Revised to 0", actor_user_id=str(actor)
             )
             continue
-        oi.restate_row(row, new_qty, None, base_note=row.note, actor_user_id=str(actor))
-        # What the row still holds after the trim, as the SO settle reads it.
-        oi._dispatch_changed_with_links(  # noqa: SLF001
-            inquiry, row, had_link=bool(oi._links_of(row.id))  # noqa: SLF001
-        )
-    for row in _rows(db, inquiry):
-        row.revised_qty = None
-    inquiry.revision_state = None
-    inquiry.reject_reason = None
+        entry = {
+            "required_date": row.revised_delivery_date,
+            "item_code": codes.get(str(row.revised_product_id)) if row.revised_product_id else None,
+            "product_id": str(row.revised_product_id) if row.revised_product_id else None,
+        }
+        if not oi._settle_row_in_place(  # noqa: SLF001
+            inquiry, entry, [row], new_qty, actor_user_id=str(actor)
+        ):
+            raise _conflict(
+                f"{row.item_code or 'A line'} can no longer be changed here. Reload and check it."
+            )
+    for row in added:
+        if _revised(row) <= 0:
+            db.delete(row)
+            continue
+        row.qty = _revised(row)
+        row.requested_qty = row.qty
+        row.requested_unit_price = row.unit_price
+        row.state = INQUIRY_RAISED
+        db.flush()
+        oi._record_handover(row, kind="raised", actor_user_id=str(actor))  # noqa: SLF001
+    _clear_revision(db, inquiry)
     inquiry.approved_at = datetime.utcnow()
     inquiry.approved_by = str(actor)
     db.flush()
@@ -1399,8 +1665,9 @@ def revise(db: Session, inquiry: OrderInquiry, actor: str) -> OrderInquiry:
     """U4.2: open a revision of an approved request, on the same record, whatever purchasing
     has done with it. The header stays raised (or actioned) and every row is left exactly as
     it is, so purchasing keeps working the approved request; each live row's `revised_qty`
-    starts at its qty. Only the qtys change from here (`edit_line`), and only the revision's
-    final approval restates the rows (`_approve_revision`)."""
+    starts at its qty. The edit form saves the revision from here (`_save_revision`, C4.1;
+    `edit_line` for a qty), and only the revision's final approval settles the rows
+    (`_approve_revision`)."""
     if not is_requester(inquiry, actor):
         raise _forbidden("Only the requester can revise this request.")
     inquiry = _lock(db, inquiry)
@@ -1412,6 +1679,8 @@ def revise(db: Session, inquiry: OrderInquiry, actor: str) -> OrderInquiry:
     inquiry.reject_reason = None
     for row in _live_rows(db, inquiry):
         row.revised_qty = row.qty
+        row.revised_product_id = None
+        row.revised_delivery_date = None
     _void_stages(db, inquiry, "Revised by the requester")
     _audit(db, inquiry, "SPR_REVISED", "Revised", actor)
     db.flush()
