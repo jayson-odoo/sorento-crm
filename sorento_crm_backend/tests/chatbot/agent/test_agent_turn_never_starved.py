@@ -157,3 +157,100 @@ def test_T4c_staff_panel_round_timeout_then_the_final_answer_fails_is_an_error(d
     assert _offered(provider.seen[-1]) == ["answer"]
     assert "could not finish the answer" in result.reply_text, result.reply_text
     _ended_in_error(result)
+
+
+# ------------------------------------------------------------------ UAC 13: the forced final answer gets a real wait
+
+
+#: What the slow final answer needs of the fake clock (crew trace: a 50-row answer under load ran past 10 s).
+FINAL_NEEDS = 20.0
+#: Turn time left when the turn goes to its final answer (crew trace 06a33482: ~7 s of 45).
+LEFT = 7.0
+
+
+class SlowFinal(ScriptedProvider):
+    """The final answer call (only the answer tool offered) needs FINAL_NEEDS seconds of the fake clock: given less,
+    it times out as the provider would; given that much, it answers. Every final call's timeout is recorded."""
+
+    def __init__(self, script, clock, on_call=None):
+        super().__init__(script, on_call=on_call)
+        self.clock = clock
+        self.final_timeouts: list = []
+
+    def chat(self, messages, *, tools=None, reasoning_effort=None, **kw):
+        if _offered({"tools": tools}) == ["answer"]:
+            from app.services.chatbot.llm_call import TimedOut
+
+            timeout = kw.get("timeout")
+            self.final_timeouts.append(timeout)
+            if timeout is None or timeout < FINAL_NEEDS:
+                self.seen.append({"messages": messages, "tools": tools, "effort": reasoning_effort})
+                self.clock["t"] += timeout if timeout is not None else FINAL_NEEDS
+                raise TimedOut("the final answer needed longer")
+            self.clock["t"] += FINAL_NEEDS
+        return super().chat(messages, tools=tools, reasoning_effort=reasoning_effort, **kw)
+
+
+def _answered_from_results(result) -> None:
+    from app.services.chatbot.agent import loop
+
+    assert result.status == "answered", (result.status, result.limit_hit, result.reply_text)
+    assert result.limit_hit is None
+    assert "could not finish" not in result.reply_text.lower(), result.reply_text
+    assert "12 units" in result.reply_text and loop.NOT_VERIFIED not in result.reply_text
+
+
+def test_T5_a_slow_final_answer_after_the_too_little_time_guard_still_answers(db, contact):
+    """UAC 13 on the 12a path: ~7 s left, no new round, and the final answer that needs 20 s completes."""
+    from app.services.chatbot.agent import loop
+
+    budget = loop.budgets_from_settings(db).max_seconds
+    assert 1 <= LEFT < loop.ROUND_MIN_SECONDS
+    clock = {"t": 0.0}
+    provider = SlowFinal(
+        [asks(call()), answer("There are 12 units.", figures=TWELVE)], clock,
+        on_call=lambda n: clock.__setitem__("t", budget - LEFT) if n == 1 else None,
+    )
+    result = run(db, contact, provider, Mcp(), clock=lambda: clock["t"])
+
+    assert provider.final_timeouts, "the turn went to its final answer"
+    _answered_from_results(result)
+
+
+@pytest.mark.parametrize("timeout", _timeouts(), ids=["TimedOut", "TimeoutError"])
+def test_T6_a_slow_final_answer_after_a_round_timeout_still_answers(db, contact, timeout):
+    """UAC 13 on the 12b path: the second round times out leaving ~7 s, and the final answer that needs 20 s
+    completes."""
+    from app.services.chatbot.agent import loop
+
+    budget = loop.budgets_from_settings(db).max_seconds
+    clock = {"t": 0.0}
+    provider = SlowFinal(
+        [asks(call()), timeout, answer("There are 12 units.", figures=TWELVE)], clock,
+        # The round's call is sent with the whole turn ahead of it, and times out with ~7 s left.
+        on_call=lambda n: clock.__setitem__("t", budget - LEFT) if n == 2 else None,
+    )
+    result = run(db, contact, provider, Mcp(), clock=lambda: clock["t"])
+
+    assert provider.final_timeouts, "the turn went to its final answer"
+    _answered_from_results(result)
+
+
+def test_T7_the_final_answer_wait_is_always_finite(db, contact):
+    """Guard: the real wait is a number of seconds, never None (no timeout) or unbounded."""
+    import math
+
+    from app.services.chatbot.agent import loop
+
+    budget = loop.budgets_from_settings(db).max_seconds
+    clock = {"t": 0.0}
+    provider = SlowFinal(
+        [asks(call()), answer("There are 12 units.", figures=TWELVE)], clock,
+        on_call=lambda n: clock.__setitem__("t", budget - LEFT) if n == 1 else None,
+    )
+    run(db, contact, provider, Mcp(), clock=lambda: clock["t"])
+
+    assert provider.final_timeouts
+    for timeout in provider.final_timeouts:
+        assert isinstance(timeout, (int, float)) and not isinstance(timeout, bool), timeout
+        assert math.isfinite(timeout) and timeout > 0, timeout
