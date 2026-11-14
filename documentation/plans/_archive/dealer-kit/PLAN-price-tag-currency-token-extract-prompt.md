@@ -1,6 +1,6 @@
 # PLAN: price tag text prices print a bare figure + `{{product.currency}}` token; AI extract prompt registered and hardened
 
-Status: building (16 Sep 2026)
+Status: merged (PR #966, 16 Sep 2026, squash 0fb5ec7d1)
 Owner ruling: 16 Sep 2026, "don't show the currency ... we should have a variable currency for flexibility" and "can I just fix at the prompt from the UI?" (answer: not registered today, so register it).
 UAC: `price-tag-currency-token-extract-prompt-acceptance-criteria.md` (alongside).
 Branch: `feat/price-tag-currency-token-extract-prompt-16sep`, worktree `.claude/worktrees/price-tag-currency-16sep`.
@@ -171,7 +171,7 @@ Slice D (pytest + vitest)
   3 of 3 runs gave 21 products, completion 212 tokens each (identical output), prompt 558 tokens.
 
 ### Browser pass, 16 Sep (lane stack :3080/:8080, session ptcur16, evidence under
-`evidence/price-tag-currency-token/`)
+`evidence/price-tag-currency-token/` (archived beside this plan))
 
 - AC-A13 PASS: Insert field lists Currency under Product; on PT-202609-0008 tag 1a the text layer
   `{{product.currency}} {{product.sell_price}}` drew `MYR 1,490`, the badge beside it kept `RM 1,490`. Note: the
