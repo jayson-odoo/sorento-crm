@@ -919,6 +919,8 @@ def _propose(
                 "access_as_written") else None
             asked.append({"row": 1, "key": typed["key"], "needs": list(needs), "label": out.data.get("label"),
                           "typed": typed, "role": said_role})
+            # A question is a result, not a failure (crew re-pass 54185b35); the loop ends the turn after it.
+            return ToolResult("ok", data=out.data, message="Done: the user is asked for the missing company or role.")
         if typed is not None and choices and single_waiting is not None:
             # A single row's pick is a pick like a table row's: the next turn may answer it (UAC F3, S7).
             single_waiting += [
@@ -2360,6 +2362,10 @@ def _run(
                     {"role": "tool", "tool_call_id": assistant_calls[idx]["id"], "content": replies.get(idx, "{}")}
                 )
             if accepted:
+                break
+            if batch_asked and not steps:
+                # The batch tool asked the user for a missing company or role: the reply is built by code from that
+                # call, so the turn ends; no further round may re-call the tool and replace it (crew re-pass 54185b35).
                 break
             schemas = narrow_after_query(schemas, calls, run.tool_calls, plan_parts=len(plan_parts))
 
