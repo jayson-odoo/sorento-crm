@@ -128,7 +128,7 @@ def test_colour_is_not_kept_on_a_block_tag():
 
 @pytest.mark.parametrize(
     "declaration",
-    ["font-size: 40px", "position: fixed", "font-family: Comic Sans", "display: none"],
+    ["font-size: 40px", "position: fixed", "font-family: Arial, serif", "display: none"],
 )
 def test_other_declarations_are_removed(declaration):
     out = sanitise_tag_html(f'<p><span style="{declaration}">x</span></p>')

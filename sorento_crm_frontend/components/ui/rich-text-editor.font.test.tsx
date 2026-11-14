@@ -111,7 +111,8 @@ describe.each<Toolbar>(['full', 'inline'])('RichTextEditor font per word, %s too
   it('keeps an existing font span when the value is loaded', async () => {
     const value = '<p>hello <span style="font-family: Montserrat; font-size: 14pt">world</span></p>';
     const { editor } = await mount(value, { toolbar });
-    expect(editor.getHTML()).toContain('<span style="font-family: Montserrat; font-size: 14pt">world</span>');
+    // TipTap serialises a trailing ';' in the style attribute; it is allowed, nothing else changes.
+    expect(editor.getHTML()).toMatch(/<span style="font-family: Montserrat; font-size: 14pt;?">world<\/span>/);
   });
 
   it('clearing the font and the size removes the mark', async () => {
