@@ -85,8 +85,10 @@ def _submit(w, inquiry):
     return reload(w.db, inquiry)
 
 
-def _pending_revision(w, qty="12", product=None):
-    inquiry = _revise(w, raised(w))
+def _pending_revision(w, qty="12", product=None, inquiry=None):
+    """A revision pending approval: of `inquiry` when given (the linked one), else of a
+    freshly raised request."""
+    inquiry = _revise(w, inquiry if inquiry is not None else raised(w))
     _change(w, inquiry, product or w.product_a, qty)
     return _submit(w, inquiry)
 
@@ -171,7 +173,7 @@ def test_F1_a_revision_down_to_6_trims_the_link_to_6_and_the_row_stays_placed(st
     assert _linked_qty(w, row_for(w.db, inquiry, w.product_a)) == Decimal("10"), "precondition"
     assert row_for(w.db, inquiry, w.product_a).state == "placed", "precondition: fully placed"
 
-    inquiry = _pending_revision(w, qty="6")
+    inquiry = _pending_revision(w, qty="6", inquiry=inquiry)
     approve(w, inquiry, w.stage1.tier1)
     row = row_for(w.db, inquiry, w.product_a)
     assert dec(row.qty) == Decimal("6")
@@ -187,7 +189,7 @@ def test_F1_a_revision_up_to_12_leaves_the_row_not_fully_placed(staged, handover
     assert _linked_qty(w, row_for(w.db, inquiry, w.product_a)) == Decimal("10"), "precondition"
     assert row_for(w.db, inquiry, w.product_a).state == "placed", "precondition"
 
-    inquiry = _pending_revision(w, qty="12")
+    inquiry = _pending_revision(w, qty="12", inquiry=inquiry)
     approve(w, inquiry, w.stage1.tier1)
     row = row_for(w.db, inquiry, w.product_a)
     assert dec(row.qty) == Decimal("12")
@@ -203,7 +205,7 @@ def test_F1_the_link_trim_and_refresh_run_through_the_settle_functions(staged, h
     inquiry = raised(w)
     row = row_for(w.db, inquiry, w.product_a)
     _link(w, row, w.product_a, w.loc_a, 10)
-    inquiry = _pending_revision(w, qty="6")
+    inquiry = _pending_revision(w, qty="6", inquiry=inquiry)
     trims = _spy(monkeypatch, ProjectOrderInquiryService, "_trim_links")
     refreshes = _spy(monkeypatch, ProjectOrderInquiryService, "refresh_link_state")
     approve(w, inquiry, w.stage1.tier1)
