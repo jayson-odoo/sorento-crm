@@ -181,7 +181,11 @@ export function useOrderInquiryHeaderDetail(id: string | undefined) {
 export function useOrderInquiryHeaderLines(id: string | undefined, view?: 'request') {
   return useQuery({
     queryKey: [ORDER_INQUIRY_HEADER_LINES_KEY, id, view ?? 'inquiry'],
-    queryFn: () => getOrderInquiryHeaderLines(id as string, { view }),
+    // No view, no second argument: every other caller reads exactly as before.
+    queryFn: () =>
+      view
+        ? getOrderInquiryHeaderLines(id as string, { view })
+        : getOrderInquiryHeaderLines(id as string),
     enabled: Boolean(id),
   });
 }
@@ -195,7 +199,9 @@ export function useOrderInquiryHistory(
 ) {
   return useQuery({
     queryKey: [ORDER_INQUIRY_HISTORY_KEY, id, view ?? 'all'],
-    queryFn: () => getOrderInquiryHistory(id as string, { view }),
+    // No view, no second argument (the whole life, as every caller had it).
+    queryFn: () =>
+      view ? getOrderInquiryHistory(id as string, { view }) : getOrderInquiryHistory(id as string),
     enabled: Boolean(id),
     refetchOnMount: 'always',
   });
