@@ -1,7 +1,7 @@
 """Phase 2 RED tests - MCP catalog for the outstanding report (Slice S3 + S4).
 
-`documentation/plans/chatbot/PLAN-chatbot-outstanding-report.md` Slice S3 and "S4 on main"
-point 9 / point 5; `documentation/plans/chatbot/chatbot-outstanding-report-acceptance-criteria.md`
+`documentation/plans/_archive/chatbot/PLAN-chatbot-outstanding-report.md` Slice S3 and "S4 on main"
+point 9 / point 5; `documentation/plans/_archive/chatbot/chatbot-outstanding-report-acceptance-criteria.md`
 AC-1120, AC-1121 (S3) and AC-1113b, AC-1114b (S4).
 
 Written before the catalog entries exist. `test_catalog_lists_outstanding_report_tool` must

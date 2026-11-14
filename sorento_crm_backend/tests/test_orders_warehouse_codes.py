@@ -1,7 +1,7 @@
 """AC-1121 (backend half) - `warehouse_codes` on `GET /api/v1/order-management/orders`.
 
-`documentation/plans/chatbot/PLAN-chatbot-outstanding-report.md` Slice S3;
-`documentation/plans/chatbot/chatbot-outstanding-report-acceptance-criteria.md` AC-1121:
+`documentation/plans/_archive/chatbot/PLAN-chatbot-outstanding-report.md` Slice S3;
+`documentation/plans/_archive/chatbot/chatbot-outstanding-report-acceptance-criteria.md` AC-1121:
 "the last one is new on the backend route too and filters on `order_lines.warehouse_id`".
 
 Postgres only, blank schema, every row seeded here (CI's database has none). Written before
