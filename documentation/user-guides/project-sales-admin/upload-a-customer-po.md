@@ -29,7 +29,10 @@ Hover the **Suggested** pill to see why the line was suggested.
 
 ## Which customer the codes belong to
 
-Codes are remembered for the customer who issued the PO. Pick it in **Issued by** at the top of the PO while it is waiting to be confirmed. When nothing is picked there, the project's customer is used. A party that is not linked to a customer record teaches nothing.
+Codes are remembered for the customer who issued the PO, when you click **Confirm this PO**: every product you accepted or picked on this PO is remembered then. Pick the issuer in **Issued by** at the top of the PO while it is waiting to be confirmed; type part of the party's name or code to find it. When nothing is picked there, the project's customer is used.
+
+- If no issuer is picked and the project has no customer, **Confirm this PO** asks you to choose one under **Issued by** first.
+- If the issuer you picked is not linked to a customer record, the PO is still confirmed, but you are told the codes were not remembered. Link that party to its customer under **Parties** so the next PO learns.
 
 ## Quantity
 
