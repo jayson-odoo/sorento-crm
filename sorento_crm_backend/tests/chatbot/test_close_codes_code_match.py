@@ -74,6 +74,9 @@ def test_ac37_named_colour_words_are_answered_directly(session_factory, monkeypa
     """AC-37: the model says the customer named the code ("gold" for -GLD): answered, though the token_keys differ."""
     _c, text = _say(session_factory, monkeypatch, stub_access, who, raw, code, "named")
     _assert_answered(text, who, code, 2)
+    # Lead ruling 14 Nov (d): the named code only, never its seeded sibling (staff answered -GLD and -GRY together).
+    for sibling in set(SEEDS[code]) - {code}:
+        assert sibling not in text, (sibling, text)
 
 
 @WHO

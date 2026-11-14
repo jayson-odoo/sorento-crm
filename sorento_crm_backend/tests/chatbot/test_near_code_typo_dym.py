@@ -713,9 +713,11 @@ def test_q1w_a_corrected_code_the_cap_cut_asks_did_you_mean_with_the_pick_first(
 
 @PATHS
 @pytest.mark.parametrize("far", ["SRT209-GM", "SRTWC287-S-150"], ids=["clearly_far", "just_under_the_floor"])
-def test_q1w_guard_a_far_pick_outside_the_cap_is_answered_directly(session_factory, monkeypatch, stub_access, gate, far):  # noqa: F811
-    """W3 (guard): a pick under the floor is not a near code, cap or no cap. Scored in the test by the
-    resolver's own expression (measured 0.14 and 0.27; SRTWC286-SH-200 scores 0.32, a near code)."""
+def test_q1w_a_far_pick_outside_the_cap_is_offered_not_answered(session_factory, monkeypatch, stub_access, gate, far):  # noqa: F811
+    """W3 updated (CHATBOT-CLOSE-CODES AC-36, round 10, lead ruling 14 Nov (b)): the parser's code is not in what was
+    typed (neither the raw nor any run of its words folds to it by `turn_state.token_key`), so it is offered "Did you
+    mean <pick>?", never answered, however far it scores (AC-39: no trigram floor decides). Was: answered directly
+    because the pick scored under the floor (measured 0.14 and 0.27, kept below as the case's precondition)."""
     from app.services.entity_resolver import ENTITY_MISS_SUGGEST_FLOOR
 
     c, _ = _cap_console(session_factory, monkeypatch, stub_access, f"+60000027{len(far) % 10}{int(gate)}", gate)
@@ -724,9 +726,9 @@ def test_q1w_guard_a_far_pick_outside_the_cap_is_answered_directly(session_facto
     score = _similarity(db, far, CAP_RAW)
     assert score < ENTITY_MISS_SUGGEST_FLOOR, (far, score)
     text = c.say(f"{CAP_RAW} stock", _ask(CAP_RAW, far, gate))
-    assert "Did you mean" not in text, text
-    assert text.startswith("Stock summary") and f"*Product Code:* {far}" in text, text
-    assert _stocked(c, 0) == [far], _stocked(c, 0)
+    assert "Did you mean" in text and far in text, text
+    assert "Stock summary" not in text and "*Product Code:*" not in text, f"answered on the parser's pick: {text!r}"
+    assert _offered(c)[0] == far, _offered(c)
 
 
 @PATHS
