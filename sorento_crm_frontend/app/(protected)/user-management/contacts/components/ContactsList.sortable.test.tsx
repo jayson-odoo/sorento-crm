@@ -41,7 +41,8 @@ vi.mock('@/hooks/useRespondContactOutbound', () => ({
 vi.mock('@/components/contacts/PortalLinkButton', () => ({ default: () => null }));
 vi.mock('@/services/contactImpersonationService', () => ({ startContactImpersonation: vi.fn() }));
 vi.mock('next-auth/react', () => ({ useSession: () => ({ data: { user: { email: 'admin@zzt.test' } } }) }));
-vi.mock('@/lib/is-superadmin', () => ({ isSuperadminUser: () => false }));
+// Superadmin: the Companies column (company access) is theirs only.
+vi.mock('@/lib/is-superadmin', () => ({ isSuperadminUser: () => true }));
 vi.mock('@/hooks/usePermissions', () => ({ useHasPermission: () => true }));
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),

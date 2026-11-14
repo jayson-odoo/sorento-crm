@@ -1,7 +1,8 @@
 /**
  * FILTER-MULTISELECT PR 1 (owner 27 Oct: "here need to be able to filter by companies", "show the
- * companies column also"). The Filters popover carries a multi-select Company filter (the companies
- * of the contact's linked customers, any-of) and the grid a Companies column.
+ * companies column also"). The Filters popover carries a multi-select Company filter and the grid a
+ * Companies column. CONTACT-COMPANIES-COL (owner 14 Nov, "it should follow the detail page"): both read
+ * the contact's company access, the same list as the detail page, from the row's `companies` field.
  * Harness mirrors ContactsList.filtersPopover.test.tsx.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -39,7 +40,19 @@ vi.mock('@/hooks/useRespondContactOutbound', () => ({
 vi.mock('@/components/contacts/PortalLinkButton', () => ({ default: () => null }));
 vi.mock('@/services/contactImpersonationService', () => ({ startContactImpersonation: vi.fn() }));
 vi.mock('next-auth/react', () => ({ useSession: () => ({ data: { user: { email: 'admin@zzt.test' } } }) }));
-vi.mock('@/lib/is-superadmin', () => ({ isSuperadminUser: () => false }));
+// Company access is superadmin-only to read (PLAN-user-management-read-gates.md:138); crew 14 Nov:
+// everyone else gets neither the column nor the filter.
+const viewer = vi.hoisted(() => ({ superadmin: true, viewingAs: null as string | null }));
+vi.mock('@/lib/is-superadmin', () => ({
+  isSuperadminUser: (u?: { roleName?: string | null } | null) =>
+    u && 'roleName' in u ? u.roleName === 'superadmin' : viewer.superadmin,
+}));
+// A superadmin viewing as another user: the backend answers for the target, so the gate must too.
+vi.mock('@/lib/impersonation-store', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/impersonation-store')>()),
+  useImpersonationSession: () =>
+    viewer.viewingAs ? { targetUser: { role_name: viewer.viewingAs } } : null,
+}));
 vi.mock('@/hooks/usePermissions', () => ({ useHasPermission: () => true }));
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
@@ -97,9 +110,9 @@ const BASE = {
   created_at: '2026-01-05T02:00:00', updated_at: '2026-01-05T02:00:00', linked_user_id: null, linked_user_name: null,
 };
 const BOTH = { ...BASE, id: 'contact-both', name: 'ZZT Both', last_name: 'Both', phone_number: '+60100000021',
-  customer_codes: ['300-1 (MCH)', '300-2'], customer_companies: ['Mocha', 'Sorento'] };
+  customer_codes: ['300-1 (MCH)', '300-2'], companies: ['Mocha', 'Sorento'] };
 const NONE = { ...BASE, id: 'contact-none', name: 'ZZT None', last_name: 'None', phone_number: '+60100000022',
-  customer_codes: [], customer_companies: [] };
+  customer_codes: [], companies: [] };
 
 const getContactsMock = vi.fn();
 vi.mock('../[id]/services/contactService', () => ({
@@ -126,6 +139,8 @@ const filtersButton = () => screen.getByRole('button', { name: /^filters/i });
 
 beforeEach(() => {
   vi.clearAllMocks();
+  viewer.superadmin = true;
+  viewer.viewingAs = null;
   window.history.replaceState(null, '', '/user-management/contacts');
   urlState.search = new URLSearchParams();
   getContactsMock.mockResolvedValue({ data: [BOTH, NONE], pagination: { total: 2 } } as never);
@@ -137,18 +152,51 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe('ContactsList - Companies column', () => {
-  it('has a Companies column listing the companies of the linked customers', async () => {
+  it('has a Companies column listing the contact\'s company access', async () => {
     renderList();
     const row = (await screen.findByText('+60100000021')).closest('tr') as HTMLElement;
     expect(screen.getByRole('button', { name: /^Companies$/ })).toBeInTheDocument();
     expect(within(row).getByText('Mocha, Sorento')).toBeInTheDocument();
   });
 
-  it('shows a dash for a contact with no customer', async () => {
+  it('shows a dash for a contact with no company access', async () => {
     renderList();
     const row = (await screen.findByText('+60100000022')).closest('tr') as HTMLElement;
     expect(row.textContent).not.toContain('Mocha');
     expect(within(row).getAllByText(/^\s*-\s*$/).length).toBeGreaterThan(0);
+  });
+});
+
+describe('ContactsList - Companies hidden from a viewer who cannot read company access', () => {
+  it('has no Companies column and no Company filter', async () => {
+    viewer.superadmin = false;
+    const user = userEvent.setup();
+    renderList();
+    await screen.findByText('+60100000021');
+    expect(screen.queryByRole('button', { name: /^Companies$/ })).toBeNull();
+    expect(screen.queryByText('Mocha, Sorento')).toBeNull();
+    await user.click(filtersButton());
+    await screen.findByTestId('contacts-filters-popover');
+    expect(screen.queryByLabelText('Company: any')).toBeNull();
+  });
+
+  it('a superadmin viewing as a non-admin gets neither column nor filter', async () => {
+    viewer.viewingAs = 'sales';
+    const user = userEvent.setup();
+    renderList();
+    await screen.findByText('+60100000021');
+    expect(screen.queryByRole('button', { name: /^Companies$/ })).toBeNull();
+    await user.click(filtersButton());
+    await screen.findByTestId('contacts-filters-popover');
+    expect(screen.queryByLabelText('Company: any')).toBeNull();
+  });
+
+  it('drops a Company filter carried in the URL', async () => {
+    viewer.superadmin = false;
+    urlState.search = new URLSearchParams(`company=${MOCHA}`);
+    renderList();
+    await screen.findByText('+60100000021');
+    expect(lastFilters().company).toBeUndefined();
   });
 });
 
