@@ -1,0 +1,65 @@
+# PLAN: Invoiced target achievement, period join the planner can hash (lane TARGET-ACHIEVED-PERF)
+
+Status: Build. Track: small fix (speed fix, no new behaviour, no migration, no auth change). UAC:
+`target-achieved-perf-14nov-acceptance-criteria.md`.
+
+## Why
+
+Owner, 14 Nov (testing #2243): the AI agent's "how is the sales for my dealers this year, compared
+with their targets?" times out, and the Targets screen dealer tab takes about 8.7 s. Root cause
+(crew report `AGENT-COMMISSION-WA-timeout/rootcause.md`, measured on sorento_prod_1112):
+
+- `achievement_service._achieved_invoiced` joins credited documents to the credit rows (`icr`
+  VALUES) and then to the period list (`ipv` VALUES, 260 rows) on `credit_group` and a date range.
+  VALUES carry no statistics, so the first join is estimated at 1 row and the planner nests the
+  period list under it: 42,456 x 260 comparisons, 10,998,391 rows removed by the join filter,
+  5-6 s warm, 18-28 s cold. The agent's per-statement limit is 5 s (`query.py:26`).
+- The timeout hint (`query.py:585`) tells the model to narrow with a filter, but a computed
+  entity's filters (agent, owner kind, ...) run in Python after the compute
+  (`computed.py:359-361`), so a retry can never be faster.
+
+## Architecture
+
+- Layer: backend service only (`app/services/sales/achievement_service.py`), plus the assistant
+  registry's timeout message (`app/services/assistant_registry/query.py`, `computed.py`).
+- Mechanism: fold the credit rows and the periods into ONE VALUES in Python, one row per
+  (credit row, period of its credit group) with the intersected date window
+  `[max(valid_from, pstart), min(valid_to, pend)]`, empty windows dropped. The documents meet it
+  on a hash of `(ckind, credit_key)`; only the date test stays as a join filter, on the few rows
+  of that key. Same tuples as today's two joins (each (document, credit row, period) triple with
+  the date inside both windows), so the figures are identical by construction.
+- Rejected: the order side's `period_days` (every day of every period, `achievement_service.py:316-341`):
+  works, but generates about 100,000 day rows for 2026's 444 dealer periods; the fold removes a
+  join instead of adding a CTE (PRINCIPLES "Simplest thing that works").
+- Timeout message: `timed(db, work, timeout_message=...)`; the two computed-entity calls pass a
+  message that does not suggest narrowing. Pushing the agent filter into SQL is not trivial (the
+  compute signature takes no filters), so text only (brief step 3).
+
+## Reuse
+
+- `_credit_groups` (`achievement_service.py:201`) as is: merged windows per (group, key), so a
+  document still meets at most one credit row per period.
+- `invoiced_sales.posted / signed_amount / agent_id / signed_line_*` as is (the one shared sales
+  function, standing rule "Every sales figure ...").
+- `timed` (`query.py:572`) extended with one keyword, not copied.
+
+## Tests (red first)
+
+- `tests/test_sales_target_invoiced.py`: a plan test on a seeded volume (20 dealer targets x 12
+  monthly periods, analyzed): `Rows Removed by Join Filter` over the whole plan stays within
+  (credited documents x periods of one target), and no VALUES scan is re-run per document.
+  Red on today's code (removes about documents x 239). The file's figure tests stay green.
+- `tests/chatbot/agent/...` timeout message: a computed-entity timeout reads without "Narrow".
+
+## Timing (brief step 4)
+
+sorento_prod_1112, read-only sessions, before vs after, warm and cold: agent_target_summary
+this_year, target_list this_year, `GET /api/v1/sales/targets?all=true&subject=dealer`. Figures:
+2026 totals per dealer target and account, before vs after, must be identical.
+
+## Standing rules that apply
+
+- "Every sales figure ... comes from the one shared sales function": unchanged, same service.
+- "Nothing hangs": the Targets dealer tab and the agent answer return well under 5 s.
+- "The bot states only what the data holds": the timeout message no longer suggests a retry that
+  cannot help.
