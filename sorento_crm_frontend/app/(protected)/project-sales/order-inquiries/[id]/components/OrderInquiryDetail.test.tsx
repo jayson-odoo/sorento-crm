@@ -50,8 +50,44 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(searchState.query),
 }));
 
+const permState = vi.hoisted(() => ({ denied: new Set<string>() }));
 vi.mock('@/hooks/usePermissions', () => ({
-  useHasPermission: () => true,
+  useHasPermission: (slug: string) => !permState.denied.has(slug),
+}));
+
+// OI-PO-LINK (document view gear): the shared dialog's hooks, mocked by module path as
+// `OrderInquiriesClient.poLink.test.tsx` does.
+const poLinkState = vi.hoisted(() => ({ switchOn: true, unlinkEnabled: true }));
+const poOptionsSpy = vi.hoisted(() => vi.fn());
+vi.mock('../../../_shared/po-link/usePoLink', () => ({
+  usePoLinkSwitch: () => ({ data: poLinkState.switchOn, isLoading: false }),
+  usePoLinkOptions: (...args: unknown[]) => {
+    poOptionsSpy(...args);
+    return {
+      data: {
+        capabilities: {
+          split_link: { enabled: true, reason: null },
+          link_row: { enabled: false, reason: null },
+          unlink_row: {
+            enabled: poLinkState.unlinkEnabled,
+            reason: poLinkState.unlinkEnabled ? null : 'Waiting for AutoCount',
+          },
+          relink_row: { enabled: false, reason: null },
+        },
+        po_lines: [], so_books: {}, lines: [], skipped: [],
+      },
+      isLoading: false,
+      error: null,
+    };
+  },
+  usePoLinkMutations: () => ({
+    link: { mutateAsync: vi.fn(), isPending: false },
+    unlink: { mutateAsync: vi.fn(), isPending: false },
+    change: { mutateAsync: vi.fn(), isPending: false },
+    relink: { mutateAsync: vi.fn(), isPending: false },
+    relocate: { mutateAsync: vi.fn(), isPending: false },
+    resume: { mutateAsync: vi.fn(), isPending: false },
+  }),
 }));
 
 // OI-RESEND-PURCHASING: the single-OI entry point.
@@ -95,6 +131,7 @@ const acknowledgeRowsSpy = vi.fn(async () => ({
   acknowledged: 0,
   results: [],
 }));
+const poCandidatesSpy = vi.hoisted(() => vi.fn());
 const autoPlaceSpy = vi.fn(async () => ({ linked: 0, results: [] }));
 const unacknowledgeSpy = vi.fn<
   (rowIds: unknown) => Promise<{ unacknowledged: number }>
@@ -219,6 +256,7 @@ vi.mock(
         acknowledgeFilterSpy(...(args as [unknown])),
       acknowledgeOrderInquiryRows: (...args: unknown[]) =>
         acknowledgeRowsSpy(...(args as [unknown])),
+      getOrderInquiryPoCandidates: (...args: unknown[]) => poCandidatesSpy(...args),
       autoPlaceOrderInquiryRows: (...args: unknown[]) =>
         autoPlaceSpy(...(args as [unknown])),
       unacknowledgeOrderInquiryRows: (...args: unknown[]) =>
@@ -274,6 +312,10 @@ function renderDetail(id: string) {
 }
 
 beforeEach(() => {
+  permState.denied.clear();
+  poLinkState.switchOn = true;
+  poLinkState.unlinkEnabled = true;
+  poOptionsSpy.mockClear();
   searchState.query = '';
   getOrderInquiryHistorySpy.mockClear();
   acknowledgeFilterSpy.mockClear();
@@ -579,7 +621,7 @@ describe('Unlink selected is a server-deferred pending action, not a confirm dia
       },
     );
     fireEvent.click(
-      await screen.findByRole('menuitem', { name: /unlink selected/i }),
+      await screen.findByRole('menuitem', { name: /^remove link in crm/i }),
     );
 
     // Target behaviour: no confirmation dialog at all, a deferred countdown instead.
@@ -604,7 +646,7 @@ describe('Unlink selected is a server-deferred pending action, not a confirm dia
       },
     );
     fireEvent.click(
-      await screen.findByRole('menuitem', { name: /unlink selected/i }),
+      await screen.findByRole('menuitem', { name: /^remove link in crm/i }),
     );
     await waitFor(() =>
       expect(createPendingActionSpy).toHaveBeenCalledTimes(1),
@@ -792,5 +834,181 @@ describe('STANDARD-HISTORY: the History tab (AC-SH-B8, v2)', () => {
     expect(getOrderInquiryHistorySpy).toHaveBeenCalledWith('oi-1');
     expect(event).toHaveTextContent('by J*** (Purchasing)');
     expect(screen.queryByRole('combobox', { name: 'Product' })).not.toBeInTheDocument();
+  });
+});
+
+describe('Gear menu: Link selected is gone, Auto link with ticks stays (owner round, 13 Nov)', () => {
+  async function openGearWithTick() {
+    const lineRow = (over: Partial<OrderInquiryWorklistRow>) =>
+      ({
+        ...LINKED_LINE,
+        item_code: 'ZZT-TICK',
+        core_line_id: 'cl-t',
+        line_no: 1,
+        verb: 'ORDER',
+        links: [],
+        ...over,
+      }) as OrderInquiryWorklistRow;
+    vi.mocked(getOrderInquiryHeaderLines).mockResolvedValueOnce([
+      lineRow({ id: 'row-a', state: 'raised', ack_state: 'changed' }),
+      lineRow({ id: 'row-b', state: 'raised', ack_state: 'awaiting' }),
+    ]);
+    renderDetail('oi-1');
+    await screen.findByRole('button', { name: 'Confirm' });
+    fireEvent.click(await screen.findByLabelText('Select ZZT-TICK'));
+    await screen.findByRole('button', { name: 'Confirm (1)' });
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Order inquiry options' }), { button: 0 });
+  }
+
+  it('has no Link selected item', async () => {
+    await openGearWithTick();
+    await screen.findByRole('menuitem', { name: /auto link/i });
+    expect(screen.queryByRole('menuitem', { name: /^link selected/i })).toBeNull();
+  });
+
+  it('Auto link with ticked lines still sends exactly those row ids', async () => {
+    await openGearWithTick();
+    fireEvent.click(await screen.findByRole('menuitem', { name: /auto link/i }));
+    await waitFor(() => expect(autoPlaceSpy).toHaveBeenCalledTimes(1));
+    const sent = autoPlaceSpy.mock.calls[0][0] as { row_ids?: string[]; filter?: unknown };
+    expect(sent.filter).toBeUndefined();
+    expect([...(sent.row_ids ?? [])].sort()).toEqual(['row-a', 'row-b']);
+  });
+});
+
+
+// OI-PO-LINK, document view gear. Owner, 13 Nov 18:55: "1 button is like link po then they can link
+// or change link or unlink in the popup". The gear carries Auto link, Link PO... (n) and Remove link
+// in CRM (n) (the CRM-only countdown unlink); never Link to PO / Change PO / Unlink...
+// ASSUMPTION: the line carries a new boolean `in_autocount_link` (AutoCount ties a PO line to it);
+// `doc` below is the one place to rename it.
+describe('Document view gear: one Link PO... item and Remove link in CRM', () => {
+  const LINK_PO = 'projects.stock_debt.link_po';
+  const doc = (id: string, code: string, inAutocountLink: boolean, over: Record<string, unknown> = {}) =>
+    ({
+      ...LINKED_LINE, id, item_code: code, product_id: 'prod-1', core_line_id: `cl-${id}`, line_no: 1,
+      verb: 'ORDER', state: 'placed', in_autocount: true, in_autocount_link: inAutocountLink,
+      links: [{ id: `l-${id}`, kind: inAutocountLink ? 'po' : 'spo', document: 'X-1', qty: '10' }],
+      ...over,
+    }) as unknown as OrderInquiryWorklistRow;
+  const A = doc('row-a', 'ZZT-AAA', true);
+  const B = doc('row-b', 'ZZT-BBB', true);
+  const C = doc('row-c', 'ZZT-CCC', false);
+
+  async function gear(rows: OrderInquiryWorklistRow[], ticks: string[]) {
+    vi.mocked(getOrderInquiryHeaderLines).mockResolvedValue(rows);
+    renderDetail('oi-1');
+    await screen.findByRole('button', { name: 'Confirm' });
+    for (const code of ticks) fireEvent.click(await screen.findByLabelText(`Select ${code}`));
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Order inquiry options' }), { button: 0 });
+    await screen.findByRole('menuitem', { name: /auto link/i });
+  }
+  const optionsKey = () => JSON.stringify((poOptionsSpy.mock.calls[0]?.[0] as { key?: unknown })?.key ?? '');
+  afterEach(() => vi.mocked(getOrderInquiryHeaderLines).mockResolvedValue([LINKED_LINE]));
+
+  it('shows Auto link, Link PO... (n), Remove link in CRM (n), and none of Link to PO / Change PO / Unlink... / Choose document', async () => {
+    await gear([A, B, C], ['ZZT-CCC']);
+    expect(screen.getByRole('menuitem', { name: /auto link/i })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: /^Link PO\.\.\. \(1\)$/ })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: /^Remove link in CRM \(1\)$/ })).toBeInTheDocument();
+    for (const gone of [/^Link to PO/, /^Change PO/, /^Unlink\.\.\./, /^Unlink selected/, /choose document/i]) {
+      expect(screen.queryByRole('menuitem', { name: gone })).toBeNull();
+    }
+  });
+
+  it('two products ticked: Link PO... (2) is enabled and no one-product reason is given (AC-HT1-d)', async () => {
+    await gear([A, doc('row-d', 'ZZT-DDD', true, { product_id: 'prod-2' })], ['ZZT-AAA', 'ZZT-DDD']);
+    const item = screen.getByRole('menuitem', { name: /^Link PO\.\.\. \(2\)$/ });
+    expect(item).not.toHaveAttribute('aria-disabled', 'true');
+    expect(item.getAttribute('title') ?? '').not.toContain('one product');
+    expect(screen.queryByText(/Tick lines of one product/)).toBeNull();
+  });
+
+  // Crew db3 pass on b452cd26a (14 Nov): two lines ticked, one not in AutoCount, gave a greyed
+  // "Link PO... (2)" with no reason on screen. Same as the lines list: the line in AutoCount goes,
+  // the count reads "1 of 2".
+  it('one line in AutoCount and one not: Link PO... (1 of 2) is enabled and sends only the AutoCount line', async () => {
+    const notInAc = doc('row-e', 'ZZT-EEE', false, { product_id: 'prod-2', in_autocount: false });
+    await gear([A, notInAc], ['ZZT-AAA', 'ZZT-EEE']);
+    const item = screen.getByRole('menuitem', { name: /^Link PO\.\.\. \(1 of 2\)$/ });
+    expect(item).not.toHaveAttribute('aria-disabled', 'true');
+    fireEvent.click(item);
+    await screen.findByRole('dialog');
+    await waitFor(() => expect(poOptionsSpy).toHaveBeenCalled());
+    expect(optionsKey()).toContain('row-a');
+  });
+
+  it('a greyed Link PO... shows its reason on screen', async () => {
+    const e1 = doc('row-e', 'ZZT-EEE', false, { in_autocount: false });
+    const f1 = doc('row-f', 'ZZT-FFF', false, { in_autocount: false });
+    await gear([e1, f1], ['ZZT-EEE', 'ZZT-FFF']);
+    const item = screen.getByRole('menuitem', { name: /^Link PO\.\.\./ });
+    expect(item).toHaveAttribute('aria-disabled', 'true');
+    expect(item).toHaveTextContent(/Tick one line to link it by hand\./);
+  });
+
+  it('Link PO... opens the shared popup titled Link PO for exactly the ticked row ids', async () => {
+    await gear([A, B, C], ['ZZT-AAA', 'ZZT-BBB']);
+    fireEvent.click(screen.getByRole('menuitem', { name: /^Link PO\.\.\./ }));
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toHaveTextContent('Link PO');
+    await waitFor(() => expect(poOptionsSpy).toHaveBeenCalled());
+    expect(optionsKey()).toContain('row-a');
+    expect(optionsKey()).toContain('row-b');
+    expect(optionsKey()).not.toContain('row-c');
+  });
+
+  it('Remove link in CRM runs the countdown for exactly the ticked CRM-only line, no popup', async () => {
+    await gear([A, C], ['ZZT-CCC']);
+    fireEvent.click(screen.getByRole('menuitem', { name: /^Remove link in CRM/ }));
+    await waitFor(() => expect(createPendingActionSpy).toHaveBeenCalledTimes(1));
+    expect(createPendingActionSpy.mock.calls[0][0].entityId).toBe('row-c');
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it.each([
+    ['the switch is off', () => { poLinkState.switchOn = false; }],
+    ['the grant is missing', () => { permState.denied.add(LINK_PO); }],
+  ])('%s: Remove link in CRM also takes an AutoCount-tied line through the countdown', async (_n, setup) => {
+    setup();
+    await gear([A, C], ['ZZT-AAA']);
+    fireEvent.click(screen.getByRole('menuitem', { name: /^Remove link in CRM/ }));
+    await waitFor(() => expect(createPendingActionSpy).toHaveBeenCalledTimes(1));
+    expect(createPendingActionSpy.mock.calls[0][0].entityId).toBe('row-a');
+  });
+});
+
+// Where AutoCount cannot be written (switch off, or the line is not in AutoCount), Link PO...
+// opens the existing CRM placement dialog, PO lines only.
+describe('Document view gear: Link PO... without AutoCount falls back to the CRM placement dialog', () => {
+  const PO_CANDIDATE = {
+    kind: 'po', po_line_id: 'pol-1', tier: 1, location: 'BRW', issue_date: '2026-08-01', cited: false,
+    po_number: 'ZZT-PO-0001', supplier_name: 'Dafuyuan', expected_date: '2026-09-01', qty_ordered: '15',
+    qty_received: '0', already_tagged: '0', remaining: '15', covers: true, recommended: false,
+    default_take: '10', claims: [],
+  };
+  const SPO_CANDIDATE = {
+    ...PO_CANDIDATE, kind: 'spo', po_line_id: null, spo_allocation_id: 'spo-1', po_number: 'ZZT-SPO-0009',
+  };
+  const line = (over: Record<string, unknown> = {}) =>
+    ({ ...LINKED_LINE, id: 'row-q', item_code: 'ZZT-QQQ', product_id: 'prod-1', state: 'raised',
+       links: [], core_line_id: 'cl-q', line_no: 1, verb: 'ORDER', ...over }) as unknown as OrderInquiryWorklistRow;
+  afterEach(() => vi.mocked(getOrderInquiryHeaderLines).mockResolvedValue([LINKED_LINE]));
+
+  it.each([
+    ['the switch is off', () => { poLinkState.switchOn = false; }, { in_autocount: true }],
+    ['the line is not in AutoCount', () => undefined, { in_autocount: false }],
+  ])('%s: Link PO... opens the CRM dialog with PO lines only', async (_n, setup, rowOver) => {
+    setup();
+    poCandidatesSpy.mockResolvedValue({ candidates: [PO_CANDIDATE, SPO_CANDIDATE], still_to_link: '10' });
+    vi.mocked(getOrderInquiryHeaderLines).mockResolvedValue([line(rowOver)]);
+    renderDetail('oi-1');
+    await screen.findByRole('button', { name: 'Confirm' });
+    fireEvent.click(await screen.findByLabelText('Select ZZT-QQQ'));
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Order inquiry options' }), { button: 0 });
+    fireEvent.click(await screen.findByRole('menuitem', { name: /^Link PO\.\.\./ }));
+    expect(await screen.findByText('Link to a document')).toBeInTheDocument();
+    expect(await screen.findByText('ZZT-PO-0001')).toBeInTheDocument();
+    expect(screen.queryByText('ZZT-SPO-0009')).toBeNull();
   });
 });
