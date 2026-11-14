@@ -1,6 +1,6 @@
 # PLAN - order inquiries: cancelled lines and used rows are shown, and purchasing confirms them
 
-Status: IN REVIEW, 20 Sep 2026. Approved in grill by owner (rulings C1 to C4). Lane
+Status: DEPLOYED 20 Sep 2026 (#1059, single-head fix #1060, deploy run 35505112655). Approved in grill by owner (rulings C1 to C4). Lane
 `feat/oi-cancelled-line-used-confirm`, tickets #1054 to #1057. Backend, frontend, reviewer,
 security review and the guide are done; the AC-CL-19 browser evidence run is still owed.
 UAC: `oi-cancelled-line-used-confirm-acceptance-criteria.md` (AC-CL-1 to AC-CL-20). The journey is
