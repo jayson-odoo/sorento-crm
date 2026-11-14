@@ -61,7 +61,9 @@ export function SystemBanner() {
       return;
     }
     root.style.setProperty(SYSTEM_BANNER_HEIGHT_VAR, `${barRef.current.offsetHeight}px`);
-    return () => root.style.removeProperty(SYSTEM_BANNER_HEIGHT_VAR);
+    return () => {
+      root.style.removeProperty(SYSTEM_BANNER_HEIGHT_VAR);
+    };
   }, [count, current?.key, isPhone]);
 
   if (!current) return null;

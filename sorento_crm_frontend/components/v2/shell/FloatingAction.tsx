@@ -54,7 +54,9 @@ export function FloatingAction({ label, onAction, blockedReason, headerPrimaryRe
       return;
     }
     root.style.setProperty(FLOATING_ACTION_ROOM_VAR, `${buttonRef.current.offsetHeight + 16}px`);
-    return () => root.style.removeProperty(FLOATING_ACTION_ROOM_VAR);
+    return () => {
+      root.style.removeProperty(FLOATING_ACTION_ROOM_VAR);
+    };
   }, [shown]);
 
   if (!shown) return null;
