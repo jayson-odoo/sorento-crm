@@ -94,6 +94,24 @@ pass. Two misses and one possible regression:
   prompts lose on this head), not this prompt.
 - The frozen file gains L2 (ideate), L3 (ideate) and A-222 (product_attachment, the 8366 product as an entity).
 
+Round 14 (crew LIVE x1 on v84 = 885bc652, crew-note 6879500272; crew decision 14 Nov): everything passes except the
+owner's conversation "this is not the asnwer i want" -> "i want to report this is not the answer i want to the IT
+team", which ended 2 of 3 on the idea give-up line ("I still couldn't find an idea ...",
+`chatbot_reply_copy.IDEATION_CAPTURE_GIVE_UP`). Crew decision: "this is not the answer I want" about the bot is
+enough detail. Changes (extractor schema and capture code, not the parser prompt; the candidate stays d7d8c837):
+
+- The capture reads the contact's last exchanges with the existing `turn_runtime.recent_exchanges` (same scopes as the
+  parser's "Recent exchanges") and hands them to `extract_ideate_turn` as context. The extractor's schema descriptions
+  say, by meaning: a message saying the assistant's answer was wrong or not what the user wanted is an issue WITH a
+  problem (has_idea true): the problem names what the user asked and that the answer was not what they wanted; the
+  title says so in the user's language (e.g. "Assistant answer not satisfying").
+- The filed item's transcript carries that last exchange, so whoever reads the issue sees the answer complained about.
+- An issue flow asks "What went wrong?" at most once and never gives up: when the answer to that ask still holds no
+  problem, it files the issue with what the user said (their own words, the title by the shared `item_title`).
+- The give-up line gets an issue wording in en / ms / zh (never the word idea in an issue flow); the idea flow's
+  give-up stays as it is.
+- Frozen: the owner's two-message conversation joins the extractor live set (with its previous exchange).
+
 - On a copy that already ran `wa_0001`/`wa_0002` on the old chain (before the 14 Nov re-parent onto
   `dbr_0001_retention_settings`), do NOT run `alembic downgrade -1 && alembic upgrade head`: that leaves
   `plr_0001` and `dbr_0001` unapplied. Either `alembic stamp agent_0001_proposal_insights && alembic upgrade head`
