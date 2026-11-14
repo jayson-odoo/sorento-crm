@@ -478,7 +478,7 @@ NEAR_PICK_KEY = "near_pick"
 #: codes: the pick is set aside (the raw is asked as typed), nothing is offered alone.
 SET_ASIDE: dict[str, Any] = {}
 #: CHATBOT-CLOSE-CODES F2: the parser's code a `SET_ASIDE` entity carries, so the which-one the
-#: raw asks lists it first (`resolve_gate.set_aside_pick_first`); order only.
+#: raw asks lists it first (`task.after_reply`, the dealer's which-one); order only.
 SET_ASIDE_PICK_KEY = "set_aside_pick"
 #: CHATBOT-CLOSE-CODES (lead ruling, 13 Nov 2026): the asks whose parser code is answered or
 #: offered by `picked_code_verdict`, and whose lone prefix hit is offered (`code_sizes`): stock and

@@ -583,34 +583,6 @@ def pick_near_code_first(parser: dict[str, Any], resolved: dict[str, Any]) -> No
                 res[NEAR_PICK_KEY] = row
 
 
-def set_aside_pick_first(parser: dict[str, Any], resolved: dict[str, Any]) -> None:
-    """CHATBOT-CLOSE-CODES F2: a product whose parser code grounding set aside because the raw
-    reaches several codes (`grounding.SET_ASIDE_PICK_KEY`) asks which one with that code listed
-    first: the raw's matches (or the one-token AND intersection) are reordered, the parser's code
-    to the front, nothing added or dropped. In place."""
-    from app.services.chatbot.head.grounding import SET_ASIDE_PICK_KEY
-    from app.services.chatbot.turn.state import token_key
-
-    def first(rows: Any, pick: str) -> Any:
-        if not isinstance(rows, list):
-            return rows
-        lead = [r for r in rows if isinstance(r, dict) and token_key(str(r.get("canonical_code") or "")) == pick]
-        return [*lead, *(r for r in rows if not any(r is x for x in lead))] if lead else rows
-
-    for entity in parser.get("entities") or []:
-        pick = token_key(str(entity.get(SET_ASIDE_PICK_KEY) or "")) if isinstance(entity, dict) else ""
-        if not pick:
-            continue
-        token = _token_of(entity)
-        resolutions = resolved.get("resolutions")
-        if isinstance(resolutions, list):
-            for res in resolutions:
-                if isinstance(res, dict) and res.get("token") == token:
-                    res["matches"] = first(res.get("matches"), pick)
-        elif len(resolved.get("tokens") or []) == 1:
-            resolved["intersection"] = first(resolved.get("intersection"), pick)
-
-
 def _answered_codes(parse_output: dict[str, Any], entities: list[Any]) -> list[str]:
     """CHATBOT-CLOSE-CODES AC-37: the folded product codes of a stock or incoming ask whose
     parser `canonical_code` is not what was typed and `grounding.picked_code_verdict` answers
@@ -1741,7 +1713,6 @@ def run(
     # parser's pick first.
     if isinstance(resolved, dict):
         pick_near_code_first(parser, resolved)
-        set_aside_pick_first(parser, resolved)
         if services.code_sizes is not None:
             # CHATBOT-CODE-MATCH R4: a missed code's close codes, and a stored size equal to
             # a number in it, read off stored values only.

@@ -997,7 +997,9 @@ def after_reply(
             continue
         # CHATBOT-CLOSE-CODES F2: the parser's code grounding set aside for this token
         # (`grounding.SET_ASIDE_PICK_KEY`) is listed first; order only.
-        suggested = str(entity.get("set_aside_pick") or "").strip().casefold() if isinstance(entity, dict) else ""
+        from app.services.chatbot.head.grounding import SET_ASIDE_PICK_KEY
+
+        suggested = str(entity.get(SET_ASIDE_PICK_KEY) or "").strip().casefold() if isinstance(entity, dict) else ""
         lead = [pair for pair in labelled if suggested and pair[1].casefold() == suggested]
         labelled = [*lead, *(pair for pair in labelled if pair not in lead)]
         in_family.update(id(row) for row in group)
