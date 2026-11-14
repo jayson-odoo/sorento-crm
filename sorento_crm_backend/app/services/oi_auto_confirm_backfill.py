@@ -30,6 +30,7 @@ from app.models.project_so import (
     INQUIRY_CANCELLED,
     IV_ORDER,
     IV_ORDER_BACK,
+    IV_REPLENISH,
     IV_RESERVE_AND_ORDER,
     OrderInquiryLink,
     OrderInquiryRow,
@@ -37,7 +38,7 @@ from app.models.project_so import (
 )
 
 _ZERO = Decimal("0")
-BUY_VERBS = (IV_ORDER, IV_RESERVE_AND_ORDER, IV_ORDER_BACK)
+BUY_VERBS = (IV_ORDER, IV_RESERVE_AND_ORDER, IV_ORDER_BACK, IV_REPLENISH)
 _ROW_COLUMNS = (
     "id", "state", "verb", "qty", "redirected_to_pool", "ack_state",
     "bundled_qty", "bundled_with_row_id",

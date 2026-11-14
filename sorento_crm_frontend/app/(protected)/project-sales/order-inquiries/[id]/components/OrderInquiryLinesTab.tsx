@@ -36,6 +36,7 @@ import { DEFAULT_HIDDEN_COLUMNS } from '../../components/orderInquiryWorklistCol
 import {
   StagedReserveEntry,
   useOrderInquiryHeaderLinesColumns,
+  type SparePartLineEdit,
 } from './orderInquiryHeaderLinesColumns';
 import {
   foldInquiryLines,
@@ -149,6 +150,7 @@ export function OrderInquiryLinesTab({
   decideSlot,
   splitSheet,
   reserveRequests = NO_REQUESTS,
+  sparePart,
 }: {
   lines: OrderInquiryWorklistRow[];
   isLoading: boolean;
@@ -184,6 +186,15 @@ export function OrderInquiryLinesTab({
   /** OI-RESERVE-ROUND: this OI's reserve requests; feeds the Request filter, which a
    * one-OI email link (`?reserve=<id>[,<id>]`) ticks. */
   reserveRequests?: OrderInquiryReserveRequest[];
+  /** SPARE-PART-ORDER-REQUEST: a spare part request's own columns (unit price, total, the
+   *  approver's in-place edits, the "was" marks) and its row photos. */
+  sparePart?: {
+    headerState?: string | null;
+    canDecide: boolean;
+    canEditPhotos: boolean;
+    currency?: string | null;
+    onEditLine?: (row: OrderInquiryWorklistRow, edit: SparePartLineEdit) => void;
+  };
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -273,6 +284,12 @@ export function OrderInquiryLinesTab({
     [lines],
   );
   const { data: attachmentsByLine } = useSoLineAttachmentLookup(attachmentLineIds);
+  // A spare part request's photos hang off its rows, one lookup for the tab.
+  const sparePartRowIds = useMemo(
+    () => (sparePart ? lines.map((row) => row.id) : []),
+    [lines, sparePart],
+  );
+  const { data: attachmentsByRow } = useSoLineAttachmentLookup(sparePartRowIds, 'order_inquiry_row');
   const columns = useOrderInquiryHeaderLinesColumns({
     canReserve,
     stagedByRowId,
@@ -283,8 +300,18 @@ export function OrderInquiryLinesTab({
     onLineHistoryClick,
     onUndoStaged,
     attachmentsByLine,
-    canEditAttachments,
+    canEditAttachments: sparePart ? sparePart.canEditPhotos : canEditAttachments,
     splitSheet,
+    ...(sparePart
+      ? {
+          inquiryType: 'spare_part_request' as const,
+          headerState: sparePart.headerState,
+          canDecide: sparePart.canDecide,
+          onEditLine: sparePart.onEditLine,
+          currency: sparePart.currency,
+          attachmentsByRow,
+        }
+      : {}),
   });
 
   // The param is dropped the moment the reader touches a filter themselves - it has done
@@ -413,7 +440,13 @@ export function OrderInquiryLinesTab({
       isLoading={isLoading}
       error={error}
       onRetry={onRetry}
-      tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
+      // A spare part grid is dense: ten columns, the approver's inputs among them, in 950 px.
+      tableLayout={{
+        width: 'fixed',
+        columnsResizable: true,
+        columnsVisibility: true,
+        dense: Boolean(sparePart),
+      }}
       emptyMessage={
         allLineRows.length === 0
           ? lines.length > 0 && lines.every((row) => row.state === 'cancelled')
