@@ -40,15 +40,13 @@ def for_lines(lines: Iterable[Any]) -> List[Tuple[str, str]]:
     squeezes the columns that do carry information. TECHNICAL SPEC always stays: it is in the
     sample's column set whether or not a line has a drawing.
 
-    REMARK only when a line of the scope is Non-cancellable (NON-CANCELLABLE-ITEMS), for the
-    same reason as the photo: a scope with nothing to remark on prints exactly as before.
+    REMARK only when a line of the scope has something to remark on, for the same reason as the
+    photo: a Non-cancellable flag (NON-CANCELLABLE-ITEMS) or a non-blank line note
+    (QUOTE-LINE-NOTE-REMARK, owner 12 Nov). A scope with neither prints exactly as before.
     """
     lines = list(lines)
     show_image = any(getattr(line, "image_attachment_id", None) for line in lines)
-    show_remark = any(
-        getattr(line, "is_non_cancellable", False) and not getattr(line, "is_section", False)
-        for line in lines
-    )
+    show_remark = any(remark(line) for line in lines)
     hidden = set()
     if not show_image:
         hidden.add(IMAGE)
@@ -57,11 +55,29 @@ def for_lines(lines: Iterable[Any]) -> List[Tuple[str, str]]:
     return [column for column in COLUMNS if column[0] not in hidden]
 
 
+def _note(line: Any) -> str:
+    """The trimmed note of a non-section line; "" for a heading row or a blank note."""
+    if getattr(line, "is_section", False):
+        return ""
+    return (getattr(line, "notes", None) or "").strip()
+
+
 def remark(line: Any) -> str:
-    """What the REMARK cell prints for one line: the Non-cancellable note, else nothing."""
-    if getattr(line, "is_non_cancellable", False) and not getattr(line, "is_section", False):
-        return NON_CANCELLABLE_REMARK
-    return ""
+    """What the REMARK cell prints for one line.
+
+    The Non-cancellable flag first, then the line's note on its own line (QUOTE-LINE-NOTE-REMARK,
+    owner 12 Nov: the salesperson's note reaches the customer). Joined with a newline, never cut;
+    each renderer keeps the break. A heading row prints nothing whatever its note.
+    """
+    if getattr(line, "is_section", False):
+        return ""
+    parts = []
+    if getattr(line, "is_non_cancellable", False):
+        parts.append(NON_CANCELLABLE_REMARK)
+    note = _note(line)
+    if note:
+        parts.append(note)
+    return "\n".join(parts)
 
 
 #: The remark text, one spelling for the PDF, the sign page and the screen.
