@@ -93,11 +93,18 @@ Write in English, Malay or Chinese and it replies in the same language. For staf
 the item and asks for a yes first. On a WhatsApp message the confirmed item is a real item on the
 **Ideas** board. One made from a Chatbot Console turn stays a test item and does not appear on the board.
 
+On WhatsApp the assistant calls every item **feedback** (Malay *maklum balas*, Chinese *反馈*) and names its
+type: **Problem report** for an issue, **Feature request** for a wish.
+
 * If an issue has no description, the assistant asks *"What went wrong? Tell me what you saw and where."*
+  It asks once: if your answer still does not say what went wrong, it logs the issue with your own words.
+* When you say the assistant's last answer was wrong or not what you wanted, that is enough to log an
+  issue, and the item keeps the question and the answer you complained about.
 * Screenshots or photos you sent in the 30 minutes before, and did not already send with an earlier
   item, are attached to the item (up to 10). If a photo cannot be attached, the item is still logged.
-* The reply gives the item number (for example IDEA-0123), the title, the photo count when there
-  are photos, and a link for staff.
+* The reply starts with *"Your feedback has been logged: Problem report - "* (or *Feature request*) and
+  the title, then the number on its own line (for example *Number: IDEA-0123*), the photo count when
+  there are photos, and a link for staff.
 * A complaint about a product or an order still gets the complaint form link, not this.
 
 **Dealers:** the first time a dealer files, the system creates the dealer's own CRM user. The dealer
