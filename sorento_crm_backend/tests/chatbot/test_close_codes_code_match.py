@@ -230,3 +230,8 @@ def test_r11_2_a_typed_code_inside_the_catalogue_name_is_still_offered(session_f
     raw = "SRTWT8259 gold"
     text = c.say(f"{raw} x 2 stock", stock({**product(raw, 2), "canonical_code": GLD}))
     _assert_offered_not_answered(c, text, who, raw, GLD)
+    if who == "staff":
+        # Reviewer should-fix: an offer naming -GLD, never a stock answer for it (the staff offer shape is
+        # "Did you mean:" then "1. <code> - has stock details").
+        assert "Did you mean" in text and GLD in text.split("Did you mean", 1)[1], f"no offer of {GLD}: {text!r}"
+        assert "Stock summary" not in text and f"*Product Code:* {GLD}" not in text, f"answered {GLD}: {text!r}"

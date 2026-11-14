@@ -14,7 +14,8 @@ The bot answers without asking only when:
 
 Everything else is offered, and the bot asks which one was meant. It never answers a guess. This includes a code that
 is only the start of one catalogue code (for example a typed `SRTWC83` when only `SRTWC8354-SH-UF` starts that way): the
-bot offers it and asks, for staff and dealers alike.
+bot offers it and asks, for staff and dealers alike. A code followed by a colour or finish word (`SRTWT8259 gold`)
+is also offered ("Did you mean SRTWT8259-GLD?"): one "yes" gets the answer.
 
 The bot also offers close codes in these cases:
 
