@@ -39,3 +39,15 @@ Plan: `PLAN-target-achieved-perf-14nov.md`.
    then "and last year?", then a typo version: each answered in 2 model calls, under 35,000 input
    tokens, under 15 s, no timeout, figures equal to the Targets screen. One live x1 run (frozen set
    dev part + these 3 phrasings), cap US$0.50, logged on the crew ledger (Q4).
+
+## Live-run round (crew decision (a), 14 Nov)
+
+10. A target's achieved on `agent_target_summary` counts every period of the target in the window,
+    including periods whose target is 0 (they add 0 to the target and nothing to the payout), so
+    each row equals the Targets tab for the same periods (owner rule: same total everywhere). The
+    note may still name targets with periods that have no target set, but never says their sales
+    are left out.
+11. The crm_query result totals for `agent_target_summary` carry target, achieved and remaining
+    sums over all matching rows next to the payout (never summed across amount and quantity), so
+    one query answers "sales vs target" (live diagnostic: with payout-only totals the model ran
+    crm_query 5 times in one turn).
