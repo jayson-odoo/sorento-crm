@@ -41,7 +41,7 @@ CANDIDATE_PATH = _PLANS / "prompt-wa-issue-ideate.txt"
 BASE_MD5 = "d29c19830b22aa47403a88ddcb8e817d"  # production v72 (crew, 5 Nov)
 # The lead fills this in once the coder has committed prompt-wa-issue-ideate.txt (md5 of that exact file).
 # Until then this test is red on purpose.
-CANDIDATE_MD5 = "TBD"
+CANDIDATE_MD5 = "edfb489f352ac552d82266b1bd362095"
 
 PROMPT_NAME = "chatbot_semantic_parser"
 MIGRATION_FILE = "wa_0002_parser_issue_ideate.py"
@@ -235,14 +235,15 @@ def test_R9_downgrade_removes_only_its_own_unlabelled_row():
         mig.publish(db)
         published = [r for r in _parser_rows(db).values() if (r.config_json or {}).get(MARKER_KEY)]
         assert len(published) == 1, "fixture: publish wrote its marked row"
+        published_id, prod_id, other_id = published[0].id, prod.id, other.id
 
         with Operations.context(MigrationContext.configure(db.connection())):
             mig.downgrade()
 
         left = _parser_rows(db)
-        assert published[0].id not in left
-        assert prod.id in left and other.id in left
-        assert _production_id(db) == prod.id
+        assert published_id not in left
+        assert prod_id in left and other_id in left
+        assert _production_id(db) == prod_id
 
 
 # --------------------------------------------------------------------------- #
