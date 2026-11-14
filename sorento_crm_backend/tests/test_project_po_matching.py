@@ -2483,7 +2483,10 @@ def test_cp2_b_confirm_with_no_known_customer_is_refused_naming_issued_by(seeded
     assert version.confirmed_at is None
 
 
-def test_cp2_c_an_issuer_not_linked_to_a_customer_counts_as_unknown(seeded, matcher):
+def test_cp2_c_an_unlinked_issuer_confirms_without_learning_and_says_why(seeded, matcher):
+    """Lead decision (review, standing rule "no extra refusals"): an issuer that IS chosen but
+    is not linked to a customer does not block Confirm. Nothing is remembered, and the
+    result says so, naming the party, so the screen can tell the person why."""
     from app.services import project_po_service as po_svc
 
     db, project, owner = seeded
@@ -2493,12 +2496,74 @@ def test_cp2_c_an_issuer_not_linked_to_a_customer_counts_as_unknown(seeded, matc
     party, _none = _issuer(db, project, linked=False)
     po_svc.update_po(db, po=po, payload={"issuing_party_id": party.id})
 
-    with pytest.raises(AppException) as caught:
-        service.confirm_version(version=version, actor_user_id=owner)
+    result = service.confirm_version(version=version, actor_user_id=owner)
 
-    assert caught.value.status_code == 422
-    assert _code(caught.value) == "po_version_issuer_required"
-    assert "Issued by" in _message(caught.value)
+    assert version.confirmed_at is not None
+    assert _all_map_rows(db, "BBTCKS903") == []
+    assert _all_map_rows(db, "BBT-HAND-2") == []
+    assert result["codes_not_remembered"] == "issuer_not_linked"
+    assert result["codes_not_remembered_party"] == party.name
+
+
+def test_cp2_c_with_a_known_customer_nothing_is_reported_as_not_remembered(seeded, matcher):
+    db, project, owner = seeded
+    _products(db, project.company_id, "CKS903")
+    po, _customer_row = _customer_po(db, project, owner, "ZZT-CP2C2")
+    version = _version(db, po)
+    service = ProjectPOExtractionService(db)
+    service.persist_pages(version, [_page(1, lines=[_row(1, code="CKS903")])])
+
+    result = service.confirm_version(version=version, actor_user_id=owner)
+
+    assert result["codes_not_remembered"] is None
+    assert result["codes_not_remembered_party"] is None
+
+
+def test_cp2_c_route_confirm_with_an_unlinked_issuer_returns_the_reason(monkeypatch, matcher):
+    """The fields reach the screen (a `response_model` drops what it does not declare)."""
+    from app.models.base import company_scope
+    from app.services import project_po_service as po_svc
+
+    from .test_project_po_document_save import _client, _restore
+
+    with blank_session() as db:
+        company_id = _sorento(db)
+        project_seed_service.run(db, company_id=company_id)
+        owner = _user(db, f"{MARKER} Ali")
+        project = _project(db, company_id, owner)
+        _products(db, company_id, "CKS903")
+        party, _none = _issuer(db, project, linked=False)
+        po = po_svc.create_po(
+            db,
+            project=project,
+            actor_user_id=owner,
+            payload={
+                "po_number": "ZZT-CP2C-ROUTE",
+                "po_source": "contractor_direct",
+                "issuing_party_id": party.id,
+            },
+        )
+        version = _version(db, po)
+        ProjectPOExtractionService(db).persist_pages(
+            version, [_page(1, lines=[_row(1, code="CKS903")])]
+        )
+        db.commit()
+        client, originals = _client(db, owner)
+        try:
+            with company_scope(db, frozenset({company_id})):
+                response = client.post(f"{BASE}/purchase-order-versions/{version.id}/confirm")
+        finally:
+            _restore(originals)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    outcome = body.get("confirm_result") or {}
+
+    def field(name):
+        return outcome.get(name, body.get(name))
+
+    assert field("codes_not_remembered") == "issuer_not_linked"
+    assert field("codes_not_remembered_party") == party.name
 
 
 def test_cp2_d_a_project_customer_lets_confirm_through_and_learns_for_it(seeded, matcher):

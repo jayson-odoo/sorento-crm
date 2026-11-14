@@ -20,6 +20,35 @@ vi.mock('@/components/common/pdf-viewer/pdfjs', async () =>
 
 const push = vi.fn();
 let originParam: string | null = null;
+// Every toast the screen raises, as (kind, message, ...). The unlinked-issuer notice and the
+// "shown once" rule for the issuer refusal are asserted on these.
+const { toastCalls } = vi.hoisted(() => ({ toastCalls: vi.fn() }));
+vi.mock('@/lib/toast', () => {
+  const record =
+    (kind: string) =>
+    (...args: unknown[]) =>
+      toastCalls(kind, ...args);
+  return {
+    toast: Object.assign(record('default'), {
+      success: record('success'),
+      error: record('error'),
+      info: record('info'),
+      warning: record('warning'),
+      message: record('message'),
+      loading: record('loading'),
+      promise: vi.fn(),
+      dismiss: vi.fn(),
+      custom: vi.fn(),
+    }),
+  };
+});
+
+function toastTexts(kind?: string): string[] {
+  return toastCalls.mock.calls
+    .filter((call) => !kind || call[0] === kind)
+    .map((call) => String(call[1] ?? ''));
+}
+
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push, replace: vi.fn() }),
   usePathname: () => '/project-sales/p1/purchase-orders/v1',
@@ -888,6 +917,50 @@ describe('POIntakeConfirmClient issuer', () => {
     let block: HTMLElement | null = picker.parentElement;
     for (let i = 0; i < 4 && block && !block.contains(sentence); i += 1) block = block.parentElement;
     expect(block?.contains(sentence)).toBe(true);
+  });
+
+  it('says the issuer refusal ONCE: inline under Issued by, never also as a toast', async () => {
+    getPOVersion.mockResolvedValue(version());
+    confirmPOVersion.mockRejectedValue(
+      Object.assign(
+        new Error('Choose who issued this PO under Issued by, so its codes are remembered.'),
+        { code: 'po_version_issuer_required', status: 422 },
+      ),
+    );
+
+    renderConfirm();
+
+    fireEvent.click(await screen.findByRole('button', { name: /Confirm this PO/i }));
+
+    expect(await screen.findByText(/under Issued by, so its codes are remembered/)).toBeInTheDocument();
+    expect(toastTexts().some((text) => /under Issued by/.test(text))).toBe(false);
+  });
+
+  it('after a confirm with an unlinked issuer, says once that codes were not remembered and why', async () => {
+    getPOVersion.mockResolvedValue(version());
+    confirmPOVersion.mockResolvedValue({
+      ...version({ confirmed_at: '2026-11-14T08:00:00Z' }),
+      confirm_result: {
+        line_count: 1,
+        po_amount: '364171.95',
+        model_mismatch_count: 0,
+        price_mismatch_count: 0,
+        codes_not_remembered: 'issuer_not_linked',
+        codes_not_remembered_party: 'ZZT Unlinked Contractor',
+      },
+    } as unknown as POVersion);
+
+    renderConfirm();
+
+    fireEvent.click(await screen.findByRole('button', { name: /Confirm this PO/i }));
+
+    await waitFor(() =>
+      expect(
+        toastTexts().filter(
+          (text) => /not linked to a customer/.test(text) && /ZZT Unlinked Contractor/.test(text),
+        ),
+      ).toHaveLength(1),
+    );
   });
 
   it('does not offer "Issued by" once the version is confirmed', async () => {

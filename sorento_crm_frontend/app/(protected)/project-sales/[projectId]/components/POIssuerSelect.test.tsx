@@ -90,3 +90,39 @@ describe('POIssuerSelect server search', () => {
     await waitFor(() => expect(select).toHaveTextContent('ZZT Far Away Contractor'));
   });
 });
+
+/**
+ * Review decision: the select never asks the parties list just to find a name. The current
+ * issuer's name arrives with the PO; the list is asked only when a person opens or searches.
+ */
+describe('POIssuerSelect asks the server only when a person searches', () => {
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 700));
+
+  it('does not call the parties list on render when the issuer and its name are given', async () => {
+    renderSelect({
+      value: 'pty-far-away',
+      issuerName: 'ZZT Far Away Contractor',
+    } as Partial<React.ComponentProps<typeof POIssuerSelect>>);
+
+    await screen.findByRole('combobox', { name: /Issued by/i });
+    await settle();
+    expect(listParties).not.toHaveBeenCalled();
+  });
+
+  it('does not call the parties list on render when the issuer has no name to show', async () => {
+    renderSelect({ value: 'pty-far-away' } as Partial<React.ComponentProps<typeof POIssuerSelect>>);
+
+    await screen.findByRole('combobox', { name: /Issued by/i });
+    await settle();
+    expect(listParties).not.toHaveBeenCalled();
+  });
+
+  it('does not call the parties list on render when no issuer is set', async () => {
+    renderSelect();
+
+    await screen.findByRole('combobox', { name: /Issued by/i });
+    await settle();
+    expect(listParties).not.toHaveBeenCalled();
+  });
+});
+
