@@ -1199,8 +1199,47 @@ def _contact_plan(db, user: dict, args: dict) -> dict:
         raise AppException(status_code=403, message="You can only restore a link you removed.", code="FORBIDDEN")
     if not in_scope and not (undo and not unlink_ids and role is None and ai in (None, True)):
         raise refused
-    codes = _own_customer_codes(db, uid, [*link_ids, *unlink_ids])
     facts = _contact_facts(db, contact, uid)
+    role_companies = args.get("role_companies")
+    # A company's access removed (crew re-pass 14 Nov): its accounts unlinked, its Business owner level taken off and
+    # the company itself removed, as the Dealer access screen models access. The model names the company; the code
+    # does the rest. AI replies go off with the last link (C4, below).
+    remove_codes = list(dict.fromkeys(str(c).strip().upper() for c in args.get("remove_companies") or [] if str(c).strip()))
+    remove_company_ids: list[str] = []
+    removed_words = ""
+    if remove_codes:
+        from app.models.company import Company
+        from app.models.order import Customer
+
+        if any(c not in TEMPLATE["owner_types"] for c in remove_codes):
+            raise AppException(
+                status_code=422, message="Name the company as SRT (Sorento) or MCH (Mocha).", code="VALIDATION_ERROR"
+            )
+        removed_words = ", ".join({"SRT": "Sorento", "MCH": "Mocha"}.get(c, c) for c in remove_codes)
+        if facts.get("other_links"):
+            raise AppException(
+                status_code=422, code="VALIDATION_ERROR",
+                message="This person also has access through another account; ask the office to change their settings.",
+            )
+        with _users_scope(db, uid):
+            company_links = [
+                str(cid) for (cid,) in db.query(Customer.id).join(Company, Company.id == Customer.company_id)
+                .filter(Customer.id.in_(facts["links"]), Company.code.in_(remove_codes))
+            ] if facts["links"] else []
+            remove_company_ids = [
+                str(cid) for (cid,) in db.query(Company.id).filter(
+                    Company.code.in_([c for c in remove_codes if c in facts["codes"]])
+                )
+            ]
+        if not company_links and not remove_company_ids:
+            raise AppException(
+                status_code=422, message=f"{contact.phone_number} has no {removed_words} access.", code="VALIDATION_ERROR"
+            )
+        unlink_ids = list(dict.fromkeys([*unlink_ids, *company_links]))
+        owned = [c for c in remove_codes if c in facts["owner_codes"]]
+        if owned and role is None:
+            role, role_companies = "employee", owned  # that company's owner tag and owner types go
+    codes = _own_customer_codes(db, uid, [*link_ids, *unlink_ids])
     for c in unlink_ids:
         if c not in facts["links"]:
             raise AppException(status_code=422, message=f"{codes[c]} was not linked.", code="VALIDATION_ERROR")
@@ -1211,9 +1250,9 @@ def _contact_plan(db, user: dict, args: dict) -> dict:
     remove_tags: list = []
     lines: list[str] = []
     template_codes = facts["template_codes"]
-    if args.get("role_companies"):
+    if role_companies:
         # The Dealer access screen changes the level of ONE company's row: only ever narrows (S5).
-        template_codes = [c for c in template_codes if c in set(args["role_companies"])]
+        template_codes = [c for c in template_codes if c in set(role_companies)]
     if role == "owner" and not template_codes:
         raise AppException(
             status_code=422,
@@ -1316,6 +1355,8 @@ def _contact_plan(db, user: dict, args: dict) -> dict:
     else:
         ai = None
     lines += [f"linked to {codes[c]}" for c in link] + [f"unlinked from {codes[c]}" for c in unlink_ids]
+    if remove_company_ids:
+        lines.append(f"{removed_words} access removed")
     if not lines:
         raise AppException(status_code=422, message=f"Nothing to change for {phone}.", code="VALIDATION_ERROR")
     from app.models.order import Customer
@@ -1329,6 +1370,7 @@ def _contact_plan(db, user: dict, args: dict) -> dict:
         "contact": contact, "facts": facts, "add": add, "remove": remove, "ai": ai,
         "add_tags": add_tags, "remove_tags": remove_tags,
         "link": link, "unlink": list(unlink_ids), "codes": codes, "lines": lines, "phone": phone,
+        "remove_company_ids": remove_company_ids,
         "link_codes": {**{str(k): v for k, v in known.items()}, **codes},
     }
 
@@ -1412,10 +1454,22 @@ def _contact_execute(db, user: dict, args: dict) -> dict:
     for customer_id in plan["link"]:
         link_customer(db, contact.id, customer_id, source="agent", linked_by=uid)
     removed = []
-    for customer_id in plan["unlink"]:
-        if not unlink_customer(db, contact.id, customer_id):
-            raise AppException(status_code=422, message=f"{plan['codes'][customer_id]} was not linked.", code="VALIDATION_ERROR")
-        removed.append(customer_id)
+    # Over every company the user is granted, as the plan read the links: a Mocha link is not in a Sorento session's
+    # scope (crew re-pass 14 Nov, a company's access removed).
+    with _users_scope(db, uid):
+        for customer_id in plan["unlink"]:
+            if not unlink_customer(db, contact.id, customer_id):
+                raise AppException(
+                    status_code=422, message=f"{plan['codes'][customer_id]} was not linked.", code="VALIDATION_ERROR"
+                )
+            removed.append(customer_id)
+    if plan["remove_company_ids"]:
+        from app.models.company import RespondContactCompany
+
+        db.query(RespondContactCompany).filter(
+            RespondContactCompany.respond_contact_id == contact.id,
+            RespondContactCompany.company_id.in_(plan["remove_company_ids"]),
+        ).delete(synchronize_session=False)
     db.flush()
     db.expire(contact)
     after = _contact_state(contact, _contact_facts(db, contact, uid))
@@ -1472,8 +1526,12 @@ def _contacts_find(db, ctx, args: dict) -> ToolResult:
             contact = db.get(RespondContact, found[n].id)
             facts = _contact_facts(db, contact, ctx.user_id)
             with _users_scope(db, ctx.user_id):
+                from app.models.company import Company
+
+                company_code = dict(db.query(Company.id, Company.code).all())
                 accounts = [
-                    {"customer_id": str(c.id), "code": c.customer_code, "name": c.customer_name}
+                    {"customer_id": str(c.id), "code": c.customer_code, "name": c.customer_name,
+                     "company": company_code.get(c.company_id)}
                     for c in db.query(Customer)
                     .join(RespondContactCustomer, RespondContactCustomer.customer_id == Customer.id)
                     .filter(RespondContactCustomer.contact_id == contact.id)
@@ -1510,7 +1568,8 @@ WRITES[UPDATE_CONTACT] = WriteDef(
             "name": UPDATE_CONTACT,
             "description": (
                 "Propose a change to one dealer contact's access: role (owner = Business owner, employee), "
-                "chatbot_allowed (AI replies), and customer links. To remove a person's access (no access, "
+                "chatbot_allowed (AI replies), and customer links. To remove one company's access (Sorento or "
+                "Mocha), pass that company in remove_companies. To remove a person's access altogether (no access, "
                 "resign), unlink every account crm_contacts_find lists for them: their AI replies go off with "
                 "the last link, and a removal needs no role, company or dealer. Route EVERY change the user asks for on a dealer contact through "
                 "this tool, including the settings below it cannot make: it answers what to do instead. Nothing "
@@ -1522,9 +1581,21 @@ WRITES[UPDATE_CONTACT] = WriteDef(
                 "properties": {
                     "contact_id": {"type": "string"},
                     "role": {"type": "string", "enum": ["owner", "employee"]},
-                    "chatbot_allowed": {"type": "boolean"},
+                    "chatbot_allowed": {
+                        "type": "boolean",
+                        "description": "AI replies on or off for the person as a whole (every company).",
+                    },
                     "link_customer_ids": {"type": "array", "items": {"type": "string"}},
                     "unlink_customer_ids": {"type": "array", "items": {"type": "string"}},
+                    "remove_companies": {
+                        "type": "array", "items": {"type": "string"},
+                        "description": (
+                            "SRT for Sorento, MCH for Mocha: remove the person's access for that company (its "
+                            "accounts unlinked, its Business owner level and the company taken off; their AI replies "
+                            "go off with the last link). Use this, not chatbot_allowed, when the user asks to remove a "
+                            "company's access."
+                        ),
+                    },
                     "chatbot_stock_allowed": {"type": "boolean", "description": "Stock replies on or off."},
                     "escalation_allowed": {"type": "boolean", "description": "Hand-over to a person on or off."},
                     "packing_list_allowed": {"type": "boolean", "description": "Packing list replies on or off."},

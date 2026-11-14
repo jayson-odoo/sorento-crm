@@ -713,3 +713,85 @@ def test_the_model_cannot_set_the_picture_flag(db):
         writes.WRITES[GRANT], {"phone": "0190000000", "role": "unknown", "companies": [], "_from_attachment": True}
     )
     assert problem and "_from_attachment" in problem
+
+
+# ------------------------------------------------------------------ crew re-pass on d65ba470 (revoke)
+
+
+def _find_then(update_args_for, phones):
+    """A script step: read the lookup's ids, then one access update per found contact."""
+    def step(messages):
+        import json as _json
+
+        found = _json.loads([m for m in messages if m.get("role") == "tool"][-1]["content"])["data"]
+        return round_of(*[tc(UPDATE, update_args_for(r), f"u{n}") for n, r in enumerate(found)])
+
+    return [round_of(tc(FIND, {"phones": phones}, "f1")), step]
+
+
+def test_remove_mocha_access_unlinks_mocha_and_takes_off_the_mocha_owner_level_only(db):
+    """Crew re-pass: 'Please remove their mocha access to the chatbot' gave 'AI replies on -> off' while the Mocha
+    links and owner tag stayed. Removing a company's access unlinks that company's accounts and takes off its Business
+    owner level; the other company's access and AI replies stay."""
+    from app.services.chatbot.agent import actions
+    from tests.chatbot.agent.test_agent_bulk_grant import state
+
+    w = make_world(db)
+    c = dealer(db, w, name="ZZT Both Cos", companies=(w.srt, w.mch), customers=[w.cust_a, w.cust_b])
+    c.chatbot_allowed = True
+    db.commit()
+    _tag_owner(db, c, "MCH")
+    script = _find_then(lambda r: {"contact_id": r["contact_id"], "remove_companies": ["MCH"]}, [local(c.phone_number)])
+    result, _ = screenshot_turn(db, w, [*script, answer_("Done.")], text_="Please remove their mocha access to the chatbot")
+    assert_plain(result.reply_text)
+    assert result.pending_action is not None, result.reply_text
+    lines = " | ".join(result.pending_action["lines"])
+    assert "AI replies on -> off" not in lines, lines
+    assert w.cust_b.customer_code in lines and "Employee" in lines, lines
+    outcome = actions.confirm(db, w.respond_id, result.pending_action["id"], via="console")
+    assert outcome.status == "executed", outcome
+    after = state(db, c.phone_number)
+    assert after["links"] == [str(w.cust_a.id)], after
+    assert after["chatbot_allowed"] is True
+    from app.services.contact_tag_service import owner_codes_by_contact
+
+    assert "MCH" not in owner_codes_by_contact(db, [str(c.id)], ["MCH"]).get(str(c.id), set())
+    assert after["companies"] == [str(w.srt)], after  # the Mocha company itself is taken off
+
+
+def test_removing_the_only_companys_access_turns_ai_replies_off_with_the_last_link(db):
+    w = make_world(db)
+    c = dealer(db, w, name="ZZT Mocha Only", companies=(w.mch,), customers=[w.cust_b])
+    c.chatbot_allowed = True  # as every dev contact linked to a Mocha account (crew re-pass fixture)
+    db.commit()
+    script = _find_then(lambda r: {"contact_id": r["contact_id"], "remove_companies": ["MCH"]}, [local(c.phone_number)])
+    result, _ = screenshot_turn(db, w, [*script, answer_("Done.")], text_="remove their mocha access", images=False)
+    assert result.pending_action is not None, result.reply_text
+    lines = " | ".join(result.pending_action["lines"])
+    assert "AI replies on -> off" in lines and w.cust_b.customer_code in lines, lines
+
+
+def test_removing_a_company_the_person_does_not_have_says_so_plainly(db):
+    w = make_world(db)
+    c = dealer(db, w, name="ZZT Srt Only", companies=(w.srt,), customers=[w.cust_a])
+    script = _find_then(lambda r: {"contact_id": r["contact_id"], "remove_companies": ["MCH"]}, [local(c.phone_number)])
+    result, _ = screenshot_turn(db, w, [*script, answer_("Done."), answer_("Done.")], text_="remove their mocha access",
+                                images=False)
+    assert_plain(result.reply_text)
+    assert result.pending_action is None
+    assert "has no Mocha access" in result.reply_text, result.reply_text
+
+
+def test_the_tools_let_the_model_name_the_company_to_remove(db):
+    """The lookup says which company each account is in, and the update takes the company to remove: the model judges
+    the meaning and passes structured values (no word rules)."""
+    from app.services.chatbot.agent import writes
+
+    w = make_world(db)
+    c = dealer(db, w, name="ZZT Lookup Co", companies=(w.mch,), customers=[w.cust_b])
+    props = writes.WRITES[UPDATE].schema["function"]["parameters"]["properties"]
+    assert "remove_companies" in props
+    from tests.chatbot.agent.test_agent_bulk_grant import ctx_of
+
+    out = writes.run_user_read(db, ctx_of(db, w), FIND, {"phones": [local(c.phone_number)]}, set())
+    assert out.data[0]["accounts"][0]["company"] == "MCH", out.data
