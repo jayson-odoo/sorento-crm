@@ -165,21 +165,21 @@ describe('RelatedRecordsPanel', () => {
     expect(within(rowOf('PR-ZZT-0001')).getByText(/RM/)).toBeTruthy();
   });
 
+  // Every record names this project's tab as its origin, so its Back reads "Back to project" and
+  // returns here (RELATED-RECORDS-B, `BackToList originLabel`). A sponsorship form keeps the
+  // retired tab name, which opens Related filtered to sponsorship forms.
   it.each([
-    ['SI-ZZT-0001', '/procurement-management/stock-inquiries/si-1'],
-    ['CX-ZZT-0001', '/complaint-management/complaints/cx-1'],
-    ['PR-ZZT-0001', '/procurement-management/purchase-requests/pr-1'],
-    // A sponsorship form's page names this project as its origin, so its Back returns here
-    // (PROJECT-STAGE-ACTIONS, `BackToList originLabel`).
-    [
-      'SF-ZZT-0001',
-      `/procurement-management/sponsorship-forms/sf-1?back=${encodeURIComponent('/project-sales/p1?tab=sponsorships')}`,
-    ],
-    ['NPA-990001', '/procurement-management/new-product-applications/npa-1'],
-  ])('AC-A7 clicking %s opens its own page', (number, href) => {
+    ['SI-ZZT-0001', '/procurement-management/stock-inquiries/si-1', 'related'],
+    ['CX-ZZT-0001', '/complaint-management/complaints/cx-1', 'related'],
+    ['PR-ZZT-0001', '/procurement-management/purchase-requests/pr-1', 'related'],
+    ['SF-ZZT-0001', '/procurement-management/sponsorship-forms/sf-1', 'sponsorships'],
+    ['NPA-990001', '/procurement-management/new-product-applications/npa-1', 'related'],
+  ])('AC-A7 clicking %s opens its own page with Back to the project', (number, path, tab) => {
     renderWithClient(<RelatedRecordsPanel project={project()} />);
     fireEvent.click(screen.getByText(number));
-    expect(push).toHaveBeenCalledWith(href);
+    expect(push).toHaveBeenCalledWith(
+      `${path}?back=${encodeURIComponent(`/project-sales/p1?tab=${tab}`)}`,
+    );
   });
 
   it('AC-A9 no rows: heading "No related records", no button', () => {

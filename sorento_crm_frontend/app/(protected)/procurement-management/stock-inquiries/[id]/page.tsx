@@ -24,6 +24,7 @@ export default function StockInquiryDetailPage({
           <BackToList hideForLimited="stock_inquiry"
             listPath="/procurement-management/stock-inquiries"
             label="Back to stock inquiries"
+            originLabel="Back to project"
           />
         }
       />

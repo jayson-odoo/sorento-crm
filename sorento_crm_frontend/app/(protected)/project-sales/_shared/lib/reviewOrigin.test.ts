@@ -8,6 +8,7 @@ import {
   isSafeReviewOrigin,
   pipelineOriginHref,
   projectTabOriginHref,
+  withProjectBack,
   withReviewOrigin,
 } from './reviewOrigin';
 
@@ -76,5 +77,21 @@ describe('pipelineOriginHref', () => {
     expect(pipelineOriginHref('page=2&sort=created_at&dir=desc', 'p1')).toBe(
       '/project-sales/pipeline?page=2&sort=created_at&dir=desc&from=p1',
     );
+  });
+});
+
+describe('withProjectBack', () => {
+  it('names the project tab as the record page\'s Back (`back=`)', () => {
+    expect(withProjectBack('/project-sales/sample-requests/sr1', 'p1', 'sample-requests')).toBe(
+      `/project-sales/sample-requests/sr1?back=${encodeURIComponent('/project-sales/p1?tab=sample-requests')}`,
+    );
+  });
+
+  it('keeps a query the record href already has', () => {
+    const href = withProjectBack('/x/r1?tab=history', 'p1', 'related');
+    const params = new URLSearchParams(href.split('?')[1]);
+    expect(href.startsWith('/x/r1?')).toBe(true);
+    expect(params.get('tab')).toBe('history');
+    expect(params.get('back')).toBe('/project-sales/p1?tab=related');
   });
 });

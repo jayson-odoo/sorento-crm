@@ -14,6 +14,7 @@ import { DELIVERY_MODE_LABELS, type SampleRequestRow } from '@/types/sampleReque
 import { useProjectSampleRequestsQuery } from '../../sample-requests/hooks/useSampleRequests';
 import { DeliveryCell, deliveryText } from '../../sample-requests/components/SampleRequestsList';
 import type { Project } from '../../_shared/types/project.types';
+import { withProjectBack } from '../../_shared/lib/reviewOrigin';
 
 /**
  * This project's sample requests, every status. The row opens the request page; Create opens
@@ -134,7 +135,9 @@ export function SampleRequestsPanel({ project }: { project: Project }) {
       isLoading={requests.isLoading}
       error={requests.isError ? requests.error : undefined}
       emptyTitle="No sample requests on this project"
-      onRowClick={(row) => router.push(`/project-sales/sample-requests/${row.id}`)}
+      onRowClick={(row) =>
+        router.push(withProjectBack(`/project-sales/sample-requests/${row.id}`, project.id, 'sample-requests'))
+      }
     />
   );
 }
