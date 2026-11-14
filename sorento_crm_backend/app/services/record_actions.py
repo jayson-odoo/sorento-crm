@@ -2593,6 +2593,28 @@ register(
 )
 
 
+def _unlink_order_change_notice_attachment(db: Session, payload: dict):
+    from app.services import order_change_notice_service
+
+    # Re-checked here: the notice can leave draft inside the window. Only the link goes.
+    order_change_notice_service.unlink_attachment(
+        db, _entity_id(payload), str(payload.get("requested_by_id") or "")
+    )
+    return {"message": "Unlinked"}
+
+
+register(
+    FormAction(
+        key="order_change_notice_attachment.unlink",
+        entity_types=("order_change_notice_attachment",),
+        execute=_unlink_order_change_notice_attachment,
+        window=WINDOW_REVERSIBLE,
+        permission=OWN_RECORD,
+        label="Unlink attachment",
+    )
+)
+
+
 def _delete_my_request(db: Session, payload: dict):
     from app.api.v1.my_requests import delete_request
 

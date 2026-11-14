@@ -491,6 +491,8 @@ def test_source_type_readers_cover_every_form_sla_type():
             "procurement.spare_part_requests.create",
             "procurement.spare_part_requests.view",
         ],
+        # OCN-ORDER-CHANGE-NOTICE: the order change notice's view-all slug.
+        "order_change_notice": ["procurement.order_change_notices.view"],
     }
 
 

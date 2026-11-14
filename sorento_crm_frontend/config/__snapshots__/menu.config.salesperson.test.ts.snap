@@ -618,6 +618,10 @@ exports[`MENU_SIDEBAR for staff is unchanged > admin with every permission: filt
         "title": "Sponsorship Forms",
       },
       {
+        "path": "/procurement-management/order-change-notices",
+        "title": "Order Change Notices",
+      },
+      {
         "path": "/procurement-management/sponsorship-forms/report",
         "title": "Sponsorship Report",
       },
@@ -1026,6 +1030,18 @@ exports[`MENU_SIDEBAR for staff is unchanged > mixed user (salesperson plus staf
       },
     ],
     "title": "Inventory",
+  },
+  {
+    "heading": "OPERATIONS",
+  },
+  {
+    "children": [
+      {
+        "path": "/procurement-management/order-change-notices",
+        "title": "Order Change Notices",
+      },
+    ],
+    "title": "Project Sales Admin",
   },
 ]
 `;

@@ -383,6 +383,10 @@ def _assert_entity_visible(
         from app.services import new_product_application_service
 
         new_product_application_service.assert_attachment_unlinkable(db, entity_id, actor_id)
+    elif action_key == "order_change_notice_attachment.unlink":
+        from app.services import order_change_notice_service
+
+        order_change_notice_service.assert_attachment_unlinkable(db, entity_id, actor_id)
     elif action_key == "my_request.delete":
         # The portal DELETE's own refusals (409/400 not a draft, 404 not theirs, 403 staff).
         from app.api.v1.my_requests import delete_request
@@ -513,6 +517,7 @@ _PARK_SCOPE_EXEMPT: frozenset = frozenset({
     "new_product_application_attachment.unlink",
     "order_inquiry_row_attachment.delete",
     "spare_part_request.delete",
+    "order_change_notice_attachment.unlink",
     "price_tag_request_tag.delete",
     "product_alternative.unlink",
     "product_alternatives.reset_auto",

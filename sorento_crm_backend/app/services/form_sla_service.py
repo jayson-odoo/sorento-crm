@@ -53,7 +53,18 @@ FORM_SLA_TYPES = (
     # SPARE-PART-ORDER-REQUEST: the approval levels of a spare part request (an Order Inquiry
     # of that type), configured as stages; the record opens on the OI page.
     "spare_part_request",
+    # OCN-ORDER-CHANGE-NOTICE: the purchase request chain (main, approval, customer service).
+    "order_change_notice",
 )
+
+#: The approval-chain form types whose approval stage honours a default approver, and the
+#: `system_settings` column that names it (`_is_approval_stage`,
+#: `_form_default_approver_user_id`).
+DEFAULT_APPROVER_SETTING: dict[str, str] = {
+    "purchase_request": "purchase_request_default_approver_user_id",
+    "sponsorship_form": "sponsorship_form_default_approver_user_id",
+    "order_change_notice": "order_change_notice_default_approver_user_id",
+}
 
 #: The quotation line media requests among FORM_SLA_TYPES.
 MEDIA_REQUEST_TYPES = ("product_drawing", "product_photo")
@@ -170,6 +181,7 @@ _ENTITY_NUMBER_SOURCE: dict = {
     "new_product_application": ("new_product_applications", "application_no", False),
     # spare_part_request: read through the model in `_resolve_entity_number` (its table is
     # in the `projects` schema).
+    "order_change_notice": ("projects.order_change_notices", "ocn_number", True),
 }
 
 
@@ -284,6 +296,10 @@ _STAGE_ACTION_LABELS: dict[tuple[str, str], dict[str, str]] = {
         "response": "send the purchasing response",
         "resolution": "complete or reject the application",
     },
+    # OCN-ORDER-CHANGE-NOTICE: the PR chain on the same three team sets.
+    ("order_change_notice", "project_sales"): {"resolution": "send the notice for approval"},
+    ("order_change_notice", "project_sales_manager"): {"resolution": "approve or reject"},
+    ("order_change_notice", "customer_service"): {"resolution": "mark the notice done (CS)"},
     ("ticket", "it_admin"): {
         "response": "respond to the ticket",
         "resolution": "resolve the ticket",
@@ -323,6 +339,8 @@ def _form_detail_link(source_entity_type: str, source_entity_id: str) -> str:
         return f"/procurement-management/new-product-applications/{source_entity_id}"
     if source_entity_type == "spare_part_request":
         return f"/procurement-management/spare-part-requests/{source_entity_id}"
+    if source_entity_type == "order_change_notice":
+        return f"/procurement-management/order-change-notices/{source_entity_id}"
     if source_entity_type in ("product_drawing", "product_photo"):
         return f"/master-data-management/products/{source_entity_id}"
     return f"/{source_entity_type.replace('_', '-')}/{source_entity_id}"
@@ -1048,27 +1066,24 @@ class FormSLAOrchestrator:
 
     @staticmethod
     def _is_approval_stage(config: FormSLAConfig) -> bool:
-        """The PR/SF stage whose resolution IS the approval decision (resolves on
+        """The approval-chain stage whose resolution IS the approval decision (resolves on
         'approved'). Only this stage honours the form's default-approver routing."""
         return (
-            str(getattr(config, "source_entity_type", "") or "")
-            in ("purchase_request", "sponsorship_form")
+            str(getattr(config, "source_entity_type", "") or "") in DEFAULT_APPROVER_SETTING
             and "approved" in (str(getattr(config, "resolve_event", "") or ""))
         )
 
     def _form_default_approver_user_id(self, source_entity_type: Optional[str]) -> Optional[str]:
-        """The configured default approver user id for PR / SF, from SystemSetting."""
+        """The configured default approver user id for the form type, from SystemSetting."""
         from app.models.user import SystemSetting
 
+        column = DEFAULT_APPROVER_SETTING.get(str(source_entity_type or ""))
+        if column is None:
+            return None
         row = self.db.query(SystemSetting).first()
         if not row:
             return None
-        if source_entity_type == "purchase_request":
-            uid = getattr(row, "purchase_request_default_approver_user_id", None)
-        elif source_entity_type == "sponsorship_form":
-            uid = getattr(row, "sponsorship_form_default_approver_user_id", None)
-        else:
-            uid = None
+        uid = getattr(row, column, None)
         return str(uid) if uid else None
 
     def _start_for_config(
@@ -1637,6 +1652,7 @@ class FormSLAOrchestrator:
             "product_drawing", "product_photo", "new_product_application",
             # SPARE-PART-ORDER-REQUEST: the request opens on its own record page.
             "spare_part_request",
+            "order_change_notice",
         }
         if s_type in _FE_RECORD_ROUTES:
             form_url = full_link

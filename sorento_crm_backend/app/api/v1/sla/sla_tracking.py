@@ -79,6 +79,8 @@ SOURCE_TYPE_READERS = {
         "procurement.new_product_applications.approve",
         "procurement.new_product_applications.open_code",
     ],
+    # OCN-ORDER-CHANGE-NOTICE: the notice's view-all slug.
+    "order_change_notice": ["procurement.order_change_notices.view"],
     # A quotation line's drawing or photo request is keyed on a product, and the product page
     # has no SLA tab: like a conversation ticket, it is read by the SLA module alone (its side
     # panel is GET /form-sla-tracking/{id}/media-request, scoped to the task's team chain).
@@ -111,7 +113,18 @@ def _require_tracker_reader(
     source_entity_type: Optional[str],
     source_entity_id: Optional[str] = None,
 ) -> None:
-    _require_any(db, current_user, tracker_reader_slugs(source_entity_type))
+    if source_entity_type == "order_change_notice" and source_entity_id:
+        # The SLA module's readers, or whoever can open the notice itself (its own reader rule,
+        # the same as its page, Conversation and History).
+        try:
+            _require_any(db, current_user, SLA_READERS)
+        except HTTPException:
+            from app.services import order_change_notice_service as ocn
+
+            ocn.reader_for(db, str(source_entity_id), str(current_user["id"]))
+            return
+    else:
+        _require_any(db, current_user, tracker_reader_slugs(source_entity_type))
     _require_source_visible(db, source_entity_type, source_entity_id, current_user)
 
 
@@ -145,19 +158,25 @@ def _require_source_visible(
     source_entity_id: Optional[str],
     current_user: Optional[dict] = None,
 ) -> None:
-    """A New Product Application carries its own company (its read is company scoped), so its
-    trackers answer only a caller who can load the application in their company scope: 404
-    otherwise, the record's own answer (NPA-FORM-SLA security review S1). An Order Request is
-    scoped to the requests the caller can see (`_require_order_request_visible`). The other
-    form types keep the slug check alone."""
-    if source_entity_type == "spare_part_request" and source_entity_id and current_user is not None:
-        _require_order_request_visible(db, current_user, str(source_entity_id))
+    """A New Product Application or an Order Change Notice carries its own company (its read
+    is company scoped), so its trackers answer only a caller who can load the record in their
+    company scope: 404 otherwise, the record's own answer (NPA-FORM-SLA security review S1). An
+    Order Request is scoped to the requests the caller can see (`_require_order_request_visible`).
+    The other form types keep the slug check alone."""
+    if not source_entity_id:
         return
-    if source_entity_type != "new_product_application" or not source_entity_id:
+    if source_entity_type == "spare_part_request":
+        if current_user is not None:
+            _require_order_request_visible(db, current_user, str(source_entity_id))
         return
-    from app.services import new_product_application_service as npa
+    if source_entity_type == "new_product_application":
+        from app.services import new_product_application_service as npa
 
-    npa.get_for(db, str(source_entity_id))
+        npa.get_for(db, str(source_entity_id))
+    elif source_entity_type == "order_change_notice":
+        from app.services import order_change_notice_service as ocn
+
+        ocn.get_for(db, str(source_entity_id))
 
 
 def _require_event_log_reader(db: Session, current_user: dict, tracking) -> None:
@@ -492,6 +511,8 @@ def build_conversation_sla_tracking_response(
         "team_set_code": getattr(tracking, "team_set_code", None),
         "brand_code": getattr(tracking, "brand_code", None),
         "message_id": getattr(tracking, "message_id", None),
+        # The record a form stage belongs to (declared on the response for form-scoped
+        # listings; a record's SLA tab shows only its own stages). None on a conversation.
         "source_entity_type": getattr(tracking, "source_entity_type", None),
         "source_entity_id": (
             str(tracking.source_entity_id) if getattr(tracking, "source_entity_id", None) else None
