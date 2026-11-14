@@ -69,7 +69,7 @@ export default {
       run: async ({ page, point, type }) => {
         await point(page.getByRole('textbox', { name: 'Customer name*' }), 900);
         await type(page.getByRole('textbox', { name: 'Contact person*' }), 'Alan Lim');
-        await type(page.getByRole('textbox', { name: 'Contact number*' }), '012-000 1201', { delay: 80 });
+        await type(page.getByRole('textbox', { name: 'Contact number*' }), '012-000 0201', { delay: 80 });
       },
     },
     {

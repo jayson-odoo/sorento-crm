@@ -2,7 +2,7 @@
 """Fake-data seeder for recording training videos. NOT for any real database.
 
 Every row is invented: "Demo Trading Sdn Bhd", customers like "Lim Bina Hardware Sdn Bhd",
-phones 012-000 1xxx, emails @example.com, bathroom/tile products priced in RM. No real names.
+phones 012-000 0xxx, emails @example.com, bathroom/tile products priced in RM. No real names.
 
 Run from the backend directory against the local sandbox DB only:
 
@@ -16,12 +16,13 @@ p2: a project with a published project sales order (4 lines), order inquiries in
     sandbox backend over HTTP, so it needs TV_API_URL (that backend's /api/v1 base) set.
 
 Idempotent: every row is found by a natural key first and only created when missing.
-Refuses to run against anything but a localhost database named sorento_ci.
+Refuses to run against anything but the local throwaway database named exactly sorento_ci_tv.
 """
 from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 from contextlib import contextmanager
 from decimal import Decimal
@@ -33,9 +34,11 @@ os.chdir(BACKEND)
 
 from app.config import settings  # noqa: E402
 
-_DB_URL = str(settings.database_url)
-if "@localhost:5432/sorento_ci" not in _DB_URL and "@127.0.0.1:5432/sorento_ci" not in _DB_URL:
-    raise SystemExit(f"Refusing to seed: DATABASE_URL is not the local sorento_ci sandbox ({_DB_URL.split('@')[-1]}).")
+from sqlalchemy.engine import make_url  # noqa: E402
+
+_DB = make_url(str(settings.database_url))
+if _DB.host not in ("localhost", "127.0.0.1") or _DB.database != "sorento_ci_tv":
+    raise SystemExit(f"Refusing to seed: DATABASE_URL is not the local sorento_ci_tv sandbox ({_DB.host}/{_DB.database}).")
 
 import bcrypt  # noqa: E402
 from sqlalchemy import func  # noqa: E402
@@ -48,9 +51,9 @@ COMPANY_ID = DEFAULT_COMPANY_ID
 COMPANY_NAME = "Demo Trading Sdn Bhd"
 PASSWORD = "Demo1234!"
 
-ADMIN = {"name": "Aina Admin", "email": "admin@example.com", "phone": "012-000 1000"}
-SALES = {"name": "Sam Sales", "email": "sales@example.com", "phone": "012-000 1001"}
-CS = {"name": "Chloe CS", "email": "cs@example.com", "phone": "012-000 1002"}
+ADMIN = {"name": "Aina Admin", "email": "admin@example.com", "phone": "012-000 0000"}
+SALES = {"name": "Sam Sales", "email": "sales@example.com", "phone": "012-000 0001"}
+CS = {"name": "Chloe CS", "email": "cs@example.com", "phone": "012-000 0002"}
 
 SALES_PERMS_REMOVED = ["dealer_kit.price_tag_requests.view"]
 SALES_PERMS = [
@@ -65,16 +68,20 @@ SALES_PERMS = [
     "master_data.complaint_root_causes.view",
     "master_data.complaint_resolutions.view",
 ]
-CS_ROLE = ("customer_service_demo", "Customer Service")
+# The real CS role and the grants migration dp_0001_cs_planning_access gives it
+# (sorento_crm_backend/alembic/versions/dp_0001_cs_planning_access.py:26-27), so the recorded
+# sidebar matches CS staff.
+CS_ROLE = ("customer_service", "Customer Service")
 CS_PERMS = [
     "projects.projects.view",
     "projects.projects.edit",
+    "scm.dashboard.view",
 ]
 # Acknowledging (Confirm) and rejecting an order inquiry row is purchasing's grant, never CS's:
 # "CS ... must not be able to acknowledge their own instructions"
 # (sorento_crm_backend/app/api/v1/projects/order_inquiries.py, ACKNOWLEDGE).
 CS_PERMS_REMOVED = ("projects.order_inquiries.acknowledge",)
-PURCHASING = {"name": "Pat Purchasing", "email": "purchasing@example.com", "phone": "012-000 1003"}
+PURCHASING = {"name": "Pat Purchasing", "email": "purchasing@example.com", "phone": "012-000 0003"}
 PURCHASING_ROLE = ("purchasing", "Purchasing")  # the existing role; only the two grants below are added
 PURCHASING_PERMS = [
     "projects.projects.view",  # reading an inquiry (order_inquiries.py VIEW) and the menu entry
@@ -84,17 +91,17 @@ PURCHASING_PERMS = [
 AGENT_CODE = "SAM I"
 CUSTOMERS = [
     # code, name, phone, email
-    ("300-L001", "Lim Bina Hardware Sdn Bhd", "012-000 1101", "purchasing@limbina.example.com"),
-    ("300-S002", "Seri Maju Tiles Enterprise", "012-000 1102", "orders@serimaju.example.com"),
-    ("300-K003", "Kedai Jubin Harmoni", "012-000 1103", "kedai@jubinharmoni.example.com"),
-    ("300-T004", "Tegas Renovation Supplies", "012-000 1104", "admin@tegasreno.example.com"),
+    ("300-L001", "Lim Bina Hardware Sdn Bhd", "012-000 0101", "purchasing@limbina.example.com"),
+    ("300-S002", "Seri Maju Tiles Enterprise", "012-000 0102", "orders@serimaju.example.com"),
+    ("300-K003", "Kedai Jubin Harmoni", "012-000 0103", "kedai@jubinharmoni.example.com"),
+    ("300-T004", "Tegas Renovation Supplies", "012-000 0104", "admin@tegasreno.example.com"),
 ]
 # Dealer staff who hold portal access to Sam's accounts (Dealer access > People).
 DEALER_PEOPLE = [
-    ("012-000 1201", "Alan Lim", "300-L001"),
-    ("012-000 1202", "Mei Chen", "300-S002"),
+    ("012-000 0201", "Alan Lim", "300-L001"),
+    ("012-000 0202", "Mei Chen", "300-S002"),
 ]
-CHATBOT_CONTACT = {"phone": "012-000 1301", "name": "Ravi Kumar", "respond_io_id": "demo-respond-1301",
+CHATBOT_CONTACT = {"phone": "012-000 0301", "name": "Ravi Kumar", "respond_io_id": "demo-respond-1301",
                    "customer": "300-K003"}
 
 WAREHOUSES = [("MAIN", "Main Warehouse", "Jalan Demo 1, Klang"), ("SA", "Shah Alam Store", "Seksyen 15, Shah Alam")]
@@ -140,6 +147,12 @@ def msisdn(phone: str) -> str:
     return normalize_msisdn(phone)
 
 
+def legacy_phone(phone: str) -> str:
+    """The number an earlier seed gave this row (012-000 1xxx), before the PII guard's fake
+    shape (four zeros after 60 1x) moved them to 012-000 0xxx. Lets a re-run find and rewrite it."""
+    return re.sub(r"^012-000 0", "012-000 1", phone)
+
+
 def contact_phone(phone: str) -> str:
     from app.services.contact_setup_engine import normalise_phone
 
@@ -183,6 +196,8 @@ def seed_workspace(db):
         db.add(ws)
         db.flush()
         say("respond workspace Demo Workspace")
+    # Reserved TLD: nothing sent through this workspace can reach the real Respond.io API.
+    ws.base_url = "https://respond.invalid"
     return ws
 
 
@@ -193,7 +208,9 @@ def contact(db, phone: str, name: str, ws, *, respond_io_id: str | None = None, 
     # Stored the way Dealer access > Add people stores a number (+60...), so the People column
     # reads one format; rows from an earlier seed without the + are found and rewritten.
     number = contact_phone(phone)
-    row = db.query(RespondContact).filter(RespondContact.phone_number.in_([number, msisdn(phone)])).first()
+    old = legacy_phone(phone)
+    row = db.query(RespondContact).filter(RespondContact.phone_number.in_(
+        [number, msisdn(phone), contact_phone(old), msisdn(old)])).first()
     if row is not None and row.phone_number != number:
         row.phone_number = number
     if row is None:
@@ -253,6 +270,7 @@ def user(db, spec: dict, role_slug: str, *, contact_row=None):
         say(f"user {spec['name']} <{email}>")
     elif not row.password or not bcrypt.checkpw(PASSWORD.encode(), row.password.encode()):
         row.password = hash_pw(PASSWORD)
+    row.contact_number = msisdn(spec["phone"])
     row.status = "ACTIVE"
     row.is_trashed = False
     row.last_active_company_id = COMPANY_ID
@@ -405,13 +423,16 @@ def seed_tag_templates(db):
     from scripts import seed_tag_templates as stt
 
     saved = dict(storage_router._backends)
+    saved_env = storage_router._env_loaded
     storage_router._backends.update({"s3": _NoStorage(), "r2": _NoStorage()})
+    storage_router._env_loaded = True  # never load the real .env's S3 / R2 keys into the seeder
     try:
         assets, result = stt.seed_assets(db, dry_run=False)
         stt.seed_templates(db, assets, result, dry_run=False)
     finally:
         storage_router._backends.clear()
         storage_router._backends.update(saved)
+        storage_router._env_loaded = saved_env
     db.flush()
     say(f"tag templates: {result.summary()}")
 
@@ -482,7 +503,7 @@ def seed_delivery_orders(db, customers, products):
 
 
 # Rows a video creates, removed on every seed so a re-recording starts from the same screen.
-VIDEO_PHONES = ["012-000 1401", "012-000 1402"]
+VIDEO_PHONES = ["012-000 0401", "012-000 0402"]
 
 
 def reset_video_rows(db):
@@ -491,7 +512,8 @@ def reset_video_rows(db):
     )
 
     for phone in VIDEO_PHONES:
-        for row in db.query(RespondContact).filter(RespondContact.phone_number.in_([contact_phone(phone), msisdn(phone)])):
+        forms = [contact_phone(phone), msisdn(phone), contact_phone(legacy_phone(phone)), msisdn(legacy_phone(phone))]
+        for row in db.query(RespondContact).filter(RespondContact.phone_number.in_(forms)):
             db.query(RespondContactCustomer).filter_by(contact_id=row.id).delete()
             # Their level too (Business owner is a tag plus access types), so Add people starts from Employee.
             for table in (respond_contact_tags, respond_contact_access_types):
@@ -501,17 +523,17 @@ def reset_video_rows(db):
     from app.models.complaints import Complaint
     from app.models.price_tag import PriceTagRequest
 
-    sam = db.query(RespondContact).filter(
-        RespondContact.phone_number.in_([contact_phone(SALES["phone"]), msisdn(SALES["phone"])])).first()
+    old = legacy_phone(SALES["phone"])
+    sam = db.query(RespondContact).filter(RespondContact.phone_number.in_(
+        [contact_phone(SALES["phone"]), msisdn(SALES["phone"]), contact_phone(old), msisdn(old)])).first()
     if sam is not None:
-        # A request's tag sheet (dealer_kit.page, slug tag-sheet-<doc number>) outlives it with request_id
-        # nulled, and the restarted numbering then collides with the old slug on Approve.
+        # A request's tag sheet (dealer_kit.page, slug tag-sheet-<doc number>) would outlive it with
+        # request_id nulled, and the restarted numbering would then collide with the old slug on Approve.
         from app.models.dealer_kit import Page
 
         mine = db.query(PriceTagRequest.id).filter(PriceTagRequest.contact_id == sam.id)
-        n = db.query(Page).filter(Page.kind == "tag_sheet").filter(
-            (Page.request_id.in_(mine.scalar_subquery())) | Page.request_id.is_(None)
-        ).delete(synchronize_session=False)
+        n = db.query(Page).filter(Page.kind == "tag_sheet", Page.request_id.in_(mine.scalar_subquery())
+                                  ).delete(synchronize_session=False)
         if n:
             say(f"removed {n} video tag sheets")
         for model, what in ((Complaint, "complaints"), (PriceTagRequest, "price tag requests")):
@@ -625,12 +647,12 @@ def seed_p1(db) -> dict:
 # ============================================================================ P2
 
 
-# The sandbox backend that reads this same sorento_ci DB, e.g. http://127.0.0.1:8477/api/v1. No
+# The sandbox backend that reads this same sorento_ci_tv DB, e.g. http://127.0.0.1:8477/api/v1. No
 # default: on a shared machine localhost:8000 can be another lane's backend on another database.
 API = os.environ.get("TV_API_URL", "").rstrip("/")
 
 PROJECT_TITLE = "Taman Demo Residences"
-BUYER = ("300-B005", "Bina Jaya Builders Sdn Bhd", "012-000 1105", "procurement@binajaya.example.com")
+BUYER = ("300-B005", "Bina Jaya Builders Sdn Bhd", "012-000 0105", "procurement@binajaya.example.com")
 DEVELOPER = "Demo Land Development Sdn Bhd"
 CLIENT_PO_NUMBER = "BJB/PO/2026/0418"
 # Two published orders: Tower A (from the client PO, partly decided, for Fulfilment Planning and
@@ -715,6 +737,7 @@ def seed_project(db, sam, chloe, agent):
         db.add(buyer)
         db.flush()
         say(f"customer {code} {name}")
+    buyer.phone_number = phone
 
     def party(party_type, party_name, customer_id=None):
         row = db.query(ProjectParty).filter_by(party_type=party_type, name=party_name).first()
@@ -926,6 +949,24 @@ def reset_p2_video_rows(db):
 REJECT_REASON = "Supplier has stopped this model."
 
 
+def _check_api_serves_this_db(order) -> str:
+    """Before any write over HTTP: TV_API_URL must be the backend on THIS database. No anonymous
+    route answers from the DB, so this signs CS in (that session row is the only write) and reads
+    the Tower A order this run just wrote by its id; a backend on any other DB answers 404."""
+    import urllib.error
+    import urllib.request
+
+    token = login(CS["email"])
+    req = urllib.request.Request(f"{API}/project-sales/sales-orders/{order.id}/line-splits",
+                                 headers={"Authorization": f"Bearer {token}"})
+    try:
+        urllib.request.urlopen(req, timeout=30)
+    except urllib.error.HTTPError as exc:
+        raise SystemExit(f"TV_API_URL {API} cannot read order {order.provisional_ref} ({exc.code}): "
+                         "it is not the backend on this database.") from None
+    return token
+
+
 def _has_open_rejection(db, order_id) -> bool:
     """A line of this order whose current inquiry row purchasing rejected (not yet re-decided)."""
     from app.models.project_so import ACK_REJECTED, INQUIRY_CANCELLED, OrderInquiry, OrderInquiryRow
@@ -955,6 +996,13 @@ def seed_p2(db) -> dict:
     for wh in db.query(Warehouse).filter(Warehouse.warehouse_code.in_([w[0] for w in WAREHOUSES])):
         wh.fulfilment_planning = True
 
+    from app.models.user import UserRole
+
+    # An earlier seed made the role as customer_service_demo; give it the real slug.
+    legacy = db.query(UserRole).filter(UserRole.slug == "customer_service_demo").first()
+    if legacy is not None and not db.query(UserRole).filter(UserRole.slug == CS_ROLE[0]).first():
+        legacy.slug = CS_ROLE[0]
+        db.flush()
     role_with_perms(db, CS_ROLE[0], CS_ROLE[1], CS_PERMS, remove=CS_PERMS_REMOVED)
     chloe = user(db, CS, CS_ROLE[0])
     role_with_perms(db, PURCHASING_ROLE[0], PURCHASING_ROLE[1], PURCHASING_PERMS)
@@ -969,7 +1017,7 @@ def seed_p2(db) -> dict:
     db.commit()
 
     # The Buy decision through the real CS confirmation route; refresh_for_decision runs inside it.
-    cs_token = None
+    cs_token = _check_api_serves_this_db(orders[0][1])
     for spec, order in orders:
         decided = db.query(SOSupplyDecision).filter_by(project_sales_order_id=order.id).first()
         # A take of the purchasing flow may have rejected a Tower A line; CS deciding it again
@@ -994,14 +1042,18 @@ def seed_p2(db) -> dict:
     inquiry = db.query(OrderInquiry).filter_by(project_sales_order_id=tower_b.id).first()
     if inquiry is None:
         raise SystemExit("Tower B confirmation raised no order inquiry.")
-    rows = (db.query(OrderInquiryRow, ProjectSalesOrderLine.line_no)
-            .join(ProjectSalesOrderLine, ProjectSalesOrderLine.id == OrderInquiryRow.so_line_id)
-            .filter(OrderInquiryRow.order_inquiry_id == inquiry.id)
-            .order_by(ProjectSalesOrderLine.line_no).all())
-    by_line = {}
-    for row, line_no in rows:  # a cancelled history row never hides the line's current one
-        if line_no not in by_line or by_line[line_no].state == INQUIRY_CANCELLED:
-            by_line[line_no] = row
+    def current_rows():
+        """{line_no: row}; a cancelled history row never hides the line's current one."""
+        out = {}
+        for row, line_no in (db.query(OrderInquiryRow, ProjectSalesOrderLine.line_no)
+                             .join(ProjectSalesOrderLine, ProjectSalesOrderLine.id == OrderInquiryRow.so_line_id)
+                             .filter(OrderInquiryRow.order_inquiry_id == inquiry.id)
+                             .order_by(ProjectSalesOrderLine.line_no)):
+            if line_no not in out or out[line_no].state == INQUIRY_CANCELLED:
+                out[line_no] = row
+        return out
+
+    by_line = current_rows()
     # Line 1 is refused by purchasing with a reason, through the real reject route, so the
     # order inquiry video can show a Rejected line. First: a reject rewrites the order's plan.
     first = by_line.get(1)
@@ -1010,14 +1062,7 @@ def seed_p2(db) -> dict:
              {"reason": REJECT_REASON})
         say(f"{inquiry.inquiry_no} line 1: rejected by purchasing")
         db.expire_all()
-        rows = (db.query(OrderInquiryRow, ProjectSalesOrderLine.line_no)
-                .join(ProjectSalesOrderLine, ProjectSalesOrderLine.id == OrderInquiryRow.so_line_id)
-                .filter(OrderInquiryRow.order_inquiry_id == inquiry.id)
-                .order_by(ProjectSalesOrderLine.line_no).all())
-        by_line = {}
-        for row, line_no in rows:
-            if line_no not in by_line or by_line[line_no].state == INQUIRY_CANCELLED:
-                by_line[line_no] = row
+        by_line = current_rows()
     admin_token = None
     plan = {2: INQUIRY_ACTIONED, 3: "placed", 4: INQUIRY_CANCELLED}
     for line_no, target in plan.items():

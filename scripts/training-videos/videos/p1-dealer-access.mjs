@@ -47,7 +47,7 @@ export default {
       run: async ({ page, type }) => {
         const dlg = page.getByRole('dialog');
         await type(dlg.getByLabel('Name', { exact: true }).first(), 'Hafiz Rahman');
-        await type(dlg.getByLabel('Phone 1'), '120001401', { delay: 90 });
+        await type(dlg.getByLabel('Phone 1'), '120000401', { delay: 90 });
       },
     },
     {
@@ -66,7 +66,7 @@ export default {
         const dlg = page.getByRole('dialog');
         await click(dlg.getByRole('button', { name: 'Add person', exact: true }));
         await type(dlg.getByLabel('Name', { exact: true }).nth(1), 'Nora Aziz');
-        await type(dlg.getByLabel('Phone 2'), '120001402', { delay: 90 });
+        await type(dlg.getByLabel('Phone 2'), '120000402', { delay: 90 });
         await click(dlg.getByRole('combobox', { name: 'Access 2' }));
         await sleep(500);
         await click(page.getByRole('option', { name: 'Employee', exact: true }).first());
