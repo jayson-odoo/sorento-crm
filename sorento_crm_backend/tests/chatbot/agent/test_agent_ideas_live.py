@@ -450,7 +450,7 @@ def test_ac_w35_a_replay_whose_idea_moved_past_captured_says_it_was_already_capt
     outcome = confirm(db, w, row)
 
     text = reply_of(outcome)
-    assert "This feedback was already captured as feedback IDEA-0184" in text, text
+    assert "This was already logged as feedback IDEA-0184" in text, text
     assert REACHED not in text.lower()
     assert not leaks(text.replace(CRM, ""))
 
