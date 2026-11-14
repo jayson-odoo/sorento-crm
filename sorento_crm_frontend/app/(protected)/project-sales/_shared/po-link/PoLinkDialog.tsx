@@ -4,7 +4,6 @@ import * as React from 'react';
 import {
   type ColumnDef,
   getCoreRowModel,
-  type Row,
   type RowSelectionState,
   useReactTable,
 } from '@tanstack/react-table';
@@ -793,6 +792,8 @@ interface ManageRow {
   linkedQty: number;
   /** skipped rows: the CRM copy has no outstanding to show. */
   openUnknown?: boolean;
+  /** skipped rows: which Order Inquiry line it is, shown on hover. */
+  hint?: string;
 }
 
 /** A ticked Order Inquiry row not in AutoCount yet, drawn as a row of its own (no inputs). */
@@ -804,9 +805,10 @@ function skippedManageRow(entry: PoLinkSkippedRow, index: number): ManageRow {
     poLabel: entry.reason,
     linkedQty: 0,
     openUnknown: entry.open_qty == null,
+    hint: [entry.inquiry_no, entry.item_code].filter(Boolean).join(' '),
     line: {
       sales_order_line_id: `skipped:${index}`,
-      so_number: entry.so_number ?? entry.inquiry_no ?? '-',
+      so_number: entry.so_number ?? '-',
       line_no: entry.line_no ?? null,
       open_qty: entry.open_qty ?? 0,
       warehouse_code: entry.location_code ?? null,
@@ -922,7 +924,6 @@ function ManageDialog({
     return {
       ...base,
       cell: (ctx) => (ctx.row.original.kind === 'skipped' ? null : (base.cell as (c: typeof ctx) => React.ReactNode)(ctx)),
-      enableRowSelection: (row: Row<ManageRow>) => row.original.kind !== 'skipped',
     };
   }, []);
   const hasNew = rows.some((row) => row.kind === 'new');
@@ -980,7 +981,12 @@ function ManageDialog({
         cell: ({ row }) => {
           const r = row.original;
           if (r.kind === 'linked') return <span className="tabular-nums">{r.poLabel}</span>;
-          if (r.kind === 'skipped') return <span className="text-muted-foreground">{r.poLabel}</span>;
+          if (r.kind === 'skipped')
+            return (
+              <span className="block truncate text-muted-foreground" title={r.hint ? `${r.hint}: ${r.poLabel}` : (r.poLabel ?? undefined)}>
+                {r.poLabel}
+              </span>
+            );
           return (
             <>
               <Label htmlFor={`po-manage-po-${r.id}`} className="sr-only">
@@ -1111,7 +1117,8 @@ function ManageDialog({
     data: rows,
     getRowId: (row) => row.id,
     getCoreRowModel: getCoreRowModel(),
-    enableRowSelection: true,
+    // A line not in AutoCount is a row to read, never to tick (header box, Shift-range included).
+    enableRowSelection: (row) => row.original.kind !== 'skipped',
     state: { rowSelection },
     onRowSelectionChange: setRowSelection,
     columnResizeMode: 'onChange',

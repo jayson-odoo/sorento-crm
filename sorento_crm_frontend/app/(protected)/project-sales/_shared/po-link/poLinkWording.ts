@@ -124,7 +124,8 @@ export function poLinkMenu(input: {
     return { manage: none, relink: none };
   }
   if (!input.capabilities) {
-    const wait = off(input.loading ? 'Checking AutoCount…' : 'Could not reach AutoCount');
+    // The popup reads only the CRM copies (OI-PO-LINK B): the wait is not on AutoCount.
+    const wait = off(input.loading ? 'Loading…' : 'Could not load the PO lines');
     return { manage: wait, relink: wait };
   }
   const cap = input.capabilities.relink_row;
