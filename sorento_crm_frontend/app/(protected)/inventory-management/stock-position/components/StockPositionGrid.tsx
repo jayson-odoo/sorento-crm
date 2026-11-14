@@ -26,11 +26,11 @@ import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { toast } from '@/lib/toast';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
-import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { idFilterLabels, joinMulti, multiValueSummary, splitMulti } from '@/lib/list-filters/multiValue';
 import { getSuppliersSelect } from '@/services/supplierSelectService';
 import { useBrandSelectQuery } from '@/app/(protected)/master-data-management/shared/hooks/use-brand-select-query';
+import { useUserListColumnConfigQuery } from '@/lib/listing-column-preferences/useUserListColumnConfigQuery';
 import { useStockPosition } from '../hooks/useStockPosition';
 import { exportStockPosition } from '../services/stockPositionService';
 import type { StockPositionRow } from '../services/stockPosition.types';
@@ -115,6 +115,38 @@ export default function StockPositionGrid() {
   const hiddenKey = JSON.stringify(hiddenParts(columnVisibility));
   const hiddenColumns = useMemo<string[]>(() => JSON.parse(hiddenKey), [hiddenKey]);
 
+  // The saved column layout, read through the SAME cached query the DataGrid's preferences hook
+  // applies it from (the page path is the listing key), so the first stock request already
+  // carries its hidden columns: no total briefly counts a column the user hid. Seeded once, during
+  // render; the hook's later apply sets the same visibility, so it changes no total.
+  const pathname = usePathname();
+  const savedLayout = useUserListColumnConfigQuery(pathname);
+  const layoutSettled = savedLayout.isSuccess || savedLayout.isError;
+  const [seeded, setSeeded] = useState(false);
+  const [pagedFor, setPagedFor] = useState(hiddenKey);
+  if (layoutSettled && !seeded) {
+    setSeeded(true);
+    const saved = (savedLayout.data?.config as { columnVisibility?: Record<string, unknown> } | null | undefined)
+      ?.columnVisibility;
+    if (saved && typeof saved === 'object') {
+      const fromSaved: VisibilityState = {};
+      for (const [id, visible] of Object.entries(saved)) if (typeof visible === 'boolean') fromSaved[id] = visible;
+      const next = { ...fromSaved, ...columnVisibility };
+      setColumnVisibility(next);
+      // The saved layout is where the list STARTS, not a change: it keeps the page restored from
+      // the URL (Back from Stock status) instead of resetting it.
+      setPagedFor(JSON.stringify(hiddenParts(next)));
+    }
+  }
+
+  // A total changes on every row with its parts, so the server re-sorts: back to page 1, in the
+  // SAME render the hidden set changes, so no request goes out for the old page with the new set.
+  const pageIndex = pagedFor === hiddenKey ? pagination.pageIndex : 0;
+  if (pagedFor !== hiddenKey) {
+    setPagedFor(hiddenKey);
+    if (pagination.pageIndex !== 0) setPagination((p) => ({ ...p, pageIndex: 0 }));
+  }
+
   // Supplier names by id from the picker's own pages, for the chosen chips (rows add theirs below).
   const pickedSupplierNames = useRef<Record<string, string>>({});
 
@@ -122,7 +154,6 @@ export default function StockPositionGrid() {
 
   // The list state rides the page URL, so Back from Stock status lands on the same view.
   const router = useRouter();
-  const pathname = usePathname();
   const searchParams = useSearchParams();
   const searchKey = searchParams.toString();
   // Every query string this list has written itself: one arriving late (two writes in flight) is
@@ -147,8 +178,10 @@ export default function StockPositionGrid() {
     }),
     [supplierIds, brandIds, warehouseIds, hiddenColumns],
   );
-  const params = { pageIndex: pagination.pageIndex, pageSize: pagination.pageSize, sorting, searchQuery };
-  const { data, isLoading, isPlaceholderData, isFetching, error, refetch } = useStockPosition(params, filters);
+  const params = { pageIndex, pageSize: pagination.pageSize, sorting, searchQuery };
+  const { data, isLoading, isPlaceholderData, isFetching, error, refetch } = useStockPosition(params, filters, {
+    enabled: layoutSettled && seeded,
+  });
   const rows = data?.data ?? [];
   const rowSupplierNames = useMemo(() => {
     const names: Record<string, string> = {};
@@ -278,9 +311,6 @@ export default function StockPositionGrid() {
   });
 
   const resetPage = () => setPagination((p) => ({ ...p, pageIndex: 0 }));
-  // A total changes on every row with its parts, so the server re-sorts: back to page 1. Not on
-  // mount, which would stamp page 1 over the page restored from the URL.
-  useResetPageOnFilterChange(setPagination, [hiddenColumns]);
   // The badge counts filters, not values (FILTER-MULTISELECT).
   const activeCount = (supplierIds ? 1 : 0) + (brandIds ? 1 : 0) + (warehouseIds ? 1 : 0);
   const fetchSuppliers = async (q: string, pageIndex: number) => {

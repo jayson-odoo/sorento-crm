@@ -22,6 +22,8 @@ vi.mock('next/navigation', () => ({
 }));
 const prefs = vi.hoisted(() => ({ useListingColumnPreferences: vi.fn() }));
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => prefs);
+const savedConfig = vi.hoisted(() => ({ useUserListColumnConfigQuery: vi.fn() }));
+vi.mock('@/lib/listing-column-preferences/useUserListColumnConfigQuery', () => savedConfig);
 const exporter = vi.hoisted(() => ({ exportStockPosition: vi.fn(async () => {}) }));
 vi.mock('../services/stockPositionService', () => exporter);
 vi.mock('@/app/(protected)/master-data-management/shared/hooks/use-brand-select-query', () => ({
@@ -87,6 +89,8 @@ beforeEach(() => {
   exporter.exportStockPosition.mockClear();
   prefs.useListingColumnPreferences.mockReset();
   prefs.useListingColumnPreferences.mockReturnValue({ resetToDefaults: async () => {}, isLoading: false });
+  savedConfig.useUserListColumnConfigQuery.mockReset();
+  savedConfig.useUserListColumnConfigQuery.mockReturnValue({ data: { config: null }, isSuccess: true, isError: false });
 });
 
 describe('StockPositionGrid', () => {
@@ -239,6 +243,52 @@ describe('StockPositionGrid: totals follow the visible columns (owner 2 Nov)', (
     );
     expect(tipOf(/^Total stock/)).toBe('Sum of none');
     expect(tipOf(/^Total incoming/)).toBe('Sum of none');
+  });
+});
+
+describe('StockPositionGrid: the saved layout reaches the FIRST request (owner hand test, 3 Nov)', () => {
+  const enabledCalls = () =>
+    hook.useStockPosition.mock.calls.filter((c) => (c[2] as { enabled?: boolean } | undefined)?.enabled !== false);
+
+  it('holds the stock request until the saved column layout has loaded', () => {
+    savedConfig.useUserListColumnConfigQuery.mockReturnValue({ data: undefined, isSuccess: false, isError: false });
+    withRows([row()], ['BRW', 'DC1']);
+    renderGrid();
+    expect(hook.useStockPosition).toHaveBeenCalled();
+    expect(enabledCalls()).toHaveLength(0);
+    expect(savedConfig.useUserListColumnConfigQuery).toHaveBeenCalledWith('/inventory-management/stock-position');
+  });
+
+  it('a saved hidden column is in the very first request, so no total ever counts it', () => {
+    savedConfig.useUserListColumnConfigQuery.mockReturnValue({
+      data: { config: { columnVisibility: { 'wh:DC1': false, outstanding_po: false, 'wh:BRW': true } } },
+      isSuccess: true,
+      isError: false,
+    });
+    withRows([row()], ['BRW', 'DC1']);
+    renderGrid();
+    const calls = enabledCalls();
+    expect(calls.length).toBeGreaterThan(0);
+    for (const c of calls) expect((c[1] as { hiddenColumns: string[] }).hiddenColumns).toEqual(['wh:DC1']);
+  });
+
+  it('a layout that fails to load does not block the page: nothing hidden', () => {
+    savedConfig.useUserListColumnConfigQuery.mockReturnValue({ data: undefined, isSuccess: false, isError: true });
+    withRows([row()], ['BRW', 'DC1']);
+    renderGrid();
+    expect(enabledCalls().length).toBeGreaterThan(0);
+    expect(lastFilters().hiddenColumns).toEqual([]);
+  });
+
+  it('hiding a column from page 2 asks for page 1 straight away, never page 2 with the new set', async () => {
+    withRows([row()], ['BRW', 'DC1'], 200);
+    renderGrid();
+    await act(async () => gridTable().setPageIndex(1));
+    expect(lastParams().pageIndex).toBe(1);
+    await act(async () => gridTable().getColumn('wh:DC1').toggleVisibility(false));
+    const withHide = enabledCalls().filter((c) => (c[1] as { hiddenColumns: string[] }).hiddenColumns.length > 0);
+    expect(withHide.length).toBeGreaterThan(0);
+    for (const c of withHide) expect((c[0] as { pageIndex: number }).pageIndex).toBe(0);
   });
 });
 

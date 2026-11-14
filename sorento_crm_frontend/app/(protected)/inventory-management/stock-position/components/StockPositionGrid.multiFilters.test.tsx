@@ -26,6 +26,10 @@ vi.mock('next/navigation', () => ({
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: async () => {}, isLoading: false }),
 }));
+const savedConfig = vi.hoisted(() => ({
+  useUserListColumnConfigQuery: vi.fn(() => ({ data: { config: null }, isSuccess: true, isError: false }) as unknown),
+}));
+vi.mock('@/lib/listing-column-preferences/useUserListColumnConfigQuery', () => savedConfig);
 const exporter = vi.hoisted(() => ({ exportStockPosition: vi.fn(async () => {}) }));
 vi.mock('../services/stockPositionService', () => exporter);
 vi.mock('@/app/(protected)/master-data-management/shared/hooks/use-brand-select-query', () => ({
@@ -178,5 +182,18 @@ describe('Stock position: Supplier, Brand, Warehouse are multi-select', () => {
     const first = hook.useStockPosition.mock.calls.at(-1)!;
     expect(first[1]).toMatchObject({ brandIds: ['b-1', 'b-2'], supplierIds: ['s-1'], warehouseIds: ['w-2'] });
     expect(first[0]).toMatchObject({ pageIndex: 1, sorting: [{ id: 'total_stock', desc: true }] });
+  });
+
+  it('a saved hidden column does not reset the page restored from the URL', () => {
+    savedConfig.useUserListColumnConfigQuery.mockReturnValueOnce({
+      data: { config: { columnVisibility: { 'wh:DC1': false } } },
+      isSuccess: true,
+      isError: false,
+    });
+    nav.search = 'page=3&limit=50&sort=total_stock&dir=desc';
+    renderGrid();
+    const last = hook.useStockPosition.mock.calls.at(-1)!;
+    expect(last[1]).toMatchObject({ hiddenColumns: ['wh:DC1'] });
+    expect(last[0]).toMatchObject({ pageIndex: 2 });
   });
 });
