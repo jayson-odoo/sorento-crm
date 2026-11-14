@@ -1059,6 +1059,8 @@ function NotesButton({ row }: { row: GridRow }) {
             className="field-sizing-content min-h-16 resize-none"
             onChange={(event) => grid.update(row.key, { notes: event.target.value })}
           />
+          {/* QUOTE-LINE-NOTE-REMARK (owner, 12 Nov): the note prints in the customer's REMARK column. */}
+          <p className="mt-1.5 text-xs text-muted-foreground">Shown to the customer</p>
         </PopoverContent>
       </PopoverPortal>
     </Popover>

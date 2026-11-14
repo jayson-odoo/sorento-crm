@@ -344,6 +344,12 @@ class Project(Base, CompanyScopedMixin):
     owner_user_id = Column(
         String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    # The primary lead: the first owner at registration (PROJECT-LEADS-REASSIGN A5). Set once and
+    # never moved by a reassignment, so the Access card can still name the primary after the
+    # project changed hands.
+    primary_owner_user_id = Column(
+        String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
 
     # The PDF's "Final Negotiation": a FLAG, not a funnel rung, so a re-quote during
     # negotiation does not drag the card backwards and corrupt stage durations.

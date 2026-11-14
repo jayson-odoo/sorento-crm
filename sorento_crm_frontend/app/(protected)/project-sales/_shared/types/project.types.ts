@@ -226,6 +226,9 @@ export interface Project {
   /** The owner's linked contact: Requested by on a sponsorship form written from the project. */
   owner_contact_id?: string | null;
   owner_contact_name?: string | null;
+  /** The primary lead: the first owner at registration, never moved by a reassignment. */
+  primary_owner_user_id?: string | null;
+  primary_owner_name?: string | null;
 
   is_critical: boolean;
   critical_at?: string | null;

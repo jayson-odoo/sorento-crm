@@ -379,7 +379,7 @@ def _value_forms(value: Any) -> set[str]:
 #: scoring fields, any `*_id` / `*_ids`, and name-like text ("Basin 600" is not 600 units).
 _NOT_FIGURE_KEYS = frozenset(
     {"more", "page", "limit", "offset", "total_count", "score", "has_result", "rank",
-     "name", "product_name", "label", "description", "title", "display", "problem"}
+     "name", "product_name", "label", "description", "title", "display", "problem", "count_by_owner_note"}
 )
 
 
@@ -680,20 +680,40 @@ def _searched_names(args: dict) -> list | None:
     return names
 
 
-def verify_answer(args: Any, ledger: dict[str, dict], user_text: str) -> tuple[list[str], list[str]]:
-    """(numbers in the text no tool result backs, not-found claims no tool call backs)."""
-    text, _figures_unused, not_found, _ = _answer_parts(args)
-    # A number is backed when any ok result of this turn holds it, or it is the total of a column
-    # of returned rows. The figures' citations are informational.
+def _backed_forms(ledger: dict[str, dict]) -> set[str]:
+    """Every figure this turn's results back: any ok result's numbers and column totals; a read that matched
+    nothing backs "0" (crew pass on 2343: "0 projects found" was flagged)."""
     backed: set[str] = set()
     for entry in ledger.values():
         # A batch result is built by code from the pasted rows (its row numbers and counts), whatever its status.
         if entry["status"] == "ok" or (entry.get("name") == batch.BATCH and isinstance(entry.get("data"), dict)):
             backed |= _number_leaves(entry["data"]) | _column_totals(entry["data"])
-    user_forms = _supported_forms([user_text])
+        elif entry["status"] == "empty":
+            backed.add(_normal("0"))
+    return backed
+
+
+def _bad_spans(text: str, ledger: dict[str, dict], user_text: str) -> list[tuple[int, int, str]]:
+    """(start, end, written) of every figure in `text` the check rejects: one no result backs, or a count written
+    beside a group's label that is not that group's count (`_group_count_misses`)."""
+    blank = _data_text_blank(ledger, text)
+    backed, user_forms = _backed_forms(ledger), _supported_forms([user_text])
+    spans = [
+        (start, end, written)
+        for start, end, written, forms in _figures(text, blank)
+        if not _figure_backed(written, forms, backed, user_forms)
+    ]
+    return spans + _group_count_misses(text, ledger, blank)
+
+
+def verify_answer(args: Any, ledger: dict[str, dict], user_text: str) -> tuple[list[str], list[str]]:
+    """(numbers in the text no tool result backs, not-found claims no tool call backs)."""
+    text, _figures_unused, not_found, _ = _answer_parts(args)
+    # A number is backed when any ok result of this turn holds it, or it is the total of a column
+    # of returned rows. The figures' citations are informational.
     bad_numbers: list[str] = []
-    for _, _, written, forms in _figures(text, _data_text_blank(ledger, text)):
-        if not _figure_backed(written, forms, backed, user_forms) and written not in bad_numbers:
+    for _, _, written in _bad_spans(text, ledger, user_text):
+        if written not in bad_numbers:
             bad_numbers.append(written)
     found = _found_ids(ledger)
     bad_not_found = [
@@ -704,15 +724,101 @@ def verify_answer(args: Any, ledger: dict[str, dict], user_text: str) -> tuple[l
     return bad_numbers, [w for w in bad_not_found if w]
 
 
+#: Results that carry a count per group, computed by code from every row (`tools.with_owner_counts`):
+#: key -> (label field, count field). A count written right after a group's label is held to that group.
+GROUP_COUNTS: dict[str, tuple[str, str]] = {"count_by_owner": ("owner", "projects")}
+#: A count written right after a label: "Ali: 8", "Ali owns 8", "Ali has 8", "| Ali | 8", "Ali (8 projects)",
+#: "**Ali** - 8". Only a bare whole number; a figure with a currency, a decimal or a percent is never a count.
+_COUNT_AFTER = re.compile(
+    r"[ \t*'’]*(?:s\b)?[ \t*]*(?:[:|(\-][ \t*]*|(?:owns|has|with)\b[ \t]*)?(\d{1,3}(?:,\d{3})+|\d+)(?![\d,]\d|\d|\.\d|[ \t]*%)", re.I
+)
+
+
+def _group_count_misses(text: str, ledger: dict[str, dict], blank: Any = None) -> list[tuple[int, int, str]]:
+    """(start, end, written) of each count written right after a group's label that is not one of that group's
+    counts this turn. "A: 10" passes the plain check when any 10 sits anywhere in the result (crew pass on 2343:
+    10 / 6 against 8 / 8), so a grouped count is held to its own group. Labels match as whole words, longest
+    first, and a match inside a longer label's match is not that label ("Ali" in "Ali Bakar")."""
+    groups: dict[str, set[str]] = {}
+    for entry in ledger.values():
+        data = entry.get("data")
+        if entry.get("status") != "ok" or not isinstance(data, dict):
+            continue
+        for key, (label, count) in GROUP_COUNTS.items():
+            for row in data.get(key) or []:
+                if isinstance(row, dict) and str(row.get(label) or "").strip() and isinstance(row.get(count), int):
+                    groups.setdefault(" ".join(str(row[label]).split()).lower(), set()).add(_normal(str(row[count])))
+    if not groups:
+        return []
+    lowered = text.lower()
+    claimed: list[tuple[int, int]] = []
+    misses: list[tuple[int, int, str]] = []
+    for label in sorted(groups, key=len, reverse=True):
+        for m in re.finditer(r"(?<!\w)" + re.escape(label).replace(r"\ ", r"\s+") + r"(?!\w)", lowered):
+            if any(a <= m.start() < b for a, b in claimed):
+                continue
+            claimed.append((m.start(), m.end()))
+            after = _COUNT_AFTER.match(text, m.end())
+            if after is None:
+                continue
+            written = after.group(1)
+            if _normal(written) not in groups[label]:
+                misses.append((after.start(1), after.end(1), written))
+    return misses
+
+
+#: What a repair adds instead of writing into a sentence (crew pass on 2343: "((not verified) projects found)").
+LEFT_OUT_NOTE = "I left out a figure I could not check against the data."
+ALL_LEFT_OUT_NOTE = "I could not check the figures in my answer against the data, so I left them out. Ask me again."
+#: A sentence ends at . ! ? (and any closing bracket or quote) before spaces and a capital letter, except after a
+#: list number at the start of the line ("1. Ali") or a short abbreviation ("No.", "Sdn. Bhd.").
+_SENTENCE_END = re.compile(r"[.!?][)\]\"'’]*([ \t]+)(?=[A-Z\"'‘(\[*])")
+_ABBREVIATIONS = frozenset(
+    {"no", "nos", "approx", "sdn", "bhd", "e.g", "i.e", "etc", "mr", "mrs", "ms", "dr", "vs", "co", "ltd", "inc", "jr", "st"}
+)
+_LINE_LIST_NUMBER = re.compile(r"^[ \t]*(?:[-*][ \t]*)?\d+$")
+
+
+def _sentences(line: str) -> list[tuple[int, int]]:
+    """(start, end) of each sentence in one line, each with its trailing spaces."""
+    out, pos = [], 0
+    for m in _SENTENCE_END.finditer(line):
+        before = line[pos:m.start()]
+        word = re.search(r"([\w.]+)$", before)
+        if _LINE_LIST_NUMBER.match(line[:m.start()]) or (word and word.group(1).lower() in _ABBREVIATIONS):
+            continue
+        out.append((pos, m.end()))
+        pos = m.end()
+    out.append((pos, len(line)))
+    return out
+
+
+def _redact_spans(text: str, spans: list[tuple[int, int]]) -> str:
+    """`text` without each sentence that holds one of `spans` (a line is never cut across), plus one closing
+    note. A repair never writes into a sentence: a half-sentence with a placeholder misleads more than a
+    missing one."""
+    if not spans:
+        return text
+    lines: list[str] = []
+    offset = 0
+    for line in text.split("\n"):
+        kept = [
+            line[a:b]
+            for a, b in _sentences(line)
+            if not any(offset + a <= s < offset + b for s, _ in spans)
+        ]
+        dropped = len(kept) < len(_sentences(line))
+        joined = "".join(kept).rstrip()
+        if joined or not dropped:
+            lines.append(joined if dropped else line)
+        offset += len(line) + 1
+    body = re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+    return f"{body}\n\n{LEFT_OUT_NOTE}" if body else ALL_LEFT_OUT_NOTE
+
+
 def _redact_written(text: str, bad: set[str], blank: Any = None) -> str:
-    out, last = [], 0
-    for start, end, written, _ in _figures(text, blank):
-        if written in bad:
-            out.append(text[last:start])
-            out.append(NOT_VERIFIED)
-            last = end
-    out.append(text[last:])
-    return "".join(out)
+    """`_redact_spans` over every figure written as one of `bad`."""
+    return _redact_spans(text, [(start, end) for start, end, written, _ in _figures(text, blank) if written in bad])
 
 
 def _same_part(a: str, b: str) -> bool:
@@ -739,7 +845,12 @@ def final_reply(
     """The user-facing text of an accepted answer, and whether the model named what it did not check."""
     text, _, _, not_checked = _answer_parts(args)
     if bad_numbers:
-        text = _redact_written(text, set(bad_numbers), _data_text_blank(ledger, text))
+        if ledger is not None:
+            # By position: a wrong per-owner count leaves out its own sentence, not every one with that number.
+            spans = [(a, b) for a, b, written in _bad_spans(text, ledger, user_text or "") if written in bad_numbers]
+            text = _redact_spans(text, spans) if spans else _redact_written(text, set(bad_numbers))
+        else:
+            text = _redact_written(text, set(bad_numbers))
     if bad_not_found:
         missing = "; ".join(bad_not_found)
         text = f"I did not search for {missing}, so I cannot say it does not exist. {text}".strip()
@@ -1237,14 +1348,24 @@ def _context_record(db, *, system: str, context_before: str, context_after: str,
     }
 
 
-def _row_count(data: Any) -> int | None:
-    """Rows a tool returned: a list's length, or the longest list in a dict (rows, items, documents); None for none."""
+def _row_count(data: Any) -> int:
+    """Rows a tool returned: a list's length, or the longest list in a dict (rows, items, documents); 0 for none.
+    The longest, never the sum: a result's side lists (`count_by_owner`) are not rows (crew pass on 2343: 9 for 8)."""
     if isinstance(data, list):
         return len(data)
     if isinstance(data, dict):
         sizes = [len(v) for v in data.values() if isinstance(v, list)]
-        return max(sizes) if sizes else None
-    return None
+        return max(sizes) if sizes else 0
+    return 0
+
+
+#: Owner standing rule (crew pass on 2343: "my projects" answers ended with "Across the CRM, there are 16 total ...
+#: owned by ..."). Appended at runtime so a saved prompt version cannot drop it.
+ANSWER_SCOPE_RULE = (
+    "ANSWER ONLY WHAT WAS ASKED: give the figures, records and lists the question asks for, nothing more. Never add a "
+    "company-wide total, other people's records or a breakdown the user did not ask for, even when a tool returned it: "
+    "\"my projects\" is about the user's own projects only. Call a project a \"project\", as the CRM screens do."
+)
 
 
 def _system_prompt(db, user_name: str, tool_names: Any = (), principal: str = "user") -> str:
@@ -1262,6 +1383,8 @@ def _system_prompt(db, user_name: str, tool_names: Any = (), principal: str = "u
             text = f"{text.rstrip()}\n\n{knowledge_service.KNOWLEDGE_CONTACT_PROTOCOL}"
         if any(portal_writes.is_portal_tool(n) for n in tool_names):
             text = f"{text.rstrip()}\n\n{DEALER_REQUESTS_PROTOCOL}"
+        if "ANSWER ONLY WHAT WAS ASKED" not in text:
+            text = f"{text.rstrip()}\n\n{ANSWER_SCOPE_RULE}"
         return f"{text}\n\nToday's date is {today}. You are answering a Sorento customer on WhatsApp."
     if "USER GUIDE PROTOCOL" not in text:
         text = text.rstrip() + "\n\n" + ai_prompt_registry._synthesizer_fallback()
@@ -1280,6 +1403,8 @@ def _system_prompt(db, user_name: str, tool_names: Any = (), principal: str = "u
             f"{text}\n\nOutside this user's or this contact's access: {'; '.join(left_out)}. When asked about these, say they "
             "are outside this user's or this contact's access; never say the CRM lacks them, and never list them in no_tool."
         )
+    if "ANSWER ONLY WHAT WAS ASKED" not in text:
+        text = f"{text.rstrip()}\n\n{ANSWER_SCOPE_RULE}"
     return f"{text}\n\nToday's date is {today}. You are working for {user_name}."
 
 
@@ -1330,14 +1455,6 @@ def _collect_names(data: Any, names: dict[str, str]) -> None:
     elif isinstance(data, list):
         for v in data:
             _collect_names(v, names)
-
-
-def _row_count(data: Any) -> int:
-    if isinstance(data, list):
-        return len(data)
-    if isinstance(data, dict):
-        return sum(len(v) for v in data.values() if isinstance(v, list))
-    return 0
 
 
 def tool_detail(name: str, args: Any, out: ToolResult, names: dict[str, str]) -> str:

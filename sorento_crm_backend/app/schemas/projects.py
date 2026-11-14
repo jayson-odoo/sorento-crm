@@ -398,9 +398,14 @@ class ProjectResponse(BaseModel):
 
     owner_user_id: Optional[str] = None
     owner_name: Optional[str] = None
+    owner_is_viewer: bool = False
+    quotation_document_count: int = 0
     # The owner's linked contact: Requested by on a sponsorship form written from the project.
     owner_contact_id: Optional[str] = None
     owner_contact_name: Optional[str] = None
+    # The primary lead: the first owner at registration, never moved by a reassignment.
+    primary_owner_user_id: Optional[str] = None
+    primary_owner_name: Optional[str] = None
 
     is_critical: bool = False
     critical_at: Optional[datetime] = None
