@@ -45,7 +45,9 @@ describe('rich text layout with no measure (MAIN-RED-TAGSHEET)', () => {
     ]);
   });
 
-  it('keeps each paragraph on its own line, no leading space', () => {
-    expect(lineTexts('<p>first line</p><p>  second line</p>')).toEqual(['first line', 'second line']);
+  // PRICETAG-DESIGNER-FEEDBACK AC-2.1: a paragraph's leading spaces are the user's indent and are
+  // kept (they were dropped here before). A soft wrap still drops its space (text-layout.indent.test.ts).
+  it('keeps each paragraph on its own line, with its leading spaces', () => {
+    expect(lineTexts('<p>first line</p><p>  second line</p>')).toEqual(['first line', '  second line']);
   });
 });
