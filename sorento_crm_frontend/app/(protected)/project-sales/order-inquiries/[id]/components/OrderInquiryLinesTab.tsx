@@ -35,6 +35,7 @@ import {
 import { DEFAULT_HIDDEN_COLUMNS } from '../../components/orderInquiryWorklistColumns';
 import {
   StagedReserveEntry,
+  SPARE_PART_REQUEST_HIDDEN_COLUMNS,
   useOrderInquiryHeaderLinesColumns,
   type SparePartLineEdit,
 } from './orderInquiryHeaderLinesColumns';
@@ -383,7 +384,11 @@ export function OrderInquiryLinesTab({
     // still applies afterwards and wins.
     initialState: {
       columnVisibility: Object.fromEntries(
-        DEFAULT_HIDDEN_COLUMNS.map((id) => [id, false]),
+        [
+          ...DEFAULT_HIDDEN_COLUMNS,
+          // SPARE-PART-OR-B U3.3b: PO starts hidden on the order request page.
+          ...(sparePart?.view === 'request' ? SPARE_PART_REQUEST_HIDDEN_COLUMNS : []),
+        ].map((id) => [id, false]),
       ),
     },
     state: { pagination, sorting, rowSelection: lineSelection, globalFilter: search, expanded },

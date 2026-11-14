@@ -15,8 +15,8 @@
  *    OR view: true when qty != submitted_qty, unit_price != submitted_unit_price, or
  *    photo_changes added + removed > 0 (U1.3). OI view: true only when the row has
  *    `previous_qty` (a post-approval change, U4.7).
- * 4. Columns are found by `meta.headerTitle`: "OI" (OR view, after State) and
- *    "Order request" (OI view, the first data column after expand + select).
+ * 4. Columns are found by `meta.headerTitle`: "OI" (OR view, after State). Lead ruling 14 Nov
+ *    (U3.3 updated): no per-line "Order request" column; the OI page header links back.
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -370,32 +370,15 @@ describe('U3.2: the OR page Lines carry an "OI" column after State', () => {
 // U3.3 - the OI page "Order request" column
 // =============================================================================
 
-describe('U3.3: the OI page Lines carry an "Order request" column first', () => {
-  it('is the first data column (after expand and select)', () => {
-    const columns = columnsOf(OI_RAISED);
-    const data = columns.filter((c) => {
-      const id = (c as { id?: string }).id;
-      return id !== 'expand' && id !== 'select';
-    });
-    expect(titleOf(data[0])).toBe('Order request');
+// Lead ruling 14 Nov (UAC U3.3 updated): one OI is one order request, so the way back is ONE
+// link in the OI page header (OrderInquiryDetail.orB.test.tsx), never a per-line column.
+describe('U3.3: the OI page Lines carry no "Order request" column', () => {
+  it('is not on the OI page', () => {
+    expect(columnsOf(OI_RAISED).map(titleOf)).not.toContain('Order request');
   });
 
-  it('is not on the OR page', () => {
+  it('is not on the OR page either', () => {
     expect(columnsOf(OR_RAISED).map(titleOf)).not.toContain('Order request');
-  });
-
-  it('links the OR number to the order request at that line', () => {
-    renderGrid([spareRow()], OI_RAISED);
-    const link = within(cell('Order request')).getByRole('link', { name: 'OR-2611-0003' });
-    expect(link).toHaveAttribute('href', '/procurement-management/spare-part-requests/oi-1?line=row-1');
-    expect(link.className).toMatch(/text-primary/);
-    expect(link.className).toMatch(/hover:underline/);
-  });
-
-  it('a click on the link does not select the row (stopPropagation)', () => {
-    renderGrid([spareRow()], OI_RAISED);
-    fireEvent.click(within(cell('Order request')).getByRole('link', { name: 'OR-2611-0003' }));
-    expect(rowClick).not.toHaveBeenCalled();
   });
 });
 
@@ -403,11 +386,8 @@ describe('U3.3: the OI page Lines carry an "Order request" column first', () => 
 // U3.5 - both new columns: size, truncate + title, hideable, one line
 // =============================================================================
 
-describe('U3.5: the OI and Order request columns follow the grid rules', () => {
-  it.each([
-    ['OI', OR_RAISED, 'OI-2611-0009'],
-    ['Order request', OI_RAISED, 'OR-2611-0003'],
-  ])('%s', (title, options, text) => {
+describe('U3.5: the OI column follows the grid rules', () => {
+  it.each([['OI', OR_RAISED, 'OI-2611-0009']])('%s', (title, options, text) => {
     const column = columnsOf(options).find((c) => titleOf(c) === title) as
       | { size?: number; enableHiding?: boolean }
       | undefined;

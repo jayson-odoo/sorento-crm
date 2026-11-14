@@ -60,7 +60,7 @@ import type { SoLineAttachmentsByLine } from '../../../_shared/services/soLineAt
 import { NumberInput } from '@/components/ui/number-input';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { formatMoneyExact } from '../../../_shared/lib/money';
-import { SPARE_PART_REQUESTS_PATH, changedFrom } from '../../../_shared/lib/sparePartRequest';
+import { changedFrom } from '../../../_shared/lib/sparePartRequest';
 import type { OrderInquiryType } from '../../../_shared/types/orderInquiry.types';
 import type { LineSplitsPayload } from '../../../_shared/types/lineSplit.types';
 
@@ -544,6 +544,10 @@ export interface SparePartLineEdit {
  *  ('request') or the order inquiry purchasing works it on ('inquiry'). */
 export type SparePartView = 'request' | 'inquiry';
 
+/** SPARE-PART-OR-B U3.3b: the order request page hides PO by default (still in Columns; it is
+ *  purchasing's fact and shows on the order inquiry), so its OI column fits the 950 px card. */
+export const SPARE_PART_REQUEST_HIDDEN_COLUMNS: string[] = ['po_number'];
+
 /**
  * SPARE-PART-OR-B: did this spare part line change? On the order request page (U1.3): its
  * qty or unit price moved off what was submitted, or a photo was added or removed. On the
@@ -624,51 +628,24 @@ function sparePartLineColumns({
   attachmentsByRow?: SoLineAttachmentsByLine;
   canEditAttachments: boolean;
 }): ColumnDef<OrderInquiryLineRow>[] {
-  // U3.3: on the order inquiry page the line's order request comes first, the mirror of a
-  // sales-order line's No. link.
-  const orderRequestColumn: ColumnDef<OrderInquiryLineRow> = {
-    id: 'order_request',
-    accessorFn: (row) => row.inquiry_no ?? '',
-    header: ({ column }) => <DataGridColumnHeader title="Order request" column={column} />,
-    size: 116,
-    meta: { headerTitle: 'Order request', skeleton: <Skeleton className="h-4 w-20" /> },
-    cell: ({ row }) => {
-      const primary = lineOf(row.original).primary;
-      const number = primary.inquiry_no;
-      if (!number) return <span className="text-muted-foreground">-</span>;
-      if (!primary.order_inquiry_id) {
-        return (
-          <span className="block min-w-0 truncate tabular-nums" title={number}>
-            {number}
-          </span>
-        );
-      }
-      return (
-        <Link
-          href={`${SPARE_PART_REQUESTS_PATH}/${primary.order_inquiry_id}?line=${primary.id}`}
-          onClick={(event) => event.stopPropagation()}
-          className="block min-w-0 truncate tabular-nums font-medium text-primary hover:underline"
-          title={number}
-        >
-          {number}
-        </Link>
-      );
-    },
-  };
   // U3.2: on the order request page each line links to its row on the order inquiry, once
   // the request is approved (its OI- number); the Sales Order Lines tab's own cell.
   const orderInquiryColumn: ColumnDef<OrderInquiryLineRow> = {
     id: 'order_inquiry',
     accessorFn: (row) => row.oi_no ?? '',
     header: ({ column }) => <DataGridColumnHeader title="OI" column={column} />,
-    size: 150,
+    size: 80,
     meta: { headerTitle: 'OI', skeleton: <Skeleton className="h-4 w-20" /> },
     cell: ({ row }) => {
       const line = lineOf(row.original);
       return (
         // A click on the link (or its pill) leaves the row's selection alone.
         // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions
-        <div className="min-w-0 truncate" onClick={(event) => event.stopPropagation()}>
+        <div
+          className="min-w-0 truncate"
+          title={line.rows.find((r) => r.oi_no)?.oi_no ?? undefined}
+          onClick={(event) => event.stopPropagation()}
+        >
           <OrderInquiryLinkCell
             rows={line.rows.filter((r) => Boolean(r.oi_no))}
             lineId={line.primary.id}
@@ -682,7 +659,6 @@ function sparePartLineColumns({
     buildSelectColumn<OrderInquiryLineRow>({
       rowLabel: (row) => `Select ${row.original.item_code ?? 'line'}`,
     }),
-    ...(view === 'inquiry' ? [orderRequestColumn] : []),
     {
       accessorKey: 'item_code',
       header: ({ column }) => <DataGridColumnHeader title="Product code" column={column} />,
@@ -714,7 +690,8 @@ function sparePartLineColumns({
     {
       accessorKey: 'qty',
       header: ({ column }) => <DataGridColumnHeader title="Qty" column={column} />,
-      size: 108,
+      // The approver's 72 px input plus the History icon (U1.2), one line.
+      size: 120,
       meta: { headerTitle: 'Qty', skeleton: <Skeleton className="h-4 w-10" /> },
       cell: ({ row }) => {
         const line = lineOf(row.original);
@@ -795,8 +772,8 @@ function sparePartLineColumns({
       id: 'state',
       accessorFn: (row) => lineOf(row).state,
       header: ({ column }) => <DataGridColumnHeader title="State" column={column} />,
-      size: 166,
-      minSize: 166,
+      size: 162,
+      minSize: 162,
       meta: { headerTitle: 'State' },
       cell: ({ row }) => {
         const line = lineOf(row.original);
@@ -892,8 +869,8 @@ export function useOrderInquiryHeaderLinesColumns({
   /** SPARE-PART-ORDER-REQUEST: the inquiry's type; a spare part request gets its own set. */
   inquiryType?: OrderInquiryType;
   /** SPARE-PART-OR-B: a spare part request read on its own order request page ('request':
-   *  the OI column) or on the order inquiry ('inquiry', the default: the Order request
-   *  column, approved figures only). */
+   *  the OI column) or on the order inquiry ('inquiry', the default: approved figures only;
+   *  the way back to the order request is the page header's link, U3.3). */
   sparePartView?: SparePartView;
   /** The header's state: a decider edits Qty / Unit price only while `pending_approval`. */
   headerState?: string | null;

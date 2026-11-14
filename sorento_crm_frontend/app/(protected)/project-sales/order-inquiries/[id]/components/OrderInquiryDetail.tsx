@@ -95,6 +95,7 @@ import { OrderInquiryGeneralTab } from './OrderInquiryGeneralTab';
 import { SparePartRequestActions } from './SparePartRequestActions';
 import { useEditSparePartLine } from '../../../_shared/hooks/useSparePartRequest';
 import {
+  SPARE_PART_REQUESTS_PATH,
   isPreApproval,
   canEditSparePartPhotos,
   isSparePartInquiry,
@@ -807,6 +808,20 @@ export function OrderInquiryDetail({ id }: { id: string }) {
         }
         subtitle={
           <>
+            {/* SPARE-PART-OR-B (U3.3): one OI is one order request, so the way back to it is
+                one header link (the order request page's "Raised to purchasing" mirror). */}
+            {isSparePartInquiry(header) ? (
+              <>
+                <Link
+                  href={`${SPARE_PART_REQUESTS_PATH}/${header.id}`}
+                  className="font-medium tabular-nums text-primary hover:underline"
+                  data-testid="oi-header-order-request-link"
+                >
+                  Order request {header.inquiry_no}
+                </Link>
+                {' · '}
+              </>
+            ) : null}
             {/* Owner hand test (5 Nov 2026): the sales order, one click away, without going
                 to the General tab (same link the General tab's S/O no uses). */}
             {header.so_number ? (

@@ -238,3 +238,19 @@ describe('U3.4: the OI page title reads the OI number', () => {
     await waitFor(() => expect(screen.getByTestId('record-header-title-row')).toHaveTextContent(HEADER.inquiry_no));
   });
 });
+
+describe('U3.3: the OI page header links back to its order request', () => {
+  it('a spare part inquiry shows "Order request <OR number>" linking to the order request', async () => {
+    mockGetOrderInquiryHeader.mockResolvedValue(SPARE);
+    renderDetail('oi-1');
+    const link = await screen.findByRole('link', { name: 'Order request OR-2611-0003' });
+    expect(link).toHaveAttribute('href', '/procurement-management/spare-part-requests/oi-1');
+    expect(screen.getByTestId('record-header-subtitle')).toContainElement(link);
+  });
+
+  it('a sales-order OI has no order request link', async () => {
+    renderDetail('oi-1');
+    await waitFor(() => expect(titleRow()).toHaveTextContent(HEADER.inquiry_no));
+    expect(screen.queryByRole('link', { name: /^Order request/ })).toBeNull();
+  });
+});

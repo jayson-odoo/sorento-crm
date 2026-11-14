@@ -221,6 +221,16 @@ describe('U3.2: the OR page Lines tab links each line to its OI row', () => {
   });
 });
 
+describe('U3.3b: the OR page Lines start with PO hidden', () => {
+  it('no PO column by default, so the OI column fits the card', async () => {
+    mount();
+    await screen.findByText('ZZX-SEAL-40', {}, { timeout: 5000 });
+    const headers = screen.getAllByRole('columnheader').map((c) => (c.textContent ?? '').trim());
+    expect(headers).toContain('OI');
+    expect(headers).not.toContain('PO');
+  });
+});
+
 describe('U4.6: the OR status pill reads the open revision', () => {
   it.each([
     ['draft', 'Draft'],
