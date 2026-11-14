@@ -41,9 +41,11 @@ KINDS: tuple[str, ...] = (
 )
 
 
-def _options(pending: Pending) -> list[dict[str, Any]]:
+def _options(pending: Pending, notes: dict[int, str] | None = None) -> list[dict[str, Any]]:
     """The options as the parser needs them: the position, the code, and the printed
-    label only when it is not the code (a customer's name beside its account code)."""
+    label only when it is not the code (a customer's name beside its account code).
+    CHATBOT-SET-CODES C: an option's spec note (`notes`, read by the caller) rides in its
+    label, "QWC604-S-RL (Trap: S trap)"; the stored options are never changed."""
     out: list[dict[str, Any]] = []
     for option in pending.options:
         position = option.get("position")
@@ -54,6 +56,9 @@ def _options(pending: Pending) -> list[dict[str, Any]]:
         row: dict[str, Any] = {"position": position, "code": code}
         if label and label != code:
             row["label"] = label
+        note = (notes or {}).get(position)
+        if note:
+            row["label"] = f"{row.get('label') or code} ({note})"
         out.append(row)
     return out
 
@@ -71,11 +76,11 @@ def _kind(pending: Pending, options: list[dict[str, Any]]) -> str:
     return PICK_ONE
 
 
-def of_pending(pending: Pending | None) -> dict[str, Any] | None:
+def of_pending(pending: Pending | None, option_notes: dict[int, str] | None = None) -> dict[str, Any] | None:
     """The open pick or offer as the object, or None when nothing is open."""
     if pending is None:
         return None
-    options = _options(pending)
+    options = _options(pending, option_notes)
     kind = _kind(pending, options)
     payload = pending.payload or {}
     stock = bool(payload.get("stock_pick"))
@@ -142,7 +147,9 @@ def of_required_ask(slot: Any) -> dict[str, Any] | None:
     return obj
 
 
-def open_question(pending: Pending | None, tasks: Any, required_ask: Any = None) -> dict[str, Any] | None:
+def open_question(
+    pending: Pending | None, tasks: Any, required_ask: Any = None, option_notes: dict[int, str] | None = None
+) -> dict[str, Any] | None:
     """The ONE question on the table: a required field the LAST reply asked for (the slot
     lives one turn, so it is always the newest question, newer than a carried roster pick
     or a stock task still in the focus), else the open pick or offer, else the stock
@@ -150,7 +157,7 @@ def open_question(pending: Pending | None, tasks: Any, required_ask: Any = None)
     obj = of_required_ask(required_ask)
     if obj is not None:
         return obj
-    obj = of_pending(pending)
+    obj = of_pending(pending, option_notes)
     if obj is not None:
         return obj
     return task_mod.open_question(tasks)
