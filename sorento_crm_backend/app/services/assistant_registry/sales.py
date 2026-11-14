@@ -43,6 +43,12 @@ NEXT_TIER_FIELDS = {
     "next_tier_gain": FieldDef(
         "More at the next tier (RM)", kind="number", note="Payout at the next tier minus the payout now.",
     ),
+    "next_tier_lines": FieldDef(
+        "Next tier, target by target", kind="text",
+        note="One sentence per commission target live today: its period, the next tier and where it starts, what is "
+             "still to sell, what it would pay there and how much more than now (with the account mix and rates it "
+             "assumes), or that it is at its top tier or has no ladder.",
+    ),
 }
 
 
@@ -54,6 +60,7 @@ NEXT_TIER_SUBJECTS = ("agent", "dealer", "team", "all")
 #: run 2 dropped them). TGT and payout account come with them (`always_fields`).
 NEXT_TIER_COLUMNS = (
     "owner_kind", "to_next_tier", "next_tier", "next_tier_at", "next_tier_payout", "next_tier_gain", "payout",
+    "next_tier_lines",
 )
 
 
@@ -429,6 +436,8 @@ def _summary_rows(
             for p in live
         ]
         out.update(_next_fields(live[0]["_next"] if len(live) == 1 else None))
+        # Target by target, for the model to write from (owner 14 Nov: the reply is the model's).
+        out["next_tier_lines"] = " ".join(_next_line(out["owner"], p) for p in out["_live"]) or None
         for target_no, (goal, achieved) in out.pop("_per_target").items():
             if goal <= 0:
                 # A target of 0 over the window has no % on the screen; its sales would swamp the row's % (owner
@@ -544,20 +553,13 @@ def _summary_note(rows: list[dict], used: set[str] = frozenset()) -> str | None:
     unset = [r["owner"] for r in rows if not r["_has_commission"]]
     if unset:
         parts.append(f"No commission is set on the targets of {_some(unset)}.")
-    # Next tier (W-A): one line per commission target's live period, so a subject with several targets is answered
-    # target by target (owner card Q2 a: a sum of two distances is not a distance).
-    # Only when the question is about the next tier (one of its fields asked, filtered or sorted on).
+    # Next tier (W-A): each row's own `next_tier_lines` say it target by target (owner card Q2 a: a sum of two
+    # distances is not a distance). Rows, none with a commission target: one note says so (crew live x3 W6), never a
+    # ranking of something else. No rows: the other notes speak (review B1).
     asked = used & NEXT_TIER_FIELDS.keys()
-    lines = [_next_line(r["owner"], live) for r in rows for live in r.get("_live", [])] if asked else []
-    if asked and rows and not lines:
-        # Rows, none with a commission target: one line says so (crew live x3 W6, `query_tools._distance_reply`
-        # answers with it alone), never a ranking of something else. No rows: the other notes speak (review B1).
+    if asked and rows and not any(r.get("_live") for r in rows):
         who = "agent target" if all(r["owner_kind"] == "agent" for r in rows) else "target"
         parts.insert(0, f"No {who} has a commission ladder this period.")
-    if lines:
-        # Every row shown has its lines: a next-tier page is at most NEXT_LINES rows (`_next_tier_spec`), and the
-        # rest come with "more" (owner L85), never an "ask for one" line.
-        parts.append("Next tier: " + " ".join(lines))
     return " ".join(parts) or None
 
 

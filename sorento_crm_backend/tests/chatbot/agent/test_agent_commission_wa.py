@@ -19,7 +19,7 @@ from tests.test_dealer_targets_api import _customer, _dealer_body, _product_id, 
 from tests.test_sales_targets_s1 import BASE, _so_line, api, world  # noqa: F401  (fixtures)
 
 ENTITY = "agent_target_summary"
-NEXT = ["next_tier", "next_tier_at", "to_next_tier", "next_tier_payout", "next_tier_gain", "payout"]
+NEXT = ["next_tier", "next_tier_at", "to_next_tier", "next_tier_payout", "next_tier_gain", "payout", "next_tier_lines"]
 OCT = "2026-10"
 SEP = "2026-09"
 
@@ -35,6 +35,11 @@ def _company(db, t):
     from app.models.sales import SalesTarget
 
     return db.get(SalesTarget, t["ta"]["id"]).company_id
+
+
+def _lines(out) -> str:
+    """The rows' next-tier sentences, target by target: what the model writes the reply from (owner 14 Nov)."""
+    return " ".join(r.get("next_tier_lines") or "" for r in out["rows"])
 
 
 def _one(db, said, period, fields=NEXT):
@@ -72,7 +77,7 @@ def test_W3_at_the_top_tier_there_is_no_next_tier_and_the_answer_says_so(targets
     row, out = _one(db, "Agent A", SEP)
     assert row["next_tier"] is None and row["to_next_tier"] is None and row["next_tier_payout"] is None
     assert row["payout"] == 360.0
-    assert "top tier" in out["scope_note"] and t["ta"]["target_no"] in out["scope_note"]
+    assert "top tier" in _lines(out) and t["ta"]["target_no"] in _lines(out)
 
 
 def test_W4_what_it_would_pay_is_what_the_page_pays_once_the_sale_lands(targets):
@@ -90,8 +95,8 @@ def test_W4_what_it_would_pay_is_what_the_page_pays_once_the_sale_lands(targets)
     assert after["payout"] == row["next_tier_payout"] and after["next_tier"] is None
 
 
-def test_W5_two_live_targets_leave_the_row_empty_and_list_each_in_the_note(targets):
-    """Q2 (a): a sum of two distances is not a distance; each target's next tier is a line of the note."""
+def test_W5_two_live_targets_leave_the_row_empty_and_list_each_in_its_lines(targets):
+    """Q2 (a): a sum of two distances is not a distance; each target's next tier is a line of the row's lines."""
     db, client, t = targets
     res = client.post(BASE, json={
         "subject_kind": "agent", "sales_agent_id": t["a"].id, "name": "ZZT A stretch", "metric": "amount",
@@ -102,7 +107,7 @@ def test_W5_two_live_targets_leave_the_row_empty_and_list_each_in_the_note(targe
     second = res.json()
     row, out = _one(db, "Agent A", OCT)
     assert row["next_tier"] is None and row["to_next_tier"] is None and row["next_tier_payout"] is None
-    note = out["scope_note"]
+    note = _lines(out)
     assert t["ta"]["target_no"] in note and "RM 1,000.00 to go" in note and "would pay RM 300.00" in note
     assert second["target_no"] in note and "RM 1,000.00 to go" in note and "would pay RM 100.00" in note
 
@@ -121,14 +126,14 @@ def test_W7_dealer_q3_already_reached_its_only_tier(targets):
     db, _c, _t = targets
     row, out = _one(db, "ZZT DEALER W2", ["01/07/2026", "30/09/2026"])
     assert row["next_tier"] is None and row["payout"] == 3500.0
-    assert "top tier" in out["scope_note"]
+    assert "top tier" in _lines(out)
 
 
 def test_W8_team_at_its_only_tier_has_no_next_tier(team):
     db, _c, _t = team
     row, out = _one(db, "Team ZZT North", OCT)
     assert row["next_tier"] is None and row["payout"] == 180.0
-    assert "top tier" in out["scope_note"]
+    assert "top tier" in _lines(out)
 
 
 @pytest.fixture
@@ -155,7 +160,7 @@ def test_W9_per_account_rates_pay_the_rest_in_the_mix_sold_so_far(two_accounts):
     db, _c, t = two_accounts
     row, out = _one(db, t["a1"].customer_code, ["01/10/2026", "31/12/2026"])
     assert (row["to_next_tier"], row["next_tier_payout"]) == (60000.0, 2500.0)
-    note = out["scope_note"]
+    note = _lines(out)
     assert "if the rest comes in the same account mix as sold so far" in note
     assert "ZZT MIX ONE 2%, ZZT MIX TWO 4%" in note
 
@@ -165,7 +170,7 @@ def test_W10_per_account_rates_with_nothing_sold_split_evenly(two_accounts):
     row, out = _one(db, t["a1"].customer_code, ["01/07/2026", "30/09/2026"])
     # 50,000 at 2% + 50,000 at 4%.
     assert (row["to_next_tier"], row["next_tier_payout"]) == (100000.0, 3000.0)
-    assert "split evenly" in out["scope_note"]
+    assert "split evenly" in _lines(out)
 
 
 # ------------------------------------------------------------------ permissions, index, per period
@@ -202,10 +207,10 @@ def test_W13_the_hidden_per_period_entity_has_no_next_tier_fields(targets):
 def test_W14_a_plain_payout_question_carries_no_next_tier_lines(targets):
     db, _c, _t = targets
     out = run(db, {"entity": ENTITY, "agent": "Agent A", "period": OCT, "fields": ["payout"]})
-    assert "Next tier" not in (out["scope_note"] or "")
-    asked = run(db, {"entity": ENTITY, "agent": "Agent A", "period": OCT, "fields": ["payout"],
-                     "sort": [{"field": "to_next_tier", "dir": "asc"}]})
-    assert "Next tier" in asked["scope_note"]
+    [row] = out["rows"]
+    assert "next_tier_lines" not in row and "Next tier" not in (out["scope_note"] or "")
+    asked = run(db, {"entity": ENTITY, "agent": "Agent A", "period": OCT, "next_tier": "distance"})
+    assert "to go, would pay" in _lines(asked)
 
 
 def test_W15_the_live_period_is_todays_not_the_windows_last_closed_one(targets):
@@ -213,7 +218,7 @@ def test_W15_the_live_period_is_todays_not_the_windows_last_closed_one(targets):
     db, _c, t = targets
     row, out = _one(db, "Agent A", ["01/09/2026", "31/10/2026"])
     assert (row["next_tier"], row["to_next_tier"], row["next_tier_payout"]) == (2, 1000.0, 300.0)
-    assert "01/10/2026 - 31/10/2026" in out["scope_note"] and "top tier" not in out["scope_note"]
+    assert "01/10/2026 - 31/10/2026" in _lines(out) and "top tier" not in _lines(out)
 
 
 # ------------------------------------------------------------------ the helper on its own (review B1, S1, S3, S4)
@@ -292,16 +297,8 @@ def test_W20_a_quantity_target_says_units_not_ringgit():
     assert "A RM 2 per unit, B RM 3 per unit" in line
 
 
-def test_W21_an_aggregate_on_a_next_tier_field_counts_as_asked(targets):
-    """Review N1."""
-    db, _c, _t = targets
-    out = run(db, {"entity": ENTITY, "agent": "Agent A", "period": OCT,
-                   "aggregates": [{"fn": "min", "field": "to_next_tier"}]})
-    assert "Next tier" in out["scope_note"]
-
-
 def test_W22_a_window_running_past_today_answers_todays_period_not_a_future_one(targets):
     db, _c, _t = targets
     row, out = _one(db, "Agent A", ["01/10/2026", "30/11/2026"])
     assert (row["next_tier"], row["to_next_tier"]) == (2, 1000.0)
-    assert "01/10/2026 - 31/10/2026" in out["scope_note"] and "01/11/2026" not in out["scope_note"]
+    assert "01/10/2026 - 31/10/2026" in _lines(out) and "01/11/2026" not in _lines(out)

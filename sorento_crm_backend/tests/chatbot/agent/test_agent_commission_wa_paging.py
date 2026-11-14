@@ -113,9 +113,9 @@ def test_P8_a_next_tier_ranking_pages_by_its_sentences():
         assert out["limit"] == min(asked or NEXT_LINES, NEXT_LINES) and out["offset"] == 10
 
 
-def test_P9_every_row_of_a_page_has_its_sentence_and_no_ask_for_one_line():
-    """Review on 5f651cfb: behaviour, not source text. Twelve live commission targets in: twelve lines out, none
-    capped and no "ask for one" line (a page holds at most NEXT_LINES rows, `_next_tier_spec`)."""
+def test_P9_the_note_never_carries_next_tier_lines_or_an_ask_for_one_line():
+    """Each row carries its own `next_tier_lines` (owner 14 Nov: the model writes from them); the note keeps only
+    what is about the rows as a whole, and never an "ask for one" line (owner L85)."""
     from datetime import date
 
     from app.services.assistant_registry import sales
@@ -125,28 +125,28 @@ def test_P9_every_row_of_a_page_has_its_sentence_and_no_ask_for_one_line():
         "owner": f"Agent {i}", "owner_kind": "agent", "_zero": [], "_has_commission": True,
         "_live": [{"target_no": f"TGT-{i}", "start": date(2026, 11, 1), "end": date(2099, 11, 30), "next": nxt}],
     } for i in range(12)]
-    said = sales._summary_note(rows, {"to_next_tier"})
-    assert all(f"TGT-{i} (Agent {i}," in said for i in range(12)), said
-    assert "ask for one" not in said
+    said = sales._summary_note(rows, {"to_next_tier"}) or ""
+    assert "Next tier:" not in said and "ask for one" not in said
 
 
 # ------------------------------------------------------------------ L51 / L82: what the model is told to write
 
 
-def test_P10_the_next_tier_tool_output_says_the_table_is_the_answer():
-    from app.services.chatbot.agent.query_tools import as_card
+def test_P10_a_next_tier_result_is_never_a_card_and_carries_the_instruction():
+    """L51 / L82 and owner 14 Nov: the model gets the rows and the instruction (`DISTANCE_INSTRUCTION`), and writes
+    the reply; no code-rendered block stands in for it."""
+    from app.services.chatbot.agent.query_tools import DISTANCE_INSTRUCTION, as_card, query_result
 
     data = {
         "entity": ENTITY,
         "columns": [{"key": "label", "label": "Owner"}, {"key": "to_next_tier", "label": "To the next tier"}],
-        "rows": [{"id": "1", "label": "Agent A", "to_next_tier": 1000.0}],
-        "total": 1, "truncated": False,
-        "scope_note": "Next tier: TGT-1 (Agent A, 01/10/2026 - 31/10/2026): tier 2 at RM 5,000.00.",
+        "rows": [{"id": str(i), "label": f"Agent {i}", "to_next_tier": 1000.0} for i in range(10)],
+        "total": 10, "truncated": False,
     }
     for panel in (True, False):
-        said = as_card(data, panel=panel).data["instruction"]
-        for must in ("do not repeat", "dd/mm/yyyy - dd/mm/yyyy", "no markdown"):
-            assert must in said.lower(), (must, said)
+        assert as_card(data, panel=panel) is None
+        out = query_result(data, panel=panel)
+        assert out.display in (None, "") and out.data["instruction"] == DISTANCE_INSTRUCTION
 
 
 def test_P11_every_card_tells_the_model_how_more_works():
@@ -217,25 +217,3 @@ def test_P14_the_sql_groups_path_pages_with_the_offset(five_customers, grant):
     assert page["total_groups"] == 5 and page["truncated"] is True and page["offset"] == 2
     past = run_(db, {**spec, "offset": 50})
     assert past["groups"] == [] and past["total_groups"] == 5
-
-
-def test_P15_a_later_page_of_a_ranking_is_never_read_as_everyone():
-    """Review on 5f651cfb: the last page of a ranking (not cut, no limit argument) covers rows 41 to 50 only, so a
-    named subject missed in the same turn is still said by the model."""
-    from app.services.chatbot.agent.query_tools import shape_reply
-
-    def entry(args, data):
-        return {"name": "crm_query", "status": "ok", "args": args, "data": data}
-
-    ranking = {
-        "entity": ENTITY, "columns": [{"key": "label", "label": "Owner"}, {"key": "to_next_tier", "label": "To go"}],
-        "rows": [{"id": "41", "label": "Agent 41", "to_next_tier": 1.0}], "total": 41, "truncated": False,
-        "offset": 40,
-    }
-    ledger = {
-        "q1": entry({"entity": ENTITY, "next_tier": "distance", "agent": "Nobody"}, {"entity": ENTITY, "rows": [], "total": 0}),
-        "q2": {**entry({"entity": ENTITY, "next_tier": "closest", "subjects": "all", "offset": 40}, ranking),
-               "display": "Distance to the next tier\n| Owner | To go |"},
-    }
-    reply = shape_reply("Couldn't find Nobody.", ledger, admitted=[])
-    assert "Couldn't find Nobody." in reply, reply

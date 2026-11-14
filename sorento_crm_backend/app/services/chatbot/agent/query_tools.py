@@ -78,8 +78,22 @@ def query_result(data: Any, *, panel: bool) -> ToolResult:
         card = as_card(data, panel=panel)
         if card is not None:
             return card
+        if _is_distance(data):
+            # The model writes the next-tier reply from the rows (owner 14 Nov): what to write comes with them.
+            data = {**data, "instruction": DISTANCE_INSTRUCTION}
     shaped, more = cap_result(data)
+    if isinstance(shaped, dict):
+        _paging(shaped)
     return ToolResult("ok", data=shaped, more=more)
+
+
+def _paging(data: dict) -> None:
+    """A cut result says how many rows the next page shows and the offset that asks for it ("more", owner L85),
+    counted on the rows the model was given."""
+    data["more"] = _left(data)
+    if data["more"]:
+        items = data.get("groups") if "groups" in data else data.get("rows")
+        data["next_offset"] = int(data.get("offset") or 0) + len(items or [])
 
 
 def _query(db, ctx, args: dict) -> ToolResult:
@@ -101,14 +115,15 @@ CARD_INSTRUCTION = (
     "The full table is shown to the user under your reply by the system. Write ONE short line (the headline "
     "figure from totals), do not list or repeat the rows, and do not repeat the period or note."
 )
-#: What the model writes under a next-tier table (crew pass 6882082161, L51 / L82: on a typo and a Malay question the
-#: model wrote its own paragraph repeating the figures, with an en-dash range and raw `*`). The reply stays the
-#: model's (owner 14 Nov): the tool says what it is.
+#: What the model writes from a next-tier result (crew pass 6882082161, L51 / L82; owner 14 Nov: the agent's reply is
+#: the model's only, so the tool says what to write and code adds nothing to it).
 DISTANCE_INSTRUCTION = (
-    "The table and its next-tier lines are shown to the user under your reply by the system: they ARE the answer. "
-    "Write at most ONE short line before them, in the user's language, and do not repeat any figure, name, tier, "
-    "period or date from them. Plain text, no markdown (no *, no #, no bullets). Any date range you write reads "
-    "dd/mm/yyyy - dd/mm/yyyy. If the user asked something the table does not answer, say that in one more line."
+    "Write the reply yourself, in the user's language, from these rows. For each row, say its next_tier_lines, one "
+    "target per line, with every figure and period as given (a period reads dd/mm/yyyy - dd/mm/yyyy). Say each "
+    "scope_note sentence too. Do not add totals, payouts or rows the user did not ask for, and do not repeat a figure. "
+    "Plain text, no markdown (no *, no #, no bullets). When `more` is above 0, end with the line: "
+    'Reply "more" to see the next N. (N = more); if the user then asks for more, make the same crm_query call with '
+    "offset = next_offset."
 )
 
 
@@ -188,20 +203,17 @@ def as_card(data: dict, *, panel: bool) -> ToolResult | None:
     items = data.get("groups") if "groups" in data else data.get("rows")
     entity = ENTITIES.get(str(data.get("entity")))
     least = entity.card_min_rows if entity is not None and entity.card_min_rows else CARD_MIN_ROWS + 1
-    distance = _is_distance(data)
-    if distance:
-        # One subject is a table too (crew live x3 W4: one row was left to the model, "were not retrieved").
-        least = 1
-    if not isinstance(items, list) or len(items) < least:
+    if _is_distance(data) or not isinstance(items, list) or len(items) < least:
+        # A next-tier page (at most NEXT_LINES rows) goes to the model whole: it writes the reply (owner 14 Nov).
         return None
-    title = DISTANCE_TITLE if distance else (entity.label if entity is not None else "Results")
+    title = entity.label if entity is not None else "Results"
     if "groups" in data:
         keys = [c["label"] for c in data.get("columns") or [] if c.get("group")]
         title = f"{title} by {', '.join(k.lower() for k in keys)}" if keys else title
     summary = {
         "entity": data.get("entity"),
         "shown_to_user": True,
-        "instruction": DISTANCE_INSTRUCTION if distance else CARD_INSTRUCTION,
+        "instruction": CARD_INSTRUCTION,
         "period_display": data.get("period_display"),
         "scope_note": data.get("scope_note"),
         "truncated": data.get("truncated"),
@@ -522,11 +534,6 @@ def _names_a_subject(entity_key: str, args: dict) -> bool:
 
 #: The entity that answers "how far from the next tier" (`assistant_registry.sales`, `next_tier`).
 NEXT_TIER_ENTITY = "agent_target_summary"
-DISTANCE_TITLE = "Distance to the next tier"
-#: The one line of a next-tier call whose rows have no commission ladder (crew live x3, W6).
-NO_LADDER_SUFFIX = "has a commission ladder this period."
-#: The tables a next-tier answer replaces (crew live x3 W1 / W2: the targets table was appended).
-_TARGET_TABLES = frozenset({"target_list", "sales_target"})
 
 
 def _is_distance(data: dict) -> bool:
@@ -542,69 +549,7 @@ def _next_tier_call(entry: dict) -> bool:
     return args.get("entity") == NEXT_TIER_ENTITY and bool(args.get("next_tier"))
 
 
-def _distance_reply(text: str, kept: list[dict], admitted: list[str]) -> str | None:
-    """A next-tier answer's reply, by code from the calls' arguments and results: the table (or the one "no
-    commission ladder" line) of every next-tier call that found rows, with no lead line about the payout and no
-    targets table; a payout call's table of its own; then the model's own text when the turn holds something the
-    tables do not say (another entity's answer, a named subject that was not found); then what `final_reply` said
-    was not done. None when no next-tier call found rows (the reply is then shaped as any other)."""
-    calls = [e for e in kept if _next_tier_call(e) and ((e.get("data") or {}).get("rows") or e.get("display"))]
-    if not calls:
-        return None
-    parts: list[str] = []
-    for e in calls:
-        data = e.get("data") or {}
-        line = next((n for n in _sentences(data.get("scope_note") or "") if n.endswith(NO_LADDER_SUFFIX)), None)
-        # Rows, none with a ladder: the line alone, never a ranking of them (crew live x3 W6).
-        parts.append(line or e.get("display") or "")
-    keep_text = False
-    # A full ranking over everyone answers for any name an earlier call missed: no subject named, no kind filter,
-    # every row shown. A ranking of one kind, or a top N, says nothing about the missed name (review on 376cdda8).
-    def covers_everyone(e: dict) -> bool:
-        args, data = e.get("args") or {}, e.get("data") or {}
-        window = ENTITIES[NEXT_TIER_ENTITY].window_field
-        # Any filter but the window narrows "everyone" (a kind, a team, a %).
-        narrowed = [f for f in args.get("filters") or [] if not (isinstance(f, dict) and f.get("field") == window)]
-        return (
-            not _names_a_subject(NEXT_TIER_ENTITY, args) and args.get("subjects") in (None, "all") and not narrowed
-            and not data.get("truncated") and args.get("limit") is None and not args.get("offset")
-        )
-
-    ranked = any(covers_everyone(e) for e in calls)
-    for e in kept:
-        data = e.get("data") or {}
-        entity = str(data.get("entity") or (e.get("args") or {}).get("entity") or "")
-        if _next_tier_call(e):
-            if not ranked and data.get("rows") == [] and not data.get("total") and _names_a_subject(
-                entity, e.get("args") or {}
-            ):
-                keep_text = True  # a named subject not found: the model says so (review on 94969a2f)
-            continue
-        if entity in _TARGET_TABLES:
-            continue
-        if entity == NEXT_TIER_ENTITY:
-            # A payout question in the same turn: its own table, never the model's total-payout line.
-            if e.get("display"):
-                parts.append(e["display"])
-            elif data.get("rows") and data.get("columns"):
-                parts.append(render_card(data, title=ENTITIES[entity].label, panel=True))
-            continue
-        # Another entity's answer (a count, a group, a lookup): its table when it has one, and the model's text,
-        # which is what answers it (review on 94969a2f: "7 open orders" was dropped).
-        if e.get("display"):
-            parts.append(e["display"])
-        keep_text = True
-    if keep_text:
-        own = text
-        for line in admitted:
-            own = own.replace(line, "")
-        if own.strip():
-            parts.append(own.strip())
-    parts += [a for a in admitted if a]
-    return "\n\n".join(dict.fromkeys(p for p in parts if p)) or None
-
-
-def shape_reply(text: str, ledger: dict | None, user_text: str | None = None, admitted: list[str] | None = None) -> str:
+def shape_reply(text: str, ledger: dict | None, user_text: str | None = None) -> str:
     """The reply as the owner's rules want it, decided in code whatever the model wrote (crew pass, 5 Nov):
     a `crm_query` row shown by its code (alone, or as "CODE (Name)") is shown by its label "CODE: Name"; the
     result's scope note is in the reply; a date is dd/mm/yyyy, never yyyy-mm-dd."""
@@ -617,7 +562,9 @@ def shape_reply(text: str, ledger: dict | None, user_text: str | None = None, ad
     missed: set[str] = set()
     kept: list[dict] = []
     for e in (ledger or {}).values():
-        if e.get("name") != QUERY or e.get("status") != "ok":
+        if e.get("name") != QUERY or e.get("status") != "ok" or _next_tier_call(e):
+            # A next-tier answer is the model's own text (owner 14 Nov): nothing is built, rewritten or appended
+            # for it; the tool told the model what to write (`DISTANCE_INSTRUCTION`).
             continue
         args = e.get("args") or {}
         entity = str((e.get("data") or {}).get("entity") or args.get("entity") or "")
@@ -635,11 +582,6 @@ def shape_reply(text: str, ledger: dict | None, user_text: str | None = None, ad
         kept.append(e)
         if e.get("display"):
             per_entity[entity] = e["display"]
-    if any(_next_tier_call(e) for e in kept):
-        # `admitted`: what `loop.final_reply` added to say what was not done, kept as it is.
-        answer = _distance_reply(text, kept, admitted or [])
-        if answer:
-            return _ISO_DATE.sub(_dmy, answer)
     text = _year_as_range(text, kept)
     if per_entity:
         cards = list(per_entity.values())

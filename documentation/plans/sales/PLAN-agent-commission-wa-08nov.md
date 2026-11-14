@@ -1,6 +1,6 @@
 # PLAN: distance to the next tier and what it would pay (AGENT-COMMISSION-WA)
 
-Status: Merge-ready after the shape rounds (reviewer READY on 35e99316 and fe74c008; main incl. #2262 merged 12 Nov, main re-merged 14 Nov clean; crew live x3 and owner hand test to run). Track: small fix (registry + one helper, no migration, no new
+Status: Re-pass pending after the owner 14 Nov ruling (agent reply = model text only): the code-built next-tier reply is removed, the tool returns each row's next-tier lines with an instruction, capped lists page on "more" (offset). Reviewer READY on 35e99316, fe74c008, e7a07f0e (the #2420 merge) and 5f651cfb (paging); crew re-pass and owner hand test to run.
 permission). Size S.
 
 Wave W-A of `PLAN-agent-commission-all-08nov.md` "Next waves". Stacks on #2242
@@ -74,3 +74,22 @@ Semantic round: #2242's `strip_self_agent` and `_user_named` read the message te
 argument says a question is about the asker; `query_as_asker` runs the call as given and drops the asker's own name
 only when the call ran and found nothing (`test_agent_commission_wa_semantic.py` S1-S12). Deferred as rare: a name
 variant that is not part of the stored name ("Mr Teh") still counts as a named miss.
+
+## Model-written reply (owner 14 Nov; crew code gate on 2cfc3f83)
+
+The agent's reply text is the model's only: no system-built or system-appended text (a structured card UI may
+stay). `query_tools._distance_reply`, the next-tier branch of `shape_reply` and the `admitted` plumbing in
+`loop.final_reply` are gone; `shape_reply` leaves a next-tier call untouched. The tool returns the data instead:
+each `agent_target_summary` row carries `next_tier_lines` (one sentence per live commission target: period, tier,
+threshold, to go, would pay, the mix and rates it assumes, or top tier), the note keeps only what is about the rows
+as a whole (no ladder, no target set, no commission set, not visible), a next-tier page is at most 10 rows and never
+a card, and the result carries `DISTANCE_INSTRUCTION`, `more` and `next_offset`. The model writes the lines, the
+notes and the 'Reply "more" to see the next N.' line itself.
+
+Paging (crew pass L85): `crm_query` takes `offset` on the SQL and computed paths, rows and groups; a cut card ends
+with `composers.sets.more_line`; a page past the end keeps the list's own count.
+
+Tests: `test_agent_commission_wa_model_reply.py` MR1-MR7 (the final text is the model's), `..._paging.py` P1-P14.
+The shape tests that asserted a code-built reply (N2, N3, N8, R2, R5-R7, R9-R11, R13-R15) are retired; the ones about
+the query stay as data checks. Open, not this lane: main's generic `shape_reply` still rewrites labels, appends scope
+notes and puts a card under the model's first line for other crm_query answers.
