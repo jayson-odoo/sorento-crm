@@ -647,7 +647,7 @@ def promo_filter(
 
     out: dict[str, list[str]] = {}
     entities = parse_output.get("entities")
-    named_promotions = set(_typed_by_token([e for e in entities or [] if isinstance(e, dict) and e.get("hint") == "promotion"]))
+    named_promotions = set(typed_by_token([e for e in entities or [] if isinstance(e, dict) and e.get("hint") == "promotion"]))
     promotion_ids: list[str] = []
     for r in jsc.array(jsc.get(gate, "resolutions")):
         if isinstance(r, dict) and _token_key(jsc.nullish_str(r.get("token") or r.get("raw"))) in named_promotions:
@@ -671,7 +671,7 @@ def promo_filter(
         for e in entities or []
         if isinstance(e, dict) and e.get("hint") in (None, "", "product") and not e.get("held_family")
     ]
-    typed_product = bool(placed & set(_typed_by_token(product_tokens)))
+    typed_product = bool(placed & set(typed_by_token(product_tokens)))
     terms = [] if typed_product else [t.lower() for t in class_scope_terms(parse_output)]
     if not typed_product:
         # A registry value the grounding placed ("basin cabinet", "gunmetal") narrows too,
@@ -2312,9 +2312,9 @@ def unplaced_tokens(entities: list[Any], resolved: Any) -> dict[str, str]:
     # never takes the reply over for it. A carried PRODUCT code that never resolved is the
     # conversation's subject, and its miss stays one (reviewer round 6): it is what
     # `would_be_unfiltered` reads to stop the zero-uuid tool call (R6), so it is still
-    # counted here. The rows that count are joined by `_typed_by_token` (RESOLVE-SEMANTIC-
+    # counted here. The rows that count are joined by `typed_by_token` (RESOLVE-SEMANTIC-
     # FALLBACK: keyed on the resolver's own token, canonical_code first, raw second).
-    named = _typed_by_token(
+    named = typed_by_token(
         [
             entity
             for entity in jsc.array(entities)
@@ -2331,7 +2331,7 @@ def unplaced_tokens(entities: list[Any], resolved: Any) -> dict[str, str]:
     return {key: raw for key, raw in named.items() if key in missed}
 
 
-def _typed_by_token(entities: list[Any]) -> dict[str, str]:
+def typed_by_token(entities: list[Any]) -> dict[str, str]:
     """`{folded resolver token: the word the customer typed}` for the message's entities.
 
     RESOLVE-SEMANTIC-FALLBACK: the token the resolver was sent is `canonical_code` first,
@@ -2358,6 +2358,7 @@ def _typed_by_token(entities: list[Any]) -> dict[str, str]:
         if key and key not in named:
             named[key] = raw or canonical
     return named
+
 
 
 def named_unplaced(entities: list[Any], resolved: Any) -> dict[str, str]:
@@ -2389,7 +2390,7 @@ def not_checked_tokens(entities: list[Any], resolved: Any) -> dict[str, str]:
     NOT unplaced - it may well exist - which is why it is a separate map and a separate
     sentence, never "I could not find".
     """
-    named = _typed_by_token(entities)
+    named = typed_by_token(entities)
     cut = {_token_key(x) for x in jsc.array(jsc.get(resolved, "truncated_tokens"))}
     return {key: raw for key, raw in named.items() if key in cut}
 
@@ -2405,7 +2406,7 @@ def absorbed_tokens(entities: list[Any], resolved: Any) -> dict[str, str]:
     whose matches is the token itself, has not been answered - it is reported unplaced,
     so the reply says "I could not find SRTSWT3001." rather than nothing.
     """
-    typed = _typed_by_token(entities)
+    typed = typed_by_token(entities)
     if len(typed) < 2:
         return {}
     codes_by_token: dict[str, set[str]] = {}
@@ -4707,7 +4708,7 @@ def typed_product_unplaced(verdict: Any, unplaced: Mapping[str, str] | None) -> 
     (S-TRAP250MM)-SRTWC8354-SH") was one unplaced product token, and the set tier
     counted 145 water closets off its words: that set is not what the dealer asked for,
     so it is never carried as a `set_page`. Keyed the way `unplaced_tokens` keys its map
-    (`_typed_by_token`: canonical_code first, raw second, folded by
+    (`typed_by_token`: canonical_code first, raw second, folded by
     `turn.state.token_key`, RESOLVE-SEMANTIC-FALLBACK). A brand or category word nobody
     could place is not a miss on the product.
 
@@ -4720,7 +4721,7 @@ def typed_product_unplaced(verdict: Any, unplaced: Mapping[str, str] | None) -> 
     if not unplaced:
         return False
     products = [e for e in jsc.array(jsc.get(verdict, "entities")) if jsc.get(e, "hint") in (None, "product")]
-    return any(key in unplaced for key in _typed_by_token(products))
+    return any(key in unplaced for key in typed_by_token(products))
 
 
 def set_page_carry(

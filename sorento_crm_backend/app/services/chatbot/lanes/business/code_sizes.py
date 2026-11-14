@@ -53,12 +53,12 @@ def _size_rows(db: Any) -> list[Any]:
 
 
 def _typed_of(parser: dict[str, Any], token: Any) -> str | None:
-    """The word typed for the resolver's `token` (`turn_runtime._typed_by_token`, the one
+    """The word typed for the resolver's `token` (`turn_runtime.typed_by_token`, the one
     lookup), or None when the message typed none."""
     from app.services.chatbot.turn.state import token_key
-    from app.services.chatbot.turn_runtime import _typed_by_token
+    from app.services.chatbot.turn_runtime import typed_by_token
 
-    return _typed_by_token(jsc.array(jsc.get(parser, "entities"))).get(token_key(token)) or None
+    return typed_by_token(jsc.array(jsc.get(parser, "entities"))).get(token_key(token)) or None
 
 
 def _stored_matches(db: Any, rows: list[Any], typed: str) -> list[dict[str, Any]]:
@@ -180,6 +180,23 @@ def _product_codes(parser: dict[str, Any]) -> list[dict[str, Any]]:
         e for e in jsc.array(jsc.get(parser, "entities"))
         if isinstance(e, dict) and e.get("current_message") is not False and jsc.js_string(e.get("hint") or "").lower() == "product"
     ]
+
+
+def _named_codes(parser: dict[str, Any]) -> set[str]:
+    """The codes the message's product entities name whole, folded by `turn_state.token_key`:
+    each one's raw, and the parser's `canonical_code` when `grounding.picked_code_verdict`
+    answers it (CHATBOT-CLOSE-CODES AC-36/37, the one decision)."""
+    from app.services.chatbot.head.grounding import ANSWER, picked_code_verdict
+    from app.services.chatbot.turn.state import token_key
+
+    out: set[str] = set()
+    for e in _product_codes(parser):
+        raw, canonical = e.get("raw"), e.get("canonical_code")
+        if raw:
+            out.add(token_key(raw))
+        if canonical and picked_code_verdict(e) == ANSWER:
+            out.add(token_key(canonical))
+    return out - {""}
 
 
 def _sizes(parser: dict[str, Any]) -> list[dict[str, Any]]:
@@ -314,31 +331,27 @@ def _all_parts_matches(db: Any, typed: str) -> list[dict[str, Any]]:
 
 
 def _offerable_rows(db: Any, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The product rows the chat may offer (`offerable_products`, owner Q3), one bounded query.
-    Also chat-searchable (`chat_searchable_products`), a defensive safety net: the resolver probes
-    that feed both callers already drop hidden products, and this keeps any future caller from
-    offering one (#2397; pinned by tests/chatbot/test_code_match_regfix_2397.py)."""
-    from app.models.product import Product, chat_searchable_products, offerable_products
+    """The product rows the chat may offer (`entity_resolver.offerable_product_rows`: offerable and
+    chat-searchable, owner Q3; the chat-searchable net is #2397's, pinned by
+    tests/chatbot/test_code_match_regfix_2397.py)."""
+    from app.services.entity_resolver import offerable_product_rows
 
-    ids = [str(r["uuid"]) for r in rows if isinstance(r, dict) and r.get("uuid")]
-    if not ids:
-        return []
-    with db.begin_nested():
-        kept = {
-            str(pid)
-            for (pid,) in db.query(Product.id)
-            .filter(Product.id.in_(ids), offerable_products(), chat_searchable_products())
-            .all()
-        }
-    return [r for r in rows if isinstance(r, dict) and str(r.get("uuid")) in kept]
+    return offerable_product_rows(db, rows)
 
 
-def _single_substring_is_an_offer(db: Any, resolved: dict[str, Any]) -> None:
+def _single_substring_is_an_offer(
+    db: Any, resolved: dict[str, Any], named_codes: set[str] | frozenset[str] = frozenset(), *, prefix_offer: bool = True
+) -> None:
     """CHATBOT-CODE-MATCH AC-27b (lead ruling): a code that is only INSIDE one catalogue code (a
     lone hit the typed code is not the prefix of: "C21120UW-2-MY" inside BRC21120UW-2-MY) is
-    offered as "Did you mean X?", never answered. A lone prefix hit stays answered; several
-    hits stay today's which-one picker. Read per token (OR mode) or on the one token's rows
-    (AND mode), folded as the resolver folds (`turn_state.token_key`)."""
+    offered as "Did you mean X?", never answered. CHATBOT-CLOSE-CODES C2 / AC-6 (crew Q2 (a),
+    13 Nov 2026): a lone PREFIX hit is offered the same way ("SRTWC287-S" for SRTWC287-S-150);
+    only the equal code (case and separators folded) is answered. Several hits stay today's
+    which-one picker. Read per token (OR mode) or on the one token's rows (AND mode), folded as
+    the resolver folds (`turn_state.token_key`). A code the message's own product entity names
+    whole (`named_codes`: its raw or the parser's code, folded the same way, as in "TWC015SS
+    CR" or "SRTWT8259 gun metal" read as SRTWT8259-GM) is that equal code, answered as today.
+    `prefix_offer` False (an ask other than stock or incoming) answers a lone prefix as on main."""
     from app.services.chatbot.turn.state import token_key
 
     def inside_only(token: Any, rows: list[Any]) -> dict[str, Any] | None:
@@ -346,7 +359,9 @@ def _single_substring_is_an_offer(db: Any, resolved: dict[str, Any]) -> None:
         if len(rows) != 1 or rows[0].get("entity_type") != "product":
             return None
         code, typed = token_key(rows[0].get("canonical_code")), token_key(token)
-        return rows[0] if typed and typed in code and not code.startswith(typed) else None
+        if not typed or typed not in code or code == typed or code in named_codes:
+            return None
+        return rows[0] if prefix_offer or not code.startswith(typed) else None
 
     named: list[tuple[dict[str, Any] | None, Any, list[Any]]] = [
         (res, res.get("token"), res.get("matches") or [])
@@ -379,6 +394,7 @@ def annotate(db: Any, parser: dict[str, Any], resolved: dict[str, Any]) -> None:
     close codes; and each close code's size line when any of them holds a stored size or the
     miss is a size miss. The registry is read only for a miss. Best effort: a failed read
     changes nothing."""
+    from app.services.chatbot.head.grounding import CLOSE_CODE_ASKS
     from app.services.chatbot.lanes.business.answer import typed_code_parts
 
     if not isinstance(resolved, dict):
@@ -386,7 +402,9 @@ def annotate(db: Any, parser: dict[str, Any], resolved: dict[str, Any]) -> None:
     # Several codes and a size: main's behaviour for the size rules (lead re-scope, 12 Nov 2026).
     sized = not (_sizes(parser) and len(_product_codes(parser)) > 1)
     try:
-        _single_substring_is_an_offer(db, resolved)
+        _single_substring_is_an_offer(
+            db, resolved, _named_codes(parser), prefix_offer=jsc.get(parser, "domain_hint") in CLOSE_CODE_ASKS
+        )
         if sized:
             _unheld_size_is_a_miss(db, parser, resolved)
         misses = [
