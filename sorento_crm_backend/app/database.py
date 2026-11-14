@@ -48,3 +48,12 @@ def get_db() -> Generator[Session, None, None]:
         yield db
     finally:
         db.close()
+
+
+# PACKING-LIST-RECALC: registered where the session factory is built, so every process
+# that opens a session gets it - the API and worker (which also register it), and every
+# hand-run script under scripts/ that only imports `SessionLocal` (crew review after
+# #2215). Idempotent; the module imports models lazily, so no import cycle here.
+from app.services.scm.packing_list_recalc import register_packing_list_recalc_listeners  # noqa: E402
+
+register_packing_list_recalc_listeners()

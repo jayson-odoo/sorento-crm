@@ -153,6 +153,7 @@ from sqlalchemy.orm import Session
 
 from app.models.procurement import PurchaseOrder, PurchaseOrderLine, SPOAllocation
 from app.services.procurement_service import _spo_match_key, next_spo_line_number
+from app.services.scm.packing_list_recalc import stamp_sql  # watermark sweep sees raw renames
 
 #: `(schema-qualified table, column)` - the two columns this script reconciles. Always
 #: schema-qualified (S1/S11): `purchase_orders` and `spo_allocations` both exist bare in more
@@ -374,7 +375,8 @@ def _do_rename(
     if apply:
         n = db.execute(
             text(
-                f"UPDATE {table} SET {column} = :new WHERE company_id = :c AND {column} = :old"
+                f"UPDATE {table} SET {column} = :new{stamp_sql(table)} "
+                f"WHERE company_id = :c AND {column} = :old"
             ),
             {"new": target, "c": company_id, "old": old},
         ).rowcount
@@ -412,7 +414,7 @@ def _repoint(
     ).scalar()
     if apply:
         n = db.execute(
-            text(f"UPDATE {ref_table} SET {ref_col} = :new WHERE {ref_col} = :old"),
+            text(f"UPDATE {ref_table} SET {ref_col} = :new{stamp_sql(ref_table)} WHERE {ref_col} = :old"),
             {"new": new_id, "old": old_id},
         ).rowcount
     else:
@@ -863,7 +865,7 @@ def run(
             if apply:
                 n = db.execute(
                     text(
-                        f"UPDATE {table} SET {column} = :new "
+                        f"UPDATE {table} SET {column} = :new{stamp_sql(table)} "
                         f"WHERE company_id = :c AND {column} = :old"
                     ),
                     {"new": target, "c": company_id, "old": old},

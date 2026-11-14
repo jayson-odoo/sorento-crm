@@ -65,8 +65,8 @@ def main():
                     dup_ids := dup.ids[2:array_length(dup.ids, 1)];
 
                     IF array_length(dup_ids, 1) IS NOT NULL THEN
-                        UPDATE inbound_shipment_lines SET product_id = survivor_id WHERE product_id = ANY(dup_ids);
-                        UPDATE picking_lines SET product_id = survivor_id WHERE product_id = ANY(dup_ids);
+                        UPDATE inbound_shipment_lines SET product_id = survivor_id, updated_at = now() WHERE product_id = ANY(dup_ids);
+                        UPDATE picking_lines SET product_id = survivor_id, updated_at = now() WHERE product_id = ANY(dup_ids);
                         DELETE FROM products WHERE id = ANY(dup_ids);
                     END IF;
                 END LOOP;
