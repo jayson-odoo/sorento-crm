@@ -708,3 +708,34 @@ def test_K2_fifty_long_rows_are_all_in_the_table_plus_totals_never_49():
     body = [line for line in out.display.splitlines() if line.startswith("| ZZT")]
     assert len(body) == 50
     assert "Top 50 of 88 by commission payout." in out.display and "| Total |" in out.display
+
+
+# ------------------------------------------------------------------ TARGET-ACHIEVED-PERF (14 Nov)
+
+
+def test_a_computed_timeout_never_tells_the_model_to_narrow_with_a_filter(targets, monkeypatch):
+    """Live 14 Nov: three this-year questions timed out and each refusal read "Narrow it with a filter", so the
+    model retried with an agent filter. A computed entity's filters (agent, owner kind) run in Python AFTER the
+    compute (`computed._exact_agents` and the row tests), so the retry computed the same periods again and
+    timed out again: the refusal must not suggest a filter."""
+    from sqlalchemy import text
+
+    from app.services.assistant_registry import ENTITIES, query
+    from app.services.assistant_registry.query import QueryRefused
+
+    db, _c, _t = targets
+    entity = ENTITIES[ENTITY]
+
+    def slow(db, user_id, own_only, date_from, date_to, *, limit):
+        db.execute(text("SELECT pg_sleep(0.2)"))
+        return []
+
+    monkeypatch.setitem(ENTITIES, ENTITY, type(entity)(**{**entity.__dict__, "compute": slow}))
+    monkeypatch.setattr(query, "STATEMENT_TIMEOUT_MS", 1)
+    with pytest.raises(QueryRefused) as info:
+        run(db, {"entity": ENTITY, "period": Q3, "fields": ["payout"]})
+
+    assert info.value.code == "timeout"
+    message = info.value.message.lower()
+    assert "narrow" not in message and "filter" not in message, info.value.message
+    assert db.execute(text("SELECT 1")).scalar() == 1

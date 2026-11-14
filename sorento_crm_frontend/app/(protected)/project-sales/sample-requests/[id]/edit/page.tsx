@@ -1,23 +1,18 @@
 'use client';
 
-import Link from 'next/link';
 import { use } from 'react';
 import { Container } from '@/components/common/container';
-import { PageHeader } from '@/components/common/PageHeader';
-import { Button } from '@/components/ui/button';
 import SampleRequestForm from '../../components/SampleRequestForm';
+import { SampleRequestPageHeader } from '../../components/SampleRequestPageHeader';
 
 export default function EditSampleRequestPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   return (
     <Container>
-      <PageHeader
+      <SampleRequestPageHeader
         title="Edit Sample Request"
-        actions={
-          <Button variant="outline" asChild>
-            <Link href={`/project-sales/sample-requests/${id}`}>Cancel</Link>
-          </Button>
-        }
+        mode="cancel"
+        fallbackHref={`/project-sales/sample-requests/${id}`}
       />
       <div className="mt-6">
         <SampleRequestForm requestId={id} />

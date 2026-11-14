@@ -69,6 +69,7 @@ EXPECTED_FIELDS = {
     # AC-QTSO-CRM (owner, 5 Nov): Project sales hides its AutoCount write actions while the
     # switch is off; the salesperson who sends holds no `user_management.settings.view`.
     "project_autocount_write_enabled",
+    "project_autocount_register_enabled",
     # AC-LINK-CRM-UI (owner, 5 Nov): the Stock Debt drill hides its PO actions while the
     # "AutoCount links from Stock Debt" switch is off, and the purchasing user who links holds
     # no `user_management.settings.view`. One boolean, not sensitive.
@@ -226,6 +227,7 @@ def test_app_config_open_to_a_caller_with_zero_permissions(api, db):
         "order_change_notice_require_project": False,
         # AC-QTSO-CRM: ships OFF.
         "project_autocount_write_enabled": False,
+        "project_autocount_register_enabled": False,
         # AC-LINK-CRM-UI: ships OFF.
         "stock_debt_po_link_enabled": False,
         # The column default (10), the same value the admin GET returns.
@@ -291,6 +293,7 @@ def test_app_config_returns_nulls_when_no_settings_row_exists(api, db):
     expected["sample_request_require_project"] = False
     expected["order_change_notice_require_project"] = False
     expected["project_autocount_write_enabled"] = False
+    expected["project_autocount_register_enabled"] = False
     expected["stock_debt_po_link_enabled"] = False
     expected["deferred_delete_seconds"] = 10
     assert resp.json() == expected

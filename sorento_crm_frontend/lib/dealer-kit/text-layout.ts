@@ -292,7 +292,8 @@ interface Group {
   words: Piece[];
 }
 
-const TOKEN = /\n|[ \t]+|[^\s-]*-|[^\s-]+/g;
+// U+00A0 (`&nbsp;`) counts as a space: `\s` matches it, so the word classes never would.
+const TOKEN = /\n|[ \t\u00a0]+|[^\s-]*-|[^\s-]+/g;
 
 export function richLayerLines(
   props: TextLayerProps,
@@ -330,10 +331,14 @@ export function richLayerLines(
     const lineSets: Piece[][] = [];
     let line: Piece[] = [];
     let lineWidth = 0;
-    const endLine = () => {
+    // A hard line start (the block's first line, or right after a break) keeps its leading
+    // spaces: they are the user's indent. A soft wrap drops the space it broke at.
+    let hardStart = true;
+    const endLine = (hard = false) => {
       lineSets.push(line);
       line = [];
       lineWidth = 0;
+      hardStart = hard;
     };
     const groups: Array<Group | 'break'> = [];
     let space: Piece[] = [];
@@ -348,7 +353,7 @@ export function richLayerLines(
           closeGroup();
           space = [];
           groups.push('break');
-        } else if (/^[ \t]+$/.test(token)) {
+        } else if (/^[ \t\u00a0]+$/.test(token)) {
           closeGroup();
           space.push({ run: index, text: token, width: widthOf(token, index) });
         } else {
@@ -365,16 +370,23 @@ export function richLayerLines(
 
     for (const group of groups) {
       if (group === 'break') {
-        endLine();
+        endLine(true);
         continue;
       }
       // A line has "started" once it holds a piece, never "once it has width": with no measure
       // (no canvas) every width is 0, and a measured word can be 0 wide (U+200B).
       const groupWidth = group.words.reduce((sum, piece) => sum + piece.width, 0);
-      const spaceWidth = line.length > 0 ? group.space.reduce((sum, piece) => sum + piece.width, 0) : 0;
+      const spaceWidth = group.space.reduce((sum, piece) => sum + piece.width, 0);
       if (measurable && line.length > 0 && lineWidth + spaceWidth + groupWidth > available) endLine();
+      // An indent that would push a fitting word past the edge is dropped, never the word cut.
+      const keepLead =
+        line.length > 0 || (hardStart && !(measurable && spaceWidth + groupWidth > available && groupWidth <= available));
+      const lead = keepLead ? group.space : [];
+      const leadWidth = keepLead ? spaceWidth : 0;
       if (measurable && groupWidth > available && line.length === 0) {
         // A word wider than the line: cut it where it overflows.
+        line.push(...lead);
+        lineWidth += leadWidth;
         for (const piece of group.words) {
           for (const char of Array.from(piece.text)) {
             const charWidth = widthOf(char, piece.run);
@@ -385,10 +397,8 @@ export function richLayerLines(
         }
         continue;
       }
-      if (line.length > 0) {
-        line.push(...group.space);
-        lineWidth += spaceWidth;
-      }
+      line.push(...lead);
+      lineWidth += leadWidth;
       line.push(...group.words);
       lineWidth += groupWidth;
     }

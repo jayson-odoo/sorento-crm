@@ -92,6 +92,12 @@ talked about.
   that same product's own data before it reaches the tag; an empty field prints nothing. It sits in
   the Insert list under **Product**, right after **Spec lines**. See
   [Manage products](../product/manage-products.md) for where the field lives on the product.
+* To indent a line in a description, type spaces at the start of that line. The indent shows on
+  the tag and in the PDF exactly as typed, and stays after you save and reload. Spaces where a long
+  line wraps by itself are not kept, so a wrapped line starts at the left edge.
+* To crop a picture, right-click it and choose **Crop image**, then drag the window or its corners. The
+  picture stays still while you drag; only the window moves. Press **Enter** or click outside the
+  window to keep the crop, or **Esc** to cancel. The spec sheet designer crops the same way.
 * Two fields bind a text box to the line's price, so one template serves both price types: **Price
   (LP or SP)** prints the line's selling price on an SP line and its list price on an LP line, and
   **Price label** prints the words *LP* or *SP* to match. Templates that use only the list price or

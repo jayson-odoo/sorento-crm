@@ -3138,6 +3138,27 @@ def _drop_unofferable_products(db: Session, hits: list[ResolvedEntity]) -> list[
     return _keep_products(db, hits, offerable_products())
 
 
+def offerable_product_rows(db: Session, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The serialized product rows (`uuid` dicts) the chat may offer (`offerable_products`,
+    owner Q3), one bounded query; a row with no uuid is dropped. The dict-row twin of
+    `_drop_unofferable_products`, read by the chat's close-code offers and the reference
+    route's kept code fragments (CHATBOT-CLOSE-CODES). Also chat-searchable
+    (`chat_searchable_products`), #2397's defensive net so no caller offers a hidden product."""
+    from app.models.product import chat_searchable_products, offerable_products
+
+    ids = [str(r["uuid"]) for r in rows if isinstance(r, dict) and r.get("uuid")]
+    if not ids:
+        return []
+    with db.begin_nested():
+        kept = {
+            str(pid)
+            for (pid,) in db.query(Product.id)
+            .filter(Product.id.in_(ids), offerable_products(), chat_searchable_products())
+            .all()
+        }
+    return [r for r in rows if isinstance(r, dict) and str(r.get("uuid")) in kept]
+
+
 def _embedding_scope_sql(db: Session) -> tuple[str, dict[str, Any]]:
     """``AND`` fragment company-scoping a raw vector search over ``embedding_chunks ec``.
 
@@ -6140,7 +6161,12 @@ def resolve_references(
                 family = _drop_unofferable_products(db, family)
             family_ids = {h.uuid for h in family}
             alternatives = family + [h for h in alternatives if h.uuid not in family_ids]
-        tr.alternatives = alternatives[:_ALTERNATIVES_CAP]
+        # CHATBOT-CLOSE-CODES C5 (G6, crew Q5 (a)): the chat ranks the WHOLE close-code list
+        # (every trigram row, `TRGM_LIMIT` per kind) by the parts the customer typed and
+        # offers its first three (`answer.miss_token_candidates`, `_cap3`), so an all-parts
+        # code ranked below the fifth row by similarity alone is still offered. Only the
+        # chat sets `alternatives_offerable_only`; every other caller keeps the cap.
+        tr.alternatives = alternatives if alternatives_offerable_only else alternatives[:_ALTERNATIVES_CAP]
 
     _apply_company_scope(db, resolutions)
     if regions is not None:

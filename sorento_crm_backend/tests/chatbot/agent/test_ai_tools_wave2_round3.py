@@ -157,15 +157,17 @@ def test_I1_the_entity_index_is_in_the_query_tools_description():
     assert "call crm_describe only when" in text
 
 
-def test_I2_at_most_three_query_calls_per_turn():
-    """The loop denies the fourth crm_query / crm_describe call of a turn and tells the model to answer."""
+def test_I2_describe_calls_never_count_toward_the_query_cap():
+    """TARGET-ACHIEVED-PERF part 2, UAC 7 (owner D4, 14 Nov: "I would rather wait if it is within reason than you
+    say hit limit"): the cap is 6 crm_query calls that ran; crm_describe is free, so seven describes all answer.
+    The query side of the cap is held in `test_target_question_fast.py` (Q2 to Q4)."""
     import app.main  # noqa: F401
     from app.services.chatbot.agent import loop
     from app.services.company_scope import register_company_scope_listeners
     from tests._pg_fixture import blank_session
-    from tests.chatbot.agent.test_ai_query_reply import Scripted, agent_contact, answer, asks, turn
+    from tests.chatbot.agent.test_ai_query_reply import Scripted, agent_contact, answer, turn
 
-    assert loop.MAX_QUERY_CALLS == 3
+    assert loop.MAX_QUERY_CALLS == 6, "UAC 7: the cap is 6"
     register_company_scope_listeners()
     seen: list[list[dict]] = []
 
@@ -176,7 +178,14 @@ def test_I2_at_most_three_query_calls_per_turn():
 
     with blank_session() as db:
         contact = agent_contact(db, ORDERS_VIEW)
-        script = [asks("crm_describe", {}, cid=f"c{i}") for i in range(5)] + [answer("Done.")]
+        from app.services.llm_provider import ChatResult
+
+        def describes(*cids):
+            return ChatResult(content="", prompt_tokens=10, completion_tokens=5, total_tokens=15,
+                              tool_calls=[{"id": cid, "name": "crm_describe", "arguments": {}} for cid in cids])
+
+        # Seven describes, more than the cap of 6, in two rounds: none counts, so none is refused.
+        script = [describes("c0", "c1", "c2", "c3"), describes("c4", "c5", "c6"), answer("Done.")]
         from tests.chatbot.agent import test_ai_query_reply as harness
 
         original = harness.Scripted
@@ -186,9 +195,8 @@ def test_I2_at_most_three_query_calls_per_turn():
         finally:
             harness.Scripted = original
     replies = seen[-1]
-    assert len(replies) == 5
-    assert all("At most" not in r["content"] for r in replies[:3])
-    assert all("At most 3 crm_query/crm_describe calls" in r["content"] for r in replies[3:])
+    assert len(replies) == 7
+    assert all('"status": "denied"' not in r["content"] for r in replies), [r["content"][:120] for r in replies]
 
 
 # ------------------------------------------------------------------ (4) the table renders
