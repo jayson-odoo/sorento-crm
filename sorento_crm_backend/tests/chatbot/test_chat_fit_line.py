@@ -810,7 +810,9 @@ def test_ac22_a_model_token_whose_host_skus_are_all_hidden_runs_as_typed(session
     )
     assert a_calls == c_calls, (a_calls, c_calls)
     assert a_reply == c_reply, (a_reply, c_reply)
-    assert "on record" not in a_reply and FAM_COVER not in a_reply, a_reply
+    # CHATBOT-CODE-MATCH (crew release sweep, 13 Nov): FAM_COVER is the VISIBLE cover in this fixture,
+    # so a did-you-mean may offer it; the model's HIDDEN SKUs are never shown.
+    assert "on record" not in a_reply and FAM_A not in a_reply and FAM_B not in a_reply, a_reply
 
 
 def test_ac22_the_carry_path_never_names_a_hidden_linked_product(session_factory, monkeypatch) -> None:
