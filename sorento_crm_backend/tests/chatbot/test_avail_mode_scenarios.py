@@ -96,9 +96,13 @@ def test_S07_exact_code_without_a_quantity_asks_for_it(console):
     assert c.say("50", reply(demand_qty=50)) == f"SRT5674 x 50: {TICK} Got stock."
 
 
-def test_S08_prefix_of_exactly_one_code_is_that_code(console):
+def test_S08_prefix_of_exactly_one_code_is_offered_not_answered(console):
+    """CHATBOT-CLOSE-CODES AC-6 (owner Q2 (a), 13 Nov): only a code equal but for case, dashes and
+    spaces, or a registered set, is answered directly. A lone prefix of one code is offered; "yes"
+    answers it at the carried quantity. Was: answered directly as SRTWC287-S-150."""
     c = console(SRTWC287_S_150=Stock(on_hand=9))
-    assert c.say("SRTWC287-S x 3", stock(product("SRTWC287-S", 3))) == f"SRTWC287-S-150 x 3: {TICK} Got stock."
+    assert c.say("SRTWC287-S x 3", stock(product("SRTWC287-S", 3))) == "Couldn't find SRTWC287-S. Did you mean SRTWC287-S-150?"
+    assert c.say("yes", reply(is_affirmative=True, open_question_answer=answer("yes"))) == f"SRTWC287-S-150 x 3: {TICK} Got stock."
 
 
 def test_S09_vague_code_with_a_quantity_picks_then_answers(console):
@@ -170,9 +174,14 @@ def test_S18_exact_and_not_found(console):
 
 
 def test_S19_exact_and_a_prefix_of_one_code(console):
+    """CHATBOT-CLOSE-CODES AC-6 (crew Q2 (a), 13 Nov): the exact code is answered (its line unchanged),
+    the prefix of one code is offered, both in one reply. Was: the prefix answered as SRTWC287-S-150."""
     c = console(SRT5674=Stock(on_hand=100), SRTWC287_S_150=Stock(on_hand=9))
     out = c.say("SRT5674 x 5, SRTWC287-S x 3", stock(product("SRT5674", 5), product("SRTWC287-S", 3)))
-    assert out == f"SRT5674 x 5: {TICK} Got stock.\n\nSRTWC287-S-150 x 3: {TICK} Got stock."
+    assert f"SRT5674 x 5: {TICK} Got stock." in out, out
+    assert "Couldn't find SRTWC287-S. Did you mean SRTWC287-S-150?" in out, out
+    assert f"SRTWC287-S-150 x 3: {TICK}" not in out, out
+    assert c.say("yes", reply(is_affirmative=True, open_question_answer=answer("yes"))) == f"SRTWC287-S-150 x 3: {TICK} Got stock."
 
 
 def test_S20_exact_and_vague_answers_the_exact_and_picks_the_vague(console):
@@ -810,7 +819,7 @@ def test_S55b_substring_of_a_family_with_a_quantity_picks_then_answers(console):
 def test_S55c_substring_of_exactly_one_code_is_offered(console):
     """CHATBOT-CODE-MATCH AC-27b (card R0, lead sign-off 12 Nov): a code only INSIDE one catalogue
     code is offered, never answered; "yes" answers it at the carried quantity. S55's own owner
-    turn (the wc286 family picker) and S08 (a prefix of one code, answered) are unchanged."""
+    turn (the wc286 family picker) is unchanged; S08 (a prefix of one code) is now offered too (AC-6)."""
     c = console(SRT5674=Stock(on_hand=100))
     assert c.say("rt5674 x 3", stock(product("rt5674", 3))) == "Couldn't find RT5674. Did you mean SRT5674?"
     assert c.say("yes", reply(is_affirmative=True, open_question_answer=answer("yes"))) == f"SRT5674 x 3: {TICK} Got stock."

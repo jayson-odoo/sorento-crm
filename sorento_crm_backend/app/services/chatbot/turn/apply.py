@@ -858,9 +858,43 @@ def _answer_pending(state: State, decision: Decision, trace: Trace, verdict: dic
         # ELP3754?" is a yes/no over its one option. A yes picks it (the carried quantity
         # rides on the pick, `_spend_stock_pick`); a no refers the dealer to their
         # salesman, with nothing left open - a dealer's stock ask is never escalated.
+        suggested = _suggested_position(pending)
         if decision.answers and decision.why == "affirmative" and len(pending.options) == 1:
             decision = replace(decision, positions=(pending.options[0].get("position"),))
             trace.rules_fired.append("stock_pick_yes")
+        elif decision.answers and decision.why == "affirmative" and not decision.positions and suggested is not None:
+            # CHATBOT-CLOSE-CODES F2: the which-one lists the parser's own code first
+            # (`task.SUGGESTED`); a "yes" over it is that code.
+            decision = replace(decision, positions=(suggested,))
+            trace.rules_fired.append("stock_pick_yes_suggested")
+        elif (
+            decision.answers
+            and decision.why == "affirmative"
+            and not decision.positions
+            and len(pending.options) > 1
+            and not pending.payload.get("did_you_mean")
+        ):
+            # CHATBOT-CLOSE-CODES F2: a "yes" over a which-one list names no code: the list
+            # is asked again as it was, nothing fetched, never referred.
+            groups = pending.payload.get("groups")
+            trace.rules_fired.append("stock_pick_yes_reasked")
+            if isinstance(groups, list) and groups:
+                trace.task_question = task_mod.picks_question(list(pending.options), groups)
+            else:
+                trace.task_question = task_mod.pick_question(
+                    str(pending.payload.get("typed") or ""),
+                    [str(o.get("label")) for o in pending.options if o.get("label")],
+                    pending.payload.get("stock_qty"),
+                    pending.payload.get("count"),
+                    start=min((o.get("position") or 1) for o in pending.options),
+                )
+            focus.domains = ["inventory"]
+            return (
+                focus,
+                pending,
+                Plan(domains=["inventory"], fetch=[], ask=None, denied=[], trace=trace),
+                False,
+            )
         elif (
             decision.answers
             and decision.why == "affirmative"
@@ -2691,8 +2725,10 @@ def _one_number_for_every_line(
     number the parser bound by CODE alone or by a code that names a different line than its
     position (the user named that part), quantities bound to two or more lines, a
     `demand_qty` that is a different number, a line already answered (a revision), and lines
-    that are not the parts of one set (R1: "5 for the 2nd one" answers that line). Reads the
-    open question's lines, the focus rows and the parser's fields only.
+    that are not the parts of one set (R1: "5 for the 2nd one" answers that line). Lines a
+    stock pick asked together (`Task.from_pick`, CHATBOT-CLOSE-CODES owner F1: the picked code
+    and the codes owed beside it) spread as a set's parts do. Reads the open question's lines,
+    the focus rows and the parser's fields only.
     """
     if asked is not None or state.pending is not None:
         return
@@ -2742,8 +2778,10 @@ def _one_number_for_every_line(
     if any(slots[index].value is not None for index in bound):
         # "make line 1 5": a revision of a line already answered, not the owed question's answer.
         return
-    if not _one_set_for_every_line(state.focus, slots):
-        # Lines that are separate products: one line filled is that line (STOCK-QTY-PARTIAL-FILL R1).
+    if not (task.from_pick or _one_set_for_every_line(state.focus, slots)):
+        # Lines that are separate products the user listed: one line filled is that line
+        # (STOCK-QTY-PARTIAL-FILL R1). The lines a stock pick asked together (`task.with_owed`,
+        # CHATBOT-CLOSE-CODES owner F1) are one question, as a set's parts are.
         return
     (qty,) = numbers
     demand = verdict.get("demand_qty")
@@ -3105,6 +3143,21 @@ def _stock_pick_refuses_all(state: State, verdict: dict[str, Any], decision: Any
     return asked, Plan(domains=["inventory"], fetch=[], ask=None, denied=[], trace=trace)
 
 
+def _suggested_position(pending: Any) -> int | None:
+    """The position of the code a one-list stock pick suggests (`task.SUGGESTED` on its only
+    group), else None."""
+    groups = pending.payload.get("groups") if pending is not None else None
+    if not (isinstance(groups, list) and len(groups) == 1 and isinstance(groups[0], dict)):
+        return None
+    wanted = str(groups[0].get(task_mod.SUGGESTED) or "").strip().casefold()
+    if not wanted:
+        return None
+    for option in pending.options:
+        if str(option.get("code") or option.get("label") or "").strip().casefold() == wanted:
+            return option.get("position")
+    return None
+
+
 def _stock_pick_requantified(state: State, verdict: dict[str, Any], trace: Trace):
     """A bare number under an open family pick ("88" under "SRTWC286 matches 10 products.
     Which one?") is the quantity, not a pick: the pick is asked again carrying it, and
@@ -3270,8 +3323,10 @@ def _hand_on_unanswered_lists(asked: Any, specs: list[Any], verdict: dict[str, A
     verdict[task_mod.NEXT_PICKS] = {
         "options": [o for o in asked.options if o.get("position") in positions],
         "groups": open_groups,
-        # CHATBOT-CODE-MATCH R7: a did-you-mean's lists are asked again as one.
-        "did_you_mean": asked.payload.get("did_you_mean") is True,
+        # CHATBOT-CODE-MATCH R7: a did-you-mean's lists are asked again as one. CHATBOT-CLOSE-CODES:
+        # so are offer lists left open beside an answered which-one list (each group's own flag).
+        "did_you_mean": asked.payload.get("did_you_mean") is True
+        or all(g.get("did_you_mean") is True for g in open_groups),
     }
     trace.rules_fired.append("stock_pick_lists_still_open")
 

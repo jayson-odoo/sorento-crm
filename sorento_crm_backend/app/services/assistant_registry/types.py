@@ -72,8 +72,13 @@ class EntityDef:
     #: A computed entity (figures no table holds: a target's achievement and commission). (db, user_id, own_only,
     #: date_from, date_to) -> rows as dicts keyed by field, built by the module's own service; filters, groups
     #: and aggregates then run over them in code (`assistant_registry.computed`). The row's "id" and every
-    #: `screen_path` placeholder come from the dict.
+    #: `screen_path` placeholder come from the dict. Keywords: `limit`, and only when the query names them,
+    #: `agent_ids` (the agents an agent filter names), `names` ((label, names) -> bool, the same filters' test on a
+    #: team's or dealer's own name, given with `agent_ids`) and `kinds` (the values a `kind_field` filter names), so
+    #: the service leaves out what no row can match before computing (TARGET-ACHIEVED-PERF part 2).
     compute: Callable[..., list[dict]] | None = None
+    #: A computed entity's kind field (agent, team or dealer): an `eq` or `in` on it reaches `compute` as `kinds`.
+    kind_field: str | None = None
     #: A computed entity's date-window field: a filter on it picks which periods `compute` reads (overlap), it is
     #: not a row filter. Without one the window is today, and the result's scope note says so.
     window_field: str | None = None

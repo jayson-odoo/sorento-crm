@@ -360,7 +360,9 @@ def test_the_final_call_gets_a_small_grace_and_compaction_is_skipped_when_time_i
     )
     result = run(db, contact, prov, clock=lambda: clock["t"])
     assert result.limit_hit == "seconds"
-    assert prov.seen[-1]["kw"]["timeout"] == 10
+    from app.services.chatbot.agent.loop import FINAL_GRACE
+
+    assert prov.seen[-1]["kw"]["timeout"] == FINAL_GRACE
     assert prov.seen[0]["kw"]["timeout"] <= 45
 
 

@@ -440,6 +440,23 @@ ONE_RAW_LOOKUP = {"substring_8259", "prefix_with_colour", "name_resolving_to_not
 def test_q1_guard_answers_as_today(session_factory, monkeypatch, stub_access, gate, name):  # noqa: F811
     c, resolves = _console(session_factory, monkeypatch, stub_access, f"+60000024{GUARDS.index(name):02d}{int(gate)}", gate)
     text = _guard(name, c, gate)
+    if name == "prefix_with_colour":
+        # CHATBOT-CLOSE-CODES AC-36 (round 10, crew Q4 (a) 14 Nov): "gun metal" -> -GM is the parser's pick, its
+        # token_key differs from the typed raw's, so it is offered "Did you mean", never answered. Was: answered as
+        # today (the 23 Oct guard, B173_Q1 below keeps that measurement).
+        assert "Did you mean" in text and "SRTWT8259-GM" in text, text
+        assert "Stock summary" not in text and "*Product Code:*" not in text, f"answered on the parser's pick: {text!r}"
+        assert "Got stock" not in text, f"answered on the parser's pick: {text!r}"
+        # Pinned on the reply, not the storage: a one-row staff offer is stored as the escalate team_pick
+        # (answer_bridge._MIN_ROSTER_OPTIONS = 2), not a product_pick (lead ruling, round 10 follow-up).
+        return
+    if name == "substring_8259":
+        # CHATBOT-CLOSE-CODES AC-34: "8259" sits inside SRTWT8259-GM and VLDWT8259-GM, so the parser's pick (which
+        # completes the raw) is never answered alone; the staff reply covers both codes (the multi-code stock summary).
+        for code in ("SRTWT8259-GM", "VLDWT8259-GM"):
+            assert f"*Product Code:* {code}" in text, (code, text)
+        assert sorted(_stocked(c, 0)) == ["SRTWT8259-GM", "VLDWT8259-GM"], _stocked(c, 0)
+        return
     observed = {"reply": text, "stocked": _stocked(c, 0), "resolve_calls": len(resolves.tokens)}
     expected = dict(B173_Q1[f"{name}|{'state_path' if gate else 'old_path'}"])
     expected["resolve_calls"] += 1 if name in ONE_RAW_LOOKUP else 0
@@ -698,9 +715,11 @@ def test_q1w_a_corrected_code_the_cap_cut_asks_did_you_mean_with_the_pick_first(
 
 @PATHS
 @pytest.mark.parametrize("far", ["SRT209-GM", "SRTWC287-S-150"], ids=["clearly_far", "just_under_the_floor"])
-def test_q1w_guard_a_far_pick_outside_the_cap_is_answered_directly(session_factory, monkeypatch, stub_access, gate, far):  # noqa: F811
-    """W3 (guard): a pick under the floor is not a near code, cap or no cap. Scored in the test by the
-    resolver's own expression (measured 0.14 and 0.27; SRTWC286-SH-200 scores 0.32, a near code)."""
+def test_q1w_a_far_pick_outside_the_cap_is_offered_not_answered(session_factory, monkeypatch, stub_access, gate, far):  # noqa: F811
+    """W3 updated (CHATBOT-CLOSE-CODES AC-36, round 10, lead ruling 14 Nov (b)): the parser's code is not in what was
+    typed (neither the raw nor any run of its words folds to it by `turn_state.token_key`), so it is offered "Did you
+    mean <pick>?", never answered, however far it scores (AC-39: no trigram floor decides). Was: answered directly
+    because the pick scored under the floor (measured 0.14 and 0.27, kept below as the case's precondition)."""
     from app.services.entity_resolver import ENTITY_MISS_SUGGEST_FLOOR
 
     c, _ = _cap_console(session_factory, monkeypatch, stub_access, f"+60000027{len(far) % 10}{int(gate)}", gate)
@@ -709,19 +728,24 @@ def test_q1w_guard_a_far_pick_outside_the_cap_is_answered_directly(session_facto
     score = _similarity(db, far, CAP_RAW)
     assert score < ENTITY_MISS_SUGGEST_FLOOR, (far, score)
     text = c.say(f"{CAP_RAW} stock", _ask(CAP_RAW, far, gate))
-    assert "Did you mean" not in text, text
-    assert text.startswith("Stock summary") and f"*Product Code:* {far}" in text, text
-    assert _stocked(c, 0) == [far], _stocked(c, 0)
+    assert "Did you mean" in text and far in text, text
+    assert "Stock summary" not in text and "*Product Code:*" not in text, f"answered on the parser's pick: {text!r}"
+    assert _offered(c)[0] == far, _offered(c)
 
 
 @PATHS
-@pytest.mark.parametrize("raw,pick", [("SRTUB668-BACK INLT", INLET), ("SRTWT8259 gun metal", "SRTWT8259-GM")],
-                         ids=["inlt_typo_word", "code_and_colour_words"])
-def test_q1w_guard_a_raw_that_resolves_by_narrowing_is_answered_directly(
+@pytest.mark.parametrize(
+    "raw,pick",
+    [("SRTUB668-BACK INLT", INLET), ("SRTWT8259 gun metal", "SRTWT8259-GM")],
+    ids=["inlt_typo_word", "code_and_colour_words"],
+)
+def test_q1w_a_raw_that_resolves_by_narrowing_to_a_different_code_is_offered_not_answered(
     session_factory, monkeypatch, stub_access, gate, raw, pick  # noqa: F811
 ):
-    """W4 (guard): the raw resolves to one prefix match, so the pick is answered as today, though it
-    scores above the floor (only the resolved raw keeps it out)."""
+    """W4 updated (CHATBOT-CLOSE-CODES AC-36, round 10; crew Q4 (a) 14 Nov): the raw still resolves to one prefix
+    match, but the parser's pick differs from the typed raw by `turn_state.token_key` (a typo in the code's words,
+    "INLT", or colour words the parser mapped, "gun metal" -> -GM), so the pick is offered, not answered. Was: both
+    answered directly (guards of 23 Oct); INLT moved to offered 13 Nov, the colour words 14 Nov."""
     from app.services.entity_resolver import ENTITY_MISS_SUGGEST_FLOOR
 
     c, _ = _cap_console(session_factory, monkeypatch, stub_access, f"+60000027{2 + len(raw) % 2}{int(gate)}", gate)
@@ -730,8 +754,9 @@ def test_q1w_guard_a_raw_that_resolves_by_narrowing_is_answered_directly(
     assert res.get("resolved") is True and [m.get("canonical_code") for m in res.get("matches") or []] == [pick], res
     assert _similarity(db, pick, raw) >= ENTITY_MISS_SUGGEST_FLOOR, _similarity(db, pick, raw)
     text = c.say(f"{raw} stock", _ask(raw, pick, gate))
-    assert "Did you mean" not in text, text
-    assert text.startswith("Stock summary") and f"*Product Code:* {pick}" in text, text
+    assert "Did you mean" in text and pick in text, text  # staff offer shape: "Did you mean:" then "1. <pick> ..."
+    assert "Stock summary" not in text and "*Product Code:*" not in text, f"answered on the parser's correction: {text!r}"
+    # The only stock call is the did-you-mean's own has-it probe, over the offered code (as the Q1 test above pins).
     assert _stocked(c, 0) == [pick], _stocked(c, 0)
 
 
