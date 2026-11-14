@@ -64,6 +64,16 @@ describe('AC-2.1: a paragraph that starts with spaces keeps them (measured)', ()
   });
 });
 
+describe('AC-2.1: an indent never pushes a fitting word off its line', () => {
+  // 12 mm is 45.1 px usable: "WORDWORD" (40 px) fits, "   WORDWORD" (55 px) does not.
+  it('AC-2.1: the indent is dropped, the word stays whole on one line at x=0', () => {
+    const lines = rich('<p>   WORDWORD</p>', 12, 40);
+    expect(lines).toHaveLength(1);
+    expect(textOf(lines[0])).toBe('WORDWORD');
+    expect(lines[0][0].x_mm).toBeCloseTo(0, 6);
+  });
+});
+
 describe('AC-2.1: no measure (no canvas)', () => {
   it('AC-2.1: the indented paragraph text begins with "   "', () => {
     const lines = textLayerLines(
