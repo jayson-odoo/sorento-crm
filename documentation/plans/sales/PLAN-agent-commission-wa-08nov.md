@@ -1,6 +1,6 @@
 # PLAN: distance to the next tier and what it would pay (AGENT-COMMISSION-WA)
 
-Status: Merge-ready after the shape rounds (reviewer READY on 35e99316 and fe74c008; main incl. #2262 merged 12 Nov; crew live x3 to re-run). Track: small fix (registry + one helper, no migration, no new
+Status: Merge-ready after the shape rounds (reviewer READY on 35e99316 and fe74c008; main incl. #2262 merged 12 Nov, main re-merged 14 Nov clean; crew live x3 and owner hand test to run). Track: small fix (registry + one helper, no migration, no new
 permission). Size S.
 
 Wave W-A of `PLAN-agent-commission-all-08nov.md` "Next waves". Stacks on #2242
