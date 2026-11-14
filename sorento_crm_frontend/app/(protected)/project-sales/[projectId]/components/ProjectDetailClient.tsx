@@ -63,6 +63,13 @@ import { projectCodeLabel } from '../../_shared/lib/projectCode';
 import { projectDisplayName } from '../../_shared/lib/projectName';
 import { isProjectApproved } from '../../_shared/lib/projectApproval';
 import {
+  useAutocountRegisterAccess,
+  useProjectAutocountRegister,
+  useRegisterProjectInAutocount,
+} from '../../_shared/hooks/useProjectAutocountWrite';
+import { AutocountWriteDialog } from '../../_shared/components/AutocountWriteDialog';
+import type { AutocountWriteResult } from '../../_shared/types/projectAutocountWrite.types';
+import {
   ApprovalStatePill,
   isAwaitingDecision,
 } from '../../_shared/components/ApprovalStatePill';
@@ -168,6 +175,27 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
   const [existingProject, setExistingProject] = React.useState<ProjectPossibleDuplicate | null>(
     null,
   );
+  // AC-PROJECT-REGISTER: "Register in AutoCount" behind its own switch and the write permission.
+  // Off or not held, nothing renders and the register route is never read (R18).
+  const registerAccess = useAutocountRegisterAccess();
+  const showRegisterItem = Boolean(
+    registerAccess &&
+      project &&
+      project.can_edit &&
+      isProjectApproved(project) &&
+      project.outcome !== 'lost' &&
+      !project.autocount_project_no,
+  );
+  const registerStatus = useProjectAutocountRegister(projectId, showRegisterItem);
+  const register = useRegisterProjectInAutocount();
+  const [registerResult, setRegisterResult] = React.useState<AutocountWriteResult | null>(null);
+  async function pressRegister() {
+    try {
+      setRegisterResult(await register.mutateAsync(projectId));
+    } catch {
+      // Already toasted by the mutation's onError.
+    }
+  }
   // Any change that lands (an approve, an edit, a reject) re-reads the project, and the
   // refusal it answered is then history: the link must not outlive it.
   React.useEffect(() => {
@@ -234,6 +262,13 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
     !waiting &&
     (project.outcome === 'won' || project.outcome === 'lost') &&
     project.status_key !== 'po_received';
+  const offerRegister = showRegisterItem && !registerStatus.data?.registered;
+  const registerReason =
+    registerStatus.data && !registerStatus.data.can_register
+      ? registerStatus.data.reason
+      : registerStatus.error instanceof Error
+        ? registerStatus.error.message
+        : null;
   const hasGearItems =
     !narrowed &&
     (showEditItem ||
@@ -241,7 +276,8 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
       secondaryMoves.length > 0 ||
       showDeleteItem ||
       canMarkWon ||
-      canReopen);
+      canReopen ||
+      offerRegister);
 
   /**
    * Spec In is where quoting starts, so making it opens the new quotation page (owner,
@@ -301,6 +337,12 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
                 statusKey={project.status_key}
                 label={project.status_label}
               />
+            )}
+            {/* AC-PROJECT-REGISTER R17: a stored fact, shown whatever the switch is set to. */}
+            {project.autocount_project_no && (
+              <Badge variant="secondary" appearance="light" title="AutoCount number">
+                {project.autocount_project_no}
+              </Badge>
             )}
             {project.is_critical && (
               <Badge variant="destructive" className="gap-1">
@@ -415,6 +457,18 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
                     onSelect={() => setOutcome.mutate({ projectId: project.id, outcome: 'open' })}
                   >
                     Re-open
+                  </DropdownMenuItem>
+                )}
+                {offerRegister && (
+                  <DropdownMenuItem
+                    disabled={!registerStatus.data?.can_register || register.isPending}
+                    onSelect={() => void pressRegister()}
+                    className="flex flex-col items-start gap-0.5"
+                  >
+                    <span>Register in AutoCount</span>
+                    {registerReason ? (
+                      <span className="text-xs text-muted-foreground">{registerReason}</span>
+                    ) : null}
                   </DropdownMenuItem>
                 )}
                 {/* An unapproved registration is Rejected, not deleted, unless a manager
@@ -639,6 +693,19 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
       )}
       {reassigning && (
         <ReassignProjectDialog project={project} onDone={() => setReassigning(false)} />
+      )}
+
+      {registerAccess && (
+        <AutocountWriteDialog
+          open={registerResult !== null}
+          onOpenChange={(open) => {
+            if (!open) setRegisterResult(null);
+          }}
+          title="Register in AutoCount"
+          result={registerResult}
+          onRetry={() => void pressRegister()}
+          retrying={register.isPending}
+        />
       )}
 
       {rejecting && (

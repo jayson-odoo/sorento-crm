@@ -369,6 +369,49 @@ def test_a_view_holder_still_reaches_the_autocount_sales_order_routes(scene, mon
     assert [pso for _n, pso in calls] == [order]
 
 
+# AC-PROJECT-REGISTER: the one AutoCount route keyed by the project itself. Another
+# salesperson's project is a 404 like every `{project_id}` route; their own project is the
+# own-records refusal (an ERP write stays an admin's job), and the service is never called.
+_REGISTER_ROUTE = "/projects/{project}/autocount-register"
+
+
+def _register_reached(monkeypatch) -> list:
+    from app.api.v1.projects import project_autocount_register as route
+
+    calls: list = []
+    monkeypatch.setattr(route, "_require_switch", lambda db: None)
+    for name in ("register", "status"):
+        monkeypatch.setattr(
+            route.ProjectAutocountRegisterService,
+            name,
+            lambda self, project_id, *a, _n=name: calls.append((_n, project_id)) or {"outcome": "done", "message": "ok"},
+        )
+    return calls
+
+
+@pytest.mark.parametrize("method", ["GET", "POST"])
+@pytest.mark.parametrize("key,expected", [("p1", 403), ("p4", 404)])
+def test_a_limited_user_cannot_register_a_project_in_autocount(scene, monkeypatch, method, key, expected):
+    db, w, p = scene
+    calls = _register_reached(monkeypatch)
+    with acting(db, w.a, LIMITED | {_AC_WRITE}) as client:
+        response = client.request(method, BASE + _REGISTER_ROUTE.format(project=p[key]), json={})
+    assert response.status_code == expected, response.text
+    if expected == 403:
+        assert "own records only" in response.text, response.text
+    assert calls == []
+
+
+def test_a_view_holder_still_reaches_the_autocount_register_route(scene, monkeypatch):
+    """Control: not limited, so the guard steps aside and the route answers."""
+    db, w, p = scene
+    calls = _register_reached(monkeypatch)
+    with acting(db, w.a, {VIEW, EDIT, _AC_WRITE}) as client:
+        response = client.post(BASE + _REGISTER_ROUTE.format(project=p["p1"]), json={})
+    assert response.status_code == 200, response.text
+    assert calls == [("register", p["p1"])]
+
+
 def test_the_guard_map_names_only_routes_that_exist():
     """Kill test for the map itself: every anchor and id-less entry matches a live route, so a
     renamed route cannot leave a stale entry behind that silently stops matching."""

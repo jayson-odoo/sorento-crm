@@ -109,6 +109,7 @@ export function mapSettingsFromApi(
     sampleRequestRequireProject: Boolean(raw.sample_request_require_project),
     orderChangeNoticeRequireProject: Boolean(raw.order_change_notice_require_project),
     projectAutocountWriteEnabled: Boolean(raw.project_autocount_write_enabled),
+    projectAutocountRegisterEnabled: Boolean(raw.project_autocount_register_enabled),
     stockDebtPoLinkEnabled: Boolean(raw.stock_debt_po_link_enabled),
     purchaseRequestDefaultApproverUserId:
       (raw.purchase_request_default_approver_user_id as string | null) ?? null,
@@ -247,6 +248,7 @@ function createDefaultSettings(): SystemSetting {
     sampleRequestRequireProject: false,
     orderChangeNoticeRequireProject: false,
     projectAutocountWriteEnabled: false,
+    projectAutocountRegisterEnabled: false,
     stockDebtPoLinkEnabled: false,
     purchaseRequestDefaultApproverUserId: null,
     purchaseRequestDefaultApproverName: null,

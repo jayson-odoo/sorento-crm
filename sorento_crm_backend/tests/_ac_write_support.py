@@ -607,3 +607,99 @@ def myt_today_candidates() -> set[str]:
 
     now = datetime.now(timezone.utc)
     return {now.date().isoformat(), (now + timedelta(hours=8)).date().isoformat()}
+
+
+# --------------------------------------------------------------------------- AC-PROJECT-REGISTER
+#
+# Plan: `documentation/plans/autocount/PLAN-ac-project-register-13nov.md`; UAC R1-R18.
+# Additive only: nothing above this line changes.
+
+REGISTER_SWITCH = "project_autocount_register_enabled"
+PROJECTS_CREATE_PATH = "/api/v1/autocount/documents/projects"
+REGISTER_OFF_CODE = "ac_register_switched_off"
+
+
+def caps_with_projects(enabled: bool = True, reason: Optional[str] = None) -> list[dict]:
+    """The pinned SS feed plus a `projects / create_doc` entry (absent today, R7)."""
+    return default_capabilities() + [cap_entry("create_doc", "projects", enabled, reason)]
+
+
+def offer_projects(fake: "FakeSS", *, book: Optional[str] = BOOK, enabled: bool = True) -> None:
+    """Make the fake SS list `projects / create_doc` (and name `book`)."""
+    fake.answers[("GET", CAPS_PATH)] = (
+        200,
+        {"book": book, "capabilities": caps_with_projects(enabled)},
+    )
+
+
+def set_register_switch(db, on: bool) -> None:
+    """`system_settings.project_autocount_register_enabled` (R1).
+
+    Fails loudly while the column is missing, rather than setting a plain Python attribute that
+    no route would ever read."""
+    from app.models.user import SystemSetting
+
+    assert hasattr(SystemSetting, REGISTER_SWITCH), (
+        f"SystemSetting.{REGISTER_SWITCH} is missing (AC-PROJECT-REGISTER R1)"
+    )
+    row = db.query(SystemSetting).first()
+    if row is None:
+        row = SystemSetting(id=str(uuid.uuid4()), name=f"{MARKER} Co")
+        db.add(row)
+        db.flush()
+    setattr(row, REGISTER_SWITCH, on)
+    db.flush()
+
+
+#: Longer than AutoCount's 100-character description, so the cut is observable (R8).
+LONG_TITLE = f"{MARKER} " + "Cadangan Pembangunan Blok Pangsapuri Servis Bertingkat " * 3
+LOCATION = "Jalan Ujian 7, Seksyen 13, Shah Alam " + "x" * 90
+ADDRESS = "Lot 4401, Mukim Ujian, Daerah Contoh"
+
+
+def build_project_world(
+    db,
+    company_id: str,
+    owner: str,
+    *,
+    title: str = LONG_TITLE,
+    location: Optional[str] = LOCATION,
+    address: Optional[str] = ADDRESS,
+) -> SoWorld:
+    """An approved (staff) open project with a code and a sales profile."""
+    from app.services.project_service import register_project
+
+    details = {k: v for k, v in (("location", location), ("address", address)) if v is not None}
+    project = register_project(
+        db,
+        company_id=company_id,
+        actor_user_id=owner,
+        developer_party_id=None,
+        title=f"{title} {_uid()[:8]}",
+        details=details or None,
+    )
+    db.flush()
+    return SoWorld(project=project, company_id=company_id, owner=owner, db=db)
+
+
+def register_api_fixture(permissions, *, switch: bool = True, **world_kw: Any):
+    """Generator behind the AC-PROJECT-REGISTER `api` fixtures; yields `(client, db, world)`.
+
+    The AC-QTSO-CRM write switch is left at its default (off): registration has its own switch.
+    """
+    from app.models.base import company_scope
+
+    with blank_session() as db:
+        company_id = _sorento(db)
+        project_seed_service.run(db, company_id=company_id)
+        owner = _user(db, f"{MARKER} CS")
+        world = build_project_world(db, company_id, owner, **world_kw)
+        seed_foundryx_connection(db, base_url=SS_BASE_URL, api_key=SS_API_KEY)
+        set_register_switch(db, switch)
+        db.commit()
+        client, originals = make_client(db, owner, permissions)
+        try:
+            with company_scope(db, frozenset({company_id})):
+                yield client, db, world
+        finally:
+            restore_client(originals)

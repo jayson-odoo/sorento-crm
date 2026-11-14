@@ -3,6 +3,7 @@ import { extractApiError } from '@/lib/api-client';
 import type {
   AutocountWriteCapabilities,
   AutocountWriteResult,
+  ProjectAutocountRegisterStatus,
 } from '../types/projectAutocountWrite.types';
 
 const BASE = '/api/v1/project-sales';
@@ -15,13 +16,22 @@ const BASE = '/api/v1/project-sales';
  * it comes back as data for the dialog; only a CRM refusal (switch off, not eligible) throws.
  */
 
-/** The admin switch, off the narrow app-config projection every signed-in user may read. */
-export async function getAutocountWriteSwitch(): Promise<boolean> {
+/** One admin switch, off the narrow app-config projection every signed-in user may read. */
+async function getAppConfigSwitch(
+  field: 'project_autocount_write_enabled' | 'project_autocount_register_enabled',
+): Promise<boolean> {
   const response = await apiFetch('/api/user-management/settings/app-config');
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load settings'));
   const data = await response.json();
-  return Boolean(data?.project_autocount_write_enabled);
+  return Boolean(data?.[field]);
 }
+
+/** "AutoCount quotations and sales orders from Project sales". */
+export const getAutocountWriteSwitch = () => getAppConfigSwitch('project_autocount_write_enabled');
+
+/** AC-PROJECT-REGISTER: "AutoCount project registration". */
+export const getAutocountRegisterSwitch = () =>
+  getAppConfigSwitch('project_autocount_register_enabled');
 
 export async function getAutocountWriteCapabilities(): Promise<AutocountWriteCapabilities> {
   const response = await apiFetch(`${BASE}/autocount-write/capabilities`);
@@ -55,3 +65,15 @@ export const cancelQuotationInAutocount = (documentId: string) =>
     `/quotation-documents/${documentId}/autocount/cancel`,
     'Could not cancel the quotation in AutoCount',
   );
+
+/** AC-PROJECT-REGISTER: whether this project can be registered in AutoCount now. */
+export async function getProjectAutocountRegister(
+  projectId: string,
+): Promise<ProjectAutocountRegisterStatus> {
+  const response = await apiFetch(`${BASE}/projects/${projectId}/autocount-register`);
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to check AutoCount'));
+  return response.json();
+}
+
+export const registerProjectInAutocount = (projectId: string) =>
+  post(`/projects/${projectId}/autocount-register`, 'Could not register the project in AutoCount');
