@@ -83,6 +83,9 @@ const onShowPage = vi.fn();
 const onAcceptAnnotation = vi.fn(async () => {});
 const onEditAnnotation = vi.fn(async () => {});
 const onRejectAnnotation = vi.fn(async () => {});
+// PO-UPLOAD-MATCHING (AC-U2): named per the plan's contract.
+const onAcceptSuggestion = vi.fn(async (_line: POVersionLine) => {});
+const onAcceptAllSuggestions = vi.fn(async () => {});
 
 function annotation(overrides: Partial<POAnnotation> = {}): POAnnotation {
   return {
@@ -107,6 +110,7 @@ interface RenderOptions {
   annotations?: POAnnotation[];
   focusedLineId?: string | null;
   defaultFlaggedOnly?: boolean;
+  suggestionCount?: number;
 }
 
 function renderGrid(lines: POVersionLine[], options: RenderOptions | boolean = {}) {
@@ -133,6 +137,9 @@ function renderGrid(lines: POVersionLine[], options: RenderOptions | boolean = {
         onEditAnnotation={onEditAnnotation}
         onRejectAnnotation={onRejectAnnotation}
         defaultFlaggedOnly={next.defaultFlaggedOnly}
+        suggestionCount={next.suggestionCount ?? 0}
+        onAcceptSuggestion={onAcceptSuggestion}
+        onAcceptAllSuggestions={onAcceptAllSuggestions}
       />
     </QueryClientProvider>
   );
@@ -630,5 +637,93 @@ describe('POIntakeLinesGrid, handwriting reviewed from a compact indicator (owne
     expect(screen.queryByRole('button', { name: /^Accept/ })).toBeNull();
     expect(screen.queryByRole('button', { name: /^Reject/ })).toBeNull();
     expect(screen.queryByRole('button', { name: /^Edit/ })).toBeNull();
+  });
+});
+
+/**
+ * PO-UPLOAD-MATCHING (AC-U1, AC-U2): a model-suggested product or qty is a proposal a person
+ * accepts. It shows as a "Suggested" pill in the Flag column; one row is accepted from its
+ * right-click menu, every one at once from a secondary "Accept all suggestions (N)" button.
+ * New props per the contract: `suggestionCount`, `onAcceptSuggestion(line)`,
+ * `onAcceptAllSuggestions()`; new line fields `match_confidence`, `match_options`,
+ * `qty_suggested`.
+ */
+describe('POIntakeLinesGrid suggestions', () => {
+  function suggested(overrides: Partial<POVersionLine> = {}): POVersionLine {
+    return line({
+      resolution_source: 'suggested',
+      match_confidence: 'high',
+      match_options: [],
+      qty_suggested: false,
+      ...overrides,
+    } as Partial<POVersionLine>);
+  }
+
+  it('marks a suggested product with a Suggested pill', async () => {
+    renderGrid([suggested({ id: 'l2', line_no: 2 })]);
+
+    expect(await screen.findByText('Suggested')).toBeInTheDocument();
+  });
+
+  it('marks a suggested qty with the same pill', async () => {
+    renderGrid([
+      line({ id: 'l2', line_no: 2, resolution_source: 'code', qty_suggested: true } as Partial<POVersionLine>),
+    ]);
+
+    expect(await screen.findByText('Suggested')).toBeInTheDocument();
+  });
+
+  it('shows no pill on an exact-code line', async () => {
+    renderGrid([line({ qty_suggested: false } as Partial<POVersionLine>)]);
+
+    await screen.findByLabelText('Code on line 1');
+    expect(screen.queryByText('Suggested')).toBeNull();
+  });
+
+  it('offers "Accept all suggestions (2)" and calls the handler', async () => {
+    renderGrid(
+      [suggested({ id: 'l1', line_no: 1 }), suggested({ id: 'l2', line_no: 2 })],
+      { suggestionCount: 2 },
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Accept all suggestions (2)' }));
+
+    expect(onAcceptAllSuggestions).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows no accept-all button when nothing is suggested', async () => {
+    renderGrid([line()], { suggestionCount: 0 });
+
+    await screen.findByLabelText('Code on line 1');
+    expect(screen.queryByRole('button', { name: /Accept all suggestions/ })).toBeNull();
+  });
+
+  it('shows no accept-all button to a reader', async () => {
+    renderGrid([suggested()], { readOnly: true, suggestionCount: 1 });
+
+    await screen.findByText('927');
+    expect(screen.queryByRole('button', { name: /Accept all suggestions/ })).toBeNull();
+  });
+
+  it('accepts one suggested line from its right-click menu', async () => {
+    renderGrid([line({ id: 'l1', line_no: 1 }), suggested({ id: 'l2', line_no: 2 })], {
+      suggestionCount: 1,
+    });
+
+    fireEvent.contextMenu(await screen.findByLabelText('Code on line 2'));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Accept suggestion' }));
+
+    expect(onAcceptSuggestion).toHaveBeenCalledTimes(1);
+    expect(onAcceptSuggestion).toHaveBeenCalledWith(expect.objectContaining({ id: 'l2' }));
+  });
+
+  it('does not offer Accept suggestion on a line with nothing suggested', async () => {
+    renderGrid([line({ id: 'l1', line_no: 1 }), suggested({ id: 'l2', line_no: 2 })], {
+      suggestionCount: 1,
+    });
+
+    fireEvent.contextMenu(await screen.findByLabelText('Code on line 1'));
+
+    expect(screen.queryByRole('menuitem', { name: 'Accept suggestion' })).toBeNull();
   });
 });

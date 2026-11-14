@@ -121,6 +121,8 @@ function version(overrides: Partial<POVersion> = {}): POVersion {
       lines_total: '364171.95',
       arithmetic_passed: 1,
       arithmetic_total: 1,
+      // PO-UPLOAD-MATCHING AC-T2: the existing tests read a document WITH a printed total.
+      printed_total_read: true,
     },
     lines: [line()],
     annotations: [],
@@ -249,6 +251,7 @@ describe('POIntakeConfirmClient', () => {
           lines_total: '364171.95',
           arithmetic_passed: 1,
           arithmetic_total: 1,
+          printed_total_read: true,
         },
       }),
     );
@@ -391,6 +394,7 @@ describe('POIntakeConfirmClient', () => {
           lines_total: '364172.95',
           arithmetic_passed: 1,
           arithmetic_total: 2,
+          printed_total_read: true,
         },
       }),
     );
@@ -425,6 +429,7 @@ describe('POIntakeConfirmClient', () => {
           lines_total: '364172.95',
           arithmetic_passed: 1,
           arithmetic_total: 2,
+          printed_total_read: true,
         },
       }),
     );
@@ -464,6 +469,7 @@ describe('POIntakeConfirmClient', () => {
           lines_total: '364171.95',
           arithmetic_passed: 2,
           arithmetic_total: 2,
+          printed_total_read: true,
         },
       }),
     );
@@ -737,3 +743,56 @@ describe('POIntakeConfirmClient', () => {
     expect(screen.queryByRole('button', { name: 'Upload the PO again' })).toBeNull();
   });
 });
+
+/**
+ * PO-UPLOAD-MATCHING (AC-T2): the reader may find no printed grand total, and then the
+ * "document total" is only the sum of the amounts it read. The label says so and the
+ * "above/below the total printed on the document" sentence is not shown; the API tells the
+ * screen which case it is (`totals.printed_total_read`).
+ */
+describe('POIntakeConfirmClient totals wording', () => {
+  it('says "Sum of lines read" and never mentions a printed total when none was read', async () => {
+    getPOVersion.mockResolvedValue(
+      version({
+        lines: [line(), line({ id: 'l2', line_no: 2, amount: '1.00', arithmetic_ok: false })],
+        totals: {
+          extracted_total: '364172.95',
+          lines_total: '364171.95',
+          arithmetic_passed: 1,
+          arithmetic_total: 2,
+          printed_total_read: false,
+        } as POVersion['totals'],
+      }),
+    );
+
+    renderConfirm();
+
+    expect(await screen.findByText(/Sum of lines read/)).toBeInTheDocument();
+    expect(screen.queryByText(/Document total/)).toBeNull();
+    expect(screen.queryByText(/total printed on the document/i)).toBeNull();
+  });
+
+  it('says "Document total" and names the gap to the printed total when one was read', async () => {
+    getPOVersion.mockResolvedValue(
+      version({
+        lines: [line(), line({ id: 'l2', line_no: 2, amount: '1.00', arithmetic_ok: false })],
+        totals: {
+          extracted_total: '728343.90',
+          lines_total: '364172.95',
+          arithmetic_passed: 1,
+          arithmetic_total: 2,
+          printed_total_read: true,
+        } as POVersion['totals'],
+      }),
+    );
+
+    renderConfirm();
+
+    expect(await screen.findByText(/Document total RM 728,343\.90/)).toBeInTheDocument();
+    expect(screen.queryByText(/Sum of lines read/)).toBeNull();
+    expect(
+      screen.getByRole('button', { name: /below the total printed on the document/i }),
+    ).toBeInTheDocument();
+  });
+});
+
