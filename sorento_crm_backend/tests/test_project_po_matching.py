@@ -2152,7 +2152,7 @@ def test_qe_b_a_printed_amount_is_never_moved_by_a_qty_or_price_edit(seeded, mat
     [
         ("SRTWT9121 -GM **", "SRTWT9121-GM"),
         ("srtwt9121-gm", "SRTWT9121-GM"),
-        ("SRTWT9121–GM", "SRTWT9121-GM"),
+        ("SRTWT9121\u2013GM", "SRTWT9121-GM"),
         ("SRTWT9121‐GM", "SRTWT9121-GM"),
         ("SRTWT9121−GM", "SRTWT9121-GM"),
         ("SRTWT9121 GM*", "SRTWT9121GM"),
