@@ -90,10 +90,11 @@ class TestBareNumberMatchesItsFamilyOnAvailability:
         assert c.say("8066 x 5", stock(product("8066", 5))) == numbered("8066 x 5: which one?", FAMILY_8066)
         assert c.say("2", _pick(2)) == f"SRTWC8066-SH x 5: {TICK} Got stock."
 
-    def test_bare_number_inside_exactly_one_code_is_that_code(self, console) -> None:
-        """S55c's shape for a number: nothing to pick, so it is that code."""
+    def test_bare_number_inside_exactly_one_code_is_offered_that_code(self, console) -> None:
+        """S55c's shape for a number. CHATBOT-CODE-MATCH AC-27b / card R0 (crew release sweep, 13 Nov):
+        a lone substring-only hit is OFFERED, never answered on a guess; a reply then answers it."""
         c = console()
-        assert c.say("9031 got stock?", stock(product("9031"))) == f"How many units of {LONE_9031}?"
+        assert c.say("9031 got stock?", stock(product("9031"))) == f"Couldn't find 9031. Did you mean {LONE_9031}?"
 
     def test_the_stock_tool_is_never_called_unfiltered(self, console) -> None:
         c = console()
