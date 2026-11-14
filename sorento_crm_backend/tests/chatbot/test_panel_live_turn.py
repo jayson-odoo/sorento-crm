@@ -316,7 +316,7 @@ class TestNothingGoesOut:
 
     def test_the_inbox_queue_refuses_a_panel_envelope(self, session_factory, monkeypatch):
         monkeypatch.setattr(inbox_queue, "queue_mode_for", lambda db, contact: True)
-        monkeypatch.setattr(inbox_queue.direct_ingress, "sender_configured", lambda db: True)
+        monkeypatch.setattr(inbox_queue.direct_ingress, "sender_configured", lambda db, contact_id=None: True)
         monkeypatch.setattr(inbox_queue.direct_ingress, "_on_default_workspace", lambda db, contact: True)
         db = session_factory()
 

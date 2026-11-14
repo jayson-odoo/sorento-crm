@@ -604,7 +604,9 @@ def _words(value: Any) -> str:
     return "none" if value in (None, "") else str(value)
 
 
-def _execute(db, user: dict, args: dict) -> dict:
+def _execute(db, user: dict, args: dict, *, queue_respond: bool = True) -> dict:
+    """Write one planned row. `queue_respond=False` (the Dealer access screen) skips the Respond.io job: the screen
+    asks Respond.io itself inside the request (DEALER-ACCESS-NAMES N5.1)."""
     from app.models.access import RespondContact
     from app.services import audit_service, contact_customer_service
     from app.services import contact_access_sheet_service as sheet
@@ -673,7 +675,7 @@ def _execute(db, user: dict, args: dict) -> dict:
         except Exception:  # noqa: BLE001 - the grant is committed; the defaults are best effort, as on the screen
             logger.warning("agent: default agents for a new contact failed", exc_info=True)
             db.rollback()
-    if not db.query(RespondContact.respond_io_id).filter(RespondContact.id == cid).scalar():
+    if queue_respond and not db.query(RespondContact.respond_io_id).filter(RespondContact.id == cid).scalar():
         # Instant (UAC B1, V8): the worker finds or creates the person in Respond.io, so the bot answers their
         # first message instead of waiting for the 15 minute sync. The grant is committed either way.
         try:

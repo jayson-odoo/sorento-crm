@@ -314,14 +314,22 @@ def _all_parts_matches(db: Any, typed: str) -> list[dict[str, Any]]:
 
 
 def _offerable_rows(db: Any, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The product rows the chat may offer (`offerable_products`, owner Q3), one bounded query."""
-    from app.models.product import Product, offerable_products
+    """The product rows the chat may offer (`offerable_products`, owner Q3), one bounded query.
+    Also chat-searchable (`chat_searchable_products`), a defensive safety net: the resolver probes
+    that feed both callers already drop hidden products, and this keeps any future caller from
+    offering one (#2397; pinned by tests/chatbot/test_code_match_regfix_2397.py)."""
+    from app.models.product import Product, chat_searchable_products, offerable_products
 
     ids = [str(r["uuid"]) for r in rows if isinstance(r, dict) and r.get("uuid")]
     if not ids:
         return []
     with db.begin_nested():
-        kept = {str(pid) for (pid,) in db.query(Product.id).filter(Product.id.in_(ids), offerable_products()).all()}
+        kept = {
+            str(pid)
+            for (pid,) in db.query(Product.id)
+            .filter(Product.id.in_(ids), offerable_products(), chat_searchable_products())
+            .all()
+        }
     return [r for r in rows if isinstance(r, dict) and str(r.get("uuid")) in kept]
 
 
