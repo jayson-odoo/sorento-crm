@@ -218,3 +218,40 @@ def test_t3_lock_a_number_bound_to_line_1_of_a_mixed_list_fills_only_line_1(sess
     text = c.say("4", reply(demand_qty=4, open_question_answer=answer("fill", items=[(1, None, 4)])))
     assert f"{S_PAN} x 4: {TICK} Got stock." in _lines(text), text
     assert f"{CISTERN} x 4" not in text and "QWX7700 x 4" not in text, ("the number spread past line 1", text)
+
+
+# --------------------------------------------------------------------------- crew pass 2, FAIL B: a leftover spec browse must not eat the bare number
+_TRAP_SPEC = {"specs": [{"key": "trap_type", "value": "s_trap"}], "set_noun": "water closets", "total": 141, "require": {"stock": True}, "product_ids": [], "domain": "inventory"}
+
+
+def _spec_pick_turns(c):
+    # The live parse also carries a spec entity (raw "S trap", trap_type / s_trap); offline that entity sends the turn
+    # to an empty spec search ("Couldn't find"), so the pick is sent without it and the leftover browse is injected below.
+    c.say("qwc604-rl x 2", stock(product("qwc604-rl", 2)))
+    return c.say("S trap", reply(reference_target="dym", reference_positions=[2], open_question_answer=answer("pick", picked=[2])))
+
+
+def test_t2g_a_bare_number_after_the_parts_were_answered_revises_those_parts_never_pages_a_leftover_browse(session_factory, monkeypatch, stub_access):  # noqa: F811
+    c = _owner_world(session_factory, monkeypatch, stub_access)
+    picked = _spec_pick_turns(c)
+    for code in (S_PAN, CISTERN):
+        assert f"{code} x 2: {TICK} Got stock." in _lines(picked), (code, picked)
+    c.state["focus"]["set_page"] = {"set_key": {**_TRAP_SPEC, "shown": 50}}  # what the live pick turn left carried
+    text = c.say(
+        "4",
+        reply(demand_qty=4, entity_op="reuse", anaphora={"backward_reference": True}, open_question_answer=answer("all", qty_for_all=4)),
+    )
+    for code in (S_PAN, CISTERN):
+        assert f"{code} x 4: {TICK} Got stock." in _lines(text), (code, text)
+    assert "How many units for each?" not in text, text
+    assert "set_count_answered" not in c.turn_traces[-1].rules_fired, c.turn_traces[-1].rules_fired
+    assert not [line for line in _lines(text) if " x " in line and S_PAN not in line and CISTERN not in line], text
+
+
+def test_t2g_lock_a_bare_number_with_a_browse_just_shown_and_no_answered_parts_still_pages_the_set(session_factory, monkeypatch, stub_access):  # noqa: F811
+    c = _owner_world(session_factory, monkeypatch, stub_access)
+    c.say("QWC604-S-RL stock", stock(product(S_RL)))
+    c.state["focus"]["tasks"] = []
+    c.state["focus"]["set_page"] = {"set_key": {**_TRAP_SPEC, "shown": 0}}
+    c.say("4", reply(demand_qty=4))
+    assert "set_count_answered" in c.turn_traces[-1].rules_fired, c.turn_traces[-1].rules_fired
