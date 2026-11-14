@@ -223,6 +223,9 @@ export interface Project {
 
   owner_user_id?: string | null;
   owner_name?: string | null;
+  /** The owner's linked contact: Requested by on a sponsorship form written from the project. */
+  owner_contact_id?: string | null;
+  owner_contact_name?: string | null;
 
   is_critical: boolean;
   critical_at?: string | null;
@@ -885,10 +888,14 @@ export interface QuotationLine {
   is_section?: boolean;
 
   is_non_standard: boolean;
+  /** Bulky item: cannot be cancelled or reduced once the SO is confirmed. Decided on the server. */
+  is_non_cancellable?: boolean;
   /** The floor in force WHEN PRICED (AC-E7). A later policy change never rewrites it. */
   floor_value_applied?: string | null;
   floor_level_applied?: FloorLevel | null;
   is_below_floor: boolean;
+  /** Priced below its default price when saved (PS-QUOTE-RULES R1): what the banner counts. */
+  is_discounted?: boolean;
 
   sort_order: number;
   notes?: string | null;
@@ -1007,6 +1014,8 @@ export interface ProjectSeries {
   is_active: boolean;
   category_ids: string[];
   category_names: string[];
+  /** The categories (a subset of `category_ids`) whose lines cannot be cancelled once the SO is confirmed. */
+  non_cancellable_category_ids: string[];
   /** Nominated plus every descendant: what the non-standard check compares against. */
   covered_category_count: number;
   /** Products nominated BY NAME, independently of any category (S18). */
@@ -1039,6 +1048,10 @@ export interface SeriesProductRow {
   derived_floor?: string | null;
   /** Of the series' brand and under one of its categories. Out-of-scope rows can only be removed. */
   in_scope: boolean;
+  /** This row's own answer; null means it follows its category. */
+  non_cancellable?: boolean | null;
+  /** What actually applies once the category is taken into account. */
+  non_cancellable_effective?: boolean;
 }
 
 /** One product SET priced on a series; the twin of `SeriesProductRow`. */
@@ -1051,6 +1064,7 @@ export interface SeriesSetRow {
   max_discount_pct?: string | null;
   /** Computed on the SERVER, null unless both numbers are set. */
   derived_floor?: string | null;
+  non_cancellable?: boolean;
 }
 
 /** A list of product codes to load onto a series (S18). */
@@ -1136,6 +1150,10 @@ export function importJobPhase(status: string): 'running' | 'done' | 'dead' {
 export interface QuotationLineVerdict {
   is_non_standard: boolean;
   is_below_floor: boolean;
+  /** Below the default price (series price, else list price), by the save's own rule. */
+  is_discounted?: boolean;
+  /** NON-CANCELLABLE-ITEMS F1: the save's `is_non_cancellable`, judged now. */
+  is_non_cancellable?: boolean;
   floor_value: string | null;
   floor_level: string | null;
 }
@@ -1165,6 +1183,8 @@ export interface ProjectSeriesBody {
   description?: string | null;
   is_active?: boolean;
   category_ids?: string[];
+  /** A subset of `category_ids`, sent whole on update. */
+  non_cancellable_category_ids?: string[];
 }
 
 export interface PriceFloorRule {
@@ -1393,19 +1413,43 @@ export interface StagedPurchaseOrderLine {
   removed: boolean;
 }
 
-/** A sponsorship form linked to this project (AC-F3). Read-only here: procurement owns it. */
-export interface ProjectSponsorship {
+/**
+ * PROJECT-RELATED-RECORDS: one record linked to the project, one line in its Related grid.
+ * `kind` keys the frontend registry (`relatedRecordTypes.ts`); `raised_by` is a name.
+ */
+export interface RelatedRecordRow {
+  kind: string;
   id: string;
-  request_number?: string | null;
-  request_date?: string | null;
-  status?: string | null;
-  approval_status?: string | null;
-  customer_name?: string | null;
-  project_title?: string | null;
-  sponsor_subject?: string | null;
-  sponsor_subject_other?: string | null;
-  total_project_value?: string | null;
-  purpose?: string | null;
+  number: string | null;
+  status: string | null;
+  /** Purchase requests and sponsorship forms only. */
+  approval_status: string | null;
+  /** ISO date (yyyy-mm-dd). */
+  date: string | null;
+  raised_by: string | null;
+  subject: string | null;
+  value: string | number | null;
+}
+
+export interface RelatedRecordsResponse {
+  data: RelatedRecordRow[];
+  pagination: { total: number; page: number; limit: number };
+  empty: boolean;
+  /** Rows per type with no filter: the tab badge is their sum. */
+  type_counts: Record<string, number>;
+  /** The types this viewer may see, in registry order: the Type filter. */
+  types: { kind: string; label: string }[];
+  /** The raw statuses of those rows with no filter: the Status filter. */
+  statuses?: string[];
+}
+
+export interface RelatedRecordsParams {
+  pageIndex: number;
+  pageSize: number;
+  sorting?: { id: string; desc: boolean }[];
+  searchQuery?: string;
+  types?: string[];
+  statuses?: string[];
 }
 
 export interface SponsorshipYearTotal {
@@ -1478,4 +1522,39 @@ export interface ProjectDashboard {
   by_salesperson: SalespersonRow[];
   sponsorship: SponsorshipConversion;
   delivery_lag_months: number;
+}
+
+
+/** One company-wide default: a product or a category whose lines cannot be cancelled. */
+export interface NonCancellableRule {
+  id: string;
+  product_id?: string | null;
+  product_code?: string | null;
+  product_name?: string | null;
+  category_id?: string | null;
+  category_name?: string | null;
+  non_cancellable: boolean;
+  notes?: string | null;
+  updated_at?: string | null;
+}
+
+/** Exactly one of `product_id` / `category_id` is set on create. */
+export interface NonCancellableRuleBody {
+  product_id?: string;
+  category_id?: string;
+  non_cancellable: boolean;
+  notes?: string | null;
+}
+
+/** One refused line, as the 409 `non_cancellable_line` names it. */
+export interface NonCancellableRefusedLine {
+  label: string;
+  from_qty: number | string;
+  to_qty: number | string;
+}
+
+/** The `details` of a 409 `non_cancellable_line` refusal. */
+export interface NonCancellableRefusal {
+  can_override: boolean;
+  lines: NonCancellableRefusedLine[];
 }

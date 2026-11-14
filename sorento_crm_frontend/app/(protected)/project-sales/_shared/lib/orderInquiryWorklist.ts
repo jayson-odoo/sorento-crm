@@ -130,6 +130,16 @@ export function orderInquirySoLineHref(
   return `/scm/sales-orders/${row.core_sales_order_id}?tab=lines&line=${row.core_line_id}`;
 }
 
+/** The confirmed quantity to print as "Was", or null when there is none or it is unchanged. */
+export function wasQtyOf(
+  now: string | number | null | undefined,
+  was: string | number | null | undefined,
+): string | null {
+  if (was === null || was === undefined || was === '') return null;
+  if (Number(was) === Number(now)) return null;
+  return formatInquiryQty(String(was));
+}
+
 /** A quantity as a person reads it: `600`, never `600.0000`. */
 export function formatInquiryQty(qty?: string | null): string {
   if (qty === null || qty === undefined) return '';

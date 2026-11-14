@@ -1,7 +1,7 @@
 """INTLOG-SPEED: the Integration Log list never counts the whole table, sorts every column on the
 server, and its default page reads ``ix_integration_log_created_at`` backward.
 
-Plan: ``documentation/plans/infra/PLAN-intlog-speed-03nov.md``. Crew measured the prod clone
+Plan: ``documentation/plans/_archive/infra/PLAN-intlog-speed-03nov.md``. Crew measured the prod clone
 (1.2M rows): the exact ``count()`` with the list's ORDER BY still attached took 1.5-9.7 s per page
 load. Postgres only; rows seeded into a blank schema; the cap is shrunk so a handful of rows can
 cross it.

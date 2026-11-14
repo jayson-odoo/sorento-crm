@@ -22,6 +22,9 @@ export type ComplaintsListParams = DataGridApiFetchParams & {
   root_cause_ids?: string[];
   /** Same, for resolutions. */
   resolution_ids?: string[];
+  /** YYYY-MM-DD Malaysia days, inclusive. */
+  last_activity_from?: string;
+  last_activity_to?: string;
 };
 
 
@@ -37,6 +40,8 @@ export function complaintListExtraParams(params: ComplaintsListParams) {
     resolution_ids: params.resolution_ids?.length
       ? params.resolution_ids.join(',')
       : undefined,
+    last_activity_from: params.last_activity_from,
+    last_activity_to: params.last_activity_to,
   };
 }
 

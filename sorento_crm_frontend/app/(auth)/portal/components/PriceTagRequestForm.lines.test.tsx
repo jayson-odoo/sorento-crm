@@ -55,6 +55,8 @@ vi.mock('../lib/price-tag-request-service', async () => {
 // labelled "Customer" (components/dealer-kit/__mocks__/RequestCustomersSelect.tsx).
 vi.mock('@/components/dealer-kit/RequestCustomersSelect');
 
+vi.mock('@/components/common/SearchableMultiSelect');
+
 vi.mock('@/components/common/SearchableSelect', () => ({
   SearchableSelect: (props: {
     id?: string;
@@ -167,7 +169,7 @@ describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () =>
     await addLine();
     const item = await screen.findByLabelText('Search a set or product...');
     // Owner, 4 Nov: each option leads with its code (the name is its second line).
-    await waitFor(() => expect(screen.getByText('ZZTSET-1')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/^ZZTSET-1/)).toBeInTheDocument());
     expect(screen.getByText('CBF-1234')).toBeInTheDocument();
     expect(item).toBeInTheDocument();
   });
@@ -282,8 +284,8 @@ describe('PriceTagRequestForm - no line reorder arrows (R3-6, AC-R12)', () => {
   });
 });
 
-describe('PriceTagRequestForm - duplicate product refused inline (R3-7, AC-R12)', () => {
-  it('picking a product already on the request shows an inline message and does not add a line', async () => {
+describe('PriceTagRequestForm - a product already on the request is offered again (PRICETAG-ALA-CARTE AC-6, AC-7)', () => {
+  it('a product already on the request is offered enabled, with no Already added, and a pick adds a second line of it', async () => {
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Customer');
     openSalesOrderSection();
@@ -294,23 +296,18 @@ describe('PriceTagRequestForm - duplicate product refused inline (R3-7, AC-R12)'
     await addLine();
     const pickers = screen.getAllByLabelText('Search a set or product...');
     const secondPicker = pickers[1] as HTMLSelectElement;
-    // The mocked SearchableSelect resolves its options asynchronously
-    // (fetchOptions), so the second instance needs the same wait
-    // `selectOption` (test-utils) gives the first - firing the change before
-    // it resolves finds no matching option and the handler no-ops.
     await waitFor(() =>
       expect(Array.from(secondPicker.options).map((o) => o.value)).toContain(
         'product:prod-uuid-1',
       ),
     );
-    fireEvent.change(secondPicker, { target: { value: 'product:prod-uuid-1' } });
+    const taken = Array.from(secondPicker.options).find((o) => o.value === 'product:prod-uuid-1')!;
+    expect(taken.disabled).toBe(false);
+    expect(taken.textContent).not.toContain('Already added');
 
-    expect(
-      await screen.findByText(/already on this request/i),
-    ).toBeInTheDocument();
-    // The second row stays an empty, unpicked line - the duplicate is
-    // refused before it ever becomes a second real line for the product.
-    expect(secondPicker).toHaveValue('');
+    fireEvent.change(secondPicker, { target: { value: 'product:prod-uuid-1' } });
+    expect(screen.getAllByLabelText('Search a set or product...')).toHaveLength(2);
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Clear item' })).toHaveLength(2));
   });
 });
 

@@ -221,6 +221,7 @@ export interface PriceTagAttachment {
 
 export interface PriceTagRequestSummary {
   id: string;
+  last_activity_at?: string | null;
   doc_number: string;
   debtor_code: string | null;
   /** Null while the portal request is still a draft (D48a). */
@@ -282,6 +283,8 @@ export interface PriceTagRequestListParams {
   dir?: 'asc' | 'desc';
   query?: string;
   status?: string;
+  last_activity_from?: string;
+  last_activity_to?: string;
 }
 
 export interface PriceTagRequestListResult {
@@ -304,7 +307,11 @@ export async function listPriceTagRequests(
         : [],
       searchQuery: params.query ?? '',
     },
-    { status: params.status },
+    {
+      status: params.status,
+      last_activity_from: params.last_activity_from,
+      last_activity_to: params.last_activity_to,
+    },
   );
 
   const response = await apiFetch(`${BASE}?${usp.toString()}`);

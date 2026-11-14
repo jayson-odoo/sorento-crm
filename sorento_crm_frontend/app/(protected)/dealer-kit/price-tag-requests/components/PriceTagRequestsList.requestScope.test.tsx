@@ -59,6 +59,7 @@ vi.mock('../../services/priceTagRequestService', () => ({
   claimPriceTagRequest: vi.fn(),
 }));
 
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import PriceTagRequestsPage from '../page';
 
 const STAFF = ['dealer_kit.price_tag_requests.view', 'dealer_kit.price_tag_requests.process', 'dealer_kit.price_tag_requests.create'];
@@ -74,7 +75,13 @@ function row(over: Record<string, unknown> = {}) {
 
 function mount(slugs: string[]) {
   held = new Set(slugs);
-  return render(<PriceTagRequestsPage />);
+  // The list's remembered view (LIST-FILTER-MEMORY-4) reads through React Query.
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={client}>
+      <PriceTagRequestsPage />
+    </QueryClientProvider>,
+  );
 }
 
 beforeEach(() => {

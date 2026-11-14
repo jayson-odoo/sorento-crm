@@ -10,6 +10,16 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import ComplaintsList from './ComplaintsList';
 
+const view = vi.hoisted(() => ({ filters: null as Record<string, unknown> | null }));
+// LIST-FILTER-MEMORY-4: the filters come back from the remembered view (per user), not the URL.
+vi.mock('@/lib/listing-column-preferences/listColumnPreferencesService', () => ({
+  getUserListColumnConfig: vi.fn(async (key: string) => ({
+    listing_key: key,
+    config: view.filters ? { version: 1, filters: view.filters, filtersVersion: 1 } : null,
+  })),
+  upsertUserListColumnConfig: vi.fn(async (key: string, payload: unknown) => ({ listing_key: key, config: payload })),
+  resetUserListColumnConfig: vi.fn(async () => undefined),
+}));
 const url = vi.hoisted(() => ({ search: '' }));
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
@@ -58,6 +68,7 @@ beforeEach(() => {
   Element.prototype.scrollIntoView = vi.fn();
   Element.prototype.hasPointerCapture = vi.fn();
   url.search = '';
+  view.filters = null;
   useComplaints.mockReset();
   useComplaints.mockReturnValue({
     data: { data: [], pagination: { total: 0, page: 1, limit: 50 } },
@@ -83,14 +94,14 @@ async function openFilters(user: ReturnType<typeof userEvent.setup>) {
 const ORPHAN = 'resp-orphan-77123';
 describe('Complaints - an assignee id the options do not hold', () => {
   it('shows no raw Respond id in the Assigned to trigger or a chip', async () => {
-    url.search = `assigned_to=${ORPHAN}`;
+    view.filters = { assigned_to: ORPHAN };
     const user = userEvent.setup();
     await openFilters(user);
     expect(document.body.textContent ?? '').not.toContain(ORPHAN);
   });
 
   it('shows no raw id beside a known assignee either', async () => {
-    url.search = `assigned_to=resp-ann%2C${ORPHAN}`;
+    view.filters = { assigned_to: `u-ann,${ORPHAN}` };
     const user = userEvent.setup();
     await openFilters(user);
     await waitFor(() => expect(document.body.textContent ?? '').toContain('ZZT Ann'));

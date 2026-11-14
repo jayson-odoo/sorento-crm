@@ -611,7 +611,8 @@ describe('QuotationFormClient create', () => {
     expect(screen.getByLabelText('Attn')).toBeInTheDocument();
     const now = new Date();
     const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-    expect(screen.getByLabelText('Date')).toHaveValue(today);
+    const [ty, tm, td] = today.split('-');
+    expect(screen.getByLabelText('Date')).toHaveValue(`${td}/${tm}/${ty}`);
     // The subject arrives as the project's title, the same default the server would use.
     await waitFor(() =>
       expect(screen.getByLabelText('Project title')).toHaveValue('Menara Test'),
@@ -680,12 +681,21 @@ describe('QuotationFormClient create', () => {
       ),
     );
 
+    // Remove takes the line out at once through the same stage handler (owner hand test 11 Nov:
+    // no struck-through row; Undo is the way back).
     fireEvent.click(within(card).getByRole('button', { name: 'Remove line 1' }));
-    expect(toggleRemovedSpy).toHaveBeenCalledWith(
-      expect.stringMatching(/^new-scope:/),
-      expect.any(String),
+    await waitFor(() =>
+      expect(stageScopeSpy).toHaveBeenLastCalledWith(
+        expect.stringMatching(/^new-scope:/),
+        [
+          expect.objectContaining({
+            draft: expect.objectContaining({ band_label: 'OPTIONAL ITEMS' }),
+          }),
+          expect.objectContaining({ id: null }),
+        ],
+      ),
     );
-    expect(await within(card).findByText('Removed on save')).toBeInTheDocument();
+    expect(within(card).queryByText('Removed on save')).toBeNull();
     expect(createQuotationDocument).not.toHaveBeenCalled();
     expect(replaceQuotationLines).not.toHaveBeenCalled();
   });
@@ -918,13 +928,42 @@ describe('QuotationFormClient edit', () => {
     );
   });
 
-  it('AC-QF071: a line removed on the form is struck through and left out of the PATCH', async () => {
+  it('NON-CANCELLABLE: an overridable 409 asks for a reason and resends the same PATCH with it', async () => {
+    const { NonCancellableRefusalError } = await import('../../../_shared/lib/nonCancellable');
+    updateQuotationDocument.mockRejectedValueOnce(
+      new NonCancellableRefusalError('Non-cancellable: SRT-WC-01', {
+        can_override: true,
+        lines: [{ label: 'SRT-WC-01', from_qty: 12, to_qty: 5 }],
+      }),
+    );
+    renderForm('d1');
+    await waitFor(() => expect(screen.getByLabelText('Your Ref')).toHaveValue('NC/18'));
+    fireEvent.change(screen.getByLabelText('Your Ref'), { target: { value: 'NC/20' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
+
+    await waitFor(() => expect(updateQuotationDocument).toHaveBeenCalledTimes(1));
+    expect(updateQuotationDocument.mock.calls[0][2]).not.toHaveProperty(
+      'non_cancellable_override_reason',
+    );
+    fireEvent.change(await screen.findByLabelText(/Reason/), {
+      target: { value: 'Customer agreed' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Override' }));
+
+    await waitFor(() => expect(updateQuotationDocument).toHaveBeenCalledTimes(2));
+    expect(updateQuotationDocument.mock.calls[1][2]).toMatchObject({
+      your_ref: 'NC/20',
+      non_cancellable_override_reason: 'Customer agreed',
+    });
+  });
+
+  it('AC-QF071: a line removed on the form leaves at once and is left out of the PATCH', async () => {
     renderForm('d1');
     const card = await openSavedLines();
 
     fireEvent.click(within(card).getByRole('button', { name: 'Remove SRT-WC-01' }));
-    expect(toggleRemovedSpy).toHaveBeenCalledWith('q1', 'l1');
-    expect(await within(card).findByText('Removed on save')).toBeInTheDocument();
+    await waitFor(() => expect(stageScopeSpy).toHaveBeenLastCalledWith('q1', []));
+    expect(within(card).queryByText('Removed on save')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
     await waitFor(() => expect(updateQuotationDocument).toHaveBeenCalledTimes(1));

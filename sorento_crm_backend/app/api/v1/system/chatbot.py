@@ -36,11 +36,12 @@ import binascii
 import json
 import logging
 from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import desc, func
+from sqlalchemy import desc, func, text
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -76,7 +77,7 @@ from app.services.chatbot.agent import actions as agent_actions
 from app.services.chatbot.agent import memory as agent_memory
 from app.services.chatbot.agent.loop import AgentBusy, single_flight
 from app.services.chatbot.agent.access import AgentRefused, build_context, grants_hash
-from app.services.chatbot import console_service
+from app.services.chatbot import console_service, crm_sender
 from app.services.chatbot.analytics import topic_audit
 from app.services.chatbot.contracts import TURN_STAGES
 from app.services.chatbot.trace_detail import compose_trace_detail
@@ -91,6 +92,9 @@ from app.services.chatbot.dispatch import (
     reinject_envelope,
     retry_available,
 )
+
+if TYPE_CHECKING:  # annotations only; the functions import it lazily
+    from app.models.resources import Attachment
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chatbot")
@@ -340,7 +344,10 @@ def list_turns(
     )
     has_more = len(rows) > limit
     page = rows[:limit]
-    available = retry_available(db)
+    # A failed turn the CRM sender is sending can be retried with no n8n inject URL.
+    available = retry_available(db) or any(
+        row.status == "failed" and crm_sender.has_crm_rows(db, str(row.id)) for row in page
+    )
     # Review round note (c): ONE `Attachment` query for the whole page's worth of
     # media_intake attachment ids, signed per row - not one query per turn.
     attachments_by_id = _load_attachments(db, _media_attachment_ids(page))
@@ -533,6 +540,10 @@ def retry_turn(
     now = datetime.now(timezone.utc)
     actor_id = str(current_user.get("id") or "")
 
+    stored_actions = (row.response or {}).get("actions") if isinstance(row.response, dict) else None
+    if stored_actions and _sent_by_crm(db, row):
+        return _retry_via_crm(db, request, row, stored_actions, now, actor_id)
+
     # Claim FIRST, then send. See the docstring - and the claim is the conditional UPDATE
     # itself, not the read above. The read can only ever tell an operator what WAS true;
     # two POSTs a few milliseconds apart both pass it, and the customer is answered twice.
@@ -623,6 +634,111 @@ def retry_turn(
     return RetryTurnResponse(turn_id=str(row.id), attempt=row.attempt + 1)
 
 
+def _sent_by_crm(db: Session, row: ChatbotTurn) -> bool:
+    """A turn the CRM sender started, or one no sender has touched yet that the switch covers.
+    A turn the n8n sender already tried keeps n8n's Retry, whatever the switch says now."""
+    from app.models.user import SystemSetting
+
+    turn_id = str(row.id)
+    if crm_sender.has_crm_rows(db, turn_id):
+        return True
+    if crm_sender.has_sender_rows(db, turn_id):
+        return False
+    return crm_sender.covers(db.query(SystemSetting).first(), row.contact_respond_id)
+
+
+RETRY_MAX_AGE = timedelta(hours=24)
+
+
+def _refuse_crm_retry(db: Session, row: ChatbotTurn, now: datetime) -> str | None:
+    """Why Try again must not send now, in plain words; None when it may."""
+    from app.services.chatbot import direct_ingress
+
+    # Counted from when the turn was created (a turn can sit a long time before it finishes).
+    stamps = [t for t in (row.created_at, row.finished_at) if t is not None]
+    created = min((t if t.tzinfo else t.replace(tzinfo=timezone.utc) for t in stamps), default=None)
+    if created is not None:
+        if now - created > RETRY_MAX_AGE:
+            return "This reply is more than a day old, so it is not sent now."
+    contact = row.contact_respond_id
+    if not direct_ingress._on_default_workspace(db, contact):
+        return "This contact belongs to another workspace, so the reply is not sent from here."
+    record = direct_ingress._lookup_contact(db, contact)
+    if not isinstance(record, dict):
+        return "Respond.io could not be asked whether staff have taken over, so nothing was sent."
+    if direct_ingress._human_intervened(record) is True:
+        return "Staff have taken over this conversation, so the reply is not sent."
+    return None
+
+
+def _retry_via_crm(
+    db: Session, request: Request, row: ChatbotTurn, actions: list, now: datetime, actor_id: str
+) -> RetryTurnResponse:
+    """Try again on a turn the CRM sender sends: re-send the stored actions; steps already
+    confirmed are skipped, so no part goes out twice. The row is not re-run."""
+    from app.database import SessionLocal  # call time: tests swap it
+    from app.services.chatbot import direct_ingress, engine
+
+    turn_id = str(row.id)
+    refusal = _refuse_crm_retry(db, row, now)
+    if refusal:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=refusal)
+    claimed = (
+        db.query(ChatbotTurn)
+        .filter(
+            ChatbotTurn.id == turn_id,
+            (ChatbotTurn.retry_requested_at.is_(None)) | (ChatbotTurn.retry_requested_at < _stale_before(now)),
+        )
+        .update({ChatbotTurn.retry_requested_at: now}, synchronize_session="fetch")
+    )
+    if not claimed:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=RETRY_IN_FLIGHT_DETAIL)
+    row.trace = [
+        *(row.trace or []),
+        {
+            "kind": "note",
+            "stage": row.stage if row.stage in TURN_STAGES else "sent",
+            "status": "ok",
+            "started_at": now.isoformat(),
+            "ms": 0,
+            "summary": "Retry requested by an operator.",
+            "why": "Try again requested; only the parts not yet confirmed are sent, sent parts are not repeated.",
+            "facts": {"attempt": row.attempt, "requested_at": now.isoformat(), "requested_by": actor_id},
+            "error": None,
+            "raw": {"retry": True, "from_attempt": row.attempt, "requested_by": actor_id},
+        },
+    ]
+    db.commit()
+    attempt_began = db.execute(text("SELECT now()")).scalar()
+    try:
+        outcome = crm_sender.send(
+            lambda: SessionLocal(),
+            turn_id=turn_id,
+            contact_id=row.contact_respond_id,
+            actions=engine.split_send_actions(list(actions)),
+        )
+    finally:
+        db.expire_all()
+        row = db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).one()
+        row.retry_requested_at = None
+    if outcome == direct_ingress.SEND_OK:
+        row.status, row.stage, row.error = "done", "sent", None
+        db.commit()
+        _log_retry(db, request, row, actor_id, 200, None, channel="chatbot_crm_sender")
+        return RetryTurnResponse(turn_id=turn_id, attempt=row.attempt)
+    # Only a plain refusal has a reason worth showing, and only from this attempt. Anything else
+    # (timeout, a result that could not be recorded) may have reached the customer.
+    row.error = (
+        crm_sender.last_failure_reason(db, turn_id, since=attempt_began) or "The reply was not sent."
+        if outcome == direct_ingress.SEND_REFUSED
+        else "Not confirmed: the reply may not have reached the customer."
+    )
+    db.commit()
+    _log_retry(db, request, row, actor_id, 502, row.error, channel="chatbot_crm_sender")
+    raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"{row.error} Try again.")
+
+
 def _log_retry(
     db: Session,
     request: Request,
@@ -630,6 +746,7 @@ def _log_retry(
     actor_id: str,
     status_code: int,
     error_message: str | None,
+    channel: str = "n8n",
 ) -> None:
     """An `integration_log` row for the outbound POST, success AND failure.
 
@@ -640,7 +757,7 @@ def _log_retry(
     try:
         IntegrationLogService(db).create_integration_log(
             IntegrationLogCreate(
-                integration_channel="n8n",
+                integration_channel=channel,
                 business_table="chatbot.turns",
                 business_id=str(row.id),
                 external_reference=row.contact_respond_id,

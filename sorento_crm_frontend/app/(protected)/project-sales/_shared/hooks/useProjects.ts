@@ -6,6 +6,7 @@ import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/rea
 import type { QueryKey } from '@tanstack/react-query';
 import type { ListPagerPage, ListPagerParams } from '@/hooks/useListPager';
 import { toast } from '@/lib/toast';
+import { isOverridableRefusal } from '../lib/nonCancellable';
 import { isQtyOver } from '../lib/qtyOverQuote';
 import { splitMulti } from '@/lib/list-filters/multiValue';
 import { projectCodeLabel } from '../lib/projectCode';
@@ -39,6 +40,7 @@ import {
   changeLeadStatus,
   createQuotation,
   createQuotationLine,
+  createNonCancellableRule,
   createSeries,
   deletePriceFloor,
   deleteQuotation,
@@ -46,6 +48,10 @@ import {
   escalateLineMedia,
   deleteSeries,
   getEffectivePriceFloor,
+  listNonCancellableRules,
+  setSeriesProductNonCancellable,
+  setSeriesSetNonCancellable,
+  updateNonCancellableRule,
   getSeriesPricedRows,
   getSeriesProductRows,
   getSeriesSetRows,
@@ -80,7 +86,7 @@ import {
   createPurchaseOrderLine,
   updatePurchaseOrderLine,
   deletePurchaseOrderLine,
-  listProjectSponsorships,
+  listProjectRelatedRecords,
   getSponsorshipRollup,
   getProjectDashboard,
   createLead,
@@ -133,6 +139,7 @@ import type {
   ProjectTaskBody,
   LeadListParams,
   FloorTargetLevel,
+  NonCancellableRuleBody,
   PriceFloorRuleBody,
   ProjectPurchaseOrderBody,
   ProjectPurchaseOrderSaveBody,
@@ -144,6 +151,7 @@ import type {
   MediaKind,
   QuotationLine,
   QuotationLineBulkItem,
+  QuotationLineVerdict,
   QuotationVersion,
   SeriesProductImportBody,
   LeadQualifyBody,
@@ -152,6 +160,7 @@ import type {
   ProjectTypeBody,
   ProjectTemplateTaskBody,
   ProjectUpdateBody,
+  RelatedRecordsParams,
   TaskPhase,
   TaskStatusChangeBody,
 } from '../types/project.types';
@@ -1112,6 +1121,34 @@ export function useQuotationLines(versionId: string | undefined) {
 }
 
 /**
+ * The first scope, in order, whose lines hold one that `matches` (PROJECT-QUOTE-LINE-TOOLS: a
+ * banner count opens the first area tab with a line it counts). Reads each version's lines under
+ * the key `useQuotationLines` uses, so a scope already opened costs nothing. Null when none does.
+ */
+export function useFindScopeWithLine() {
+  const queryClient = useQueryClient();
+  return React.useCallback(
+    async (
+      scopes: { scopeId: string; versionId: string | null }[],
+      matches: (line: QuotationLine) => boolean,
+    ): Promise<string | null> => {
+      for (const scope of scopes) {
+        if (!scope.versionId) continue;
+        const versionId = scope.versionId;
+        const lines = await queryClient.fetchQuery({
+          queryKey: linesKey(versionId),
+          queryFn: () => listQuotationLines(versionId),
+          staleTime: 30_000,
+        });
+        if (lines.some(matches)) return scope.scopeId;
+      }
+      return null;
+    },
+    [queryClient],
+  );
+}
+
+/**
  * The lines of several versions at once, each under the same key `useQuotationLines` uses, so a
  * version already open costs nothing. One array per version that has loaded.
  */
@@ -1254,8 +1291,15 @@ export function useQuotationLineMutations(projectId: string, versionId: string) 
   });
 
   const update = useMutation({
-    mutationFn: ({ id, body }: { id: string; body: Partial<QuotationLineBody> }) =>
-      updateQuotationLine(versionId, id, body),
+    mutationFn: ({
+      id,
+      body,
+      overrideReason,
+    }: {
+      id: string;
+      body: Partial<QuotationLineBody>;
+      overrideReason?: string;
+    }) => updateQuotationLine(versionId, id, body, overrideReason),
     onSuccess: (line) => {
       invalidate();
       if (line.is_below_floor) {
@@ -1264,16 +1308,22 @@ export function useQuotationLineMutations(projectId: string, versionId: string) 
         );
       }
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: Error) => {
+      if (!isOverridableRefusal(error)) toast.error(error.message);
+    },
   });
 
   const remove = useMutation({
-    mutationFn: (lineId: string) => deleteQuotationLine(versionId, lineId),
+    mutationFn: ({ lineId, overrideReason }: { lineId: string; overrideReason?: string }) =>
+      deleteQuotationLine(versionId, lineId, overrideReason),
     onSuccess: () => {
       invalidate();
       toast.success('Line removed');
     },
-    onError: (error: Error) => toast.error(error.message),
+    // An overridable refusal is for the caller's override dialog, not a toast.
+    onError: (error: Error) => {
+      if (!isOverridableRefusal(error)) toast.error(error.message);
+    },
   });
 
   return { create, update, remove };
@@ -1312,17 +1362,27 @@ export function useQuotationBulkLineMutation(projectId: string) {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ versionId, lines }: { versionId: string; lines: QuotationLineBulkItem[] }) =>
-      replaceQuotationLines(versionId, lines),
+    mutationFn: ({
+      versionId,
+      lines,
+      overrideReason,
+    }: {
+      versionId: string;
+      lines: QuotationLineBulkItem[];
+      overrideReason?: string;
+    }) => replaceQuotationLines(versionId, lines, overrideReason),
     onSuccess: (_lines, { versionId }) => {
       queryClient.invalidateQueries({ queryKey: linesKey(versionId) });
       queryClient.invalidateQueries({ queryKey: quotationsKey(projectId) });
       queryClient.invalidateQueries({ queryKey: [QUOTATIONS_KEY, 'versions'] });
       queryClient.invalidateQueries({ queryKey: quotationDocumentsKey(projectId) });
     },
-    // No toast: the screen raises ONE for the whole Save, and a quotation with four scopes
-    // would otherwise stack four notifications for a single button press.
-    onError: (error: Error) => toast.error(error.message),
+    // No success toast: the screen raises ONE for the whole Save, and a quotation with four
+    // scopes would otherwise stack four notifications. An overridable refusal opens the
+    // override dialog instead of a toast.
+    onError: (error: Error) => {
+      if (!isOverridableRefusal(error)) toast.error(error.message);
+    },
   });
 }
 
@@ -1461,6 +1521,27 @@ export function useSeriesProductRowMutations(seriesId?: string) {
   return { setPricing, remove };
 }
 
+/** One product's own non-cancellable answer on a series; `null` follows its category. */
+export function useSeriesProductNonCancellable(seriesId?: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ productId, value }: { productId: string; value: boolean | null }) =>
+      setSeriesProductNonCancellable(seriesId as string, productId, value),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: SERIES_KEY }),
+    onError: (error: Error) => toast.error(error.message),
+  });
+}
+
+export function useSeriesSetNonCancellable(seriesId?: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ productSetId, value }: { productSetId: string; value: boolean }) =>
+      setSeriesSetNonCancellable(seriesId as string, productSetId, value),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: SERIES_KEY }),
+    onError: (error: Error) => toast.error(error.message),
+  });
+}
+
 export function useSeriesSetRows(seriesId?: string) {
   return useQuery({
     queryKey: [...SERIES_KEY, 'set-rows', seriesId],
@@ -1568,6 +1649,24 @@ export function useImportJobStatus(jobId: string | null) {
  * non-standard" is not something a disappearing notification should be the only record of.
  */
 /**
+ * The cache key of one draft's verdict. Exported so the lines filter reads the SAME cached answer
+ * the row's pills show (PROJECT-QUOTE-LINE-TOOLS): one question, one answer, two readers.
+ */
+export function lineVerdictKey(
+  target: { quotationId: string | null; seriesId?: string | null },
+  draft: { product_id?: string; product_set_id?: string; unit_price?: string },
+) {
+  return [
+    'quotation-line-verdict',
+    target.quotationId ?? '',
+    target.seriesId ?? '',
+    draft.product_id ?? '',
+    draft.product_set_id ?? '',
+    draft.unit_price ?? '',
+  ] as const;
+}
+
+/**
  * The verdict for one DRAFT line, kept current as it is typed.
  *
  * Debounced at 400ms: judging fires a request, and a keystroke-per-request would hammer
@@ -1605,14 +1704,7 @@ export function useLineVerdict(
 
   return useQuery({
     ...LIST_QUERY_OPTIONS,
-    queryKey: [
-      'quotation-line-verdict',
-      target.quotationId ?? '',
-      target.seriesId ?? '',
-      settled.product_id ?? '',
-      settled.product_set_id ?? '',
-      settled.unit_price ?? '',
-    ],
+    queryKey: lineVerdictKey(target, settled),
     queryFn: () =>
       judgeQuotationLine(target, {
         product_id: settled.product_id,
@@ -1624,6 +1716,38 @@ export function useLineVerdict(
     // it, and retyping it should not be three requests.
     staleTime: 30_000,
   });
+}
+
+/**
+ * The verdicts the rows' own `useLineVerdict` calls hold, for many drafts at once (the lines
+ * filter, PROJECT-QUOTE-LINE-TOOLS). It never asks by itself (`enabled: false`), so filtering
+ * costs no request, yet it carries the REAL query function: an observer's options land on the
+ * shared query, so a global refetch of the key judges the draft rather than writing null over
+ * the answer. One observer per distinct draft; answers come back in `drafts` order, `undefined`
+ * where nothing has been answered yet.
+ */
+export function useCachedLineVerdicts(
+  target: { quotationId: string | null; seriesId?: string | null },
+  drafts: { product_id?: string; product_set_id?: string; unit_price?: string }[],
+): (QuotationLineVerdict | undefined)[] {
+  const ids = drafts.map((draft) => JSON.stringify(lineVerdictKey(target, draft)));
+  const distinct = Array.from(new Map(drafts.map((draft, index) => [ids[index], draft])));
+  const answers = useQueries({
+    queries: distinct.map(([, draft]) => ({
+      queryKey: lineVerdictKey(target, draft),
+      queryFn: () => judgeQuotationLine(target, draft),
+      enabled: false,
+      staleTime: 30_000,
+    })),
+    // Structurally shared, so the array keeps its identity until an answer actually changes.
+    combine: (results) => results.map((result) => result.data),
+  });
+  return React.useMemo(() => {
+    const byId = new Map(distinct.map(([id], index) => [id, answers[index]]));
+    return ids.map((id) => byId.get(id));
+    // `ids` is rebuilt every render; its joined text is what changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [answers, ids.join('|')]);
 }
 
 /**
@@ -1663,6 +1787,46 @@ export function useQuotationRecomputeMutation(projectId: string) {
     },
     onError: (error: Error) => toast.error(error.message),
   });
+}
+
+export const NON_CANCELLABLE_RULES_KEY = ['project-non-cancellable-rules'];
+
+export function useNonCancellableRules() {
+  return useQuery({
+    queryKey: NON_CANCELLABLE_RULES_KEY,
+    queryFn: () => listNonCancellableRules(),
+  });
+}
+
+export function useNonCancellableRuleMutations() {
+  const queryClient = useQueryClient();
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: NON_CANCELLABLE_RULES_KEY });
+
+  const create = useMutation({
+    mutationFn: (body: NonCancellableRuleBody) => createNonCancellableRule(body),
+    onSuccess: () => {
+      invalidate();
+      toast.success('Item saved');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const update = useMutation({
+    mutationFn: ({
+      id,
+      body,
+    }: {
+      id: string;
+      body: { non_cancellable: boolean; notes?: string | null };
+    }) => updateNonCancellableRule(id, body),
+    onSuccess: () => {
+      invalidate();
+      toast.success('Item saved');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  return { create, update };
 }
 
 export function usePriceFloorMutations() {
@@ -1814,19 +1978,35 @@ export function usePurchaseOrderLineMutations(projectId: string, poId: string) {
 
 export const SPONSORSHIPS_KEY = 'project-sponsorships';
 
-export function useProjectSponsorships(projectId: string | undefined) {
+export const RELATED_RECORDS_KEY = 'project-related-records';
+
+/**
+ * PROJECT-RELATED-RECORDS: the project's Related tab rows for these grid params, sorted,
+ * searched, filtered and paged on the server. The tab badge reads `type_counts` off the same
+ * query (the panel's opening params), so opening the tab costs no second request.
+ */
+export function useProjectRelatedRecords(
+  projectId: string | undefined,
+  params: RelatedRecordsParams,
+  options: { enabled?: boolean } = {},
+) {
   return useQuery({
-    queryKey: [SPONSORSHIPS_KEY, projectId],
-    queryFn: () => listProjectSponsorships(projectId as string),
-    enabled: Boolean(projectId),
+    queryKey: [RELATED_RECORDS_KEY, projectId, params],
+    queryFn: () => listProjectRelatedRecords(projectId as string, params),
+    enabled: Boolean(projectId) && (options.enabled ?? true),
+    // Keep the page on screen while the next sort, search or page loads (M4-01).
+    ...LIST_QUERY_OPTIONS,
   });
 }
 
-export function useSponsorshipRollup(projectId: string | undefined) {
+export function useSponsorshipRollup(
+  projectId: string | undefined,
+  options: { enabled?: boolean } = {},
+) {
   return useQuery({
     queryKey: [SPONSORSHIPS_KEY, 'rollup', projectId],
     queryFn: () => getSponsorshipRollup(projectId as string),
-    enabled: Boolean(projectId),
+    enabled: Boolean(projectId) && (options.enabled ?? true),
   });
 }
 

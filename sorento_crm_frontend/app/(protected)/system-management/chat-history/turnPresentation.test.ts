@@ -335,3 +335,22 @@ describe('WU23 phone branch kinds are named in words', () => {
     });
   });
 });
+
+// N8N-RETIRE-A (UAC 10-11): a turn whose send may have reached the customer reads
+// "Not confirmed", not "Failed at send unconfirmed".
+describe('send_unconfirmed reads Not confirmed', () => {
+  it('headlines a failed turn at send_unconfirmed as Not confirmed, failed tone', () => {
+    expect(turnHeadline(turn({ status: 'failed', stage: 'send_unconfirmed' }))).toEqual({
+      word: 'Not confirmed',
+      tone: 'failed',
+    });
+  });
+
+  it('labels the send_unconfirmed stage Not confirmed', () => {
+    expect(stageLabel('send_unconfirmed')).toBe('Not confirmed');
+  });
+
+  it('still reads a failed turn at sent as Failed at Sent', () => {
+    expect(turnHeadline(turn({ status: 'failed', stage: 'sent' })).word).toBe('Failed at Sent');
+  });
+});

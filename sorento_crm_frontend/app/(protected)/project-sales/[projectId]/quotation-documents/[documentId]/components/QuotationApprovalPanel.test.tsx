@@ -336,3 +336,66 @@ describe('QuotationApprovalPanel: the manager', () => {
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
   });
 });
+
+// PROJECT-QUOTE-LINE-TOOLS (owner 11 Nov 2026, Q1): each line count opens the lines it counts.
+describe('QuotationApprovalPanel line-count links', () => {
+  const pending = (overrides: Partial<QuotationDocument>) =>
+    quotationDocument({
+      approval_status_id: 's-draft',
+      approval_status_key: 'draft',
+      requires_approval: true,
+      ...overrides,
+    });
+
+  it("reads exactly the server's sentence, with each count a link to its filter", () => {
+    const onShowLines = vi.fn();
+    const document = pending({
+      off_series_line_count: 4,
+      below_floor_line_count: 1,
+      discounted_line_count: 12,
+      approval_reasons:
+        "4 lines are outside the project's series and one line is priced below the minimum price and 11 lines are priced below the default price",
+    });
+    const { container } = render(
+      <QuotationApprovalPanel document={document} onShowLines={onShowLines} />,
+    );
+    expect(container.textContent).toContain(
+      `${document.approval_reasons}, so this quotation needs a manager's approval`,
+    );
+    fireEvent.click(screen.getByRole('button', { name: '4 lines are' }));
+    fireEvent.click(screen.getByRole('button', { name: 'one line is' }));
+    // QUOTE-BELOW-DEFAULT-OFF (owner 12 Nov 2026): no lines filter for the default price any
+    // more, so its count stays text; the words are unchanged.
+    expect(screen.queryByRole('button', { name: '11 lines are' })).toBeNull();
+    expect(onShowLines.mock.calls.map((call) => call[0])).toEqual(['non_standard', 'below_floor']);
+  });
+
+  it('QUOTE-BELOW-DEFAULT-OFF: a below-default-price count stays text, same words', () => {
+    render(
+      <QuotationApprovalPanel
+        document={pending({ discounted_line_count: 2, approval_reasons: '2 lines are priced below the default price' })}
+        onShowLines={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole('button')).toBeNull();
+    expect(screen.getByText(/2 lines are priced below the default price/)).toBeInTheDocument();
+  });
+
+  it('a below-proposal count stays text: there is no line filter for it', () => {
+    render(
+      <QuotationApprovalPanel
+        document={pending({ below_proposal_count: 2, approval_reasons: '2 lines are priced below the proposal' })}
+        onShowLines={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole('button')).toBeNull();
+    expect(screen.getByText(/2 lines are priced below the proposal/)).toBeInTheDocument();
+  });
+
+  it('with no handler the sentence is the server text, no links', () => {
+    renderPanel(
+      pending({ discounted_line_count: 2, approval_reasons: '2 lines are priced below the default price' }),
+    );
+    expect(screen.queryByRole('button')).toBeNull();
+  });
+});

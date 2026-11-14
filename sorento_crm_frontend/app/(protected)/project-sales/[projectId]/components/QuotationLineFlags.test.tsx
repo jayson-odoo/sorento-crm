@@ -7,7 +7,8 @@
  * product nor a set is refused on save, so it no longer has a flag of its own.
  *
  * Owner meeting 29 Oct: the below-floor flag leaves the product cell. It sits under the price in
- * the Rate cell (`MinimumPriceFlag`) and reads "Minimum price RM x", never "Below floor".
+ * the Rate cell (`MinimumPriceFlag`) and reads just "Below minimum price", no amount (owner hand tests 11 Nov:
+ * the Flags filter's own words), never "Below floor".
  */
 import React from 'react';
 import { render, screen } from '@testing-library/react';
@@ -22,8 +23,8 @@ vi.mock('./QuotationsPanel', () => ({
   formatMyr: (value: string) => `RM ${value}`,
 }));
 
-import { LineFlags, MinimumPriceFlag } from './QuotationLineFlags';
-import { emptyDraft } from './quotationLineDraft';
+import { LineFlags, MinimumPriceFlag, NonCancellableFlag } from './QuotationLineFlags';
+import { emptyDraft, sectionDraft } from './quotationLineDraft';
 
 function line(overrides: Partial<QuotationLine> = {}): QuotationLine {
   return {
@@ -172,7 +173,7 @@ describe('MinimumPriceFlag', () => {
     ...extra,
   });
 
-  it('reads Minimum price RM x for a line priced below its floor, with no "Set on" line (PRICING-UX-FIXES)', () => {
+  it('reads just "Below minimum price", no amount, one line, for a line below its floor (owner 11 Nov)', () => {
     render(
       <MinimumPriceFlag
         quotationId="q1"
@@ -186,7 +187,13 @@ describe('MinimumPriceFlag', () => {
         draft={draftOf({ product_id: 'p1' })}
       />,
     );
-    expect(screen.getByText('Minimum price RM 700.00')).toBeInTheDocument();
+    // Owner hand test 11 Nov ~22:10: "just don't show the minimum price in the warning".
+    const pill = screen.getByText('Below minimum price');
+    expect(pill.textContent).toBe('Below minimum price');
+    expect(document.body.textContent).not.toMatch(/RM\s?\d|700/);
+    expect(pill.getAttribute('title') ?? '').not.toMatch(/RM|\d/);
+    expect(pill.className).toContain('whitespace-nowrap');
+    expect(pill.className).not.toContain('line-through');
     expect(screen.queryByText(/Set on/)).toBeNull();
     expect(screen.queryByText(/below floor/i)).toBeNull();
     expect(screen.queryByText(/\bfloor\b/i)).toBeNull();
@@ -200,7 +207,7 @@ describe('MinimumPriceFlag', () => {
         draft={draftOf({ product_id: 'p1' })}
       />,
     );
-    expect(screen.getByText('Minimum price')).toBeInTheDocument();
+    expect(screen.getByText('Below minimum price')).toBeInTheDocument();
     expect(screen.queryByText('Below the minimum price for this item.')).toBeNull();
   });
 
@@ -216,7 +223,7 @@ describe('MinimumPriceFlag', () => {
         draft={draftOf({ product_id: 'p1' })}
       />,
     );
-    expect(screen.getByText('Minimum price RM 900.00')).toBeInTheDocument();
+    expect(screen.getByText('Below minimum price')).toBeInTheDocument();
     expect(screen.queryByText(/Set on/)).toBeNull();
     useLineVerdict.mockReturnValue({ data: undefined });
   });
@@ -237,7 +244,7 @@ describe('MinimumPriceFlag', () => {
         <LineFlags quotationId={null} seriesId="s1" line={null} draft={draftOf({ product_id: 'p1' })} />
       </>,
     );
-    expect(screen.getByText('Minimum price RM 900.00')).toBeInTheDocument();
+    expect(screen.getByText('Below minimum price')).toBeInTheDocument();
     expect(screen.getByText('Non-standard')).toBeInTheDocument();
     const call = useLineVerdict.mock.calls.at(-1)!;
     expect(call[0]).toEqual({ quotationId: null, seriesId: 's1' });
@@ -254,5 +261,121 @@ describe('MinimumPriceFlag', () => {
       />,
     );
     expect(container).toBeEmptyDOMElement();
+  });
+});
+
+/**
+ * NON-CANCELLABLE-ITEMS F1 (owner hand test, 12 Nov): the badge under the description is live,
+ * like Non-standard: off the saved row while the draft matches it, off the line verdict the moment
+ * the item, the series or the price moves. Values invented.
+ */
+describe('NonCancellableFlag', () => {
+  const draftOf = (extra: Record<string, string> = {}) => ({
+    ...emptyDraft(),
+    unit_price: '900.00',
+    ...extra,
+  });
+  const verdict = (isNonCancellable: boolean) => ({
+    data: {
+      is_non_standard: false,
+      is_below_floor: false,
+      is_non_cancellable: isNonCancellable,
+      floor_value: null,
+      floor_level: null,
+    },
+  });
+
+  it('(b) shows on an item just added under a series, before any save', () => {
+    useLineVerdict.mockReturnValue(verdict(true));
+    render(
+      <NonCancellableFlag quotationId={null} seriesId="s1" line={null} draft={draftOf({ product_id: 'p1' })} />,
+    );
+    expect(screen.getByText('Non-cancellable')).toBeInTheDocument();
+  });
+
+  it('(a) shows on a saved line once a series is picked after the item', () => {
+    useLineVerdict.mockReturnValue(verdict(true));
+    render(
+      <NonCancellableFlag
+        quotationId="q1"
+        seriesId="s1"
+        savedSeriesId={null}
+        line={line({ product_id: 'p1', is_non_cancellable: false })}
+        draft={draftOf({ product_id: 'p1' })}
+      />,
+    );
+    expect(screen.getByText('Non-cancellable')).toBeInTheDocument();
+    // The verdict is asked against the editor's series, not skipped as "pristine".
+    expect(useLineVerdict).toHaveBeenLastCalledWith(
+      { quotationId: 'q1', seriesId: 's1' },
+      expect.objectContaining({ product_id: 'p1' }),
+      true,
+    );
+  });
+
+  it('(c) goes away when the series is cleared or the item changes to a cancellable one', () => {
+    useLineVerdict.mockReturnValue(verdict(false));
+    const { rerender } = render(
+      <NonCancellableFlag
+        quotationId="q1"
+        seriesId={null}
+        savedSeriesId="s1"
+        line={line({ product_id: 'p1', is_non_cancellable: true })}
+        draft={draftOf({ product_id: 'p1' })}
+      />,
+    );
+    expect(screen.queryByText('Non-cancellable')).toBeNull();
+    rerender(
+      <NonCancellableFlag
+        quotationId="q1"
+        seriesId="s1"
+        savedSeriesId="s1"
+        line={line({ product_id: 'p1', is_non_cancellable: true })}
+        draft={draftOf({ product_id: 'p2' })}
+      />,
+    );
+    expect(screen.queryByText('Non-cancellable')).toBeNull();
+  });
+
+  it('(c) goes away when the item is cleared', () => {
+    useLineVerdict.mockReturnValue(verdict(true));
+    render(
+      <NonCancellableFlag
+        quotationId="q1"
+        seriesId="s1"
+        savedSeriesId="s1"
+        line={line({ product_id: 'p1', is_non_cancellable: true })}
+        draft={draftOf()}
+      />,
+    );
+    expect(screen.queryByText('Non-cancellable')).toBeNull();
+  });
+
+  it('reads the saved flag while nothing moved, without asking', () => {
+    useLineVerdict.mockReturnValue({ data: undefined });
+    render(
+      <NonCancellableFlag
+        quotationId="q1"
+        seriesId="s1"
+        savedSeriesId="s1"
+        line={line({ product_id: 'p1', is_non_cancellable: true })}
+        draft={draftOf({ product_id: 'p1' })}
+      />,
+    );
+    expect(screen.getByText('Non-cancellable')).toBeInTheDocument();
+    expect(useLineVerdict).toHaveBeenLastCalledWith(expect.anything(), expect.anything(), false);
+  });
+
+  it('never shows on a section heading', () => {
+    useLineVerdict.mockReturnValue(verdict(true));
+    render(
+      <NonCancellableFlag
+        quotationId="q1"
+        seriesId="s1"
+        line={null}
+        draft={{ ...sectionDraft('Bathrooms'), product_id: 'p1' }}
+      />,
+    );
+    expect(screen.queryByText('Non-cancellable')).toBeNull();
   });
 });

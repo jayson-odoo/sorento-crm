@@ -13,6 +13,10 @@ export interface StockInquiry {
   item_description?: string | null;
   project_customer?: string | null;
   project_name?: string | null;
+  /** The registered project (PROJECT-RELATED-RECORDS); shown as code + title, never the id. */
+  project_id?: string | null;
+  project_code?: string | null;
+  project_title?: string | null;
   quantity?: string | null;
   delivery_date?: string | null;
   remark?: string | null;
@@ -50,6 +54,7 @@ export interface StockInquiry {
   revision_no?: number | null;
   /** When the latest revision landed (naive UTC). */
   last_revised_at?: string | null;
+  last_activity_at?: string | null;
   /** Purchasing asks the salesperson to create a New Product Application (NPA-FROM-SI). */
   npa_requested?: boolean | null;
   npa_requested_at?: string | null;
@@ -104,6 +109,8 @@ export interface StockInquiryFormData {
   item_description?: string;
   project_customer?: string;
   project_name?: string;
+  /** null clears the link. */
+  project_id?: string | null;
   quantity?: string;
   delivery_date?: string;
   remark?: string;

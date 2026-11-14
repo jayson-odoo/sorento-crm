@@ -23,6 +23,7 @@ DELETE /sales-orders/{pso_id}
 DELETE /samples/{sample_id}
 GET /allocation-claims
 GET /config/loss-reasons
+GET /config/non-cancellable-rules
 GET /config/price-floors
 GET /config/price-floors/effective
 GET /config/quotation-templates
@@ -108,6 +109,7 @@ GET /projects/{project_id}/quotation-documents/{document_id}/spec-sheets/{sheet_
 GET /projects/{project_id}/quotation-documents/{document_id}/spec-sheets/{sheet_id}/preview
 GET /projects/{project_id}/quotation-documents/{document_id}/views
 GET /projects/{project_id}/quotations
+GET /projects/{project_id}/related-records
 GET /projects/{project_id}/sales-orders
 GET /projects/{project_id}/sample-requests
 GET /projects/{project_id}/sample-requests/quotation-prefill
@@ -136,6 +138,7 @@ GET /reports/dashboard
 GET /reports/forecast
 GET /sales-orders/{pso_id}
 GET /sales-orders/{pso_id}/allocations
+GET /sales-orders/{pso_id}/history
 GET /sales-orders/{pso_id}/import-file
 GET /sales-orders/{pso_id}/line-splits
 GET /sales-orders/{pso_id}/order-inquiry
@@ -162,6 +165,7 @@ PATCH /projects/{project_id}/quotation-documents/{document_id}/certificates/{cer
 PATCH /projects/{project_id}/quotation-documents/{document_id}/feedback/{row_id}
 PATCH /projects/{project_id}/quotation-documents/{document_id}/scopes/{quotation_id}
 PATCH /projects/{project_id}/quotation-documents/{document_id}/spec-sheets/{sheet_id}
+POST /config/non-cancellable-rules
 POST /config/price-floors
 POST /config/quotation-templates
 POST /config/quotation-templates/cover-preview
@@ -228,6 +232,7 @@ POST /projects/{project_id}/quotation-documents/{document_id}/approval-status
 POST /projects/{project_id}/quotation-documents/{document_id}/approve
 POST /projects/{project_id}/quotation-documents/{document_id}/certificates
 POST /projects/{project_id}/quotation-documents/{document_id}/certificates/export
+POST /projects/{project_id}/quotation-documents/{document_id}/duplicate
 POST /projects/{project_id}/quotation-documents/{document_id}/form-draft/open
 POST /projects/{project_id}/quotation-documents/{document_id}/history/{entry_id}/restore
 POST /projects/{project_id}/quotation-documents/{document_id}/issue
@@ -283,8 +288,11 @@ POST /stock-debt/snapshots/{snapshot_id}/export
 POST /stock-debt/snapshots/{snapshot_id}/rows/{row_id}/po-link/link
 POST /stock-debt/snapshots/{snapshot_id}/rows/{row_id}/po-link/relink
 POST /stock-debt/snapshots/{snapshot_id}/rows/{row_id}/po-link/unlink
+PUT /config/non-cancellable-rules/{rule_id}
 PUT /config/quotation-templates/{template_id}
 PUT /config/series/{series_id}
+PUT /config/series/{series_id}/products/{product_id}/non-cancellable
+PUT /config/series/{series_id}/sets/{product_set_id}/non-cancellable
 PUT /config/templates/{template_id}
 PUT /config/templates/{template_id}/tasks/{template_task_id}
 PUT /config/types/{type_id}

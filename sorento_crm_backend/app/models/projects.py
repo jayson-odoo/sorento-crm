@@ -45,6 +45,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     CheckConstraint,
     Column,
@@ -1010,6 +1011,9 @@ class ProjectSeriesCategory(Base):
         ForeignKey("product_categories.id", ondelete="CASCADE"),
         primary_key=True,
     )
+    #: NON-CANCELLABLE-ITEMS: every product under this category (children included) is
+    #: non-cancellable on this series, unless its own product row says otherwise.
+    non_cancellable = Column(Boolean, nullable=False, default=False, server_default=text("false"))
 
 
 class ProjectSeriesProduct(Base):
@@ -1058,6 +1062,9 @@ class ProjectSeriesProduct(Base):
     #: category scope would list it, the admin removed it. Not listed, not standard, not
     #: priced, until it is added back (which clears the flag).
     excluded = Column(Boolean, nullable=False, default=False, server_default=text("false"))
+    #: NON-CANCELLABLE-ITEMS: the model's own answer. NULL follows the series' category
+    #: setting; true / false overrides it (model beats category, owner 11 Nov 2026).
+    non_cancellable = Column(Boolean, nullable=True)
 
     #: A price with no max discount means NO discount (owner ruling Q2, 1 Nov 2026): the floor
     #: is the selling price itself. See ``series_floor``.
@@ -1101,6 +1108,8 @@ class ProjectSeriesSet(Base):
     selling_price = Column(Numeric(12, 2), nullable=True)
     #: A PERCENT, ``6`` means 6%. NULL with a selling price means no discount (owner ruling Q2).
     max_discount_pct = Column(Numeric(5, 2), nullable=True)
+    #: NON-CANCELLABLE-ITEMS: the set as quoted is non-cancellable on this series.
+    non_cancellable = Column(Boolean, nullable=False, default=False, server_default=text("false"))
 
 
 class PriceFloorRule(Base, CompanyScopedMixin):
@@ -1157,6 +1166,54 @@ class PriceFloorRule(Base, CompanyScopedMixin):
     )
 
 
+class NonCancellableRule(Base, CompanyScopedMixin):
+    """The company-wide Non-cancellable default for one product or one category
+    (NON-CANCELLABLE-ITEMS, owner answer (a), 11 Nov 2026).
+
+    Covers lines outside any series, and lines whose series says nothing about the item. A
+    series' own setting wins over this; within each level a product beats a category, and a
+    category covers its children. ``non_cancellable = false`` on a product is the way to
+    exempt one model from a category marked here.
+
+    Exactly one target per row (CHECK below), one row per target per company.
+    """
+
+    __tablename__ = "non_cancellable_rules"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    product_id = Column(
+        UUID(as_uuid=False), ForeignKey("products.id", ondelete="CASCADE"), nullable=True
+    )
+    category_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("product_categories.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    non_cancellable = Column(Boolean, nullable=False, default=True, server_default=text("true"))
+    notes = Column(Text, nullable=True)
+    created_by = Column(String(100), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index(
+            "uq_non_cancellable_rules_company_target",
+            "company_id",
+            "product_id",
+            "category_id",
+            unique=True,
+            postgresql_nulls_not_distinct=True,
+        ),
+        CheckConstraint(
+            "(product_id IS NULL) <> (category_id IS NULL)",
+            name="ck_non_cancellable_rules_one_target",
+        ),
+        {"schema": "projects"},
+    )
+
+
 class ProjectQuotationDocument(Base, CompanyScopedMixin):
     """The letterhead: one quotation the customer receives, carrying several priced scopes.
 
@@ -1191,6 +1248,22 @@ class ProjectQuotationDocument(Base, CompanyScopedMixin):
     document_no = Column(String(64), nullable=False)
     your_ref = Column(String(120), nullable=True)
     doc_date = Column(Date, nullable=True)
+
+    # AC-QTSO-CRM: the AutoCount quotation this document became, written only by a `done`
+    # answer. `autocount_issue_id` is the accepted issue last sent (no FK: it is a marker).
+    autocount_doc_no = Column(String(80), nullable=True)
+    autocount_doc_key = Column(String(80), nullable=True)
+    autocount_last_modified = Column(String(64), nullable=True)
+    autocount_issue_id = Column(UUID(as_uuid=False), nullable=True)
+    # Per-step progress of an update for one issue, so a retry sends only what is left: the
+    # PATCH (header + line edits) and the added lines. Markers, no FK.
+    autocount_edit_issue_id = Column(UUID(as_uuid=False), nullable=True)
+    autocount_lines_issue_id = Column(UUID(as_uuid=False), nullable=True)
+    autocount_cancelled_at = Column(DateTime(timezone=False), nullable=True)
+    autocount_cancelled_by = Column(String(100), nullable=True)
+    autocount_book = Column(String(40), nullable=True)
+    # Owner 11 Nov: the key + exact body of a create whose outcome is not known yet (write-ahead).
+    autocount_pending_create = Column(JSON(none_as_null=True), nullable=True)
 
     recipient_party_id = Column(
         UUID(as_uuid=False), ForeignKey("projects.parties.id", ondelete="SET NULL"), nullable=True
@@ -1276,6 +1349,15 @@ class ProjectQuotationDocument(Base, CompanyScopedMixin):
         nullable=True,
     )
 
+    # QUOTE-DUPLICATE-PARTY: the document this one was duplicated from for another party (the
+    # header's "Copied from" link). Not ``source_issue_id``, which means "the quotation made from
+    # this proposal" and feeds the below-proposal approval check.
+    copied_from_document_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.quotation_documents.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
     created_by = Column(String(100), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(
@@ -1284,6 +1366,7 @@ class ProjectQuotationDocument(Base, CompanyScopedMixin):
 
     __table_args__ = (
         Index("ix_project_quotation_documents_project", "project_id"),
+        Index("ix_quotation_documents_copied_from", "copied_from_document_id"),
         Index("ix_project_quotation_documents_approval_status", "approval_status_id"),
         UniqueConstraint("company_id", "document_no", name="uq_project_quotation_documents_no"),
         CheckConstraint("kind IN ('proposal', 'quotation')", name="ck_quotation_documents_kind"),
@@ -1373,7 +1456,8 @@ class QuotationDocumentSnapshot(Base):
 
     The form's whole state, in the shape the form holds it, so Restore can load it straight back.
     Immutable once written (``PageVersion``'s rule). ``draft_id`` carries an entry made before its
-    proposal had a number; the first Save moves it onto the new document.
+    proposal had a number; the first Save moves it onto the new document. ``event`` (QUOTE-DUPLICATE-
+    PARTY) is a line with a note and no restorable state (``doc`` = ``{}``).
 
     Not audited: insert-only, and itself the history. Not company-scoped itself: reachable only
     through its document (or its owner's private draft), and every read goes through that first.
@@ -1384,7 +1468,7 @@ class QuotationDocumentSnapshot(Base):
     __table_args__ = (
         Index("ix_quotation_document_snapshots_document", "document_id", "created_at"),
         CheckConstraint(
-            "kind IN ('saved', 'before_restore', 'conflict')",
+            "kind IN ('saved', 'before_restore', 'conflict', 'event')",
             name="ck_quotation_document_snapshots_kind",
         ),
         {"schema": "projects"},
@@ -2107,6 +2191,12 @@ class ProjectQuotationLine(Base, CompanyScopedMixin):
     # Priced below its default price (series selling price, else list price) when saved
     # (PS-QUOTE-RULES R1). Any discount needs approval, so this, not the floor, gates Issue.
     is_discounted = Column(Boolean, nullable=False, server_default="false", default=False)
+    # NON-CANCELLABLE-ITEMS: the series (or set) said this item cannot be cancelled once the
+    # order is confirmed. Computed on save and STORED like the flags above, so a later change
+    # of the setting never rewrites a quotation the customer already holds. Printed under the
+    # description; read by every CRM cancel / reduce path through the SO line's
+    # `quotation_line_id`.
+    is_non_cancellable = Column(Boolean, nullable=False, server_default="false", default=False)
 
     sort_order = Column(Integer, nullable=False, server_default="0", default=0)
     notes = Column(Text, nullable=True)

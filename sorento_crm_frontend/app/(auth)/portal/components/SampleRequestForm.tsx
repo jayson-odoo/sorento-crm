@@ -20,6 +20,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
+import { DatePicker, parseDateInput, toIsoDate } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
@@ -44,7 +45,6 @@ import {
 import { cn } from '@/lib/utils';
 import { SampleRequestError, type SampleRequestDetail } from '@/types/sampleRequest';
 import { portalBase } from '../lib/portal-paths';
-import type { ProjectLookupItem } from '../lib/portal-client';
 import * as portalSampleRequest from '../lib/sample-request-service';
 import type { SampleRequestCustomerHit } from '../lib/sample-request-service';
 import {
@@ -56,8 +56,7 @@ import {
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { dateAnswerText } from '@/lib/sample-request-tracking';
 import { AsyncCombobox } from './AsyncCombobox';
-import { projectCodeLabel } from '@/app/(protected)/project-sales/_shared/lib/projectCode';
-import { projectDisplayName } from '@/app/(protected)/project-sales/_shared/lib/projectName';
+import { PortalProjectCombobox } from './PortalProjectCombobox';
 
 function FormField({
   label,
@@ -353,22 +352,12 @@ export default function SampleRequestForm({
                 htmlFor="sr-project"
                 error={errors.project_id}
               >
-                <AsyncCombobox<ProjectLookupItem>
+                <PortalProjectCombobox
                   id="sr-project"
                   disabled={readOnly}
                   value={state.project_id}
                   displayValue={state.project_label}
-                  allowFreeText={false}
-                  onChange={(v, item) =>
-                    patch({
-                      project_id: v,
-                      project_label: item ? `${projectCodeLabel(item)} - ${projectDisplayName(item)}` : '',
-                    })
-                  }
-                  fetchOptions={(q) => client.lookupProjects(q)}
-                  optionValue={(o) => o.id}
-                  optionLabel={(o) => `${projectCodeLabel(o)} - ${projectDisplayName(o)}`}
-                  optionMeta={(o) => o.company_name ?? ''}
+                  onChange={(v, label) => patch({ project_id: v, project_label: label })}
                   placeholder="Search your registered projects"
                 />
               </FormField>
@@ -386,12 +375,13 @@ export default function SampleRequestForm({
                 htmlFor="sr-delivery-date"
                 error={errors.delivery_date}
               >
-                <Input
+                {/* The shared DD/MM/YYYY picker, never the browser's own date box. */}
+                <DatePicker
                   id="sr-delivery-date"
-                  type="date"
+                  ariaLabel="Request Delivery Date"
                   disabled={readOnly}
-                  value={state.delivery_date}
-                  onChange={(e) => set('delivery_date', e.target.value)}
+                  value={parseDateInput(state.delivery_date)}
+                  onChange={(date) => set('delivery_date', date ? toIsoDate(date) : '')}
                 />
                 {request && dateAnswerText(request, formatDateInMalaysia) && (
                   // PS-SAMPLE-TRACKING rule 3: the sample team's answer, read-only.

@@ -19,6 +19,7 @@ from sqlalchemy import inspect
 from decimal import Decimal, InvalidOperation
 from typing import Optional, List, Dict, Any
 from datetime import date, datetime, timedelta, timezone
+from app.utils.last_activity import last_activity_order, last_activity_range
 from app.utils.multi_value import multi_values
 from app.models.procurement import (
     Supplier, ProductSupplier, InboundShipment, InboundShipmentLine, SPOAllocation,
@@ -83,6 +84,7 @@ from app.services.requestor_options_service import (
 # from an explicit None (which CLEARS the requestor + its label).
 _UNSET_REQUESTOR = object()
 from app.config import settings
+from app.services.integration_service import respond_endpoint
 
 logger = logging.getLogger(__name__)
 
@@ -5637,6 +5639,8 @@ class StockInquiryService:
         space_id: Optional[str] = None,
         statuses: Optional[List[str]] = None,
         viewer_user_id: Optional[str] = None,
+        last_activity_from: Optional[Any] = None,
+        last_activity_to: Optional[Any] = None,
     ):
         """Build the filtered + sorted stock-inquiry query shared by ``list_inquiries``
         and ``neighbours`` so the two can never drift.
@@ -5657,6 +5661,10 @@ class StockInquiryService:
             q = q.filter(StockInquiry.space_id == str(space_id).strip())
         if statuses:
             q = q.filter(StockInquiry.status.in_(statuses))
+
+        in_range = last_activity_range(StockInquiry.last_activity_at, last_activity_from, last_activity_to)
+        if in_range is not None:
+            q = q.filter(in_range)
 
         if query:
             q = q.filter(
@@ -5693,9 +5701,6 @@ class StockInquiryService:
             "salesperson": StockInquiry.salesperson,
             "status": StockInquiry.status,
             "last_responded_at": StockInquiry.last_responded_at,
-            "last_activity_at": func.coalesce(
-                StockInquiry.last_revised_at, StockInquiry.created_at
-            ),
             "revision_no": StockInquiry.revision_no,
         }
         if sort_field in ("assigned_to_name", "handled_by_name"):
@@ -5704,10 +5709,12 @@ class StockInquiryService:
             )
         elif sort_field == "print_count":
             sort_map[sort_field] = self._print_count_sort(viewer_user_id)
-        sort_column = sort_map.get(sort_field, StockInquiry.created_at)
-
         if sort_dir not in ("asc", "desc"):
             sort_dir = "desc"
+
+        if sort_field == "last_activity_at":
+            return q.order_by(*last_activity_order(StockInquiry.last_activity_at, StockInquiry.created_at, StockInquiry.id, sort_dir))
+        sort_column = sort_map.get(sort_field, StockInquiry.created_at)
 
         if sort_dir == "desc":
             q = q.order_by(sort_column.desc().nulls_last(), StockInquiry.id.asc())
@@ -5726,6 +5733,8 @@ class StockInquiryService:
         space_id: Optional[str] = None,
         statuses: Optional[List[str]] = None,
         viewer_user_id: Optional[str] = None,
+        last_activity_from: Optional[Any] = None,
+        last_activity_to: Optional[Any] = None,
     ):
         """List stock inquiries.
 
@@ -5741,6 +5750,8 @@ class StockInquiryService:
             space_id=space_id,
             statuses=statuses,
             viewer_user_id=viewer_user_id,
+            last_activity_from=last_activity_from,
+            last_activity_to=last_activity_to,
         )
 
         total = q.count()
@@ -5902,6 +5913,31 @@ class StockInquiryService:
             raise handle_not_found("Stock Inquiry", inquiry_id)
         return inquiry
 
+    def _assert_linkable_project(self, project_id, current=None) -> None:
+        """A stock inquiry links to an approved PROJECT (PROJECT-RELATED-RECORDS AC-C2), as a
+        complaint does. Re-saving the link it already has is not a change."""
+        from app.services.project_service import assert_linkable_project
+
+        assert_linkable_project(self.db, project_id, current, code="stock_inquiry_project_not_approved")
+
+    def _attach_project_display(self, inquiry) -> None:
+        """Stamp the linked project's code and title onto the row for serialization, as
+        `PurchaseRequestService._attach_project_display` does: the response reads attributes
+        off the ORM object, and no screen may render the bare UUID."""
+        inquiry.project_code = None
+        inquiry.project_title = None
+        if not getattr(inquiry, "project_id", None):
+            return
+        from app.models.projects import Project
+
+        row = (
+            self.db.query(Project.project_code, Project.title)
+            .filter(Project.id == str(inquiry.project_id))
+            .first()
+        )
+        if row:
+            inquiry.project_code, inquiry.project_title = row[0], row[1]
+
     def _resolve_requestor_display_name(self, contact_id: Optional[str]) -> Optional[str]:
         """Display name of a requestor contact, or None. Read-only lookup - the
         eligibility check + the actual stamping still go through
@@ -5945,6 +5981,9 @@ class StockInquiryService:
         # `column_attrs` skips python properties, so the derived requestor name
         # has to be copied in explicitly or the response returns null.
         data["salesperson_contact_name"] = inquiry.salesperson_contact_name
+        self._attach_project_display(inquiry)
+        data["project_code"] = inquiry.project_code
+        data["project_title"] = inquiry.project_title
         # Same reason - a python property, skipped by column_attrs. The detail page
         # gates its response affordances on this rather than mirroring the status
         # list (UAC O1).
@@ -6338,6 +6377,9 @@ class StockInquiryService:
             # `pending_purchasing` skips the review stage, so both keep their name.
             new_status = submission_status.RESUBMITTED
 
+        if "project_id" in data:
+            data["project_id"] = data["project_id"] or None
+            self._assert_linkable_project(data["project_id"], inquiry.project_id)
         column_keys = {a.key for a in inspect(inquiry).mapper.column_attrs}
         immutable = {"id", "created_at", "inquiry_number", "updated_at"}
         requestor_value = data.pop("salesperson_contact_id", _UNSET_REQUESTOR)
@@ -6389,6 +6431,7 @@ class StockInquiryService:
                 )
         except Exception as e:
             logger.warning("Form SLA emit 'submit' (resubmit_rejected_inquiry) failed for %s: %s", inquiry.id, e)
+        self._attach_project_display(inquiry)
         return inquiry
 
     def create_inquiry(
@@ -6449,6 +6492,8 @@ class StockInquiryService:
         data = inquiry_data.model_dump()
         data.pop("inquiry_number", None)
         data.pop("user_confirmed", None)
+        data["project_id"] = data.get("project_id") or None
+        self._assert_linkable_project(data["project_id"])
         # `salesperson` is a REQUIRED submission field, but the CRM form now
         # offers a contact picker instead of the free-text input - so derive the
         # label from the FK before the completeness gate, or a perfectly complete
@@ -6511,6 +6556,7 @@ class StockInquiryService:
                 )
         except Exception as e:
             logger.warning("Form SLA emit 'submit' (create_inquiry) failed for %s: %s", inquiry.id, e)
+        self._attach_project_display(inquiry)
         return inquiry, "created"
 
     def delete_inquiry(self, inquiry_id: str) -> dict:
@@ -6832,6 +6878,9 @@ class StockInquiryService:
         ):
             assert_response_write_allowed("stock_inquiry", inquiry.status)
         self._apply_npa_request(inquiry, update_data, actor_user_id)
+        if "project_id" in update_data:
+            update_data["project_id"] = update_data["project_id"] or None
+            self._assert_linkable_project(update_data["project_id"], inquiry.project_id)
 
         contact_id = update_data.get("contact_id") if "contact_id" in update_data else inquiry.contact_id
         space_id = update_data.get("space_id") if "space_id" in update_data else inquiry.space_id
@@ -6856,6 +6905,7 @@ class StockInquiryService:
 
         self.db.commit()
         self.db.refresh(inquiry)
+        self._attach_project_display(inquiry)
         return inquiry
 
     STOCK_INQUIRY_REPLY_PREAMBLE = "There is a response to your stock inquiry"
@@ -7788,7 +7838,7 @@ class PurchaseRequestService:
                     business_id=str(header.id),
                     external_reference=identifier,
                     direction="outbound",
-                    endpoint=f"https://api.respond.io/v2/contact/id:{identifier}/message",
+                    endpoint=respond_endpoint(f"/v2/contact/id:{identifier}/message"),
                     http_method="POST",
                     status="success",
                     response_payload=str(response)[:50000] if response else None,
@@ -7824,7 +7874,7 @@ class PurchaseRequestService:
                     business_id=str(header.id),
                     external_reference=identifier or "",
                     direction="outbound",
-                    endpoint=f"https://api.respond.io/v2/contact/id:{identifier or ''}/message",
+                    endpoint=respond_endpoint(f"/v2/contact/id:{identifier or ''}/message"),
                     http_method="POST",
                     status="failed",
                     status_code=resp_code,
@@ -9353,6 +9403,8 @@ class PurchaseRequestService:
         contact_id: Optional[str] = None,
         space_id: Optional[str] = None,
         assigned_to: Optional[list[str] | str] = None,
+        last_activity_from: Optional[Any] = None,
+        last_activity_to: Optional[Any] = None,
     ):
         """Build the filtered + sorted PR/SF query shared by ``list_requests`` and
         ``neighbours`` so the two can never drift.
@@ -9463,6 +9515,10 @@ class PurchaseRequestService:
             # Several statuses are OR-ed (an unknown one adds nothing, as before).
             q = q.filter(or_(*status_clauses))
 
+        in_range = last_activity_range(PurchaseRequestHeader.last_activity_at, last_activity_from, last_activity_to)
+        if in_range is not None:
+            q = q.filter(in_range)
+
         sort_map = {
             "submitted_at": PurchaseRequestHeader.submitted_at,
             "request_date": PurchaseRequestHeader.request_date,
@@ -9483,6 +9539,10 @@ class PurchaseRequestService:
             sort_map[sort_field] = self._request_sla_person_name_sort(
                 "assigned_to_id" if sort_field == "assigned_to_name" else "handled_by_id"
             )
+        if sort_field == "last_activity_at":
+            return q.order_by(*last_activity_order(
+                PurchaseRequestHeader.last_activity_at, PurchaseRequestHeader.created_at, PurchaseRequestHeader.id, sort_dir
+            ))
         sort_col = sort_map.get(sort_field, PurchaseRequestHeader.submitted_at)
         if sort_dir == "desc":
             q = q.order_by(sort_col.desc().nullslast(), PurchaseRequestHeader.id.asc())
@@ -9529,6 +9589,8 @@ class PurchaseRequestService:
         contact_id: Optional[str] = None,
         space_id: Optional[str] = None,
         assigned_to: Optional[list[str] | str] = None,
+        last_activity_from: Optional[Any] = None,
+        last_activity_to: Optional[Any] = None,
     ):
         """List purchase requests / sponsorship forms with pagination."""
         q = self._build_request_list_query(
@@ -9540,6 +9602,8 @@ class PurchaseRequestService:
             contact_id=contact_id,
             space_id=space_id,
             assigned_to=assigned_to,
+            last_activity_from=last_activity_from,
+            last_activity_to=last_activity_to,
         )
 
         total = q.count()
@@ -9557,7 +9621,7 @@ class PurchaseRequestService:
         header from the latest unresolved form-SLA tracker (project-sales
         pre-approval, CS post-approval). `handled_by_name` is the form-handling-lock
         holder (separate from the assignee). Mirrors complaint's
-        `_latest_unresolved_sla_assignee_name`, batched per page.
+        `effective_assignee_key` (complaints_service), batched per page.
         """
         ids = [str(getattr(i, "id", "")) for i in items if getattr(i, "id", None)]
         if not ids:
@@ -9642,6 +9706,7 @@ class PurchaseRequestService:
         is how a link starts looking broken. `project_title` remains the fallback for the
         thousands of rows that have no link.
         """
+        header.project_name = None  # the linked title; `project_title` is the typed text
         if not getattr(header, "project_id", None):
             header.project_code = None
             return
@@ -9649,11 +9714,12 @@ class PurchaseRequestService:
             from app.models.projects import Project
 
             row = (
-                self.db.query(Project.project_code)
+                self.db.query(Project.project_code, Project.title)
                 .filter(Project.id == str(header.project_id))
                 .first()
             )
             header.project_code = row[0] if row else None
+            header.project_name = row[1] if row else None
         except Exception:  # noqa: BLE001 -- display sugar must never break a read
             header.project_code = None
 
@@ -10003,7 +10069,7 @@ class PurchaseRequestService:
                     business_id=request_id,
                     external_reference=identifier,
                     direction="outbound",
-                    endpoint="https://api.respond.io/v2/contact/id:{}/message".format(identifier),
+                    endpoint=respond_endpoint("/v2/contact/id:{}/message".format(identifier)),
                     http_method="POST",
                     status="success",
                     response_payload=str(response)[:50000] if response else None,
@@ -10019,7 +10085,7 @@ class PurchaseRequestService:
                     business_id=request_id,
                     external_reference=identifier or "",
                     direction="outbound",
-                    endpoint="https://api.respond.io/v2/contact/id:{}/message".format(identifier or ""),
+                    endpoint=respond_endpoint("/v2/contact/id:{}/message".format(identifier or "")),
                     http_method="POST",
                     status="failed",
                     error_message=str(e),

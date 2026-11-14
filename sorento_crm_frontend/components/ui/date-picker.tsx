@@ -26,6 +26,12 @@ function realDate(y: number, m: number, d: number): Date | undefined {
     : undefined;
 }
 
+/** A picked day as YYYY-MM-DD in local time, the form value the API takes (toISOString would
+ *  shift it a day in UTC+8). */
+export function toIsoDate(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
 /** Parse YYYY-MM-DD or DD/MM/YYYY to local Date; return undefined if invalid or empty.
  *  ISO needs both digits of month and day, so a half-typed `2026-07-0` is not a date yet. */
 export function parseDateInput(value: string): Date | undefined {
@@ -140,7 +146,7 @@ export function DatePicker({
         }}
         disabled={disabled}
         aria-label={ariaLabel}
-        className={cn('flex-1', inputClassName)}
+        className={cn('min-w-0 flex-1', inputClassName)}
         autoComplete="off"
       />
       <Popover open={open} onOpenChange={setOpen}>
@@ -160,4 +166,25 @@ export function DatePicker({
       </Popover>
     </div>
   );
+}
+
+export interface DatePickerFieldProps
+  extends Omit<DatePickerProps, 'value' | 'onChange'> {
+  /** `YYYY-MM-DD` or empty. */
+  value?: string | null;
+  onChange: (value: string | null) => void;
+}
+
+/** `DatePicker` speaking the API's `YYYY-MM-DD` string, so a swapped native date input
+ *  changes no payload. The day is read and written by its own parts: no timezone shifts it. */
+export function DatePickerField({ value, onChange, ...rest }: DatePickerFieldProps) {
+  const date = React.useMemo(() => (value ? parseDateInput(value.slice(0, 10)) : undefined), [value]);
+  return <DatePicker {...rest} value={date} onChange={(next) => onChange(toIsoDay(next))} />;
+}
+
+function toIsoDay(value?: Date): string | null {
+  if (!value) return null;
+  const m = String(value.getMonth() + 1).padStart(2, '0');
+  const d = String(value.getDate()).padStart(2, '0');
+  return `${value.getFullYear()}-${m}-${d}`;
 }

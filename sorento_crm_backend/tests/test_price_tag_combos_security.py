@@ -509,17 +509,15 @@ def test_a_combo_from_another_host_is_stored_as_null(db):
 
     Obeying it would price and print somebody else's package on this cabinet.
     Refusing it would break warn-and-allow, which the whole slice is built on -
-    so it lands as "No package chosen" on the row instead.
+    so the line is stored ala carte instead (PRICETAG-ALA-CARTE AC-17: no
+    warning; the stored combo_id itself proves the foreign id was dropped).
     """
     contact = _contact(db)
     cabinet = _product(db, "SRTBF11834", class_label="Bathroom Furniture")
     other_host = _product(db, "SRTBF99999", class_label="Bathroom Furniture")
     mirror = _product(db, "SRTMR502")
-    # The cabinet gets a combo of its OWN, so the warning that lands afterwards
-    # is "No package chosen" - which can only be true if the foreign combo_id was
-    # nulled. Without it the host would warn "No package defined" whatever was
-    # sent (D2's first branch), and the test would pass without proving anything
-    # about the foreign id.
+    # The cabinet gets a combo of its OWN, so an ala carte line of it carries no
+    # warning at all (AC-17).
     _combo(db, cabinet, "3 in 1", [(mirror, None)])
     foreign_combo = _combo(db, other_host, "Somebody else's 3 in 1", [(mirror, None)])
     client = _portal_client(db, contact.id)
@@ -552,8 +550,8 @@ def test_a_combo_from_another_host_is_stored_as_null(db):
         .filter(PriceTagRequestLine.request_id == created.json()["id"])
         .one()
     )
-    assert line.combo_id is None
-    assert line.package_warning == "No package chosen"
+    assert line.combo_id is None, "the foreign combo id was dropped, not obeyed"
+    assert line.package_warning is None
 
 
 def test_every_read_still_answers_after_a_valid_parts_submit(db, monkeypatch):

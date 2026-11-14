@@ -34,6 +34,8 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { AlertTriangle } from 'lucide-react';
+import SalesOrderHistory from '@/components/audit/SalesOrderHistory';
+import { Dialog, DialogBody, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import {
@@ -85,9 +87,6 @@ import {
   contributionMatchesSearch,
   confirmLinesByOrder,
   remarkFor,
-  autocountBoardNote,
-  autocountChangeNotes,
-  autocountChangeSentence,
   confirmButtonLabel,
   confirmSummaryFor,
   decisionHeaderText,
@@ -110,6 +109,9 @@ import {
   orderPartyLabels,
 } from '../../_shared/lib/fulfilmentBoard';
 import { unpostableNotices } from '../../_shared/lib/unpostableNotices';
+import { isOverridableRefusal, overridableRefusalOf } from '../../_shared/lib/nonCancellable';
+import { NonCancellableOverrideDialog } from '../../_shared/components/NonCancellableOverrideDialog';
+import type { NonCancellableRefusal } from '../../_shared/types/project.types';
 import type {
   BoardCell,
   BoardContribution,
@@ -117,6 +119,7 @@ import type {
   BoardDraft,
   BoardGranularity,
   BoardRowAxis,
+  CancelledLineBody,
   ConfirmEmailLine,
   ConfirmManyBody,
   ConfirmManyOrderResult,
@@ -199,7 +202,7 @@ function SoPartyLine({ label, inMenu = false }: { label: string | undefined; inM
  * and is excluded from the header's ok/total denominator so an order that confirmed
  * everything else does not read as a failure alongside its own success.
  */
-type BoardBatchResult = ConfirmManyOrderResult & { so_number?: string; heldBack?: boolean };
+type BoardBatchResult = ConfirmManyOrderResult & { heldBack?: boolean };
 
 /**
  * S6 (R-J): List is the default view; only an explicit `?view=grid` opens Grid. Exported
@@ -302,59 +305,32 @@ function pressHasSomething(
   );
 }
 
-/** The note lines of what a press's AutoCount change retired (`lines_retired`), for one order. */
-function retiredNote(result: BoardBatchResult, createdAt: string | null) {
-  const retired = result.lines_retired ?? [];
-  const itemCodes = [
-    ...new Set(retired.map((line) => line.item_code).filter((code): code is string => Boolean(code))),
-  ].sort();
-  return { count: retired.length, itemCodes, createdAt };
-}
-
 /**
  * One order's line in the Confirm / Simulate results (PLAN-BATCH-HELD-CANCEL UAC U3/U4;
  * PLAN-BATCH-COUNT-DISPLAY D3/D4): what the press did with the DECISIONS - the Cancel SO transfer
- * or the revision it confirmed. The AutoCount change it applied is one separate note
- * (`autocountChangeSentence`), unless that change is all the press did: then it is the sentence.
+ * or the revision it confirmed.
  */
 function resultSentence(
   result: BoardBatchResult,
   simulated: boolean,
-  createdAt: string | null,
 ): string {
   if (!result.ok) return result.error ?? 'refused';
   const cancelled = result.lines_cancelled?.length ?? 0;
   const confirmed = result.lines_confirmed?.length ?? 0;
-  const handedOver = result.inquiry_rows_created ?? 0;
+  // Two different counts: the rows CREATED (the branches below ask whether the press raised
+  // anything new) and the rows HANDED OVER (cancels and date moves included), which is only the
+  // number the closing sentence prints.
+  const created = result.inquiry_rows_created ?? 0;
+  const handedOver = result.inquiry_rows_handed_over ?? created;
   const lines = (count: number) => `${count} line${count === 1 ? '' : 's'}`;
-  if (cancelled > 0 && confirmed === 0 && handedOver === 0) {
+  if (cancelled > 0 && confirmed === 0 && created === 0) {
     return simulated
       ? `would transfer ${lines(cancelled)} to Cancel SO`
       : `${lines(cancelled)} transferred to Cancel SO`;
   }
-  if (result.planning_change_applied && confirmed === 0 && handedOver === 0) {
-    const note = autocountChangeSentence(
-      retiredNote(result, createdAt),
-      simulated ? 'simulated' : 'confirmed',
-      false,
-    );
-    return note.charAt(0).toLowerCase() + note.slice(1);
-  }
   return simulated
     ? `would confirm as revision ${result.decision_revision}`
     : `confirmed as revision ${result.decision_revision} (${handedOver} purchase row${handedOver === 1 ? '' : 's'} handed over)`;
-}
-
-/** Whether a result's AutoCount change gets its own note (it is not already the sentence). */
-function retiredNoteApart(result: BoardBatchResult): boolean {
-  if (!result.ok || !result.planning_change_applied || !(result.lines_retired?.length ?? 0)) {
-    return false;
-  }
-  return (
-    (result.lines_cancelled?.length ?? 0) > 0 ||
-    (result.lines_confirmed?.length ?? 0) > 0 ||
-    (result.inquiry_rows_created ?? 0) > 0
-  );
 }
 
 function rowAxisFrom(value: string | null): BoardRowAxis {
@@ -605,16 +581,6 @@ export function FulfilmentBoardPanel({
     return out;
   }, [loadedBatches]);
 
-  /**
-   * PLAN-BATCH-COUNT-DISPLAY (reviewer round 1): every batch date this board has seen, per SO.
-   * Never emptied, so the results of a Confirm still name the change by its date after the
-   * board's re-read drops the now-applied batch from `bySoNumber`.
-   */
-  const seenBatchDates = React.useRef(new Map<string, string>());
-  for (const [soNumber, entry] of bySoNumber) {
-    seenBatchDates.current.set(soNumber, entry.batch.created_at);
-  }
-
   /** The one batch this order belongs to, or null - a `replan`/applied lookup never guesses. */
   const batchIdBySoNumber = React.useMemo(() => {
     const map = new Map<string, string>();
@@ -690,6 +656,10 @@ export function FulfilmentBoardPanel({
     null,
   );
   const closeViewSplits = React.useCallback(() => setViewSplits(null), []);
+  /** STANDARD-HISTORY wave 2: one planned order's History, for every board user. */
+  const [orderHistory, setOrderHistory] = React.useState<{ psoId: string; soNumber: string } | null>(
+    null,
+  );
   /** UAC B8: the board gear, where the View splits popup hands focus back on close. */
   const boardActionsRef = React.useRef<HTMLButtonElement | null>(null);
   const psoIdBySalesOrder = React.useMemo(
@@ -823,6 +793,12 @@ export function FulfilmentBoardPanel({
   const allContributions = React.useMemo<BoardContribution[]>(
     () => board.data?.contributions ?? [],
     [board.data],
+  );
+  // OI-WHOLE-SO-CANCEL (AC-WC-9): an order whose only lines are pending cancelled ones comes
+  // back with contributions and no cells; that is still a board with something to confirm.
+  const hasPendingCancelled = React.useMemo(
+    () => allContributions.some((c) => c.cancelled && c.pending_change_batch_id),
+    [allContributions],
   );
   const purchasingRejected = React.useMemo(
     () => rejectedLineCount(allContributions),
@@ -1418,17 +1394,6 @@ export function FulfilmentBoardPanel({
       batchNamedKeys,
     ],
   );
-  // PLAN-BATCH-COUNT-DISPLAY (D2, crew ruling b): the lines pending AutoCount changes retire,
-  // per order - not in the count, said once in the note beside the button.
-  const autocountNotes = React.useMemo(
-    () =>
-      autocountChangeNotes(allContributions, draftWithoutPreMark).map((note) => ({
-        ...note,
-        createdAt: (note.soNumber && bySoNumber.get(note.soNumber)?.batch.created_at) || null,
-      })),
-    [allContributions, draftWithoutPreMark, bySoNumber],
-  );
-
   /**
    * AC-DT-1/AC-DT-4 (`PLAN-oi-decision-trail-ui.md`): "Revision N, confirmed by <name>,
    * N lines" beside the confirm summary, or "No decision yet" - one segment per order
@@ -1618,6 +1583,12 @@ export function FulfilmentBoardPanel({
    */
   const [undoAllOpen, setUndoAllOpen] = React.useState(false);
   const [confirmingAll, setConfirmingAll] = React.useState(false);
+  // A Confirm the server refused with an overridable `non_cancellable_line`: the dialog asks
+  // for a reason, then the same press runs again carrying it.
+  const [overrideAsk, setOverrideAsk] = React.useState<{
+    refusal: NonCancellableRefusal;
+    soRemarks?: ReadonlyMap<string, string>;
+  } | null>(null);
   const [batchResults, setBatchResults] = React.useState<BoardBatchResult[] | null>(null);
   // True while `batchResults` holds an admin Simulate confirm: nothing in it was saved.
   const [simulated, setSimulated] = React.useState(false);
@@ -2005,6 +1976,7 @@ export function FulfilmentBoardPanel({
    */
   const runConfirmAll = React.useCallback(async (
     soRemarks?: ReadonlyMap<string, string>,
+    nonCancellableOverrideReason?: string,
   ): Promise<boolean> => {
     if (!board.data) return false;
     setConfirmingAll(true);
@@ -2030,7 +2002,29 @@ export function FulfilmentBoardPanel({
       // answering per order which lines it would confirm or withdraw. The press then posts the
       // same body narrowed to exactly those lines, so hold-back and the recheck still protect
       // and "Posted P" is what the server said it would write. No step for the planner.
-      const dry = await previewConfirmMany.mutateAsync(built.body);
+      // The retry after a 409 `non_cancellable_line`: the reason rides on every cancelled line.
+      const withOverride = <T extends { orders: { cancelled_lines: CancelledLineBody[] }[] }>(
+        body: T,
+      ): T =>
+        nonCancellableOverrideReason
+          ? {
+              ...body,
+              orders: body.orders.map((order) => ({
+                ...order,
+                cancelled_lines: order.cancelled_lines.map((line) => ({
+                  ...line,
+                  non_cancellable_override_reason: nonCancellableOverrideReason,
+                })),
+              })),
+            }
+          : body;
+      const dry = await previewConfirmMany.mutateAsync(withOverride(built.body));
+      // An order refused for a non-cancellable line asks for a reason instead of reporting.
+      const dryRefusal = overridableRefusalOf(dry.results);
+      if (dryRefusal) {
+        setOverrideAsk({ refusal: dryRefusal, soRemarks });
+        return false;
+      }
       const answer = new Map(dry.results.map((entry) => [entry.pso_id, entry]));
       const refusals: BoardBatchResult[] = [];
       const orders = built.orders
@@ -2079,7 +2073,9 @@ export function FulfilmentBoardPanel({
             only_line_ids: only,
           };
         });
-      const body = built.body.batch_id ? { orders, batch_id: built.body.batch_id } : { orders };
+      const body = withOverride(
+        built.body.batch_id ? { orders, batch_id: built.body.batch_id } : { orders },
+      );
       if (orders.length === 0) {
         setBatchResults(settleHeldBackNotes([...skipped, ...refusals]));
         return true;
@@ -2125,6 +2121,8 @@ export function FulfilmentBoardPanel({
         ),
       );
       setBatchResults(settleHeldBackNotes([...skipped, ...refusals, ...result.results]));
+      const postedRefusal = overridableRefusalOf(result.results);
+      if (postedRefusal) setOverrideAsk({ refusal: postedRefusal, soRemarks });
 
       // What the press produced, in the three numbers a planner is about to act on (D3):
       // the promises made, the movements somebody now has to approve (the panel below lists
@@ -2230,10 +2228,14 @@ export function FulfilmentBoardPanel({
         }
         return next;
       });
-      return true;
-    } catch {
+      // A fresh non-cancellable refusal keeps its dialog open: report "not done" so the
+      // override handler does not close the dialog it was just given.
+      return !postedRefusal;
+    } catch (error) {
       // The mutation's own `onError` already toasted the message; nothing here is left to say.
       // Caught only so the rejection does not float unhandled past this async click handler.
+      // An overridable non-cancellable refusal toasts nothing: the override dialog asks instead.
+      if (isOverridableRefusal(error)) setOverrideAsk({ refusal: error.details, soRemarks });
       return false;
     } finally {
       setConfirmingAll(false);
@@ -3191,7 +3193,7 @@ export function FulfilmentBoardPanel({
         data-testid="board-action-bar"
         className="flex flex-col gap-2 rounded-lg border border-border px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between"
       >
-        {board.data && board.data.cells.length > 0 ? (
+        {board.data && (board.data.cells.length > 0 || hasPendingCancelled) ? (
           <span className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
             <span
               data-testid="board-confirm-summary"
@@ -3325,6 +3327,20 @@ export function FulfilmentBoardPanel({
                           <SoPartyLine label={partyByOrder.get(order.sales_order_id)} inMenu />
                         </span>
                       </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onSelect={() =>
+                          setOrderHistory({
+                            psoId: order.project_sales_order_id,
+                            soNumber: order.so_number,
+                          })
+                        }
+                      >
+                        <History className="size-4" aria-hidden />
+                        <span className="flex min-w-0 flex-col">
+                          <span className="truncate">{`History ${order.so_number}`}</span>
+                          <SoPartyLine label={partyByOrder.get(order.sales_order_id)} inMenu />
+                        </span>
+                      </DropdownMenuItem>
                     </React.Fragment>
                   ))}
                 </>
@@ -3406,7 +3422,7 @@ export function FulfilmentBoardPanel({
           {/* An undo countdown must keep showing even once its own commit has cleared the
               board down to zero cells (review round) - the Confirm slot this occupies is
               not gated on there being anything left to confirm while it is counting down. */}
-          {board.data && (board.data.cells.length > 0 || undoAction.pending) ? (
+          {board.data && (board.data.cells.length > 0 || hasPendingCancelled || undoAction.pending) ? (
             <DeferredActionButton
               pending={undoAction.pending}
               verb="Undoing"
@@ -3419,14 +3435,14 @@ export function FulfilmentBoardPanel({
                     size="sm"
                     data-testid="board-confirm"
                     disabled={
-                      (confirmSummary.toConfirm === 0 && autocountNotes.length === 0) ||
+                      confirmSummary.toConfirm === 0 ||
                       confirmingAll ||
                       Boolean(confirmBlockedReason)
                     }
                     title={confirmBlockedReason ?? undefined}
                     onClick={openGuide}
                   >
-                    {confirmButtonLabel(confirmSummary.toConfirm, autocountNotes.length)}
+                    {confirmButtonLabel(confirmSummary.toConfirm)}
                   </Button>
                 </>
               }
@@ -3514,17 +3530,6 @@ export function FulfilmentBoardPanel({
         </Alert>
       )}
 
-      {autocountNotes.length > 0 && (
-        <div
-          data-testid="board-autocount-change-note"
-          className="space-y-0.5 rounded-lg border border-border px-3 py-2.5 text-sm break-words text-muted-foreground"
-        >
-          {autocountBoardNote(autocountNotes, confirmSummary.toConfirm > 0).map((line) => (
-            <p key={line}>{line}</p>
-          ))}
-        </div>
-      )}
-
       {batchResults && (
         <div
           data-testid="board-confirm-results"
@@ -3549,9 +3554,6 @@ export function FulfilmentBoardPanel({
                 (candidate) => candidate.project_sales_order_id === result.pso_id,
               );
               const label = order?.so_number ?? result.so_number ?? result.pso_id;
-              // PLAN-BATCH-COUNT-DISPLAY: the date the note names is this order's batch, as seen
-              // when the press ran (the re-read after Confirm no longer names an applied batch).
-              const createdAt = seenBatchDates.current.get(label) ?? null;
               // A refusal names the LINES it refused, not just the order: the fix is on one
               // row, and "SO404352: refused" sends a planner to read thirty of them.
               const failing = result.failing_lines ?? [];
@@ -3573,7 +3575,7 @@ export function FulfilmentBoardPanel({
                           : 'text-destructive'
                     }`}
                   >
-                    {`${label}: ${resultSentence(result, simulated, createdAt)}`}
+                    {`${label}: ${resultSentence(result, simulated)}`}
                   </span>
                   <SoPartyLine label={order ? partyByOrder.get(order.sales_order_id) : undefined} />
                   {simulated &&
@@ -3620,18 +3622,6 @@ export function FulfilmentBoardPanel({
                       ))}
                     </ul>
                   )}
-                  {retiredNoteApart(result) && (
-                    <p
-                      data-testid={`board-retired-note-${result.pso_id}`}
-                      className="text-sm break-words text-muted-foreground"
-                    >
-                      {autocountChangeSentence(
-                        retiredNote(result, createdAt),
-                        simulated ? 'simulated' : 'confirmed',
-                        true,
-                      )}
-                    </p>
-                  )}
                   {result.ok && result.lines_cancelled && result.lines_cancelled.length > 0 && (
                     <ul
                       data-testid={`board-cancelled-lines-${result.pso_id}`}
@@ -3675,7 +3665,11 @@ export function FulfilmentBoardPanel({
                       );
                     }
                     const posted = postedLines[result.pso_id] ?? [];
-                    const echoed = new Set(result.lines_confirmed.map((line) => line.project_line_id));
+                    // A saved cancel comes back retired, not confirmed (F2): both count as done.
+                    const echoed = new Set([
+                      ...result.lines_confirmed.map((line) => line.project_line_id),
+                      ...(result.lines_retired ?? []).map((line) => line.project_line_id),
+                    ]);
                     // A posted line the server did not name. Comparing lengths would flag a
                     // planning-change echo that carries lines the board never posted.
                     const missing = posted.filter((line) => !echoed.has(line.project_line_id));
@@ -3797,7 +3791,7 @@ export function FulfilmentBoardPanel({
           <Skeleton className="h-10 w-full" />
           <Skeleton className="h-72 w-full" />
         </div>
-      ) : !board.data || board.data.cells.length === 0 ? (
+      ) : !board.data || (board.data.cells.length === 0 && !hasPendingCancelled) ? (
         <Card>
           <CardContent className="px-6 py-10 text-center">
             <PackageSearch className="mx-auto size-6 text-muted-foreground" aria-hidden />
@@ -4192,6 +4186,17 @@ export function FulfilmentBoardPanel({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      {overrideAsk && (
+        <NonCancellableOverrideDialog
+          refusal={overrideAsk.refusal}
+          submitting={confirmingAll}
+          onCancel={() => setOverrideAsk(null)}
+          onOverride={async (reason) => {
+            const ok = await runConfirmAll(overrideAsk.soRemarks, reason);
+            if (ok) setOverrideAsk(null);
+          }}
+        />
+      )}
       {canSimulate && (
         <PlanningHistorySheet
           open={historyOpen}
@@ -4209,11 +4214,21 @@ export function FulfilmentBoardPanel({
           returnFocusRef={boardActionsRef}
         />
       ) : null}
+      {orderHistory ? (
+        <Dialog open onOpenChange={(open) => (open ? undefined : setOrderHistory(null))}>
+          <DialogContent className="max-w-3xl" aria-describedby={undefined}>
+            <DialogHeader>
+              <DialogTitle className="truncate">{`History ${orderHistory.soNumber}`}</DialogTitle>
+            </DialogHeader>
+            <DialogBody className="max-h-[70dvh] overflow-y-auto">
+              <SalesOrderHistory source="project" id={orderHistory.psoId} />
+            </DialogBody>
+          </DialogContent>
+        </Dialog>
+      ) : null}
       {guideOpen ? (
         <ConfirmGuideDialog
           pages={guidePages}
-          autocountNote={autocountBoardNote(autocountNotes, guidePages.length > 0)}
-          applyLabel={confirmButtonLabel(0, autocountNotes.length)}
           runConfirm={runConfirmAll}
           saveRemarks={saveLineRemarks}
           preparing={guidePrep.running}

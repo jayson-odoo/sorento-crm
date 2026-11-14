@@ -225,6 +225,7 @@ class ComplaintUpdate(BaseModel):
 
 class ComplaintResponse(ComplaintBase):
     id: str
+    last_activity_at: Optional[datetime] = None
     # Resolved display values for the project link (AC-L3). Read-only: the client sends
     # `project_id` and gets these back, so no screen has to render a UUID.
     project_code: Optional[str] = None

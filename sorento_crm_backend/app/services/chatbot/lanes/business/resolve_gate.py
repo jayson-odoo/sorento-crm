@@ -535,6 +535,12 @@ def pick_near_code_first(parser: dict[str, Any], resolved: dict[str, Any]) -> No
         if not isinstance(row, dict):
             continue
         token, pick = _token_of(entity), token_key(str(row.get("canonical_code") or ""))
+        # CHATBOT-CODE-MATCH AC-20d / owner Q3: an inactive or discontinued pick is set aside but
+        # never offered. Its row is the pick's own exact match (`grounding._pick_as_trgm_neighbour`,
+        # which stamps `display.offerable`), which `alternatives_offerable_only` does not filter.
+        shown = row.get("display") or {}
+        if shown.get("is_active") is False or shown.get("offerable") is False:
+            continue
         for res in resolutions:
             if isinstance(res, dict) and res.get("token") == token:
                 others = [
@@ -819,6 +825,8 @@ def resolve_entity_body(
         "hidden_spec_keys": _hidden_spec_keys_from_ctx(ctx),
         "contact_id": _contact_id_from_ctx(ctx),
         "space_id": space_id,
+        # CHATBOT-CODE-MATCH AC-20: the chat never offers an inactive code as a did-you-mean.
+        "alternatives_offerable_only": True,
     }
     if dry_run:
         body["dry_run"] = True
@@ -1633,6 +1641,10 @@ def run(
     # parser's pick first.
     if isinstance(resolved, dict):
         pick_near_code_first(parser, resolved)
+        if services.code_sizes is not None:
+            # CHATBOT-CODE-MATCH R4: a missed code's close codes, and a stored size equal to
+            # a number in it, read off stored values only.
+            services.code_sizes(parser, resolved)
 
     resolved_snapshot = _snapshot(resolved)
 

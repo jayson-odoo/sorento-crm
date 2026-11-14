@@ -522,6 +522,15 @@ class ProductAlternative(Base, CompanyScopedMixin):
     )
 
 
+def offerable_products():
+    """CHATBOT-CODE-MATCH AC-20 / owner Q3 (13 Nov 2026): a product the chat may OFFER as a close
+    code (a did-you-mean, a near code, a suggestion): active and not discontinued. A code typed
+    exactly is answered whatever its state; this governs offers only."""
+    from sqlalchemy import and_
+
+    return and_(Product.is_active.is_(True), Product.is_discontinued.isnot(True))
+
+
 def chat_searchable_products():
     """The one predicate every chat-facing product read applies.
 

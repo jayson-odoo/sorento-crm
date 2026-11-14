@@ -65,6 +65,7 @@ class Complaint(Base):
     root_cause_notified_at = Column(DateTime(timezone=False), nullable=True)
     resolution_notified_at = Column(DateTime(timezone=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    last_activity_at = Column(DateTime(timezone=False), nullable=True, index=True)  # newest person activity (FORMS-LAST-ACTIVITY)
     assigned_to = Column(Text, nullable=True)  # Respond.io assignee user id; display name resolved via User.respond_user_id
     portal_draft_at = Column(DateTime(timezone=False), nullable=True)  # set while user is editing in submission portal; cleared on Submit
     required_on_site_support = Column(Boolean, nullable=False, server_default="false")

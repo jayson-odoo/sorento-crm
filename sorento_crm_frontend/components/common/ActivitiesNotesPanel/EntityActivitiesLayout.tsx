@@ -58,8 +58,9 @@ import type {
   InternalNote,
   PanelTab,
 } from './types';
-import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { formatDateTimeInMalaysia, parseDateTimeAsUTC } from '@/lib/helpers';
 import { localStore } from '@/lib/storage';
+import { formatSystemEvent } from './formatSystemEvent';
 
 const PERSIST_KEY = 'sorento:activities-panel:tab';
 
@@ -69,8 +70,8 @@ function htmlToText(html: string): string {
   return (doc.body.textContent || '').trim();
 }
 
-function relativeTime(iso: string): string {
-  const d = new Date(iso);
+export function relativeTime(iso: string): string {
+  const d = parseDateTimeAsUTC(iso);
   const diff = (Date.now() - d.getTime()) / 1000;
   if (diff < 60) return 'just now';
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
@@ -78,35 +79,6 @@ function relativeTime(iso: string): string {
   return formatDateTimeInMalaysia(d);
 }
 
-function formatSystemEvent(
-  template: string | null | undefined,
-  payload: Record<string, unknown> | null | undefined,
-): string {
-  const t = template ?? '';
-  const p = payload ?? {};
-  switch (t) {
-    case 'entity.created':
-      return `Ticket ${(p.ticket_number as string) ?? ''} was created.`;
-    case 'status.changed':
-      return `Status changed: ${(p.from as string) ?? '?'} → ${(p.to as string) ?? '?'}${
-        p.note ? ` - ${p.note as string}` : ''
-      }`;
-    case 'assignee.changed':
-      return 'Assignee changed.';
-    case 'response.updated':
-      return p.first_response ? 'First response posted.' : 'Response updated.';
-    case 'resolution.updated':
-      return 'Resolution updated.';
-    case 'watchers.added':
-      return 'Watchers added.';
-    case 'watchers.removed':
-      return 'Watcher removed.';
-    case 'message.sent':
-      return 'Outbound message sent.';
-    default:
-      return t || 'System event';
-  }
-}
 
 interface Props {
   entityType: string;
@@ -326,7 +298,7 @@ function ActivitiesTab({
               </div>
               {it.kind === 'system' ? (
                 <p className="text-sm">
-                  {formatSystemEvent(it.system_template, it.system_payload)}
+                  {formatSystemEvent(it.system_template, it.system_payload, it.body_text)}
                 </p>
               ) : it.body_html ? (
                 <div

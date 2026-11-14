@@ -52,12 +52,16 @@ vi.mock('@/components/common/SearchableSelect', () => ({
 
 vi.mock('@/components/common/SearchableMultiSelect', () => ({
   SearchableMultiSelect: (props: {
+    /** Only the Item cell passes this; these suites are about the other multi-selects. */
+    renderTrigger?: unknown;
     placeholder?: string;
     max?: number;
     value: string[];
     onChange: (v: string[]) => void;
     options?: Opt[];
-  }) => (
+  }) =>  {
+    if (props.renderTrigger) return null;
+    return (
     <div data-testid="multi" data-max={String(props.max)} data-placeholder={props.placeholder ?? ''}>
       <span data-testid="multi-value">{props.value.join(',')}</span>
       <ul>
@@ -71,7 +75,8 @@ vi.mock('@/components/common/SearchableMultiSelect', () => ({
         pick two
       </button>
     </div>
-  ),
+    );
+  },
 }));
 
 import { PriceTagLinesTable } from './PriceTagLinesTable';

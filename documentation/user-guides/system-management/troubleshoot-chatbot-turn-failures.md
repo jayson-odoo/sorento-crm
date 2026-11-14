@@ -80,6 +80,18 @@ Opening the Turn trace on one of these messages shows one extra step, **Read the
 steps - naming what was read or heard, and whether it was accepted, denied or failed. This step
 does not appear at all on an ordinary text message.
 
+## Opening a trace from other screens
+
+Every **trace** link opens the same full trace panel at the side of the screen you are on, in the
+same tab. The screen behind it stays as it was, so you can close the panel and carry on where you
+left off. Press **Escape** or click **X** to close it. On a phone the panel fills the screen.
+
+* **Chatbot Console**: click **trace** under a bot reply.
+* **Contact > Chatbot > Conversations**: click a conversation row to open its first turn.
+* **AI assistant panel**: click **View trace** under a reply (admins only).
+* **AI Usage**: expand a row in Recent queries, then click **View full trace**.
+* A Chat History address that names a turn opens that turn's panel straight away.
+
 ## The full trace panel
 
 For more than the raw payload, click the small tree icon at the end of the Turn line (its label
@@ -148,6 +160,14 @@ genuinely needs re-answering, a person has to press **Retry turn** on the failed
     asking again),
   * or this environment simply has no automation front door configured to retry into (this is
     normal on a development machine; it is not a bug).
+* **When the CRM sent the reply** (Settings > Chatbot, **Bot replies sent by** is a CRM option),
+  Retry does not ask the bot again. It sends the same reply again, only the parts the customer has
+  not received yet, so nobody gets a part twice. If a part timed out, the CRM first checks the
+  conversation: a part that did arrive is counted as sent. When that check itself fails, the turn
+  shows **Not confirmed**: look at the conversation, then press Retry.
+* Retry on a reply the CRM sent is refused, with the reason, when staff have taken over the
+  conversation, when the message is more than 24 hours old, or when the contact belongs to another
+  respond.io workspace. Answer the customer in the conversation instead.
 * Retry needs a slightly wider permission than viewing the trace, so if you can see the trace but
   not the Retry button, that is expected for your role - ask an admin to retry it instead.
 
@@ -155,8 +175,8 @@ genuinely needs re-answering, a person has to press **Retry turn** on the failed
 
 On the **Chat History** list itself, open **Filters** and turn on **Failed turns only**. The list
 then narrows to contacts who had at least one failed turn in the selected date range, and the
-**Contact** column shows a badge naming the stage the *last* failure stopped at (e.g. "failed at
-understood") plus a count if there was more than one.
+**Contact** column shows a badge with the same words the turn itself shows for the *last* failure
+(e.g. "Failed at Understood", or "Not confirmed") plus a count if there was more than one.
 
 Inside a thread, the drawer header has its own **Failed turns only** toggle (with a count badge)
 that jumps you straight to the messages whose turn failed, without scrolling the whole
@@ -217,8 +237,8 @@ previous version again, not by asking engineering to revert code.
 * [Chatbot - "which products have X" (asking for a set)](chatbot-attribute-set-answers.md) - what
   a customer sees when they ask for a whole group of products at once, and the Lookup Sets an
   admin fills in to teach the bot new words for it.
-* [Chatbot - "last purchase cost" answer](chatbot-last-purchase-cost.md) - the per-contact
-  Field reveal that gates a cost answer, and rolling out its parser vocabulary via a Publish.
+* [Chatbot - "last purchase cost" answer](chatbot-last-purchase-cost.md) - who gets a cost
+  answer (the linked user's View Product Cost permission), and rolling out its parser vocabulary via a Publish.
 * [Chatbot - photos and voice notes](chatbot-media-intake.md) - what a contact sees when they
   send a photo or voice note, and why one might be refused.
 * [Chatbot Domains](chatbot-domains.md) and [Entity kinds](chatbot-entity-kinds.md) - what a
