@@ -166,7 +166,7 @@ describe('ContactsList - Companies hidden from a viewer who cannot read company 
     expect(screen.queryByRole('button', { name: /^Companies$/ })).toBeNull();
     expect(screen.queryByText('Mocha, Sorento')).toBeNull();
     await user.click(filtersButton());
-    await screen.findByRole('dialog');
+    await screen.findByTestId('contacts-filters-popover');
     expect(screen.queryByLabelText('Company: any')).toBeNull();
   });
 
