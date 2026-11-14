@@ -1,8 +1,8 @@
 """AC-20..AC-24 (chatbot-last-purchase-cost): the `_po_last_cost` presenter and its
 ToolSpec, `crm_procurement_po_last_cost_list`.
 
-`documentation/plans/chatbot/PLAN-chatbot-last-purchase-cost.md`;
-`documentation/plans/chatbot/chatbot-last-purchase-cost-acceptance-criteria.md`.
+`documentation/plans/_archive/chatbot/PLAN-chatbot-last-purchase-cost.md`;
+`documentation/plans/_archive/chatbot/chatbot-last-purchase-cost-acceptance-criteria.md`.
 
 Owner ruling from live verification, 12 Sep 2026, verbatim: "we should always show
 discount even though it is null or 0" - `Discount / unit` is no longer an "if any" field;

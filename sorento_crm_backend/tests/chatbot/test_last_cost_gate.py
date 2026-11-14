@@ -2,8 +2,8 @@
 whole-domain field-reveal gate, the parser prompt addendum, the gate matrix row, the
 `top_n` passthrough, and the migration 513 publish.
 
-`documentation/plans/chatbot/PLAN-chatbot-last-purchase-cost.md`;
-`documentation/plans/chatbot/chatbot-last-purchase-cost-acceptance-criteria.md`.
+`documentation/plans/_archive/chatbot/PLAN-chatbot-last-purchase-cost.md`;
+`documentation/plans/_archive/chatbot/chatbot-last-purchase-cost-acceptance-criteria.md`.
 
 AC-16/AC-17 drive the REAL `engine.run_turn`, mirroring `tests/chatbot/
 test_s6c_engine_paths.py`'s `_srtwc8517_resolved_bundle()` pattern (a canned

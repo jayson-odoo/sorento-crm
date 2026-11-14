@@ -1,7 +1,7 @@
 # Console cases for "last purchase cost" per product per location, gated per contact
 # (`feat/chatbot-last-purchase-cost`).
 #
-# Plan `documentation/plans/chatbot/PLAN-chatbot-last-purchase-cost.md`; UAC
+# Plan `documentation/plans/_archive/chatbot/PLAN-chatbot-last-purchase-cost.md`; UAC
 # `chatbot-last-purchase-cost-acceptance-criteria.md` AC-31 / AC-32 (plus AC-15 and AC-30
 # on the live route/tool). Run with `scripts/chatbot_console_check.py` against a lane
 # backend before the PR and once against production after the deploy.
