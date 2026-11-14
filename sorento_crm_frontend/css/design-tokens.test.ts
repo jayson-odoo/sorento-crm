@@ -209,7 +209,7 @@ describe('S2-02 dark surface ramp', () => {
   it('renders the active tab in primary on its muted track', () => {
     const tabs = read('components/ui/tabs.tsx');
     expect(tabs).toContain("default: 'bg-muted p-1'");
-    expect(tabs).toContain('data-[state=active]:bg-primary');
+    expect(tabs).toContain('data-[state=active]:bg-(--toggle-selected-bg)');
     expect(step(darkVars['--popover'])).toBeLessThan(step(darkVars['--muted']));
   });
 });

@@ -36,6 +36,8 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Switch } from '@/components/ui/switch';
+import { useUiVersion } from '@/components/v2/version/useUiVersion';
+import { VersionSwitchItem } from '@/components/v2/version/VersionSwitchItem';
 import { useUploadManager } from '@/components/upload-activity/UploadManagerContext';
 import { useUploadActivity } from '@/components/upload-activity/useUploadActivity';
 import { useMyDownloads } from '@/components/my-downloads/MyDownloadsContext';
@@ -54,6 +56,7 @@ export function UserDropdownMenu({ trigger }: { trigger: ReactNode }) {
     useAccountProfileForHeader();
   const { changeLanguage, language } = useLanguage();
   const { theme, setTheme } = useTheme();
+  const { uiVersion, uiV2Available, themeMode, setThemeMode } = useUiVersion();
 
   const handleLanguage = (lang: Language) => {
     changeLanguage(lang.code);
@@ -263,20 +266,37 @@ export function UserDropdownMenu({ trigger }: { trigger: ReactNode }) {
         <DropdownMenuSeparator />
 
         {/* Footer */}
-        <DropdownMenuItem
-          className="flex items-center gap-2"
-          onSelect={(event) => event.preventDefault()}
-        >
-          <Moon />
-          <div className="flex items-center gap-2 justify-between grow">
-            Dark Mode
-            <Switch
-              size="sm"
-              checked={theme === 'dark'}
-              onCheckedChange={handleThemeToggle}
-            />
-          </div>
-        </DropdownMenuItem>
+        {uiVersion === 'v2' ? (
+          // v2: the mode is stored on the server (users.theme_mode), so it follows the user.
+          <DropdownMenuRadioGroup
+            value={themeMode}
+            onValueChange={(value) => void setThemeMode(value as typeof themeMode)}
+          >
+            <DropdownMenuRadioItem value="light">Light</DropdownMenuRadioItem>
+            <DropdownMenuRadioItem value="dark">Dark</DropdownMenuRadioItem>
+            <DropdownMenuRadioItem value="system">System</DropdownMenuRadioItem>
+          </DropdownMenuRadioGroup>
+        ) : (
+          <DropdownMenuItem
+            className="flex items-center gap-2"
+            onSelect={(event) => event.preventDefault()}
+          >
+            <Moon />
+            <div className="flex items-center gap-2 justify-between grow">
+              Dark Mode
+              <Switch
+                size="sm"
+                checked={theme === 'dark'}
+                onCheckedChange={handleThemeToggle}
+              />
+            </div>
+          </DropdownMenuItem>
+        )}
+        {uiV2Available && (
+          <DropdownMenuItem asChild className="flex items-center gap-2">
+            <VersionSwitchItem className="w-full text-start" />
+          </DropdownMenuItem>
+        )}
         <div className="p-2 mt-1">
           <Button
             variant="outline"

@@ -16,8 +16,9 @@ export function useAccountProfileForHeader() {
   // `/api/v1/` URL carries the X-Impersonate-User-Id header, the account BFF route does not.
   const targetId = useImpersonationSession()?.targetUser.id ?? null;
 
+  const queryKey = targetId ? ['account-profile', targetId] : ['account-profile'];
   const { data: profile, isError } = useQuery({
-    queryKey: targetId ? ['account-profile', targetId] : ['account-profile'],
+    queryKey,
     queryFn: async () => {
       const response = await apiFetch(
         targetId ? '/api/v1/user-management/users/me' : '/api/user-management/account/',
@@ -35,6 +36,11 @@ export function useAccountProfileForHeader() {
           contact_id?: string | null;
           contact_name?: string | null;
         } | null;
+        /** UI v2 (phase 0): the effective version, whether v2 is offered, and the user's mode. */
+        ui_version?: 'v1' | 'v2';
+        ui_version_stored?: 'v1' | 'v2';
+        ui_v2_available?: boolean;
+        theme_mode?: 'light' | 'dark' | 'system';
       }>;
     },
     enabled: status === 'authenticated',
@@ -57,6 +63,8 @@ export function useAccountProfileForHeader() {
     : null;
 
   return {
+    profile,
+    queryKey,
     salesperson,
     // Settled = answered, failed, or answered null; a disabled query (session still loading) is not.
     isLoading: status === 'loading' || (status === 'authenticated' && profile === undefined && !isError),

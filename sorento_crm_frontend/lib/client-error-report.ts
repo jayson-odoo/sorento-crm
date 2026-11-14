@@ -29,11 +29,16 @@ function stackOf(error: Error & { componentStack?: string }): string | null {
   return parts.length ? parts.join('\n\n').slice(0, MAX_STACK) : null;
 }
 
+/** Extra fields a caller merges into the report body (UI v2: `{ ui_version: 'v2' }`). */
+export type ClientErrorExtra = Record<string, string | number | boolean | null>;
+
 export function buildClientErrorReport(
   error: Error & { digest?: string; componentStack?: string },
   boundary: ErrorBoundaryKind,
+  extra: ClientErrorExtra = {},
 ) {
   return {
+    ...extra,
     boundary,
     name: String(error?.name ?? 'Error').slice(0, 128),
     message: String(error?.message ?? '').slice(0, MAX_MESSAGE),
@@ -50,6 +55,7 @@ export function buildClientErrorReport(
 export async function reportClientError(
   error: Error & { digest?: string },
   boundary: ErrorBoundaryKind,
+  extra: ClientErrorExtra = {},
 ): Promise<void> {
   if (!error || typeof error !== 'object' || reported.has(error)) return;
   reported.add(error);
@@ -62,7 +68,7 @@ export async function reportClientError(
     const init: RequestInit = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify(buildClientErrorReport(error, boundary)),
+      body: JSON.stringify(buildClientErrorReport(error, boundary, extra)),
     };
     const url = `${base}/api/v1/system/client-errors`;
     // `keepalive` lets the report outlive a reload. Older Safari rejects a keepalive

@@ -121,7 +121,23 @@
   --scm-dead-soft: oklch(0.95 0.005 260);
   --scm-incoming: oklch(0.55 0.16 250);
   --scm-incoming-soft: oklch(0.95 0.035 250);
+  /* D9 (TOGGLE-SELECTED): one token pair for a selected toggle, toggle-group item and pill tab.
+     v1 resolves it to the primary fill, so v1 pixels are unchanged. */
+  --toggle-selected-bg: var(--primary);
+  --toggle-selected-fg: var(--primary-foreground);
 }
+
+/* UI v2 (phase 0). Scoped by <html data-ui="v2">, so a v1 screen keeps v1 tokens. The brand variables
+   (--primary, --primary-hover, --primary-foreground, --primary-soft, --ring) are written at runtime by
+   components/v2/theme/V2ThemeProvider from lib/theme; the values below are the fallback soft tint and the
+   selected-toggle pair (D9). The neutrals stay the v1 ones until a phase changes them. */
+:root[data-ui="v2"] {
+  --primary-soft: var(--color-blue-50);
+  --toggle-selected-bg: var(--primary-soft);
+  --toggle-selected-fg: var(--primary);
+}
+
+
 
 .dark {
   --background: var(--color-zinc-950);
@@ -178,6 +194,13 @@
   --scm-dead-soft: oklch(0.29 0.008 260);
   --scm-incoming: oklch(0.72 0.15 250);
   --scm-incoming-soft: oklch(0.30 0.05 250);
+}
+
+/* v2 dark: the page background is the one the generator measures against (lib/theme/presets PAGE_BACKGROUND). */
+.dark[data-ui="v2"] {
+  --toggle-selected-bg: var(--primary-soft);
+  --toggle-selected-fg: var(--primary);
+  --background: oklch(0.178 0.004 286);
 }
 
 /** Theme Setup **/
