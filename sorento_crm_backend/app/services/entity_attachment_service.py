@@ -267,6 +267,7 @@ class EntityAttachmentService:
         uploaded_by: Optional[str] = None,
         uploader_kind: Optional[str] = None,
         uploaded_by_contact_id: Optional[str] = None,
+        company_id: Optional[str] = None,
     ) -> EntityAttachmentLink:
         """``uploaded_by`` / ``uploader_kind`` are additive attribution params
         (default None, no behaviour change for existing callers that don't pass
@@ -275,7 +276,11 @@ class EntityAttachmentService:
         contact/system upload (UAC B2). ``uploaded_by_contact_id`` (chatbot
         media-into-turn, S4) is the same idea for a CONTACT-sourced upload (a
         WhatsApp photo/voice note) - pass it with ``uploader_kind='contact'``
-        rather than ``uploaded_by``, which is a ``users.id`` FK."""
+        rather than ``uploaded_by``, which is a ``users.id`` FK.
+
+        ``company_id`` (default None: shared, as before) owns the file for a record that is
+        itself company-scoped, so another company's catalogue cannot list, open or link it
+        (the order change notice, security review M5)."""
         et, eid = self._normalize(entity_type, entity_id)
         url = (file_url or "").strip()
         if not url:
@@ -303,6 +308,8 @@ class EntityAttachmentService:
             uploader_kind=uploader_kind,
             uploaded_by_contact_id=uploaded_by_contact_id,
         )
+        if company_id:
+            attachment.company_id = company_id
         self.db.add(attachment)
         self.db.flush()
         return self.link_existing_attachment(
@@ -650,8 +657,12 @@ def create_response_attachment(
     attachment_type_code: str = RESPONSE_ATTACHMENT_TYPE_CODE,
     key_prefix: Optional[str] = None,
     check_quota: bool = True,
+    company_id: Optional[str] = None,
 ) -> dict[str, Any]:
     """Upload + link a staff response attachment (``response_attachment`` type, D9).
+
+    ``company_id`` owns the file for a company-scoped record (the order change notice); the
+    default None keeps it shared, as complaints and stock inquiries have it.
 
     ``check_quota=False`` is for a caller that has already checked its own limits.
     ``attachment_type_code`` and ``key_prefix`` let another staff upload surface (the AI panel's
@@ -718,6 +729,7 @@ def create_response_attachment(
         mime_type=content_type,
         uploaded_by=uploader_id,
         uploader_kind="user",
+        company_id=company_id,
     )
     if commit:
         db.commit()

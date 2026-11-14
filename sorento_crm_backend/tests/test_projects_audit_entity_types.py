@@ -122,10 +122,20 @@ BORN_AFTER_THE_MOVE = frozenset({
     # autosaved state and its insert-only History, born straight into `projects`.
     "quotation_document_drafts",
     "quotation_document_snapshots",
+    # OCN-ORDER-CHANGE-NOTICE (migration ocn_0001_order_change_notice): the notice's lines and
+    # its change-type lookup, born straight into `projects` beside `order_change_notices`.
+    "order_change_notice_lines",
+    "order_change_types",
     # PROJECT-MIGRATION-TOOL (#2385, migration pimp_0001_import_value_maps): the project import's
     # saved value links, born straight into `projects`.
     "import_value_maps",
 })
+
+# A kept-name model whose audit entity type was deliberately re-pinned after the move, with
+# the reason. `order_change_notices` became a form with a History tab (OCN-ORDER-CHANGE-NOTICE
+# B11) and audits as `order_change_notice`, the name the form's SLA, comments and History use;
+# the table held no rows in production when it moved, so no audit row was orphaned.
+REPINNED = {"order_change_notices": "order_change_notice"}
 
 
 def _projects_schema_classes():
@@ -223,18 +233,25 @@ def test_every_renamed_model_pins_its_pre_move_audit_entity_type():
 
 
 def test_models_that_kept_their_name_keep_their_audit_entity_type():
-    """The other 13 changed schema only, so their entity type must not have moved either."""
+    """The other 13 changed schema only, so their entity type must not have moved either,
+    except the re-pinned ones (`REPINNED`), which carry exactly their new entity type."""
     pre_move = _pre_move_names()
     checked = 0
+    repinned = set()
 
     for cls in _projects_classes():
         name = cls.__tablename__
         if pre_move[name] != name:
             continue
+        if name in REPINNED:
+            assert _audit_entity_type(cls) == REPINNED[name]
+            repinned.add(name)
+            continue
         assert _audit_entity_type(cls) == name
         checked += 1
 
-    assert checked == 13
+    assert repinned == set(REPINNED)
+    assert checked + len(repinned) == 13
 
 
 def test_no_projects_entity_type_collides_with_any_other_model():

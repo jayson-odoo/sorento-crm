@@ -76,6 +76,7 @@ def _entity_status(db: Session, source_entity_type: str, source_entity_id: str):
     """
     from app.models.complaints import Complaint
     from app.models.procurement import PurchaseRequestHeader, StockInquiry
+    from app.models.project_so import OrderChangeNotice
     from app.models.tickets import Ticket
 
     model = {
@@ -84,6 +85,7 @@ def _entity_status(db: Session, source_entity_type: str, source_entity_id: str):
         "stock_inquiry": StockInquiry,
         "complaint": Complaint,
         "ticket": Ticket,
+        "order_change_notice": OrderChangeNotice,
     }.get(source_entity_type)
     if model is None:
         return None

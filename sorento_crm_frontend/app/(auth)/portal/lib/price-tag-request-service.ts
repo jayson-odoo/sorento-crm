@@ -444,6 +444,9 @@ export type LinePartIn = {
  * index signature - an interface would need a cast at that one call site.
  */
 export type PriceTagRequestLineInput = {
+  /** PRICETAG-ALA-CARTE AC-12: the saved line's own id (absent on a new line), so a re-save
+   *  carries marketing's tags by line when a product repeats. */
+  id?: string;
   line_type: PriceTagLineType;
   product_id: string | null;
   product_set_id: string | null;

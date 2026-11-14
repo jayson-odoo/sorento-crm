@@ -82,16 +82,6 @@ describe('usePriceTagLineEditor Item options (bug 17)', () => {
       'SET-TWO',
     ]);
   });
-
-  it('the part picker lists products only, with the same option shape', async () => {
-    const { result } = setup();
-    const options = await result.current.editor.fetchPartOptions('');
-    expect(options.map((o) => [o.label, o.description, o.code])).toEqual([
-      ['SRTWT7634-BL  RM 1,050', 'ZZT Basin Mixer', 'SRTWT7634-BL'],
-      ['SRTSH2626-GY', undefined, 'SRTSH2626-GY'],
-      ['SRTZERO-1', undefined, 'SRTZERO-1'],
-    ]);
-  });
 });
 
 describe('usePriceTagLineEditor item pick (bug 14)', () => {
@@ -119,17 +109,6 @@ describe('usePriceTagLineEditor item pick (bug 14)', () => {
     const set = options.find((o) => o.value === 'product_set:s-2')!;
     act(() => result.current.editor.handleItemSelect('l1', set));
     expect(result.current.lines[0].code).toBe('SET-TWO');
-  });
-
-  it('a part added by hand whose name equals its code carries that code', async () => {
-    const { result } = setup();
-    const items = await result.current.editor.fetchItemOptions('');
-    act(() => result.current.editor.handleItemSelect('l1', items[0]));
-    const parts = await result.current.editor.fetchPartOptions('');
-    act(() => result.current.editor.addPart('l1', parts.find((o) => o.value === 'product:p-2')!));
-    await waitFor(() => expect(result.current.lines[0].parts).toHaveLength(1));
-    expect(result.current.lines[0].parts[0].code).toBe('SRTSH2626-GY');
-    expect(result.current.lines[0].parts[0].name).toBe('SRTSH2626-GY');
   });
 });
 

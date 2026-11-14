@@ -93,6 +93,8 @@ class SystemSettingUpdate(BaseModel):
     n8n_close_convo_webhook_url: Optional[str] = None
     purchase_request_default_approver_user_id: Optional[str] = None
     sponsorship_form_default_approver_user_id: Optional[str] = None
+    # OCN-ORDER-CHANGE-NOTICE: the approval stage's default approver. Here and in the GET dict.
+    order_change_notice_default_approver_user_id: Optional[str] = None
     # PS-QUOTE-RULES R4: who approves an off-series line, and the last-resort approver.
     off_series_approver_user_id: Optional[str] = None
     default_quotation_approver_user_id: Optional[str] = None
@@ -134,6 +136,9 @@ class SystemSettingUpdate(BaseModel):
     cost_price_verification_enabled: Optional[bool] = None
     # Sample requests (SR-CORE, card rule 2): soft-transition switch, OFF on deploy. Must appear here, in the GET dict, and in AppConfigResponse below.
     sample_request_require_project: Optional[bool] = None
+    # OCN-ORDER-CHANGE-NOTICE: Submit needs a project, OFF on deploy. Here, in the GET dict, and in
+    # AppConfigResponse below (the form marks the project required, as the sample request's does).
+    order_change_notice_require_project: Optional[bool] = None
     # AC-QTSO-CRM: "AutoCount quotations and sales orders from Project sales", OFF on deploy.
     # Here, in the GET dict, and in AppConfigResponse below.
     project_autocount_write_enabled: Optional[bool] = None
@@ -295,6 +300,9 @@ class AppConfigResponse(BaseModel):
     #: SR-CORE: a salesperson's sample request form must know whether to require a
     #: registered project, and holds no `user_management.settings.view`.
     sample_request_require_project: bool = False
+    #: OCN-ORDER-CHANGE-NOTICE: the order change notice form says whether Submit needs a project,
+    #: and its raisers hold no `user_management.settings.view` (the sample request's reason).
+    order_change_notice_require_project: bool = False
     #: AC-QTSO-CRM: Project sales hides every AutoCount write action while this is off; the
     #: salesperson who sends holds no `user_management.settings.view`.
     project_autocount_write_enabled: bool = False
@@ -342,8 +350,10 @@ def get_settings(
             }
         pr_uid = getattr(settings, "purchase_request_default_approver_user_id", None) if settings else None
         sf_uid = getattr(settings, "sponsorship_form_default_approver_user_id", None) if settings else None
+        ocn_uid = getattr(settings, "order_change_notice_default_approver_user_id", None) if settings else None
         user_pr = db.query(User).filter(User.id == pr_uid).first() if pr_uid else None
         user_sf = db.query(User).filter(User.id == sf_uid).first() if sf_uid else None
+        user_ocn = db.query(User).filter(User.id == ocn_uid).first() if ocn_uid else None
         # The default unit's CODE as well as its id: the settings screen may not render a
         # bare UUID, and the id alone would leave it with nothing to show until the units
         # master happens to be loaded beside it.
@@ -428,6 +438,8 @@ def get_settings(
                 "sponsorship_form_default_approver_user_id": sf_uid,
                 "sponsorship_form_default_approver_name": user_sf.name if user_sf else None,
                 "sponsorship_form_default_approver_email": user_sf.email if user_sf else None,
+                "order_change_notice_default_approver_user_id": ocn_uid,
+                "order_change_notice_default_approver_name": user_ocn.name if user_ocn else None,
                 **_quotation_approver_fields(db, settings),
                 "n8n_attachment_webhook_url": getattr(settings, "n8n_attachment_webhook_url", None)
                 if settings
@@ -491,6 +503,9 @@ def get_settings(
                 ),
                 "sample_request_require_project": (
                     bool(getattr(settings, "sample_request_require_project", False)) if settings else False
+                ),
+                "order_change_notice_require_project": (
+                    bool(getattr(settings, "order_change_notice_require_project", False)) if settings else False
                 ),
                 "project_autocount_write_enabled": (
                     bool(getattr(settings, "project_autocount_write_enabled", False)) if settings else False
@@ -638,6 +653,9 @@ def get_app_config(
             ),
             sample_request_require_project=bool(
                 getattr(settings, "sample_request_require_project", False)
+            ),
+            order_change_notice_require_project=bool(
+                getattr(settings, "order_change_notice_require_project", False)
             ),
             project_autocount_write_enabled=bool(
                 getattr(settings, "project_autocount_write_enabled", False)
@@ -1007,6 +1025,7 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
     for col in (
         "purchase_request_default_approver_user_id",
         "sponsorship_form_default_approver_user_id",
+        "order_change_notice_default_approver_user_id",
         "off_series_approver_user_id",
         "default_quotation_approver_user_id",
     ):
@@ -1258,6 +1277,7 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
     # NOT NULL booleans: an explicit null would 500 at commit, so it reads as "off".
     for column in (
         "sample_request_require_project",
+        "order_change_notice_require_project",
         "project_autocount_write_enabled",
         "stock_debt_po_link_enabled",
     ):
