@@ -139,7 +139,7 @@ MAIN_LEFT_OUT = (
     "change an opportunity; change a dealer contact; approve or reject a purchase request; "
     "take back a purchase request action; record a suggestion or wish for what the system should have or do, "
     "an idea or a feature request; change one of your ideas; grant a dealer contact access; add or remove contact tags; "
-    "assign sales agents to customers"
+    "assign sales agents to customers; edit contacts from a pasted table"
 )
 
 

@@ -4,17 +4,23 @@
  * Stable per-contact portal URL - `/portal/c/{slug}`.
  *
  * The slug is an identity hint, not a credential: with a live device token
- * for this contact the landing renders straight away; otherwise the user
- * verifies via OTP. When the device holds a token for a DIFFERENT contact
- * (shared device), the slug in the address bar wins - the stored session is
- * dropped and this contact verifies fresh.
+ * for this contact the landing renders straight away; otherwise a signed-in
+ * CRM user opening their OWN contact's portal is let in by the CRM-session
+ * bridge, and everyone else verifies via OTP. When the device holds a token
+ * for a DIFFERENT contact (shared device), the slug in the address bar wins -
+ * the stored session is dropped first.
  */
 
-import { Suspense, use, useEffect, useState } from 'react';
+import { Suspense, use, useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Skeleton } from '@/components/ui/skeleton';
 import { PortalLanding } from '../../components/PortalLanding';
-import { clearPortalToken, readPortalToken } from '../../lib/portal-client';
+import {
+  clearPortalToken,
+  openPortalFromCrm,
+  readPortalToken,
+  writePortalToken,
+} from '../../lib/portal-client';
 import {
   clearPortalSlug,
   portalVerifyPath,
@@ -26,27 +32,40 @@ function SlugEntry({ slug }: { slug: string }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [ready, setReady] = useState(false);
+  // One bridge call per visit: Strict Mode's second effect run must not mint a second token.
+  const started = useRef(false);
 
   useEffect(() => {
+    if (started.current) return;
+    started.current = true;
     const token = readPortalToken();
     const storedSlug = readPortalSlug();
     const type = searchParams?.get('type');
 
-    if (!token) {
-      router.replace(portalVerifyPath({ slug, type }));
-      return;
-    }
-    if (storedSlug && storedSlug !== slug) {
+    if (token && storedSlug && storedSlug !== slug) {
       // Slug wins: the visitor explicitly opened another contact's URL. Drop
       // the previous session entirely (token AND slug pointer) so no stale
       // identity survives on this device.
       clearPortalToken();
       clearPortalSlug();
-      router.replace(portalVerifyPath({ slug, type }));
+    } else if (token) {
+      if (!storedSlug) writePortalSlug(slug);
+      setReady(true);
       return;
     }
-    if (!storedSlug) writePortalSlug(slug);
-    setReady(true);
+
+    // No CRM session, a refusal or a failure all answer null: the verify card, as before.
+    void openPortalFromCrm(slug)
+      .catch(() => null)
+      .then((bridged) => {
+        if (bridged) {
+          writePortalToken(bridged.token);
+          writePortalSlug(slug);
+          setReady(true);
+          return;
+        }
+        router.replace(portalVerifyPath({ slug, type }));
+      });
     // Intentional: only on first mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

@@ -1,0 +1,102 @@
+/**
+ * QUOTE-LINE-NOTE-REMARK (AC-7): the line note now prints in the customer's REMARK column, so the
+ * note popup tells the salesperson so with a one-line hint. Masked values.
+ */
+import React from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { fireEvent, render, screen } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { QuotationLine, StagedQuotationLine } from '../../_shared/types/project.types';
+import { serverToDraft } from './quotationLineDraft';
+
+if (!window.matchMedia) {
+  (window as unknown as { matchMedia: unknown }).matchMedia = () => ({
+    matches: false,
+    addEventListener() {},
+    removeEventListener() {},
+    addListener() {},
+    removeListener() {},
+  });
+}
+
+vi.mock('../../_shared/hooks/useProjects', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../_shared/hooks/useProjects')>();
+  return {
+    ...actual,
+    useQuotationLineImages: () => ({ data: undefined, isLoading: false, isError: false }),
+    useProductSetLineRef: () => ({ data: undefined, isLoading: false, isError: false }),
+  };
+});
+vi.mock('./QuotationStockChip', () => ({ QuotationStockChip: () => null, SetStockChip: () => null }));
+vi.mock('./QuotationLineFlags', () => ({
+  LineFlags: () => null,
+  MinimumPriceBadge: () => null,
+  MinimumPriceFlag: () => null,
+  NonCancellableFlag: () => null,
+}));
+vi.mock('@/hooks/useDeferredDeleteSeconds', () => ({ useDeferredDeleteSeconds: () => 10 }));
+vi.mock('@/lib/toast', () => ({
+  toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
+}));
+
+import { QuotationLinesGrid } from './QuotationLinesGrid';
+
+const BASE: QuotationLine = {
+  id: 'l1',
+  version_id: 'v1',
+  product_id: 'p1',
+  product_code: 'ZZT8518',
+  description: 'BATHTUB',
+  unit_price: '45.00',
+  quantity: '2.00',
+  uom: 'PCS',
+  line_total: '90.00',
+  is_non_standard: false,
+  is_below_floor: false,
+  sort_order: 0,
+};
+
+function staged(source: QuotationLine): StagedQuotationLine {
+  return { id: source.id, key: source.id, line: source, draft: serverToDraft(source, false), removed: false };
+}
+
+function renderGrid(lines: StagedQuotationLine[], editing = true) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={client}>
+      <QuotationLinesGrid
+        lines={lines}
+        editing={editing}
+        quotationId="q1"
+        emptyHint="No lines yet."
+        filterEmptyHint="No line matches."
+        fetchProducts={async () => []}
+        resolveProduct={() => undefined}
+        productCodeOf={() => null}
+        fillFromProduct={() => ({})}
+        uomOptions={[]}
+        uomError={null}
+        onUomRetry={() => {}}
+        brandOptions={[]}
+      />
+    </QueryClientProvider>,
+  );
+}
+
+beforeEach(() => vi.clearAllMocks());
+
+function openNotes(label: string) {
+  const trigger = screen.getByRole('button', { name: `Notes on ${label}` });
+  fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+  fireEvent.click(trigger);
+  return screen.findByRole('textbox', { name: `Note text on ${label}` });
+}
+
+describe('Line note popup hint', () => {
+  it('tells the salesperson the note is shown to the customer once opened', async () => {
+    renderGrid([staged({ ...BASE, notes: 'Lead time 6 weeks' })]);
+    expect(screen.queryByText('Shown to the customer')).toBeNull();
+    await openNotes('ZZT8518');
+    expect(screen.getAllByText('Shown to the customer')).toHaveLength(1);
+  });
+});
