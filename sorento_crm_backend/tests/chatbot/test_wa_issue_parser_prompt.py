@@ -7,6 +7,9 @@ as a new stored version:
 * `app.services.chatbot.head.issue_rule.apply_issue_rule(text) -> str | None` makes the doc's two edits by
   anchor (each anchor occurs exactly once in v72). It raises ValueError when an anchor is missing and
   returns None when the text already carries the rule (idempotent, a no-op signal).
+* Round 12 widens edit 2's text and adds edit 4 (rule 1, line 157) and edit 5 (the "outranks" line 164),
+  each appended in place after an anchor found exactly once: five edits on four lines, no line added.
+  The rule-1 phrase "is NOT request_for_help, even when it names IT" is in the candidate AND the template.
 * Applied to v72 it gives exactly the committed candidate `prompt-wa-issue-ideate.txt` (md5 pinned here).
 * The shared phrase "a problem with the CRM system or the assistant itself" is in the candidate AND the
   code template (`head.parser_template.TEMPLATE`), so the two agree.
@@ -48,20 +51,44 @@ MIGRATION_FILE = "wa_0002_parser_issue_ideate.py"
 MARKER_KEY = "wa_0002_parser_issue_ideate"
 SHARED_PHRASE = "a problem with the CRM system or the assistant itself"
 
-# The doc's three edits (Round 11), verbatim. All three change a line in place: no line is added.
+# The doc's edits, verbatim. Round 11 made three; round 12 widens edit 2's text and adds edits 4 and 5.
+# Every edit changes a line in place: no line is added (the candidate keeps v72's 1037 lines).
 EDIT1_OLD = "a complaint about existing behaviour (stays portal_link/complaint);"
 EDIT1_NEW = "a complaint about a product or an order (stays portal_link/complaint);"
 HUMAN_OLD = "asking for a human (stays request_for_help)."
 HUMAN_NEW = (
     "asking for a human (stays request_for_help). ALSO ideate: the user reports a problem with the CRM system "
-    "or the assistant itself (it errors, does not work or answers wrongly), or says they want to report one "
-    "before saying what it is: an issue to log, no routing, never request_for_help or an IT or support team."
+    "or the assistant itself (it errors, keeps loading, does not work or answers wrongly, whatever screen or "
+    "list it is on), or says they want to report one before saying what it is: an issue to log, no routing, "
+    "never request_for_help or an IT or support team, also when the user names IT or a team to report it to."
 )
 EDIT2_OLD = "  - ideate (an idea is never escalated), or none of these this turn -> NO routing: null / null"
 EDIT2_NEW = (
     "  - ideate (an idea or an issue report is never escalated), or none of these this turn -> NO routing: "
     "null / null"
 )
+# Round 12 edit 4: MESSAGE TYPE rule 1 (v72 line 157), appended in place after the anchor.
+RULE1_OLD = (
+    'Customer/company names (e.g. "today plumbing", "total home") are NOT departments and never trigger '
+    "request_for_help."
+)
+RULE1_NEW = RULE1_OLD + (
+    " A report of a problem with the CRM system or the assistant is NOT request_for_help, even when it names "
+    "IT, the IT team or a support team, or asks to report or send it to them: it is ideate (an issue to log, "
+    "see the ideate bullet), message_type business_query, no routing. Only an ask to be put through to IT or "
+    "a person that neither reports a problem nor says the user wants to report one stays request_for_help."
+)
+RULE1_LINE = 157
+# Round 12 edit 5: the "outranks" line (v72 line 164), appended in place after the anchor.
+OUTRANK_OLD = (
+    '"request_for_help" outranks business_query, clarification and casual, even when the message also '
+    "mentions a product or order."
+)
+OUTRANK_NEW = OUTRANK_OLD + " It never outranks a report of a CRM system or assistant problem (rule 1)."
+OUTRANK_LINE = 164
+# Round 12: the rule-1 phrase both the stored text and the code template carry.
+RULE1_PHRASE = "is NOT request_for_help, even when it names IT"
+V72_LINE_COUNT = 1037
 
 
 def _md5(path: Path) -> str:
@@ -74,13 +101,18 @@ def _v72() -> str:
 
 
 def _expected_from_doc(text: str) -> str:
-    """The doc's edits, derived here independently of the code under test."""
+    """The doc's five edits, derived here independently of the code under test."""
     lines = text.split("\n")
     (i,) = [n for n, line in enumerate(lines) if EDIT1_OLD in line]
     assert lines[i].count(HUMAN_OLD) == 1, "edit 2's anchor sits on the ideate bullet's own line"
     (j,) = [n for n, line in enumerate(lines) if line == EDIT2_OLD]
+    (k,) = [n for n, line in enumerate(lines) if RULE1_OLD in line]
+    (m,) = [n for n, line in enumerate(lines) if OUTRANK_OLD in line]
+    assert len({i, j, k, m}) == 4, "the four edited lines are distinct"
     lines[j] = EDIT2_NEW
     lines[i] = lines[i].replace(EDIT1_OLD, EDIT1_NEW).replace(HUMAN_OLD, HUMAN_NEW)
+    lines[k] = lines[k].replace(RULE1_OLD, RULE1_NEW)
+    lines[m] = lines[m].replace(OUTRANK_OLD, OUTRANK_NEW)
     return "\n".join(lines)
 
 
@@ -91,11 +123,13 @@ def _apply():
 
 
 # --------------------------------------------------------------------------- #
-# 1. The candidate file is v72 plus exactly the two edits                     #
+# 1. The candidate file is v72 plus exactly the five edits, on four lines     #
 # --------------------------------------------------------------------------- #
-def test_R9_the_candidate_is_pinned_and_is_v72_plus_the_two_edits():
-    """Round 11 (F3): the three edits change two lines in place and add none."""
+def test_R12_the_candidate_is_pinned_and_is_v72_plus_the_five_edits():
+    """Round 12 (F3 kept): the five edits change four lines in place (ideate bullet, rule 1 on line 157, the
+    outranks line 164, the routing line) and add none."""
     v72 = _v72()
+    assert len(v72.split("\n")) - (1 if v72.endswith("\n") else 0) == V72_LINE_COUNT
     assert CANDIDATE_PATH.is_file(), f"missing committed candidate {CANDIDATE_PATH.name}"
     candidate = CANDIDATE_PATH.read_text(encoding="utf-8")
     assert len(candidate.split("\n")) == len(v72.split("\n")), "the candidate adds a line (F3)"
@@ -106,10 +140,21 @@ def test_R9_the_candidate_is_pinned_and_is_v72_plus_the_two_edits():
         if line.startswith(("---", "+++", "@@")):
             continue
         (removed if line.startswith("-") else added).append(line[1:])
-    old_bullet = next(line for line in v72.split("\n") if EDIT1_OLD in line)
+    v72_lines = v72.split("\n")
+    old_bullet = next(line for line in v72_lines if EDIT1_OLD in line)
     new_bullet = old_bullet.replace(EDIT1_OLD, EDIT1_NEW).replace(HUMAN_OLD, HUMAN_NEW)
-    assert sorted(removed) == sorted([old_bullet, EDIT2_OLD])
-    assert sorted(added) == sorted([new_bullet, EDIT2_NEW])
+    old_rule1 = v72_lines[RULE1_LINE - 1]
+    old_outrank = v72_lines[OUTRANK_LINE - 1]
+    assert RULE1_OLD in old_rule1, f"edit 4's anchor sits on v72 line {RULE1_LINE}"
+    assert OUTRANK_OLD in old_outrank, f"edit 5's anchor sits on v72 line {OUTRANK_LINE}"
+    new_rule1 = old_rule1.replace(RULE1_OLD, RULE1_NEW)
+    new_outrank = old_outrank.replace(OUTRANK_OLD, OUTRANK_NEW)
+    assert len(removed) == 4 and len(added) == 4, (removed, added)
+    assert sorted(removed) == sorted([old_bullet, old_rule1, old_outrank, EDIT2_OLD])
+    assert sorted(added) == sorted([new_bullet, new_rule1, new_outrank, EDIT2_NEW])
+    cand_lines = candidate.split("\n")
+    assert cand_lines[RULE1_LINE - 1] == new_rule1
+    assert cand_lines[OUTRANK_LINE - 1] == new_outrank
     assert _md5(CANDIDATE_PATH) == CANDIDATE_MD5, "pin the candidate's md5 (CANDIDATE_MD5)"
 
 
@@ -124,10 +169,27 @@ def test_R9_apply_issue_rule_on_v72_returns_the_committed_candidate():
 # 2. Missing anchor raises; a text that already carries the rule is a no-op    #
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize(
-    "anchor", [EDIT1_OLD, HUMAN_OLD, EDIT2_OLD], ids=["complaint_clause", "human_clause", "routing_line"]
+    "anchor",
+    [EDIT1_OLD, HUMAN_OLD, EDIT2_OLD, RULE1_OLD, OUTRANK_OLD],
+    ids=["complaint_clause", "human_clause", "routing_line", "rule1_line", "outranks_line"],
 )
 def test_R9_apply_issue_rule_raises_when_an_anchor_is_missing(anchor):
     text = _v72().replace(anchor, "zzt anchor gone")
+    with pytest.raises(ValueError):
+        _apply()(text)
+
+
+def test_R12_edit4_and_edit5_anchors_occur_exactly_once_in_v72():
+    v72 = _v72()
+    assert v72.count(RULE1_OLD) == 1
+    assert v72.count(OUTRANK_OLD) == 1
+
+
+@pytest.mark.parametrize("anchor", [RULE1_OLD, OUTRANK_OLD], ids=["rule1_line", "outranks_line"])
+def test_R12_apply_issue_rule_raises_when_an_edit4_or_edit5_anchor_occurs_twice(anchor):
+    """Each new anchor must be found exactly once: a second copy is ambiguous, so refuse rather than guess."""
+    text = _v72() + "\n" + anchor
+    assert text.count(anchor) == 2
     with pytest.raises(ValueError):
         _apply()(text)
 
@@ -158,6 +220,15 @@ def test_R9_the_shared_phrase_is_in_the_candidate_and_the_code_template():
     assert SHARED_PHRASE in TEMPLATE
     assert SHARED_PHRASE not in _v72(), "v72 must not carry it already"
     assert SHARED_PHRASE in CANDIDATE_PATH.read_text(encoding="utf-8")
+
+
+def test_R12_the_rule1_phrase_is_in_the_candidate_and_the_code_template():
+    """Round 12: the code template mirrors edit 4 in rule 1, so both texts carry the same phrase."""
+    from app.services.chatbot.head.parser_template import TEMPLATE
+
+    assert RULE1_PHRASE not in _v72(), "v72 must not carry it already"
+    assert RULE1_PHRASE in CANDIDATE_PATH.read_text(encoding="utf-8")
+    assert RULE1_PHRASE in TEMPLATE
 
 
 # --------------------------------------------------------------------------- #

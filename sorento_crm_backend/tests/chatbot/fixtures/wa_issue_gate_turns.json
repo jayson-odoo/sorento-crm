@@ -1,0 +1,58 @@
+[
+  {
+    "id": "OWN1",
+    "message": "i want to report this is not the answer i want to the IT team",
+    "previous_response": "Okay. What would you like to check?",
+    "contact": "staff",
+    "expect": {"domain_hint": "ideate", "suggested_team": null}
+  },
+  {
+    "id": "OWN2",
+    "message": "i want to report this is not the answer i want to the IT team",
+    "previous_response": "(none)",
+    "contact": "staff",
+    "expect": {"domain_hint": "ideate", "suggested_team": null}
+  },
+  {
+    "id": "OWN3",
+    "message": "i want to report to the IT team",
+    "previous_response": "(none)",
+    "contact": "staff",
+    "expect": {"domain_hint": "ideate", "suggested_team": null}
+  },
+  {
+    "id": "G05",
+    "message": "hi good morning, the sales order list keeps loading and never opens",
+    "previous_response": "(none)",
+    "contact": "staff",
+    "expect": {"domain_hint": "ideate", "suggested_team": null}
+  },
+  {
+    "id": "G01",
+    "message": "the stock page shows a blank screen on my phone",
+    "previous_response": "(none)",
+    "contact": "dealer",
+    "expect": {"domain_hint": "ideate", "suggested_team": null}
+  },
+  {
+    "id": "G03",
+    "message": "I want to report a problem",
+    "previous_response": "(none)",
+    "contact": "dealer",
+    "expect": {"domain_hint": "ideate", "suggested_team": null}
+  },
+  {
+    "id": "G08",
+    "message": "the basin we delivered to the customer arrived cracked",
+    "previous_response": "(none)",
+    "contact": "dealer",
+    "expect": {"domain_hint": "portal_link", "message_type_not": "request_for_help"}
+  },
+  {
+    "id": "G09",
+    "message": "get me IT support",
+    "previous_response": "(none)",
+    "contact": "staff",
+    "expect": {"message_type": "request_for_help"}
+  }
+]
