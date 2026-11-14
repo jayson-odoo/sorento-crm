@@ -1,6 +1,6 @@
 # PLAN: CI-ZERO-MINUTES, GitHub Actions for build / deploy / rollback only (14 Nov 2026)
 
-Status: plan only, waiting on the owner's OK (no code before it). Track: small fix (workflow + crew-side change, no
+Status: owner OK 14 Nov ~20:45 ("Second PR about ci yes"), building on its own branch (not stacked on PR 1). Track: small fix (workflow + crew-side change, no
 product code). Follows `PLAN-ci-secrets-env-14nov.md` (PR 1).
 
 Owner goal (14 Nov): "I don't want to use github CI minutes at all", except build, deploy and rollback.

@@ -2,8 +2,10 @@
 
 The repo is private on a 3,000 GitHub-hosted minutes a month quota (CI-CLOUD-GATE, 4 Nov 2026;
 the Enterprise plan of 10 Oct did not happen), billed per job and rounded up to the minute. So
-GitHub runs fast checks and the release build/deploy only; tests run in Claude Code cloud
-sandboxes (`documentation/agents/cloud-lanes.md`, "Tests before crew-done" and "Release
+GitHub Actions only builds, deploys and rolls back (CI-ZERO-MINUTES, owner 14 Nov 2026): no
+workflow runs on a PR or a push, and there are no CI labels. The PR gate is
+`scripts/pr-gate.sh`, run by crew in the lane sandbox, which posts the `PR gate` commit status;
+tests run in Claude Code cloud sandboxes (`documentation/agents/cloud-lanes.md`, "Tests before crew-done" and "Release
 sweep"; plan `documentation/plans/ci/PLAN-ci-cloud-gate-04nov.md`). No job runs on the Mac
 runner. One workflow,
 `.github/workflows/deploy.yml`, runs everything. This page says what each trigger runs, what it
@@ -15,41 +17,16 @@ mechanics; this page is the operator's view. The design and its measurements:
 
 | Trigger | Runs | Billed minutes (target) |
 | --- | --- | --- |
-| PR labelled `ci` | Two jobs: `Changed areas`, then `PR gate`, fast checks only (CI-CLOUD-GATE): main's head merged in, alembic single head, PII, Outline guides, gitleaks; the app and worker import chains plus `pytest --collect-only` when the backend changed; the MCP import check when MCP changed; `tsc` plus ESLint over the changed files when the frontend changed. No test executes and no Postgres/Redis container starts: the lane posted `crew-tests:` from its sandbox. A merge tree whose PR gate already passed is not checked again. | ~2 docs-only or re-label, ~5 one area, ~9 backend + frontend (see the budget) |
-| PR labelled `ci-full` | REFUSED (owner, 9 Oct 2026: no full suite per PR). One job removes the label and fails with the reason; nothing else runs. | 1 |
+| Any PR | Nothing on GitHub. Crew runs `scripts/pr-gate.sh` (alembic single head, PII, assistant coverage, Outline guides, gitleaks; the app and worker import chains plus `pytest --collect-only` when the backend changed; the MCP import check when MCP changed; `tsc` plus ESLint over the changed files when the frontend changed) in the lane sandbox and posts the `PR gate` status. | 0 |
 | `workflow_dispatch` on main (the release) | Default (`skip_tests` true since CI-CLOUD-GATE): the alembic head check, build only the images whose service tree changed (an unchanged one is retagged), the owner-approved deploy. `Changed areas` refuses it unless the sha carries a `success` `release-sweep` commit status, which crew sets after a green full-suite cloud sweep on that sha (runbook: `documentation/agents/cloud-lanes.md`); `-f allow_unswept=true` overrides that as a visible emergency (the run summary says UNSWEPT RELEASE). `-f skip_tests=false`: the lean release tests first (core tier plus what the batch since the last release reaches, one `Release tests` job, ~25-50). `-f full_suite=true` (emergency, wins over `skip_tests`): the full shards. | ~25 default (build-images median 7 + build-and-deploy median 18); ~470 full (38099410256) |
-| Push to main | The alembic single-head gate only (PII and gitleaks ran on the same commits in the PR gate). No tests, no deploy. | 1 |
-| Any other label | Nothing (every job skips). | under 1 |
+| Push to main | Nothing. Every release's `needs` holds the alembic single-head check. | 0 |
 
 There is no nightly of any kind (owner, 10 Oct 2026): the deploy.yml schedule is gone and the
 never-stuck smoke (`never-stuck-nightly.yml`) runs by hand only.
 
-`PR gate` is the one check a PR needs: it runs the fast gates itself and fails when `Changed
-areas` did not pass, and it runs with `always()` so a red root job never turns it into "skipped". The ruleset
-`protect-main-branch` requires it once crew switches the ruleset (owner Q3). A merge-queue
-entry reports `CI gate (full)`.
-
-## The labels
-
-`ci` is one-shot: the run removes it, so adding it again re-runs against the PR's current
-head. A push to the PR branch never starts a run. `ci` runs share one concurrency group per PR
-with cancel-in-progress on: adding `ci` while a `ci` run is live cancels that run (the head
-moved). A `ci-full` label is refused by its own job and joins no group, so it cancels nothing.
-Never change labels while a run you want is live; to re-run, remove the label, wait ten
-seconds, add it alone.
-
-- `ci` once per PR head that is ready to merge (CI-LEAN budget: about ten PR runs a day).
-
-Above the 3600 CPU-s selection budget the `ci` run executes the PR's own changed test files
-only and says so in the "Select backend tests by import" step of the `Changed areas` job; the
-whole selection then runs in the release. That replaces the earlier behaviour (CI-SPEED,
-1 Oct 2026) of running all six shards on the PR, which fired on most backend PRs and was 59% of
-all minutes in the week of 29 Sep to 5 Oct 2026.
-
-Until crew switches the ruleset to `PR gate`, it requires the five old names (`Single alembic
-head (fast gate)`, `Changed areas`, `Validate backend imports`, `Validate MCP imports`,
-`Type-check frontend`): the first two still run on a PR and the other three report "skipped",
-which a ruleset accepts.
+`PR gate` is the one check a PR needs, a commit status crew posts from the lane sandbox
+(`documentation/agents/cloud-lanes.md`, "PR gate"). A merge-queue entry reports `CI gate (full)`.
+The Outline user-guide sync runs from crew's scheduler; its workflow is a manual fallback.
 
 ## Timeouts
 
@@ -105,10 +82,10 @@ possibly an artefact of the earlier `next typegen` in that checkout). A full bui
 | Item | Count a month | Each | Month |
 | --- | ---: | ---: | ---: |
 | Releases, default (build-images median 7 + build-and-deploy median 18) | 60 (2 a day) | ~25 | ~1,500 |
-| PR gate runs (`Changed areas` + `PR gate`) | ~7 a day | ~7 | ~1,500 |
-| **Total** | | | **~3,000** |
+| PR gate runs | 0 (crew runs `scripts/pr-gate.sh` in the sandbox since CI-ZERO-MINUTES) | 0 | 0 |
+| **Total** | | | **~1,500** |
 
-Fewer releases buy PR gates at about 3.5 per release. A `full_suite=true` emergency
+A `full_suite=true` emergency
 release (~470) or a `skip_tests=false` release (~25-50 more) comes out of the same pool. The
 tests themselves (each lane's `crew-tests.sh`, the ~2 h release sweep) bill no GitHub minutes.
 

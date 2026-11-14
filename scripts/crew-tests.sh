@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # The tests a lane runs in its cloud sandbox before crew-done (CI-CLOUD-GATE, 4 Nov 2026).
 #
-# The PR gate on GitHub runs fast checks only (no pytest execution, no vitest). This script runs
-# what that gate used to run, on the lane's exact head, and prints the `crew-tests:` line the
+# The PR gate (scripts/pr-gate.sh, run by crew; CI-ZERO-MINUTES) runs fast checks only (no pytest
+# execution, no vitest). This script runs the tests that gate does not, on the lane's exact head, and prints the `crew-tests:` line the
 # lane posts on its PR (contract: documentation/agents/cloud-lanes.md "Tests before crew-done"):
 #
 #   backend  every changed backend test file plus every test file that imports a changed module
@@ -51,7 +51,7 @@ else
       echo "git fetch of origin/main failed: cannot tell what this head changes against main now" >&2
       exit 2
     fi
-    # The PR gate tests the head merged into main's head; a lane behind main would report on
+    # The PR gate (scripts/pr-gate.sh) refuses a head behind main; a lane behind main would report on
     # code that is not what lands. Merge origin/main first (a plan may still be printed).
     if ! git merge-base --is-ancestor refs/remotes/origin/main HEAD; then
       echo "HEAD does not contain origin/main ($(git rev-parse --short refs/remotes/origin/main)): merge origin/main first" >&2

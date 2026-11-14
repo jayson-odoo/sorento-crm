@@ -55,7 +55,7 @@ Every lane, cloud or local, meets `PRINCIPLES.md` DoD lines 6 to 8 before `crew-
 
 6. A new list screen registers its entity in `sorento_crm_backend/app/services/assistant_registry/<module>.py`
    (with its list route in `routes`), or its list route carries `# ai: not-for-assistant <reason>` directly
-   above its decorators. The PR gate step "Assistant coverage of new list routes" fails otherwise; run
+   above its decorators. The PR gate check `ai-coverage` (`scripts/pr-gate.sh`) fails otherwise; run
    `python3 scripts/ci_ai_coverage.py` locally (the pre-push hook does) to see the same verdict.
 7. A new record-changing button a user would ask for in words gets an `ActionDef`, or the plan says why not.
 8. Two eval prompts per feature in `sorento_crm_backend/scripts/chatbot_eval/gold/assistant_<module>.jsonl`.
@@ -63,27 +63,23 @@ Every lane, cloud or local, meets `PRINCIPLES.md` DoD lines 6 to 8 before `crew-
 The `crew-done` comment names which of the three applied and where (file:line), or "n/a: no new list
 screen, button or feature the assistant would be asked about".
 
-## CI trigger (standing rule, 25 Sep 2026)
+## PR gate (CI-ZERO-MINUTES, owner 14 Nov 2026)
 
-A push to a lane's PR never runs CI - `.github/workflows/deploy.yml`'s `pull_request` trigger is
-`types: [labeled]` only, gated on the label being exactly `ci`. The orchestrator is the only one
-who adds that label, and only once the lane is genuinely ready for CI (Phase 3, or a small-fix
-track PR ready to merge). A lane, cloud or local, never adds the `ci` label to its own PR and does
-not wait for CI on that PR unless its brief says the label was already added - a lane that needs a
-CI result waits for the orchestrator to say so, it does not poll the PR itself. A workflow run
-removes the label again the moment it fires, so the operator recipe to re-run CI against a new
-head is always `gh pr edit <n> --add-label ci`, never leaving the label sitting on the PR.
+No GitHub Actions workflow runs on a PR or a push: Actions only builds, deploys and rolls back, and
+there is no `ci` label. The PR gate is `scripts/pr-gate.sh`, run by crew in the lane sandbox on the
+PR's exact head; crew posts its result as the `PR gate` commit status on that sha, the one check the
+`protect-main-branch` ruleset requires, and re-runs it when main moves before the merge. Workers
+never post that status themselves.
 
-Workers never put a CI-skip marker in a commit message: crew manages the `ci` label, and a push to
-a PR starts no run on its own.
-
-A `ci`-labelled PR run is `Changed areas` plus one `PR gate` job, **fast checks only**
-(CI-CLOUD-GATE, owner 4 Nov 2026): main's head merged in, the alembic head, PII, Outline-guide
-and gitleaks gates, the backend import chains and `pytest --collect-only`, the MCP import check,
-and `tsc` plus ESLint over the changed frontend files (whole files: 54 files carry 195 ESLint
-errors on main today, so touching one means fixing its errors). No pytest test and no vitest executes on
-GitHub for a PR, and no job runs on the Mac runner: the tests run in the lane's own sandbox
-(next section). **A merge does not deploy**: a push to main runs only the alembic head gate. The
+`scripts/pr-gate.sh` runs **fast checks only**: the alembic head, PII, assistant coverage,
+Outline-guide and gitleaks gates on every PR, then by changed area the backend import chains and
+`pytest --collect-only`, the MCP import check, and `tsc` plus ESLint over the changed frontend files
+(whole files: 54 files carry 195 ESLint errors on main today, so touching one means fixing its
+errors). It refuses a head that does not contain `origin/main` (`reason=main-not-merged`) and a tree with
+uncommitted changes to tracked files (`reason=dirty-tree`), and
+`--plan` prints the checks it would run. Its last line is
+`pr-gate: <sha> PASS|FAIL main=<sha> checks=<ids> [failed=<ids>]`. The tests run separately, in the
+same sandbox (next section). **A merge does not deploy**, and a push to main runs nothing. The
 release is `gh workflow run deploy.yml --repo jayson-odoo/sorento-crm --ref main`,
 dispatched by the orchestrator after a batch has merged AND the release sweep below passed on
 that exact head; by default it runs no tests (`skip_tests` defaults to true), builds the images,
@@ -103,7 +99,7 @@ Every lane, cloud or local, runs its changed-area tests itself, on the exact hea
    scripts/crew-tests.sh
    ```
 
-   It diffs the head against `merge-base(origin/main, HEAD)` and runs what the PR gate used to:
+   It diffs the head against `merge-base(origin/main, HEAD)` and runs what the hosted PR gate used to:
    the changed backend test files plus every test file that imports a changed module
    (`sorento_crm_backend/scripts/ci_select_tests.py`), the forms lifecycle chains when forms code
    changed (FORMS-REGRESSION), the regression guards (`tests/test_lessons_learnt_regressions.py`),
@@ -122,7 +118,7 @@ Every lane, cloud or local, runs its changed-area tests itself, on the exact hea
 
    Only a run that exited 0 counts: a failed or crashed run ends its line with
    `FAILED (exit N)`. The script refuses a head that does not contain `origin/main` (merge
-   main first, as the PR gate does). The sha must be the PR's head at the time of `crew-done`; any later push needs a new run and
+   main first, as `scripts/pr-gate.sh` does). The sha must be the PR's head at the time of `crew-done`; any later push needs a new run and
    a new `crew-tests:` comment. A failure is fixed, not posted as done. A test that fails on main
    too is named with its main run as evidence, never skipped or quarantined.
 3. A lane may add tests the script does not pick (a module it knows is coupled) and lists them
@@ -313,8 +309,8 @@ inputs, visible in the run:
   `UNSWEPT RELEASE` and the step logs a warning. Owner's call only.
 
 A docs-only change (every path under `documentation/**`, `.claude/**`, `.cursor/**`, a root-level
-`*.md` or the PR template) runs only `Changed areas` and the `PR gate` fast-gate steps (alembic
-head, PII, gitleaks) on a PR, and `Changed areas` plus `Single alembic head` on a merge-queue entry: no image build, no test suite (owner ruling 29 Sep 2026;
+`*.md` or the PR template) runs only the always-on `scripts/pr-gate.sh` checks on a PR, and
+`Changed areas` plus `Single alembic head` on a merge-queue entry: no image build, no test suite (owner ruling 29 Sep 2026;
 `documentation/plans/ci/PLAN-ci-docs-skip-29sep.md`). One
 non-docs path anywhere in the change keeps the full pipeline: a markdown file inside a service
 tree, either end of a rename, or documentation a test reads as input (`documentation/reference/`,
@@ -322,8 +318,8 @@ a plan's `fixtures/`, `samples/` or `seed-assets/` folder, and the plan files li
 workflow's `NOT_DOCS_RE`). A test that reads a new documentation path must add it there, or
 `tests/test_ci_docs_only_filter.py` fails.
 
-A PR with no `ci` label shows no checks and therefore cannot merge under branch protection - that
-is intended, not a bug: it is what keeps a not-yet-ready PR from being mergeable by accident.
+A PR whose head has no `PR gate` status (crew has not run the gate on it, or crew is down) cannot
+merge under branch protection - that is intended, not a bug: the gate fails closed.
 
 ## LLM spend in test runs: replay by default (LLM-TEST-COST, 4 Oct 2026)
 

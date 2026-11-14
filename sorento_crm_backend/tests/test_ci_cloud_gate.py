@@ -1,9 +1,9 @@
 """CI-CLOUD-GATE (owner, 4 Nov 2026: "yes cloud CI"): GitHub runs fast checks and the release
 build/deploy; tests run in Claude Code cloud sandboxes.
 
-1. A `ci`-labelled pull request bills only fast checks on GitHub: no step that runs on a pull
-   request executes pytest (`--collect-only` is an import check, not a run) or vitest, and the
-   Postgres / Redis service containers do not start.
+1. A pull request bills nothing on GitHub (CI-ZERO-MINUTES, 14 Nov 2026, pinned by
+   tests/test_ci_zero_minutes.py): its fast checks run in the lane sandbox through
+   `scripts/pr-gate.sh`, which still imports every test file, type-checks and lints.
 2. No job in any workflow runs on the Mac (`sorento-mac`) or any self-hosted runner: the Mac ran
    the release suite in 5-6 h (2 Nov) and stays free.
 3. A release dispatch builds and deploys without a test matrix by default (`skip_tests` defaults
@@ -32,19 +32,9 @@ REPO = Path(__file__).resolve().parents[2]
 WORKFLOWS = REPO / ".github" / "workflows"
 DEPLOY = WORKFLOWS / "deploy.yml"
 CREW_TESTS = REPO / "scripts" / "crew-tests.sh"
+PR_GATE = REPO / "scripts" / "pr-gate.sh"
 
 pytestmark = pytest.mark.skipif(not DEPLOY.is_file(), reason="workflow not present (backend-only checkout)")
-
-# What a pull_request run looks like to a step's `if`: the `ci` label, every area changed, a tree
-# not yet validated. Step outputs (`steps.x.outputs.y`) are unknown, so they are treated as
-# "could be anything": a step counts as running on a PR unless its `if` excludes the
-# pull_request event outright.
-PR_EXCLUDED = re.compile(r"^\s*github\.event_name\s*!=\s*'pull_request'\s*(&&|$)")
-
-# pytest that executes tests: any pytest call without --collect-only. vitest: any `vitest` call.
-_PYTEST = re.compile(r"\bpytest\b")
-_VITEST = re.compile(r"\bvitest\b")
-
 
 def _load(path: Path) -> dict:
     return yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -54,47 +44,13 @@ def _deploy_jobs() -> dict:
     return _load(DEPLOY)["jobs"]
 
 
-def _executing_lines(run: str) -> list[str]:
-    hits = []
-    for line in run.replace("\\\n", " ").splitlines():
-        code = line.split("#", 1)[0]
-        if _PYTEST.search(code) and "--collect-only" not in code and "pip install" not in code:
-            hits.append(line.strip())
-        if _VITEST.search(code):
-            hits.append(line.strip())
-    return hits
-
-
-@pytest.mark.parametrize("job_id", ["changes", "lean-gate"])
-def test_no_step_that_runs_on_a_pull_request_executes_pytest_or_vitest(job_id):
-    bad = []
-    for step in _deploy_jobs()[job_id]["steps"]:
-        lines = _executing_lines(str(step.get("run", "")))
-        if not lines:
-            continue
-        if PR_EXCLUDED.search(str(step.get("if", ""))):
-            continue
-        bad.append((step.get("name"), lines))
-    assert not bad, f"{job_id}: these steps would execute tests on a pull request: {bad}"
-
-
 def test_the_pr_gate_still_imports_every_test_file_and_type_checks():
-    steps = {s.get("name"): s for s in _deploy_jobs()["lean-gate"]["steps"]}
-    collect = steps["Pytest collect-only (catches import errors in tests)"]
-    assert "pull_request" not in str(collect.get("if", "")), "the collect runs on a PR too now"
-    joined = "\n".join(str(s.get("run", "")) for s in steps.values())
-    assert "from app.main import app" in joined and "import worker" in joined
-    assert "npm run typecheck" in joined
-    assert "npx eslint" in joined, "the frontend lint runs on a PR"
-    assert "create_mcp_app" in joined, "the MCP import check runs on a PR"
-
-
-def test_the_service_containers_do_not_start_on_a_pull_request():
-    services = _deploy_jobs()["lean-gate"]["services"]
-    for name in ("postgres", "redis"):
-        image = services[name]["image"]
-        assert image.startswith("${{") and "github.event_name != 'pull_request'" in image, (name, image)
-        assert image.rstrip("} ").endswith("|| ''"), (name, image)
+    script = PR_GATE.read_text(encoding="utf-8")
+    assert "pytest --collect-only" in script, "the collect runs on a PR"
+    assert "from app.main import app" in script and "import worker" in script
+    assert "npm run typecheck" in script
+    assert "npx eslint" in script, "the frontend lint runs on a PR"
+    assert "create_mcp_app" in script, "the MCP import check runs on a PR"
 
 
 def _every_job():
@@ -191,22 +147,18 @@ def test_crew_tests_on_a_docs_only_change_runs_nothing(tmp_path):
 # --- security review (CI-CLOUD-GATE) -----------------------------------------------------------
 
 
-def test_the_pr_gate_checkout_keeps_no_token_for_pr_code():
-    """The job token can edit PRs (the label removal); every step after the checkout runs
-    PR-controlled code. Only the main fetch gets the token, in its own env."""
+def test_the_release_tests_checkout_keeps_no_token_for_repository_code():
+    """Every step after the checkout runs repository code (npm install scripts, conftest): the
+    checkout keeps no credentials and no step reaches a secret."""
     steps = {s.get("name"): s for s in _deploy_jobs()["lean-gate"]["steps"]}
     assert steps["Checkout"]["with"]["persist-credentials"] is False
-    merge = steps["Merge main's current head into the PR head"]
-    assert merge["env"]["GH_TOKEN"] == "${{ secrets.GITHUB_TOKEN }}"
-    assert "extraheader" in merge["run"]
     for name, step in steps.items():
-        if name not in {"Remove the ci label so a future add re-triggers CI", "Merge main's current head into the PR head"}:
-            assert "secrets." not in str(step), name
+        assert "secrets." not in str(step), name
 
 
 def test_eslint_takes_file_names_as_operands_only():
-    run = {s.get("name"): s for s in _deploy_jobs()["lean-gate"]["steps"]}["Lint the changed frontend files"]["run"]
-    assert "git diff -z" in run and "xargs -0 -r npx eslint --no-warn-ignored --" in run
+    script = PR_GATE.read_text(encoding="utf-8")
+    assert "git diff -z" in script and "xargs -0 -r npx eslint --no-warn-ignored --" in script
 
 
 def test_crew_tests_never_inherits_a_database_from_the_shell():
