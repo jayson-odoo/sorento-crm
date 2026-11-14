@@ -686,8 +686,8 @@ def test_a_turn_finds_the_phones_then_proposes_the_role_change_and_writes_nothin
 
     assert {FIND, UPDATE} <= tool_names(provider)
     assert result.pending_action is not None
-    assert PROPOSAL_HEAD in result.reply_text
-    assert "Employee -> Business owner (Sorento)" in result.reply_text
+    assert PROPOSAL_HEAD not in result.reply_text  # owner 14 Nov: no system confirm block
+    assert "Employee -> Business owner (Sorento)" in result.pending_action["lines"][0]
     assert state(db, row.id)["types"] == ["end_user"]
 
 

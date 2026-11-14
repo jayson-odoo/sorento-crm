@@ -646,7 +646,8 @@ def test_fr4_r1_no_message_handed_to_the_model_on_the_yes_turn_carries_the_whole
     assert _run_of(dump) <= 300
     assert "Shorter stock list" in dump, "positive control: the short values travel"
     history = [m for m in seen["messages"] if m["role"] == "assistant"]
-    assert any("I will make these changes" in str(m["content"]) for m in history), "the proposal block is in history"
+    # Owner 14 Nov: no system confirm block, so the replayed reply is the model's own text.
+    assert not any("I will make these changes" in str(m["content"]) for m in history), history
 
 
 def test_fr4_r3_a_failed_whatsapp_turn_after_a_confirm_keeps_the_note(db, ss):

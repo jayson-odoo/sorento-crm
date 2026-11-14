@@ -364,9 +364,9 @@ def test_02_a_write_call_during_a_turn_writes_nothing_and_stores_one_proposal(db
     assert summary and not UUID_RE.search(summary)
     assert ask.product_code in summary or w.customer.customer_name in summary
 
-    assert PROPOSAL_HEAD in result.reply_text
-    assert summary in result.reply_text
-    assert result.reply_text.rstrip().endswith(PROPOSAL_TAIL)
+    # Owner 14 Nov: the reply is the model's own text; no system confirm block is appended.
+    assert PROPOSAL_HEAD not in result.reply_text and PROPOSAL_TAIL not in result.reply_text
+    assert result.reply_text == "I have prepared the changes."
     pending = result.pending_action
     assert pending["id"] == str(row.id)
     assert len(pending["lines"]) == 1 and summary in pending["lines"][0]

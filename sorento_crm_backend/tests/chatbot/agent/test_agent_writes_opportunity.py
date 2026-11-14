@@ -447,6 +447,6 @@ def test_a_turn_reads_then_proposes_a_stage_move_and_writes_nothing(db):
 
     assert {LIST, META, UPDATE, CREATE} <= tool_names(provider)
     assert result.pending_action is not None
-    assert PROPOSAL_HEAD in result.reply_text
-    assert f"{stage(db, 'new').label} -> {qualified.label}" in result.reply_text
+    assert PROPOSAL_HEAD not in result.reply_text  # owner 14 Nov: no system confirm block
+    assert f"{stage(db, 'new').label} -> {qualified.label}" in result.pending_action["lines"][0]
     assert str(opp_now(db, opp.id).status_id) == stage(db, "new").id

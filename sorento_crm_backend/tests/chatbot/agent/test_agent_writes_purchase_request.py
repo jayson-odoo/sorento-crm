@@ -498,7 +498,7 @@ def test_a_turn_lists_then_proposes_an_approval_and_writes_nothing(db, sends):
 
     assert {LIST, DECIDE} <= tool_names(provider)
     assert result.pending_action is not None
-    assert PROPOSAL_HEAD in result.reply_text
-    assert f"Approve purchase request {pr.request_number}" in result.reply_text
+    assert PROPOSAL_HEAD not in result.reply_text  # owner 14 Nov: no system confirm block
+    assert f"Approve purchase request {pr.request_number}" in result.pending_action["lines"][0]
     assert row_now(db, pr.id).approval_status == "pending"
     assert sends == []
