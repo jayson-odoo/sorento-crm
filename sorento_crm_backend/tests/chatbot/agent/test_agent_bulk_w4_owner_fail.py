@@ -795,3 +795,35 @@ def test_the_tools_let_the_model_name_the_company_to_remove(db):
 
     out = writes.run_user_read(db, ctx_of(db, w), FIND, {"phones": [local(c.phone_number)]}, set())
     assert out.data[0]["accounts"][0]["company"] == "MCH", out.data
+
+
+def test_a_user_cannot_remove_a_company_they_are_not_granted(db):
+    """Security B1: an edit_own salesperson granted Sorento only cannot take a person's Mocha access away."""
+    from app.models.company import UserCompany
+    from tests.chatbot.agent.test_agent_bulk_grant import state
+    from tests.chatbot.agent.test_dealer_access_agent import own_world
+
+    o = own_world(db)
+    db.query(UserCompany).filter(UserCompany.user_id == o.w.user_id, UserCompany.company_id == o.w.mch).delete()
+    db.commit()
+    c = dealer(db, o.w, name="ZZT Keep Mocha", companies=(o.w.srt, o.w.mch), customers=[o.w.cust_a])
+    script = _find_then(lambda r: {"contact_id": r["contact_id"], "remove_companies": ["MCH"]}, [local(c.phone_number)])
+    result, _ = screenshot_turn(db, o.w, [*script, answer_("Done."), answer_("Done.")], text_="remove their mocha access",
+                                images=False)
+    assert result.pending_action is None, result.reply_text
+    assert str(o.w.mch) in state(db, c.phone_number)["companies"]
+
+
+def test_removing_a_company_is_audited(db):
+    """Security S2: the removed company shows in the audit row of the change."""
+    from app.models.audit import AuditLog
+    from app.services.chatbot.agent import actions
+
+    w = make_world(db)
+    c = dealer(db, w, name="ZZT Audit Co", companies=(w.srt, w.mch), customers=[w.cust_a])
+    script = _find_then(lambda r: {"contact_id": r["contact_id"], "remove_companies": ["MCH"]}, [local(c.phone_number)])
+    result, _ = screenshot_turn(db, w, [*script, answer_("Done.")], text_="remove their mocha access", images=False)
+    assert result.pending_action is not None, result.reply_text
+    actions.confirm(db, w.respond_id, result.pending_action["id"], via="console")
+    rows = db.query(AuditLog).filter(AuditLog.entity_id == str(c.id), AuditLog.event == "contact.access_agent").all()
+    assert any("Companies" in (r.old_values or {}) for r in rows), [(r.old_values, r.new_values) for r in rows]

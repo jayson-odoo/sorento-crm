@@ -1197,7 +1197,9 @@ def _contact_plan(db, user: dict, args: dict) -> dict:
     )
     if link_ids and not undo and not _permitted(db, uid, CONTACT_EDIT):
         raise AppException(status_code=403, message="You can only restore a link you removed.", code="FORBIDDEN")
-    if not in_scope and not (undo and not unlink_ids and role is None and ai in (None, True)):
+    if not in_scope and not (
+        undo and not unlink_ids and role is None and ai in (None, True) and not args.get("remove_companies")
+    ):
         raise refused
     facts = _contact_facts(db, contact, uid)
     role_companies = args.get("role_companies")
@@ -1216,6 +1218,17 @@ def _contact_plan(db, user: dict, args: dict) -> dict:
                 status_code=422, message="Name the company as SRT (Sorento) or MCH (Mocha).", code="VALIDATION_ERROR"
             )
         removed_words = ", ".join({"SRT": "Sorento", "MCH": "Mocha"}.get(c, c) for c in remove_codes)
+        from app.models.base import company_scope as _scope
+        from app.services.company_scope_resolver import resolve_user_grant_ids
+
+        granted = {str(g) for g in resolve_user_grant_ids(db, uid)}
+        with _scope(db, None):
+            ids_of = {code: str(cid) for cid, code in db.query(Company.id, Company.code).filter(Company.code.in_(remove_codes))}
+        outside = [c for c in remove_codes if ids_of.get(c) not in granted]
+        if outside:
+            # Only a company the user is granted, as the grant adds one (security review B1).
+            words = ", ".join({"SRT": "Sorento", "MCH": "Mocha"}.get(c, c) for c in outside)
+            raise AppException(status_code=403, message=f"{words} is not one of your companies.", code="FORBIDDEN")
         if facts.get("other_links"):
             raise AppException(
                 status_code=422, code="VALIDATION_ERROR",
@@ -1378,7 +1391,7 @@ def _contact_plan(db, user: dict, args: dict) -> dict:
 def _contact_state(contact, facts: dict) -> dict:
     out = {
         "role": facts["role"], "owner_companies": facts["owner_codes"],
-        "chatbot_allowed": bool(contact.chatbot_allowed), "links": facts["links"],
+        "chatbot_allowed": bool(contact.chatbot_allowed), "links": facts["links"], "companies": facts["codes"],
     }
     if "other_links" in facts:
         out["other_links"] = facts["other_links"]
@@ -1416,6 +1429,9 @@ def _contact_words(state: dict, codes: dict) -> dict:
         "Role": _role_label(state["role"], state["owner_companies"]),
         "AI replies": _on_off(state["chatbot_allowed"]),
         "Customer links": _link_words(state["links"], codes, int(state.get("other_links") or 0)),
+        "Companies": ", ".join(
+            {"SRT": "Sorento", "MCH": "Mocha"}.get(c, c) for c in state.get("companies") or []
+        ) or "none",
     }
 
 
@@ -1466,10 +1482,12 @@ def _contact_execute(db, user: dict, args: dict) -> dict:
     if plan["remove_company_ids"]:
         from app.models.company import RespondContactCompany
 
-        db.query(RespondContactCompany).filter(
+        # One row at a time through the ORM, so the audit listeners see each removal (security review S2).
+        for row in db.query(RespondContactCompany).filter(
             RespondContactCompany.respond_contact_id == contact.id,
             RespondContactCompany.company_id.in_(plan["remove_company_ids"]),
-        ).delete(synchronize_session=False)
+        ).all():
+            db.delete(row)
     db.flush()
     db.expire(contact)
     after = _contact_state(contact, _contact_facts(db, contact, uid))
@@ -1528,7 +1546,10 @@ def _contacts_find(db, ctx, args: dict) -> ToolResult:
             with _users_scope(db, ctx.user_id):
                 from app.models.company import Company
 
-                company_code = dict(db.query(Company.id, Company.code).all())
+                listed = db.query(Customer.company_id).join(
+                    RespondContactCustomer, RespondContactCustomer.customer_id == Customer.id
+                ).filter(RespondContactCustomer.contact_id == contact.id)
+                company_code = dict(db.query(Company.id, Company.code).filter(Company.id.in_(listed)).all())
                 accounts = [
                     {"customer_id": str(c.id), "code": c.customer_code, "name": c.customer_name,
                      "company": company_code.get(c.company_id)}
