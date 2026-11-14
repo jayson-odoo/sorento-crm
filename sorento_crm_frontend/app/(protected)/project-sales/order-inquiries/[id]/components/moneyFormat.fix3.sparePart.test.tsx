@@ -1,7 +1,6 @@
 /**
  * SPARE-PART-ORDER-REQUEST fix round 3, B4 (browser pass): money reads the same everywhere.
- * - The unit price "was" mark shows 2 decimals: "was 35.00" (the browser pass saw "was 35").
- *   The currency label is allowed in front ("was RM 35.00"), never a bare "35".
+ * - The unit price shows 2 decimals (SPARE-PART-OR-B U1.1 retired its "was" mark).
  * - The Lines tab and the Approve popup print money through the ONE shared formatter
  *   (`formatMoneyExact`, `_shared/lib/money.ts`): whatever it renders for MYR, the same string.
  *   That includes the popup's unit price change ("unit price RM 35.00 to RM 32.00").
@@ -120,11 +119,13 @@ function cell(title: string): HTMLElement {
 const RAISED = { inquiryType: 'spare_part_request', headerState: 'raised', canDecide: false, currency: 'MYR' };
 
 describe('B4: the Lines tab prints money through the shared formatter', () => {
-  it('the unit price "was" mark has 2 decimals', () => {
+  // SPARE-PART-OR-B (U1.1, owner 14 Nov): no "was" mark on a spare part line any more; the
+  // unit price prints alone, in 2 decimals.
+  it('the unit price prints with 2 decimals and no "was" mark', () => {
     wrap(<Grid rows={[row()]} options={RAISED} />);
     const text = cell('Unit price').textContent ?? '';
-    expect(text).toMatch(/was (RM )?35\.00\b/);
-    expect(text).not.toMatch(/was 35(?!\.\d)/);
+    expect(text).toMatch(/32\.00\b/);
+    expect(text).not.toMatch(/was /i);
   });
 
   it('unit price and total read exactly as formatMoneyExact renders them for MYR', () => {

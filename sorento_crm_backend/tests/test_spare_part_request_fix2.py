@@ -127,11 +127,13 @@ def test_R3_spare_part_request_is_a_routed_record_type():
 
 
 # =============================================================================
-# R4 - Revise after a purchasing rejection starts clean
+# R4 - Revise after a purchasing rejection. SPARE-PART-OR-B (owner 14 Nov, U4.2): Revise no
+# longer resets the rows to a clean draft; it opens a revision and leaves every row, its
+# purchasing refusal included, exactly as it is until the revision's final approval.
 # =============================================================================
 
 
-def test_R4_revise_after_a_rejected_line_resets_it_to_a_clean_draft(staged):
+def test_R4_revise_after_a_rejected_line_keeps_purchasings_refusal(staged):
     from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 
     w = staged
@@ -144,17 +146,12 @@ def test_R4_revise_after_a_rejected_line_resets_it_to_a_clean_draft(staged):
 
     svc().revise(w.db, reload(w.db, inquiry), w.requester)
     w.db.commit()
+    inquiry = reload(w.db, inquiry)
+    assert inquiry.state == "raised" and inquiry.revision_state == "draft"
     row = row_for(w.db, inquiry, w.product_a)
-    assert row.state == "draft"
-    assert row.ack_state == "awaiting"
-    assert row.rejected_by is None and row.rejected_at is None and row.rejected_reason is None
-
-    svc().submit(w.db, reload(w.db, inquiry), w.requester)
-    w.db.commit()
-    inquiry = approve(w, reload(w.db, inquiry), w.stage1.tier1)
-    row = row_for(w.db, inquiry, w.product_a)
-    assert row.state == "raised" and row.ack_state == "awaiting"
-    assert row.rejected_reason is None, "the old rejection does not survive the new approval"
+    assert row.state == "raised"
+    assert row.ack_state == "rejected"
+    assert row.rejected_reason == "Supplier discontinued it"
 
 
 # =============================================================================
