@@ -2384,15 +2384,20 @@ def _run(
                 elif name in portal_writes.PORTAL_READS:
                     out = portal_writes.run_read(db, ctx, name, args, seen_ids)
                 elif name in writes.USER_READS:
-                    if name == "crm_query" and isinstance(args, dict) and ctx.user_id:
-                        # The asker's own name is not an agent filter (crm_query runs here, as a user read).
+                    from app.services.chatbot.agent.query_tools import _names_a_subject, strip_self_agent
+
+                    if (
+                        name == "crm_query" and isinstance(args, dict) and ctx.user_id
+                        and _names_a_subject(str(args.get("entity")), args)
+                    ):
+                        # UAC 14: an asker with no sales agent of their own is never an agent filter (crm_query runs
+                        # here, as a user read); an asker who is an agent keeps the query as asked.
                         from app.models.user import User
                         from app.services import own_scope
-                        from app.services.chatbot.agent.query_tools import strip_self_agent
 
-                        asker = db.query(User.name).filter(User.id == str(ctx.user_id)).scalar()
-                        has_agent = bool(own_scope.me(db, str(ctx.user_id)).agent_ids)
-                        args, self_note = strip_self_agent(args, asker, text, has_own_agent=has_agent)
+                        if not own_scope.me(db, str(ctx.user_id)).agent_ids:
+                            asker = db.query(User.name).filter(User.id == str(ctx.user_id)).scalar()
+                            args, self_note = strip_self_agent(args, asker, text, has_own_agent=False)
                     out = writes.run_user_read(db, ctx, name, args, seen_ids)
                 elif name == CONFIRM_ACTION and (run.rounds > 1 or file_text or images):
                     out = ToolResult(
