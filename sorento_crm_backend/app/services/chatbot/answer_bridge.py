@@ -2202,13 +2202,17 @@ def answer_for(
     text = _apply_crossdomain_render(
         text, crossdomain_result, include_offer=offers_escalation(profile)
     )
-    if dealer_stock_ask:
+    if dealer_stock_ask or dealer_incoming_ask:
         # Owner ruling 26 Sep 2026 (hand test F1): a dealer's stock ask never offers
         # an escalation. The did-you-mean is a pick of the suggested code(s), carrying
         # the quantity the dealer typed - one candidate included, which AC-1691's
         # two-option minimum above would otherwise turn into a team offer. With no
         # candidate at all, `engine._dealer_refers_to_salesman` strips the offer.
-        dealer = _dealer_did_you_mean(offer, parser, asked_at_turn)
+        # CHATBOT-CLOSE-CODES C4 (crew Q4 (a)): a dealer's incoming ask gets the same pick,
+        # answered as an incoming ask.
+        dealer = _dealer_did_you_mean(
+            offer, parser, asked_at_turn, domain="inventory" if dealer_stock_ask else "incoming"
+        )
         if dealer is not None:
             return turn_compose.Answer(text=dealer[0], question=dealer[1])
     alternative_lines = fetch_item.get("alternative_lines") if isinstance(fetch_item, Mapping) else None
@@ -2306,7 +2310,7 @@ def with_alternative_lines(text: str, lines: Any) -> str:
 
 
 def _dealer_did_you_mean(
-    offer: Any, parser: Mapping[str, Any] | None, asked_at_turn: int | None
+    offer: Any, parser: Mapping[str, Any] | None, asked_at_turn: int | None, *, domain: str = "inventory"
 ) -> tuple[str, pending.Pending] | None:
     from app.services.chatbot import dealer_stock as dealer_mod
 
@@ -2346,6 +2350,7 @@ def _dealer_did_you_mean(
                 for token, rows_of in by_token.items()
             ],
             asked_at_turn=asked_at_turn,
+            domain=domain,
         )
         return (each[0], each[1]) if each is not None else None
     token = next(iter(by_token), None)
@@ -2361,4 +2366,5 @@ def _dealer_did_you_mean(
         quantity=quantity,
         asked_at_turn=asked_at_turn,
         size_asked=str(offer.get("size_asked") or ""),
+        domain=domain,
     )

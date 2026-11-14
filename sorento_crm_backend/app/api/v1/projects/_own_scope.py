@@ -16,7 +16,8 @@ It fails closed. For a limited user:
   ``_line_or_404(db, po_id, line_id)``, ...), so a foreign child under their own parent is a
   404 from the route itself;
 - a route with an ``autocount`` path segment (a write to AutoCount) is refused (403), own
-  project included;
+  project included; one keyed by ``/projects/{project_id}`` answers 404 first when the project
+  is not theirs;
 - a route with no id is refused unless it is in ``_ID_LESS`` (the project list filters in
   the query) or is reference data (``_REFERENCE_PREFIXES`` / ``_REFERENCE_PATHS``);
 - the cross-project screens (``_OWN_PERMISSION_PREFIXES``) are left to their own permission
@@ -224,6 +225,25 @@ def _not_found() -> HTTPException:
     return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
 
 
+def _is_autocount(path: str) -> bool:
+    """A path with an AutoCount segment (``autocount``, ``autocount-register``, ...)."""
+    return any(part == "autocount" or part.startswith("autocount-") for part in path.split("/"))
+
+
+def _not_found_if_foreign_project(db: Session, user_id: str, path_format: str, path_params: dict) -> None:
+    """A refused AutoCount route keyed by the project itself (AC-PROJECT-REGISTER) still answers
+    404 for a project that is not theirs, as every ``/projects/{project_id}`` route does; their
+    own project falls through to the refusal. Other refused routes are unchanged."""
+    path = path_format[len(PREFIX):] if path_format.startswith(PREFIX) else path_format
+    if not _is_autocount(path) or not path.startswith("/projects/{project_id}/"):
+        return
+    value = str(path_params.get("project_id") or "")
+    if not _is_uuid(value):
+        raise _not_found()
+    if not own_scope.project_in_scope(db, own_scope.me(db, user_id), _project(db, value)):
+        raise _not_found()
+
+
 def _refused() -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
@@ -235,7 +255,7 @@ def classify(method: str, path_format: str):
     """How a limited user reaches this route: ``"open"`` (no id to check), an anchor resolver
     (or ``_MODULE_RULE``) for its first id, or ``None`` when it is refused."""
     path = path_format[len(PREFIX):] if path_format.startswith(PREFIX) else path_format
-    if "autocount" in path.split("/"):
+    if _is_autocount(path):
         # An ERP write (AC-QTSO-CRM) is an admin's job: refused outright, own project included,
         # and ahead of the open prefixes so no future AutoCount route slips under one.
         return None
@@ -266,6 +286,7 @@ def check(
         return
     resolver = classify(method, path_format)
     if resolver is None:
+        _not_found_if_foreign_project(db, user_id, path_format, path_params)
         raise _refused()
     if interest and method == "POST" and path_format.endswith("/projects/{project_id}/takeover-requests"):
         # Registering interest (kind "dispute") in a project that is not theirs: the route

@@ -5005,11 +5005,19 @@ def miss_token_candidates(res: Any, allowed_types: list | None, *, typed: Any = 
             continue
         seen.append(key)
         keep.append(match)
-    # CHATBOT-CODE-MATCH R2: among the code rows (products, sets), one holding every typed
-    # part ranks before one missing a part, in the slots those rows already hold; ties keep
-    # the resolver's order, other kinds keep their places. The parser's own pick (Q1) leads.
     token = typed if jsc.truthy(typed) else jsc.get(res, "token")
     first = 1 if isinstance(near_pick, dict) and keep and keep[0] is near_pick else 0
+    return _set_then_its_members(rank_by_typed_parts(keep, token, first), first, close, token)
+
+
+def rank_by_typed_parts(keep: list, typed: Any, first: int = 0) -> list:
+    """CHATBOT-CODE-MATCH R2: among the code rows (products, sets), one holding every typed
+    part (`holds_every_typed_part`) ranks before one missing a part, in the slots those rows
+    already hold; ties keep the resolver's order, other kinds keep their places, and the rows
+    before `first` (the parser's own pick, Q1) stay where they are. The ONE ranking: the
+    offer (`miss_token_candidates`) and the has-it probe plan (`miss_suggest._token_candidates`)
+    both read it, so the probe covers the codes the offer prints (CHATBOT-CLOSE-CODES C5)."""
+    keep = list(keep)
     slots = [
         i
         for i in range(first, len(keep))
@@ -5017,11 +5025,11 @@ def miss_token_candidates(res: Any, allowed_types: list | None, *, typed: Any = 
     ]
     ranked = sorted(
         (keep[i] for i in slots),
-        key=lambda m: not holds_every_typed_part(token, jsc.get(m, "canonical_code")),
+        key=lambda m: not holds_every_typed_part(typed, jsc.get(m, "canonical_code")),
     )
     for i, match in zip(slots, ranked):
         keep[i] = match
-    return _set_then_its_members(keep, first, close, token)
+    return keep
 
 
 def _set_then_its_members(keep: list, first: int, close: list, token: Any = None) -> list:

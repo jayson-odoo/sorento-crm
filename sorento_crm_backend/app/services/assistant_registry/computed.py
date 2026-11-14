@@ -40,6 +40,8 @@ from app.services.assistant_registry.types import EntityDef, FieldDef
 WINDOW_ALIASES = frozenset({"period_start", "period_end", "start_date", "end_date", "date"})
 #: The most periods one call reads before its filters: past it the window is too wide to compute in a turn.
 MAX_COMPUTED_ROWS = 2000
+#: A computed entity's statement timeout: no advice to retry (`run_computed` already narrowed what it could).
+COMPUTE_TIMEOUT = "The question took too long to answer."
 #: The widest date window one call computes (security review, wave 2: "all payouts ever" is not a chat question).
 MAX_WINDOW_DAYS = 731
 
@@ -342,9 +344,20 @@ def run_computed(db, user_id: str, entity: EntityDef, own_only: bool, slugs: set
     from app.services.assistant_registry.query import timed
 
     # The service runs under the same statement timeout as a SQL query; it refuses a window over the cap itself,
-    # BEFORE computing (a count first).
+    # BEFORE computing (a count first). An agent or kind filter also reaches it (`_narrowing`), so it computes only
+    # the targets those can match (TARGET-ACHIEVED-PERF part 2, UAC 5); every filter still runs on the computed
+    # rows below, so the rows are the ones computing everything gives.
+    narrow = _narrowing(db, entity, slugs, rest)
+
+    def compute(**narrowing):
+        return timed(
+            db,
+            lambda: entity.compute(db, user_id, own_only, date_from, date_to, limit=MAX_COMPUTED_ROWS, **narrowing),
+            timeout_message=COMPUTE_TIMEOUT,
+        )
+
     try:
-        computed = timed(db, lambda: entity.compute(db, user_id, own_only, date_from, date_to, limit=MAX_COMPUTED_ROWS))
+        computed = compute(**narrow)
     except QueryRefused as exc:
         if exc.code != "timeout" or not defaulted:
             raise
@@ -355,7 +368,7 @@ def run_computed(db, user_id: str, entity: EntityDef, own_only: bool, slugs: set
         notes = [n for n in notes if not n.startswith("No period named")]
         notes.insert(0, f"No period named and too many periods this year: the periods containing today "
                         f"({_display_date(date_from.isoformat(), 'date')}).")
-        computed = timed(db, lambda: entity.compute(db, user_id, own_only, date_from, date_to, limit=MAX_COMPUTED_ROWS))
+        computed = compute(**narrow)
     tests, named_agents = _exact_agents(entity, rest, tests, computed)
     if named_agents:
         notes.insert(0, named_agents)
@@ -373,9 +386,83 @@ def run_computed(db, user_id: str, entity: EntityDef, own_only: bool, slugs: set
         out = _rows(entity, slugs, rows, sort, spec)
     out["period_display"] = period
     out["scope_note"] = " ".join(notes) or None
-    if not rows and computed:
+    if not rows and narrow:
+        # "Nothing matched" lists the values that do exist in the whole window, as before the narrowing; when the
+        # whole window is refused (over the cap) it is still said, without the values.
+        try:
+            every = compute()
+        except QueryRefused:
+            out["instruction"] = _no_match(entity, rest, [])["instruction"]
+        else:
+            if every:
+                out.update(_no_match(entity, rest, every))
+    elif not rows and computed:
         out.update(_no_match(entity, rest, computed))
     return out
+
+
+def _narrowing(db, entity: EntityDef, slugs: set[str], filters: list) -> dict:
+    """What `compute` may leave out before computing (UAC 5), so it computes fewer targets and never loses a row.
+
+    `agent_ids`: every agent a filter on an agent field can match by the row test itself (`_row_test`: exactly or
+    as the op says, both as `_exact_agents` may apply them), with `names`, the same tests on a team's or dealer's
+    own name (the field may hold those too). Every filter's exact hits are then among the computed rows, so
+    `_exact_agents` picks the same test as over everything. No agent matched: nothing narrowed.
+
+    `kinds`: the values an `eq` or `in` on the entity's `kind_field` names, only with no agent filter: an agent's
+    exact hit may be a row of another kind (agent eq B with owner_kind dealer is exact because of B's own row)."""
+    agents: set[str] = set()
+    named = []
+    kinds: set[str] | None = None
+    for item in filters:
+        name = item.get("field") if isinstance(item, dict) else None
+        field = entity.fields.get(name) if isinstance(name, str) else None
+        if field is None:
+            continue
+        op, value = item.get("op"), item.get("value")
+        if field.agent_id and op in ("eq", "contains", "starts_with") and isinstance(value, str) and value.strip():
+            test = _row_test(entity, slugs, item)
+            named.append(test)
+            agents |= _agents_named(db, test)
+        elif name == entity.kind_field and op in ("eq", "in"):
+            values = [value] if op == "eq" else value
+            if isinstance(values, list) and values and all(isinstance(v, str) for v in values):
+                kinds = set(values) if kinds is None else kinds | set(values)
+    narrow: dict = {}
+    if agents:
+        narrow["agent_ids"] = agents
+        narrow["names"] = lambda label, said: any(test(label, said) for test in named)
+    if kinds is not None and not named:
+        narrow["kinds"] = kinds
+    return narrow
+
+
+def _row_test(entity: EntityDef, slugs: set[str], item: dict):
+    """(label, names) -> does the filter keep a row printing `label` with those `_names`: exactly (`names_exact`)
+    or as its op says, both as `_exact_agents` may apply them."""
+    path, value = item["field"], item["value"]
+    loose = _predicate(entity, slugs, item)
+
+    def test(label, said) -> bool:
+        row = {path: label, "_names": {path: said}}
+        return names_exact(row, path, value) or loose(row)
+
+    return test
+
+
+def _agents_named(db, test) -> set[str]:
+    """The agents whose row, as a computed entity prints them ("CODE - Name", the person behind several codes),
+    the filter's `_row_test` keeps."""
+    from app.models.sales_agent import SalesAgent
+    from app.services.assistant_registry.query import _plain_text
+    from app.services.sales.team_service import agent_label
+
+    found = set()
+    for agent in db.query(SalesAgent.id, SalesAgent.sales_agent, SalesAgent.description, SalesAgent.person_label):
+        person = _plain_text(agent.person_label)
+        if test(agent_label(agent), [person] if person else []):
+            found.add(agent.id)
+    return found
 
 
 def _exact_agents(entity: EntityDef, filters: list, tests: list, computed: list[dict]) -> tuple[list, str | None]:

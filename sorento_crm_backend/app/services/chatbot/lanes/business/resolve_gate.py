@@ -523,11 +523,35 @@ def pick_near_code_first(parser: dict[str, Any], resolved: dict[str, Any]) -> No
     `miss_token_candidates`, D1's cap of 3) reads the alternatives in this order. D1 lists the
     resolution's matches before its alternatives, so the row also rides the resolution itself
     (`NEAR_PICK_KEY`), which D1 reads first. Never into `matches`: the gate reads those as found
-    entities and D1 drops what the gate found. In place."""
+    entities and D1 drops what the gate found. In place.
+
+    CHATBOT-CLOSE-CODES AC-36/37: a pick the raw itself resolved to (a narrowing, a lone
+    prefix, or one of the codes a part of the raw reaches: `grounding._pick_as_trgm_neighbour`'s
+    `offered`, decided by `grounding.picked_code_verdict`) is taken out of that resolution's
+    matches, so the raw is a miss offered the pick, never a found product. The
+    one-token AND shape becomes that token's miss in the per-token shape, under the entity's
+    own token (`code_sizes._single_substring_is_an_offer` writes the same shape)."""
     from app.services.chatbot.head.grounding import NEAR_PICK_KEY
     from app.services.chatbot.turn.state import token_key
 
     resolutions = resolved.get("resolutions")
+    tokens = resolved.get("tokens") or []
+    if not isinstance(resolutions, list) and isinstance(resolved.get("intersection"), list) and len(tokens) == 1:
+        for entity in parser.get("entities") or []:
+            row = entity.get(NEAR_PICK_KEY) if isinstance(entity, dict) else None
+            pick = token_key(str((row or {}).get("canonical_code") or "")) if isinstance(row, dict) else ""
+            hits = resolved["intersection"]
+            # The pick alone when the raw reached it (a raw that reaches several codes as typed was
+            # set aside by the grounding and carries no pick).
+            if pick and pick in [token_key(str(m.get("canonical_code") or "")) for m in hits if isinstance(m, dict)]:
+                token = _token_of(entity)
+                resolved.update({
+                    "match_mode": "or", "intersection": [], "by_entity_type": {},
+                    "resolutions": [{"token": token, "resolved": False, "ambiguous": False, "matches": [], "alternatives": []}],
+                    "unresolved_tokens": [token],
+                })
+                resolutions = resolved["resolutions"]
+                break
     if not isinstance(resolutions, list):
         return
     for entity in parser.get("entities") or []:
@@ -543,12 +567,49 @@ def pick_near_code_first(parser: dict[str, Any], resolved: dict[str, Any]) -> No
             continue
         for res in resolutions:
             if isinstance(res, dict) and res.get("token") == token:
+                held = [m for m in res.get("matches") or [] if isinstance(m, dict)]
+                if pick in [token_key(str(m.get("canonical_code") or "")) for m in held]:
+                    # The raw reached the pick: a miss offered it (a raw that reaches several codes
+                    # as typed was set aside by the grounding and carries no pick).
+                    res.update({"matches": [], "resolved": False, "ambiguous": False})
+                    unresolved = resolved.setdefault("unresolved_tokens", [])
+                    if token not in unresolved:
+                        unresolved.append(token)
                 others = [
                     a for a in res.get("alternatives") or []
                     if not (isinstance(a, dict) and token_key(str(a.get("canonical_code") or "")) == pick)
                 ]
                 res["alternatives"] = [row, *others]
                 res[NEAR_PICK_KEY] = row
+
+
+def _answered_codes(parse_output: dict[str, Any], entities: list[Any]) -> list[str]:
+    """CHATBOT-CLOSE-CODES AC-37: the folded product codes of a stock or incoming ask whose
+    parser `canonical_code` is not what was typed and `grounding.picked_code_verdict` answers
+    it ("SRTWT8259-GLD" named by "SRTWT8259 gold"); empty on any other ask. A code equal to the
+    raw, or to a run of its words (`grounding._types_the_code_whole`), is what was typed,
+    narrowed as on main."""
+    from app.services.chatbot.head.grounding import (
+        ANSWER,
+        CLOSE_CODE_ASKS,
+        _types_the_code_whole,
+        picked_code_verdict,
+    )
+    from app.services.chatbot.turn.state import token_key
+    from app.services.product_code_family import _fold
+
+    if parse_output.get("domain_hint") not in CLOSE_CODE_ASKS:
+        return []
+    return [
+        _fold(x.get("canonical_code"))
+        for x in entities
+        if isinstance(x, dict)
+        and jsc.nullish_str(x.get("hint")).strip().lower() == "product"
+        and jsc.nullish_str(x.get("canonical_code")).strip()
+        and token_key(x.get("canonical_code")) != token_key(x.get("raw"))
+        and not _types_the_code_whole(jsc.nullish_str(x.get("raw")), jsc.nullish_str(x.get("canonical_code")))
+        and picked_code_verdict(x) == ANSWER
+    ]
 
 
 def _token_of(entity: Any) -> Any:
@@ -830,6 +891,17 @@ def resolve_entity_body(
     }
     if dry_run:
         body["dry_run"] = True
+    answered = _answered_codes(parse_output, entities)
+    if answered:
+        # CHATBOT-CLOSE-CODES AC-37: the codes the grounding answered stay those codes in the
+        # route's code narrowing. In-process only (`services._resolve_entity`), never a field.
+        body["answered_codes"] = answered
+    from app.services.chatbot.head.grounding import CLOSE_CODE_ASKS
+
+    if parse_output.get("domain_hint") in CLOSE_CODE_ASKS:
+        # CHATBOT-CLOSE-CODES F4: a typed code that is no catalogue code stays as typed in the
+        # route's code narrowing (a miss offered its close codes). In-process only.
+        body["close_code_ask"] = True
     # CHAT-FIND: on a find the words beside a code name what fits it, never which variant of
     # it ("seat cover for SRTWC8088"), so the route keeps the typed codes as typed.
     from app.services.chatbot.lanes.business import find as find_lane

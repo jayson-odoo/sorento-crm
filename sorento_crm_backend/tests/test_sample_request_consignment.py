@@ -116,13 +116,6 @@ def test_linking_a_live_consignment_delivers_on_its_date(world):
     }
 
 
-def test_linking_from_customer_confirmed_also_delivers(world):
-    rid = _processing(world)
-    assert _move(world, rid, "customer_confirmed", date="2026-11-18").status_code == 200
-    res = _link(world, rid, _cg(world).id)
-    assert res.status_code == 200, res.text
-    assert res.json()["status"] == "delivered"
-
 
 def test_salesperson_cannot_link(world):
     rid = _processing(world)
@@ -180,50 +173,21 @@ def test_manual_delivered_is_refused_while_a_consignment_is_linked(world):
     from app.services import sample_request_service as svc
 
     rid = _processing(world)
-    assert _move(world, rid, "customer_confirmed", date="2026-11-18").status_code == 200
     cg = _cg(world)
     assert _link(world, rid, cg.id).status_code == 200
-    # The CG is voided: the request goes back, the link stays.
+    # The CG is voided: the request goes back to Processing and lets go of it (owner, 11 Nov).
     world.db.query(SalesOrder).filter(SalesOrder.id == cg.id).update({"status": "cancelled"})
     svc.sync_consignment(world.db, world.company_id, cg.so_number)
-    assert _get(world, rid)["status"] == "customer_confirmed"
+    assert _get(world, rid)["status"] == "processing"
 
     res = _move(world, rid, "delivered", date="2026-11-25")
     assert res.status_code == 409, res.text
     assert _code(res) == "SAMPLE_REQUEST_DELIVERED_BY_CONSIGNMENT"
 
 
-def test_manual_delivered_still_works_without_a_consignment(world):
-    """Edge: a board-only request, or goods that never went through AutoCount."""
-    rid = _processing(world)
-    assert _move(world, rid, "customer_confirmed", date="2026-11-18").status_code == 200
-    assert _move(world, rid, "delivered", date="2026-11-25").status_code == 200
-
 
 # ------------------------------------------------------------------ void / restore / unlink
 
-
-def test_voided_consignment_reverts_and_a_restored_one_delivers_again(world):
-    from app.models.order import SalesOrder
-    from app.services import sample_request_service as svc
-
-    rid = _processing(world)
-    assert _move(world, rid, "customer_confirmed", date="2026-11-18").status_code == 200
-    cg = _cg(world)
-    assert _link(world, rid, cg.id).status_code == 200
-
-    world.db.query(SalesOrder).filter(SalesOrder.id == cg.id).update({"status": "cancelled"})
-    svc.sync_consignment(world.db, world.company_id, cg.so_number)
-    back = _get(world, rid)
-    assert back["status"] == "customer_confirmed"
-    assert back["delivered_at"] is None and back["return_due"] is None
-    assert back["consignment"]["status"] == "cancelled"
-
-    world.db.query(SalesOrder).filter(SalesOrder.id == cg.id).update({"status": "closed"})
-    svc.sync_consignment(world.db, world.company_id, cg.so_number)
-    again = _get(world, rid)
-    assert again["status"] == "delivered"
-    assert again["delivered_at"] == "2026-11-20"
 
 
 def test_void_reverts_to_processing_when_never_confirmed(world):
@@ -250,24 +214,15 @@ def test_sync_ignores_other_companies_and_unlinked_requests(world):
 
 def test_unlink_undoes_the_delivery(world):
     rid = _processing(world)
-    assert _move(world, rid, "customer_confirmed", date="2026-11-18").status_code == 200
     assert _link(world, rid, _cg(world).id).status_code == 200
     res = _link(world, rid, None)
     assert res.status_code == 200, res.text
     body = res.json()
-    assert body["status"] == "customer_confirmed"
+    assert body["status"] == "processing"
     assert body["consignment"] is None
     assert body["consignment_no"] is None
     assert body["delivered_at"] is None
 
-
-def test_manual_delivered_then_link_takes_the_consignment_date(world):
-    rid = _processing(world)
-    assert _move(world, rid, "customer_confirmed", date="2026-11-18").status_code == 200
-    assert _move(world, rid, "delivered", date="2026-11-25").status_code == 200
-    res = _link(world, rid, _cg(world).id)
-    assert res.status_code == 200, res.text
-    assert res.json()["delivered_at"] == "2026-11-20"
 
 
 def test_cancelled_request_cannot_be_linked(world):

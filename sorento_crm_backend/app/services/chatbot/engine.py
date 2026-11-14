@@ -1037,6 +1037,13 @@ def _exact_codes_only(
     candidates = [c for c in resolved_candidates.get("product") or [] if isinstance(c, dict)]
     if not tokens or not candidates:
         return None
+    # CHATBOT-CLOSE-CODES C1 (G1): a token the parser typed as a product code is a code whatever
+    # its shape (`answer.product_typed_tokens`, owner Q1 (b)). One the resolver itself left
+    # unplaced is a miss the reply names and offers close codes for, never dropped as a word;
+    # a word the resolver placed code rows for still takes none of them.
+    from app.services.chatbot.lanes.business.answer import product_typed_tokens
+
+    typed_products = product_typed_tokens(parse_output)
     keep: set[str] = set()
     per_token: dict[str, int] = {}
     misses: dict[str, str] = {}
@@ -1061,7 +1068,7 @@ def _exact_codes_only(
         if chosen:
             keep.update(str(c.get("uuid")) for c in chosen)
             per_token[fold] = len(chosen)
-        elif turn_task.code_or_number(code):
+        elif turn_task.code_or_number(code) or (fold in typed_products and fold in unplaced):
             misses[fold] = typed
         else:
             ignored.add(fold)
@@ -1844,6 +1851,10 @@ class _SpanPrep:
     # Fix round 9 (crew turn 4ff1d7b8): the spans the span model typed `supplier`, placed or not; a turn naming one is
     # supplier-scoped even when the parser returned no entity for it (`_supplier_scope`).
     supplier_typed: list[str] = field(default_factory=list)
+    # CHATBOT-SPEED: how long `_span_prep` took (row loading, visibility, spec keys, numbers), for the trace event.
+    prep_ms: int = 0
+    # CHATBOT-SPEED: the span call `_span_prep` already started (`_start_span_call`); None: `_span_lookup` makes it.
+    span_answer: Callable[[], span_extract.SpanAnswer | None] | None = None
 
 
 def _span_override(db: Session, envelope: Envelope, *, dry_run: bool) -> str | None:
@@ -1877,7 +1888,18 @@ def _span_prep(
     """ENTITY-EXTRACT-MATCH S2: the rows the contact may see (the same visibility as `_lookup_lines`), the spec-name
     rows, the number hits and the span call's config, read inside the session. None when the loader itself fails.
     `companies` (`_candidate_companies`): the Company rows, offered by the near-exact spelling pass only."""
+    started = time.perf_counter()
     try:
+        # CHATBOT-SPEED: the span call reads only its config and the message, so it starts here, on a thread, and
+        # the row loading below (and the rest of the step before the parser) runs while it waits on the model.
+        config = None
+        try:
+            with db.begin_nested():
+                pin = {"override_version_id": span_override} if span_override else {}
+                config = span_extract.resolve_config(db, llm_choice=llm_choice, **pin)
+        except Exception:  # noqa: BLE001 - no key or no registry: the n-gram lines take over
+            logger.warning("chatbot: span config failed; using the n-gram lookup", exc_info=True)
+        span_answer = _start_span_call(config, message) if config is not None else None
         embed = _guarded(db, lambda: lookup_lists.embedder(db), None)
         include_salespeople, include_customers, customer_ids, include_suppliers = _lookup_visibility(
             db, contact_respond_id, space_id
@@ -1893,18 +1915,14 @@ def _span_prep(
             spec_keys = [r for r in list_resolver.spec_key_rows(active_registry(db)) if r.key not in hidden]
             brand_words = lookup_lists.brand_words(db, brands)
             numbers = lookup_lists.number_hits(message, db, hidden_spec_keys=hidden)
-        config = None
-        try:
-            with db.begin_nested():
-                pin = {"override_version_id": span_override} if span_override else {}
-                config = span_extract.resolve_config(db, llm_choice=llm_choice, **pin)
-        except Exception:  # noqa: BLE001 - no key or no registry: the n-gram lines take over
-            logger.warning("chatbot: span config failed; using the n-gram lookup", exc_info=True)
         lookup_lists.warm([*rows, *spec_keys], embed)
-        return _SpanPrep(
+        prep = _SpanPrep(
             message, rows, spec_keys, brand_words, numbers, held or {}, embed, config, group_categories, row_ids,
             supplier_ids,
         )
+        prep.span_answer = span_answer
+        prep.prep_ms = int((time.perf_counter() - started) * 1000)
+        return prep
     except Exception:  # noqa: BLE001 - advisory block, never a failed turn
         logger.warning("chatbot: span prep failed; parsing without lookup lists", exc_info=True)
         return None
@@ -2269,20 +2287,56 @@ def _hits_of(resolutions: list[list_resolver.Resolution]) -> dict[str, list[look
     return {name: sorted(h.values(), key=lambda x: (-(x.spelling + x.meaning), x.row.label)) for name, h in best.items()}
 
 
+def _start_span_call(config: span_extract.SpanConfig, message: str) -> Callable[[], span_extract.SpanAnswer | None]:
+    """CHATBOT-SPEED: `span_extract.extract(config, message)` on a thread, started now; the returned call waits for
+    its answer. Same config, same message, so the same request as the serial call. The turn's context (the usage
+    capture `llm_call` reads) goes with it. `extract` never raises and has its own deadline; a thread that outlives
+    it by `_SPAN_JOIN_GRACE_SECONDS` reads as a timed-out call."""
+    import contextvars
+
+    box: list[span_extract.SpanAnswer | None] = []
+    began = time.perf_counter()
+    context = contextvars.copy_context()
+    thread = threading.Thread(
+        target=lambda: box.append(context.run(span_extract.extract, config, message)), name="span-call", daemon=True
+    )
+    thread.start()
+
+    def answer() -> span_extract.SpanAnswer | None:
+        thread.join(span_extract.SPAN_TIMEOUT_SECONDS + _SPAN_JOIN_GRACE_SECONDS)
+        if box:
+            return box[0]
+        # Still running: late. Ended with no answer: `extract` raised, which it is written never to do.
+        failure = "timeout" if thread.is_alive() else "call_error"
+        return span_extract.SpanAnswer(None, {}, int((time.perf_counter() - began) * 1000), failure)
+
+    return answer
+
+
+#: How long past the span call's own deadline the turn waits for its thread.
+_SPAN_JOIN_GRACE_SECONDS = 2.0
+
+
 def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_respond_id: str, dry_run: bool,
                  turn_id: str | None) -> tuple[list[str], dict[str, Any], dict[str, Any]]:
     """The span call, then the lookup blocks. Runs with no DB session open. Returns (lines, `lookup_lists` event,
     `span_extract` event). A call that fails or answers unreadably leaves today's n-gram lines (`fallback`)."""
     config = prep.config
-    answer = span_extract.extract(config, prep.message) if config is not None else None
+    if prep.span_answer is not None:
+        answer = prep.span_answer()
+    else:
+        answer = span_extract.extract(config, prep.message) if config is not None else None
     event: dict[str, Any] = {
         "spans": [], "rows_rendered": 0, "ms": answer.ms if answer else 0,
         "provider": config.provider if config else None, "model": config.model if config else None,
         "model_source": config.model_source if config else None,
         "embedding_model": None, "fallback": False, "fallback_reason": None, "near_exact_rows": 0,
         "tokens": {k: answer.usage.get(k) or 0 for k in ("prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens")} if answer else {},
+        # CHATBOT-SPEED: the rest of the time before the parser, per piece (measurement only).
+        "prep_ms": prep.prep_ms, "resolve_ms": 0, "usage_log_ms": 0,
     }
     if answer is not None and answer.usage and not dry_run:
+        log_started = time.perf_counter()
         try:
             with _session(session_factory) as db:
                 record_turn_llm_usage(
@@ -2291,7 +2345,9 @@ def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_re
                 )
         except Exception:  # noqa: BLE001 - telemetry must never fail a customer's turn
             logger.warning("chatbot turn %s: span usage log failed", turn_id, exc_info=True)
+        event["usage_log_ms"] = int((time.perf_counter() - log_started) * 1000)
     reason = "no_config" if answer is None else answer.failure
+    resolve_started = time.perf_counter()
     try:
         hits: dict[str, list[lookup_lists.Hit]] | None = None
         if answer is not None and answer.spans is not None:
@@ -2395,6 +2451,7 @@ def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_re
             prep.supplier_groups = {}
             prep.supplier_spans = {}
         event["rows_rendered"] = sum(1 for ln in lines if ln.startswith("- "))
+        event["resolve_ms"] = int((time.perf_counter() - resolve_started) * 1000)
         lookup_event["hits"] = [
             {"label": h.row.label, "piece": h.piece, "spelling": round(h.spelling, 3), "meaning": round(h.meaning, 3)}
             for name in hits
@@ -10083,9 +10140,11 @@ def _stock_ask_reply(
     parts = _stock_answer_lines(envelopes, full=composers.enabled())
     # CHATBOT-CODE-MATCH R1/R7: a dealer's missed codes beside found ones get the pick a
     # single-code miss gets (`dealer_stock.did_you_mean_each`), over the same candidates,
-    # never one this reply already answered.
+    # never one this reply already answered. CHATBOT-CLOSE-CODES C3 (crew Q3 (a)): also
+    # beside a reply that asks (how many, a which-one list): the offer follows the question,
+    # its numbers running on after the list's, and one pick holds both.
     offer = None
-    if not pick and not text and getattr(getattr(state_out, "profile", None), "stock_availability_only", False):
+    if misses and getattr(getattr(state_out, "profile", None), "stock_availability_only", False):
         from app.services.chatbot import dealer_stock as dealer_mod
 
         suggested = turn_compose.unplaced_suggestions(envelopes)
@@ -10096,6 +10155,9 @@ def _stock_ask_reply(
             ],
             answered=turn_compose.answered_codes(envelopes),
             asked_at_turn=turn_no,
+            before=pick or None,
+            # CHATBOT-CLOSE-CODES B2: a how-many this reply asks stays owed past the offer's pick.
+            owed=turn_task.owed_of(tuple(state_out.focus.tasks or ())) if text and not pick else None,
         )
     if offer is not None:
         misses = [m for m in misses if m not in offer[2]]
@@ -10103,14 +10165,16 @@ def _stock_ask_reply(
         miss_line = composers_stock.miss_line(misses)
         if miss_line:
             parts.append(miss_line)
-    if offer is not None:
-        parts.append(offer[0])
     if text:
         parts.append(text)
+    if offer is not None:
+        parts.append(offer[0])
     question = (
-        turn_pending.ask("product_pick", pick["options"], asked_at_turn=turn_no, payload=pick["payload"])
+        offer[1]
+        if offer is not None
+        else turn_pending.ask("product_pick", pick["options"], asked_at_turn=turn_no, payload=pick["payload"])
         if pick
-        else offer[1] if offer is not None else None
+        else None
     )
     return dataclasses_replace(answer, text="\n\n".join(parts), question=question, sections=[])
 

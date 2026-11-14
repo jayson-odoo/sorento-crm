@@ -347,6 +347,10 @@ def _wire_line(line: dict) -> dict:
 
 
 class ProjectAutocountWriteService:
+    #: The SS capability kinds this service reads (group -> SS kind). A subclass adds its own
+    #: (AC-PROJECT-REGISTER) without changing what the quotation and sales order screens read.
+    KINDS: Dict[str, str] = _KINDS
+
     def __init__(self, db: Session, client: Optional[FoundryxAutocountClient] = None):
         self.db = db
         self._client = client
@@ -484,7 +488,7 @@ class ProjectAutocountWriteService:
         except FoundryxPullError as exc:
             reason = UNREACHABLE if exc.code == "UNREACHABLE" else (exc.message or "")[:_MAX_TEXT]
             return (
-                {group: {op: {"enabled": False, "reason": reason} for op in OPS} for group in _KINDS},
+                {group: {op: {"enabled": False, "reason": reason} for op in OPS} for group in self.KINDS},
                 None,
             )
         book = body.get("book")
@@ -495,7 +499,7 @@ class ProjectAutocountWriteService:
             if isinstance(e, dict)
         }
         out: Dict[str, Dict[str, Dict[str, Any]]] = {}
-        for group, kind in _KINDS.items():
+        for group, kind in self.KINDS.items():
             ops = {}
             for op in OPS:
                 entry = entries.get((kind, op))
