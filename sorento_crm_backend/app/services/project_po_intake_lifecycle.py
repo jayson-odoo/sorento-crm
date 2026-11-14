@@ -83,8 +83,6 @@ from app.services.project_po_reading import (  # noqa: F401 - shared vocabulary
     dedup_key,
     successor_po_number,
     _looks_like_code,
-    _squash,
-    _code_tokens,
     _proposed_code,
     classify_annotation,
 )
@@ -945,6 +943,7 @@ class POIntakeLifecycleMixin:
         *,
         company_id: Optional[str] = None,
         remembered: Optional[Dict[str, str]] = None,
+        description: Optional[str] = None,
     ) -> Tuple[Optional[str], Optional[str]]:
         """The two exact tiers: the catalogue code, then the customer's remembered code.
 
@@ -955,7 +954,10 @@ class POIntakeLifecycleMixin:
         failing to reconcile against its own PO because the two had resolved the same
         code to different rows. Callers pass the PO's company.
 
-        ``remembered`` is the customer's own codes (``customer_code_map.remembered_codes``).
+        ``remembered`` is the customer's own codes (``customer_code_map.remembered_codes``),
+        looked up by ``customer_code_map.customer_code_for``: the stock code, or the
+        description of a line printed without one. A remembered product of another company
+        never resolves (the map row predates a catalogue move, or was written wrongly).
         Nothing here is approximate any more (PO-UPLOAD-MATCHING): the description-token
         rule matched a size ("40MM") as a product, and the loose string tiers are replaced
         by a model SUGGESTION among real candidates (``project_po_matching``), which a
@@ -964,18 +966,29 @@ class POIntakeLifecycleMixin:
         from app.models.product import Product
 
         code = (stock_code or "").strip().upper()
-        if not code:
-            return None, None
-        query = self.db.query(Product).filter(func.upper(Product.product_code) == code)
-        if company_id:
-            query = query.filter(Product.company_id == company_id)
-        product = query.first()
-        if product is not None:
-            return product.id, "code"
-        product_id = (remembered or {}).get(code)
-        if product_id:
+        if code:
+            query = self.db.query(Product).filter(func.upper(Product.product_code) == code)
+            if company_id:
+                query = query.filter(Product.company_id == company_id)
+            product = query.first()
+            if product is not None:
+                return product.id, "code"
+        key = customer_code_map.customer_code_for(stock_code, description)
+        product_id = (remembered or {}).get(key.upper()) if key else None
+        if product_id and self._product_in_company(product_id, company_id) is not None:
             return product_id, "map"
         return None, None
+
+    def _product_in_company(self, product_id: Optional[str], company_id: Optional[str]):
+        """The product, only when it belongs to ``company_id`` (the line's company)."""
+        from app.models.product import Product
+
+        if not product_id:
+            return None
+        query = self.db.query(Product).filter(Product.id == product_id)
+        if company_id:
+            query = query.filter(Product.company_id == company_id)
+        return query.first()
 
     def _customer_for_version(self, version: ProjectPOVersion) -> Optional[str]:
         return customer_code_map.customer_id_for_po(
@@ -1019,11 +1032,26 @@ class POIntakeLifecycleMixin:
             if line.resolved_product_id is not None:
                 continue
             line.resolved_product_id, line.resolution_source = self._resolve_product(
-                line.stock_code_raw, company_id=version.company_id, remembered=remembered
+                line.stock_code_raw,
+                company_id=version.company_id,
+                remembered=remembered,
+                description=line.description_raw,
             )
         self.db.flush()
 
-        quotation = self._quotation_version_for(purchase_order)
+        # The quotation only adds candidates. A lookup that fails must not fail the read:
+        # the map and catalogue candidates still stand (savepoint, so a DB error inside
+        # does not abort the rest of the read's transaction).
+        quotation = None
+        try:
+            with self.db.begin_nested():
+                quotation = self._quotation_version_for(purchase_order)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "PO version %s: quotation lookup failed, matching without it: %s",
+                version.id,
+                exc,
+            )
         project_po_matching.suggest_matches(
             self.db,
             version,
@@ -1078,7 +1106,9 @@ class POIntakeLifecycleMixin:
                 self.db,
                 company_id=line.company_id,
                 customer_id=self._customer_for_version(version),
-                customer_code=line.stock_code_raw,
+                customer_code=customer_code_map.customer_code_for(
+                    line.stock_code_raw, line.description_raw
+                ),
                 product_id=line.resolved_product_id,
                 actor_user_id=actor_user_id,
             )
@@ -1282,11 +1312,8 @@ class POIntakeLifecycleMixin:
         if "resolved_product_id" in payload:
             product_id = payload["resolved_product_id"]
             if product_id:
-                from app.models.product import Product
-
-                product = (
-                    self.db.query(Product).filter(Product.id == product_id).first()
-                )
+                # Only a product of the line's own company (same rule as the read's tiers).
+                product = self._product_in_company(product_id, line.company_id)
                 if product is None:
                     raise AppException(
                         status_code=404,
@@ -1299,7 +1326,9 @@ class POIntakeLifecycleMixin:
                     self.db,
                     company_id=line.company_id,
                     customer_id=self._customer_for_version(version),
-                    customer_code=line.stock_code_raw,
+                    customer_code=customer_code_map.customer_code_for(
+                        line.stock_code_raw, line.description_raw
+                    ),
                     product_id=product.id,
                     actor_user_id=actor_user_id,
                 )
@@ -1315,6 +1344,7 @@ class POIntakeLifecycleMixin:
                 line.stock_code_raw,
                 company_id=line.company_id,
                 remembered=self._remembered_for_version(version),
+                description=line.description_raw,
             )
             line.resolved_product_id = product_id
             line.resolution_source = source

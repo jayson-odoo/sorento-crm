@@ -15,6 +15,16 @@ from sqlalchemy.orm import Session
 from app.models.project_so import CustomerItemCodeMap
 from app.models.projects import Project, ProjectParty, ProjectPurchaseOrder
 
+#: ``customer_item_code_map.customer_code`` is String(180).
+CODE_MAX_LENGTH = 180
+
+
+def customer_code_for(stock_code: Optional[str], description: Optional[str]) -> Optional[str]:
+    """What a PO line is remembered by: its printed stock code, or, when the line has none,
+    its description (cut to the column length). Read and write both use this one rule."""
+    code = (stock_code or "").strip() or (description or "").strip()
+    return code[:CODE_MAX_LENGTH] or None
+
 
 def remembered_codes(db: Session, customer_id: Optional[str]) -> Dict[str, str]:
     """Every code this customer taught us: UPPER customer code -> product id."""
@@ -39,7 +49,7 @@ def remember_code(
 ) -> None:
     """Insert or overwrite, case-insensitive on the code. A blank code or no customer is a
     no-op: there is nothing to key the memory on."""
-    code = (customer_code or "").strip()
+    code = (customer_code or "").strip()[:CODE_MAX_LENGTH]
     if not customer_id or not code or not product_id:
         return
     existing = (
@@ -59,7 +69,7 @@ def remember_code(
         CustomerItemCodeMap(
             company_id=company_id,
             customer_id=customer_id,
-            customer_code=code[:180],
+            customer_code=code,
             product_id=product_id,
             confirmed_by=actor_user_id,
         )

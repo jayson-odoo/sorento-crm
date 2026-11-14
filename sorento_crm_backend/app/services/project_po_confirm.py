@@ -76,8 +76,6 @@ from app.services.project_po_reading import (  # noqa: F401 - shared vocabulary
     dedup_key,
     successor_po_number,
     _looks_like_code,
-    _squash,
-    _code_tokens,
     _proposed_code,
     classify_annotation,
 )
@@ -146,10 +144,10 @@ def lines_need_attention_message(line_nos: List[int]) -> str:
     """AC-Q3: every line still holding Confirm, by number, and what to do about it."""
     named = [str(n) for n in line_nos]
     listed = named[0] if len(named) == 1 else f"{', '.join(named[:-1])} and {named[-1]}"
-    noun = "Line" if len(named) == 1 else "Lines"
+    noun, verb = ("Line", "needs") if len(named) == 1 else ("Lines", "need")
     return (
-        f"{noun} {listed} still need a quantity or a suggestion accepted. Enter the "
-        "missing quantities, and accept or change each suggested product or quantity."
+        f"{noun} {listed} still {verb} a quantity or a suggestion accepted. Enter a "
+        "quantity above zero, and accept or change each suggested product or quantity."
     )
 
 
@@ -205,7 +203,9 @@ class POConfirmationMixin:
         attention = [
             line.line_no
             for line in live
-            if line.qty is None or self.has_suggestion(version, line)
+            if _to_decimal(line.qty) is None
+            or _to_decimal(line.qty) <= 0
+            or self.has_suggestion(version, line)
         ]
         if attention:
             raise AppException(

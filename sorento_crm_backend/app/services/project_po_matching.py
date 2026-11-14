@@ -84,8 +84,11 @@ def ask_line_matcher(db: Session, lines: List[dict], *, company_id: Optional[str
     any failure (no key, provider error, timeout, an answer that is not the schema); the
     caller treats a raise as "this batch stays unmatched".
 
-    Candidates every line shares (the quotation and the customer's map) are sent once, not
-    once per line, so a long quotation does not multiply into every item of the batch.
+    Candidates every line of the batch shares are sent once, under
+    ``candidates_for_every_line``, not once per line, so a long quotation does not multiply
+    into every item; ``lines[].candidates`` carries only what is offered to that line alone.
+    The prompt names both keys, and a line may pick from either. ``company_id`` is the PO's
+    company, for the log line: the candidates were already scoped to it by the caller.
     """
     from app.services.ai_prompt_registry import agent_model, get_prompt
     from app.services.document_extraction import _assistant_config, _reader_model
@@ -118,6 +121,14 @@ def ask_line_matcher(db: Session, lines: List[dict], *, company_id: Optional[str
         ],
     }
     system = get_prompt(db, PROMPT_KEY).text
+    logger.info(
+        "PO line matcher: %s lines, %s shared candidates, company %s, %s/%s",
+        len(lines),
+        len(shared),
+        company_id,
+        provider_name,
+        model,
+    )
     result = provider.chat(
         [
             {"role": "system", "content": system},
@@ -359,6 +370,8 @@ def suggest_matches(
             line = by_line.get(line_no)
             if line is None:
                 continue
+            # Everything this line was offered: the shared list AND its own (`offered` is
+            # built from the full per-line list, before `ask_line_matcher` splits it).
             allowed = offered.get(line_no) or {}
             picked = allowed.get(str(answer.get("product_code") or "").strip().upper())
             options: List[str] = []

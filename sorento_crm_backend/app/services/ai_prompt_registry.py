@@ -712,9 +712,13 @@ def _po_line_matcher_fallback() -> str:
         "You match lines of a customer PURCHASE ORDER sent to Sorento Sdn Bhd to products\n"
         "in Sorento's catalogue.\n"
         "\n"
-        "The user message is a JSON list. Each item is one PO line:\n"
+        "The user message is a JSON object with two keys:\n"
+        '- "candidates_for_every_line": candidates offered to EVERY line in "lines".\n'
+        '- "lines": the PO lines to match. Each item is one PO line:\n'
         '  {"line_no": 4, "stock_code": "...", "description": "...",\n'
-        '   "candidates": [{"code": "SRTWC8518-SH", "name": "...", "source": "quotation"}]}\n'
+        '   "candidates": [{"code": "SRTWC8518-SH", "name": "...", "source": "catalogue"}]}\n'
+        '  where "candidates" are offered to THAT line only.\n'
+        "A line's candidates are its own \"candidates\" PLUS \"candidates_for_every_line\".\n"
         '"source" says where a candidate came from: "quotation" (quoted to this customer\n'
         'on this project), "customer_map" (a code this customer used before) or\n'
         '"catalogue" (a near match in the catalogue).\n'
@@ -725,8 +729,9 @@ def _po_line_matcher_fallback() -> str:
         "\n"
         "Rules:\n"
         "- One entry per input line, same line_no.\n"
-        "- \"product_code\" is ONE code copied exactly from THAT line's own candidates, or\n"
-        "  null. Never a code from another line's candidates, never a code you made up,\n"
+        "- \"product_code\" is ONE code copied exactly from THAT line's candidates (its own\n"
+        "  list or candidates_for_every_line), or null. Never a code offered only to another\n"
+        "  line, never a code you made up,\n"
         "  never a corrected spelling.\n"
         "- Read the customer's text the way a person would. Ignore brand words (SORENTO,\n"
         "  CABANA), a customer's own prefix stuck on the front of our code (for example\n"

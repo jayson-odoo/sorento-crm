@@ -108,8 +108,6 @@ from app.services.project_po_reading import (  # noqa: F401 - shared vocabulary
     dedup_key,
     successor_po_number,
     _looks_like_code,
-    _squash,
-    _code_tokens,
     _proposed_code,
     classify_annotation,
 )

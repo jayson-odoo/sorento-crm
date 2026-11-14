@@ -1,8 +1,20 @@
 'use client';
 
 import * as React from 'react';
-import { ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
-import { Ban, Check, Loader2, Pencil, RotateCcw, StickyNote, X } from 'lucide-react';
+import {
+  ColumnDef,
+  getCoreRowModel,
+  useReactTable,
+} from '@tanstack/react-table';
+import {
+  Ban,
+  Check,
+  Loader2,
+  Pencil,
+  RotateCcw,
+  StickyNote,
+  X,
+} from 'lucide-react';
 import { toast } from '@/lib/toast';
 import {
   AlertDialog,
@@ -47,7 +59,12 @@ import type {
   POVersionLine,
 } from '../../_shared/types/poIntake.types';
 import { PO_INTERPRETATION_LABELS } from '../../_shared/types/poIntake.types';
-import { formatMyrExact, formatQty, isDecimalString, multiplyMoney } from '../../_shared/lib/money';
+import {
+  formatMyrExact,
+  formatQty,
+  isDecimalString,
+  multiplyMoney,
+} from '../../_shared/lib/money';
 import { describeAnnotationEffect } from './POIntakeAnnotationsGrid';
 import { POIntakeAnnotationEditDialog } from './POIntakeAnnotationEditDialog';
 
@@ -63,7 +80,8 @@ export interface POIntakeLinesGridHandle {
  * uploaded document instead of one per person. `<perm_slug>::<stable_id>`, per
  * docs/LISTING-COLUMN-PREFERENCES.md.
  */
-export const PO_INTAKE_LINES_LISTING_KEY = 'projects.projects.view::po-intake-lines';
+export const PO_INTAKE_LINES_LISTING_KEY =
+  'projects.projects.view::po-intake-lines';
 
 interface Props {
   lines: POVersionLine[];
@@ -76,8 +94,14 @@ interface Props {
   annotations: POAnnotation[];
   savingAnnotationIds: string[];
   onShowPage: (page: number) => void;
-  onAcceptAnnotation: (annotationId: string, note?: string | null) => Promise<void>;
-  onEditAnnotation: (annotationId: string, body: POAnnotationEditBody) => Promise<void>;
+  onAcceptAnnotation: (
+    annotationId: string,
+    note?: string | null,
+  ) => Promise<void>;
+  onEditAnnotation: (
+    annotationId: string,
+    body: POAnnotationEditBody,
+  ) => Promise<void>;
   onRejectAnnotation: (annotationId: string, note: string) => Promise<void>;
   /**
    * S6-3: the grid opens on "Need attention" while the version is unconfirmed, and on every
@@ -92,6 +116,8 @@ interface Props {
 }
 
 type ProductOption = { value: string; label: string; description?: string };
+
+type LinesView = 'flagged' | 'suggested' | 'all';
 
 /** The short marker on the row: what the pencil is asking for, not why. */
 function annotationBadgeLabel(note: POAnnotation): string {
@@ -127,7 +153,10 @@ export function hasSuggestion(line: POVersionLine): boolean {
  */
 export function isFlaggedLine(line: POVersionLine): boolean {
   return (
-    !line.arithmetic_ok || !line.resolved_product_id || hasSuggestion(line) || line.is_cancelled
+    !line.arithmetic_ok ||
+    !line.resolved_product_id ||
+    hasSuggestion(line) ||
+    line.is_cancelled
   );
 }
 
@@ -157,7 +186,8 @@ export function blockingNotes(
   const lineNos = new Set(lines.map((line) => line.line_no));
   return annotations.filter(
     (note) =>
-      note.state === 'proposed' && note.refers_to_lines.some((lineNo) => lineNos.has(lineNo)),
+      note.state === 'proposed' &&
+      note.refers_to_lines.some((lineNo) => lineNos.has(lineNo)),
   );
 }
 
@@ -176,879 +206,940 @@ export function blockingNotes(
  * (S6-3, `defaultFlaggedOnly`) - the exceptions are the work; "All lines" is one click away
  * for reconciling a total against the whole document.
  */
-export const POIntakeLinesGrid = React.forwardRef<POIntakeLinesGridHandle, Props>(
-  function POIntakeLinesGrid(
-    {
-      lines,
-      readOnly,
-      savingLineIds,
-      focusedLineId,
-      onFocusLine,
-      onUpdateLine,
-      annotations,
-      savingAnnotationIds,
-      onShowPage,
-      onAcceptAnnotation,
-      onEditAnnotation,
-      onRejectAnnotation,
-      defaultFlaggedOnly,
-      suggestionCount = 0,
-      onAcceptSuggestion,
-      onAcceptAllSuggestions,
-      isAcceptingSuggestions,
+export const POIntakeLinesGrid = React.forwardRef<
+  POIntakeLinesGridHandle,
+  Props
+>(function POIntakeLinesGrid(
+  {
+    lines,
+    readOnly,
+    savingLineIds,
+    focusedLineId,
+    onFocusLine,
+    onUpdateLine,
+    annotations,
+    savingAnnotationIds,
+    onShowPage,
+    onAcceptAnnotation,
+    onEditAnnotation,
+    onRejectAnnotation,
+    defaultFlaggedOnly,
+    suggestionCount = 0,
+    onAcceptSuggestion,
+    onAcceptAllSuggestions,
+    isAcceptingSuggestions,
+  },
+  ref,
+) {
+  // The row a right-click landed on, when it has a suggestion to accept.
+  const [menuLine, setMenuLine] = React.useState<POVersionLine | null>(null);
+  const rowRefs = React.useRef<Record<string, HTMLElement | null>>({});
+  const [confirming, setConfirming] = React.useState<{
+    kind: 'cancel' | 'clear-product';
+    line: POVersionLine;
+  } | null>(null);
+  // Which rows the grid shows: the ones needing attention, the suggestions still to accept
+  // (exactly what "Accept all suggestions (N)" counts), or every line.
+  const [view, setView] = React.useState<LinesView>(
+    defaultFlaggedOnly ? 'flagged' : 'all',
+  );
+  const flaggedOnly = view !== 'all';
+  // A row asked for while it is filtered out cannot be scrolled to until it mounts.
+  const pendingFocusId = React.useRef<string | null>(null);
+  // Which line's notes popover is open, if any - one at a time, and closed by default. Set
+  // from "Review them" (the header's call to action) landing on a note-only line, never on
+  // an ordinary row click, so a popover opens only when the reader asked to review notes.
+  const [openNotesLineId, setOpenNotesLineId] = React.useState<string | null>(
+    null,
+  );
+  const pendingOpenNotesId = React.useRef<string | null>(null);
+
+  // Accept / reject / edit dialogs are shared across every row, the same way the old
+  // "Handwriting" card shared one set of dialogs across every note: a note naming three
+  // lines is still one thing to decide about, decided once.
+  const [acceptingAnnotation, setAcceptingAnnotation] = React.useState<{
+    note: POAnnotation;
+    lineId: string;
+  } | null>(null);
+  const [rejectingAnnotation, setRejectingAnnotation] = React.useState<{
+    note: POAnnotation;
+    lineId: string;
+  } | null>(null);
+  const [editingAnnotation, setEditingAnnotation] =
+    React.useState<POAnnotation | null>(null);
+  const [rejectNote, setRejectNote] = React.useState('');
+  // Which note (and which row it was cleared from) to watch for, so that once the parent's
+  // data confirms it is no longer proposed, focus moves on to the next warning on its own
+  // rather than leaving the reader to scroll and find it.
+  const lastActionedAnnotationId = React.useRef<string | null>(null);
+  const lastActionedLineId = React.useRef<string | null>(null);
+
+  // Notes that name at least one line, grouped by the line number they name. A note naming
+  // three lines lives in three buckets, so it shows, and clears, on every one of them.
+  const annotationsByLineNo = React.useMemo(() => {
+    const map = new Map<number, POAnnotation[]>();
+    for (const note of annotations) {
+      for (const lineNo of note.refers_to_lines) {
+        const bucket = map.get(lineNo);
+        if (bucket) bucket.push(note);
+        else map.set(lineNo, [note]);
+      }
+    }
+    return map;
+  }, [annotations]);
+
+  // "Identified" (S6-3): an arithmetic mismatch, an unresolved product, a cancellation, or
+  // a handwritten note still waiting on a decision - everything a person has to look at
+  // before this document can be trusted, not only what `isFlaggedLine` alone catches.
+  const flagged = React.useMemo(
+    () =>
+      lines.filter(
+        (line) =>
+          isFlaggedLine(line) ||
+          (annotationsByLineNo.get(line.line_no) ?? []).some(
+            (note) => note.state === 'proposed',
+          ),
+      ),
+    [lines, annotationsByLineNo],
+  );
+  // Live lines with a suggestion: the server's `suggestion_count` rule, so this filter's row
+  // count and the accept-all button's N are the same number.
+  const suggested = React.useMemo(
+    () => lines.filter((line) => !line.is_cancelled && hasSuggestion(line)),
+    [lines],
+  );
+  const visibleLines =
+    view === 'flagged' ? flagged : view === 'suggested' ? suggested : lines;
+  const nothingLeftToShow = flaggedOnly && visibleLines.length === 0;
+  // When the filter has emptied itself the way back lives in the all-clear panel, so the
+  // toolbar toggle stands down rather than offering the same thing twice.
+  const showFilterToggle =
+    (flagged.length > 0 || flaggedOnly) && !nothingLeftToShow;
+
+  const linesWithUnreviewedAnnotations = React.useMemo(
+    () =>
+      lines
+        .filter((line) =>
+          (annotationsByLineNo.get(line.line_no) ?? []).some(
+            (note) => note.state === 'proposed',
+          ),
+        )
+        .sort((a, b) => a.line_no - b.line_no),
+    [lines, annotationsByLineNo],
+  );
+
+  const scrollToLine = React.useCallback((lineId: string) => {
+    // jsdom implements no scrollIntoView, hence the optional call.
+    rowRefs.current[lineId]?.scrollIntoView?.({
+      block: 'center',
+      behavior: 'smooth',
+    });
+  }, []);
+
+  const focusLineInternal = React.useCallback(
+    (lineId: string, options?: { openNotes?: boolean }) => {
+      const line = lines.find((item) => item.id === lineId);
+      if (!line) return;
+      onFocusLine(line);
+      // The banner and the handwriting notes both point at specific lines, and a note can
+      // name a perfectly healthy one. Landing on it has to work with the filter on, so the
+      // filter gives way rather than swallowing the jump - but only when the line is not
+      // already one of the ones "Need attention" shows (N1: a note-only line is already
+      // visible there, and flipping to "All lines" on its own call to action defeats the
+      // guided view).
+      if (flaggedOnly && !visibleLines.some((item) => item.id === lineId)) {
+        pendingFocusId.current = lineId;
+        if (options?.openNotes) pendingOpenNotesId.current = lineId;
+        setView('all');
+        return;
+      }
+      scrollToLine(lineId);
+      if (options?.openNotes) setOpenNotesLineId(lineId);
     },
-    ref,
-  ) {
-    // The row a right-click landed on, when it has a suggestion to accept.
-    const [menuLine, setMenuLine] = React.useState<POVersionLine | null>(null);
-    const rowRefs = React.useRef<Record<string, HTMLElement | null>>({});
-    const [confirming, setConfirming] = React.useState<{
-      kind: 'cancel' | 'clear-product';
-      line: POVersionLine;
-    } | null>(null);
-    const [flaggedOnly, setFlaggedOnly] = React.useState(defaultFlaggedOnly ?? false);
-    // A row asked for while it is filtered out cannot be scrolled to until it mounts.
-    const pendingFocusId = React.useRef<string | null>(null);
-    // Which line's notes popover is open, if any - one at a time, and closed by default. Set
-    // from "Review them" (the header's call to action) landing on a note-only line, never on
-    // an ordinary row click, so a popover opens only when the reader asked to review notes.
-    const [openNotesLineId, setOpenNotesLineId] = React.useState<string | null>(null);
-    const pendingOpenNotesId = React.useRef<string | null>(null);
+    [lines, onFocusLine, flaggedOnly, visibleLines, scrollToLine],
+  );
 
-    // Accept / reject / edit dialogs are shared across every row, the same way the old
-    // "Handwriting" card shared one set of dialogs across every note: a note naming three
-    // lines is still one thing to decide about, decided once.
-    const [acceptingAnnotation, setAcceptingAnnotation] = React.useState<{
-      note: POAnnotation;
-      lineId: string;
-    } | null>(null);
-    const [rejectingAnnotation, setRejectingAnnotation] = React.useState<{
-      note: POAnnotation;
-      lineId: string;
-    } | null>(null);
-    const [editingAnnotation, setEditingAnnotation] = React.useState<POAnnotation | null>(
-      null,
-    );
-    const [rejectNote, setRejectNote] = React.useState('');
-    // Which note (and which row it was cleared from) to watch for, so that once the parent's
-    // data confirms it is no longer proposed, focus moves on to the next warning on its own
-    // rather than leaving the reader to scroll and find it.
-    const lastActionedAnnotationId = React.useRef<string | null>(null);
-    const lastActionedLineId = React.useRef<string | null>(null);
+  // Where "clear the warning and move on" goes next: the first line, after the one just
+  // cleared, that still has a note nobody has looked at. Wraps back to the top of the list
+  // rather than stopping, since the document does not end where the reader started.
+  const goToNextUnreviewed = React.useCallback(
+    (afterLineId: string | null) => {
+      if (linesWithUnreviewedAnnotations.length === 0) return;
+      const anchor = lines.find((item) => item.id === afterLineId);
+      const anchorLineNo = anchor?.line_no ?? -Infinity;
+      const next =
+        linesWithUnreviewedAnnotations.find(
+          (line) => line.line_no > anchorLineNo,
+        ) ?? linesWithUnreviewedAnnotations[0];
+      focusLineInternal(next.id);
+    },
+    [linesWithUnreviewedAnnotations, lines, focusLineInternal],
+  );
 
-    // Notes that name at least one line, grouped by the line number they name. A note naming
-    // three lines lives in three buckets, so it shows, and clears, on every one of them.
-    const annotationsByLineNo = React.useMemo(() => {
-      const map = new Map<number, POAnnotation[]>();
-      for (const note of annotations) {
-        for (const lineNo of note.refers_to_lines) {
-          const bucket = map.get(lineNo);
-          if (bucket) bucket.push(note);
-          else map.set(lineNo, [note]);
-        }
-      }
-      return map;
-    }, [annotations]);
-
-    // "Identified" (S6-3): an arithmetic mismatch, an unresolved product, a cancellation, or
-    // a handwritten note still waiting on a decision - everything a person has to look at
-    // before this document can be trusted, not only what `isFlaggedLine` alone catches.
-    const flagged = React.useMemo(
-      () =>
-        lines.filter(
-          (line) =>
-            isFlaggedLine(line) ||
-            (annotationsByLineNo.get(line.line_no) ?? []).some(
-              (note) => note.state === 'proposed',
-            ),
-        ),
-      [lines, annotationsByLineNo],
-    );
-    const visibleLines = flaggedOnly ? flagged : lines;
-    const nothingLeftToShow = flaggedOnly && visibleLines.length === 0;
-    // When the filter has emptied itself the way back lives in the all-clear panel, so the
-    // toolbar toggle stands down rather than offering the same thing twice.
-    const showFilterToggle = (flagged.length > 0 || flaggedOnly) && !nothingLeftToShow;
-
-    const linesWithUnreviewedAnnotations = React.useMemo(
-      () =>
-        lines
-          .filter((line) =>
-            (annotationsByLineNo.get(line.line_no) ?? []).some(
-              (note) => note.state === 'proposed',
-            ),
-          )
-          .sort((a, b) => a.line_no - b.line_no),
-      [lines, annotationsByLineNo],
-    );
-
-    const scrollToLine = React.useCallback((lineId: string) => {
-      // jsdom implements no scrollIntoView, hence the optional call.
-      rowRefs.current[lineId]?.scrollIntoView?.({
-        block: 'center',
-        behavior: 'smooth',
+  React.useImperativeHandle(ref, () => ({
+    focusLine: focusLineInternal,
+    focusFirstUnreviewedAnnotation: () => {
+      if (linesWithUnreviewedAnnotations.length === 0) return false;
+      // "Review them" (the header link) opens the first unreviewed line's popover
+      // directly, rather than merely scrolling to a row the reader still has to click.
+      focusLineInternal(linesWithUnreviewedAnnotations[0].id, {
+        openNotes: true,
       });
-    }, []);
+      return true;
+    },
+  }));
 
-    const focusLineInternal = React.useCallback(
-      (lineId: string, options?: { openNotes?: boolean }) => {
-        const line = lines.find((item) => item.id === lineId);
-        if (!line) return;
-        onFocusLine(line);
-        // The banner and the handwriting notes both point at specific lines, and a note can
-        // name a perfectly healthy one. Landing on it has to work with the filter on, so the
-        // filter gives way rather than swallowing the jump - but only when the line is not
-        // already one of the ones "Need attention" shows (N1: a note-only line is already
-        // visible there, and flipping to "All lines" on its own call to action defeats the
-        // guided view).
-        if (flaggedOnly && !flagged.some((item) => item.id === lineId)) {
-          pendingFocusId.current = lineId;
-          if (options?.openNotes) pendingOpenNotesId.current = lineId;
-          setFlaggedOnly(false);
-          return;
-        }
-        scrollToLine(lineId);
-        if (options?.openNotes) setOpenNotesLineId(lineId);
-      },
-      [lines, onFocusLine, flaggedOnly, flagged, scrollToLine],
+  React.useEffect(() => {
+    const pending = pendingFocusId.current;
+    if (!pending) return;
+    pendingFocusId.current = null;
+    scrollToLine(pending);
+    if (pendingOpenNotesId.current === pending) {
+      pendingOpenNotesId.current = null;
+      setOpenNotesLineId(pending);
+    }
+  }, [view, scrollToLine]);
+
+  // Runs after the parent's data confirms the note just accepted or rejected is no longer
+  // proposed (a fresh fetch, not the click itself), and only then moves focus on: acting on
+  // stale data would send the reader to a line whose warning has not actually cleared yet.
+  React.useEffect(() => {
+    const noteId = lastActionedAnnotationId.current;
+    if (!noteId) return;
+    const stillProposed = annotations.some(
+      (note) => note.id === noteId && note.state === 'proposed',
     );
+    if (stillProposed) return;
+    const fromLineId = lastActionedLineId.current;
+    lastActionedAnnotationId.current = null;
+    lastActionedLineId.current = null;
+    // The just-resolved line's popover has nothing left to show - close it rather than
+    // leaving it open over an empty indicator while focus moves on to the next one.
+    setOpenNotesLineId(null);
+    goToNextUnreviewed(fromLineId);
+  }, [annotations, goToNextUnreviewed]);
 
-    // Where "clear the warning and move on" goes next: the first line, after the one just
-    // cleared, that still has a note nobody has looked at. Wraps back to the top of the list
-    // rather than stopping, since the document does not end where the reader started.
-    const goToNextUnreviewed = React.useCallback(
-      (afterLineId: string | null) => {
-        if (linesWithUnreviewedAnnotations.length === 0) return;
-        const anchor = lines.find((item) => item.id === afterLineId);
-        const anchorLineNo = anchor?.line_no ?? -Infinity;
-        const next =
-          linesWithUnreviewedAnnotations.find((line) => line.line_no > anchorLineNo) ??
-          linesWithUnreviewedAnnotations[0];
-        focusLineInternal(next.id);
-      },
-      [linesWithUnreviewedAnnotations, lines, focusLineInternal],
-    );
-
-    React.useImperativeHandle(ref, () => ({
-      focusLine: focusLineInternal,
-      focusFirstUnreviewedAnnotation: () => {
-        if (linesWithUnreviewedAnnotations.length === 0) return false;
-        // "Review them" (the header link) opens the first unreviewed line's popover
-        // directly, rather than merely scrolling to a row the reader still has to click.
-        focusLineInternal(linesWithUnreviewedAnnotations[0].id, { openNotes: true });
-        return true;
-      },
-    }));
-
-    React.useEffect(() => {
-      const pending = pendingFocusId.current;
-      if (!pending) return;
-      pendingFocusId.current = null;
-      scrollToLine(pending);
-      if (pendingOpenNotesId.current === pending) {
-        pendingOpenNotesId.current = null;
-        setOpenNotesLineId(pending);
-      }
-    }, [flaggedOnly, scrollToLine]);
-
-    // Runs after the parent's data confirms the note just accepted or rejected is no longer
-    // proposed (a fresh fetch, not the click itself), and only then moves focus on: acting on
-    // stale data would send the reader to a line whose warning has not actually cleared yet.
-    React.useEffect(() => {
-      const noteId = lastActionedAnnotationId.current;
-      if (!noteId) return;
-      const stillProposed = annotations.some(
-        (note) => note.id === noteId && note.state === 'proposed',
-      );
-      if (stillProposed) return;
-      const fromLineId = lastActionedLineId.current;
-      lastActionedAnnotationId.current = null;
-      lastActionedLineId.current = null;
-      // The just-resolved line's popover has nothing left to show - close it rather than
-      // leaving it open over an empty indicator while focus moves on to the next one.
-      setOpenNotesLineId(null);
-      goToNextUnreviewed(fromLineId);
-    }, [annotations, goToNextUnreviewed]);
-
-    const openAcceptAnnotation = React.useCallback(
-      (note: POAnnotation, lineId: string) => setAcceptingAnnotation({ note, lineId }),
-      [],
-    );
-    const openRejectAnnotation = React.useCallback((note: POAnnotation, lineId: string) => {
+  const openAcceptAnnotation = React.useCallback(
+    (note: POAnnotation, lineId: string) =>
+      setAcceptingAnnotation({ note, lineId }),
+    [],
+  );
+  const openRejectAnnotation = React.useCallback(
+    (note: POAnnotation, lineId: string) => {
       setRejectNote('');
       setRejectingAnnotation({ note, lineId });
-    }, []);
+    },
+    [],
+  );
 
-    const fetchProducts = React.useCallback(async (query: string): Promise<ProductOption[]> => {
+  const fetchProducts = React.useCallback(
+    async (query: string): Promise<ProductOption[]> => {
       const rows = await getProductsForVariantSelect(query || undefined);
       return rows.map((row) => ({
         value: row.id,
         label: row.product_code,
         description: row.product_name,
       }));
-    }, []);
+    },
+    [],
+  );
 
-    const commit = React.useCallback(
-      (line: POVersionLine, body: POLineUpdateBody) => {
-        void onUpdateLine(line.id, body);
-      },
-      [onUpdateLine],
+  const commit = React.useCallback(
+    (line: POVersionLine, body: POLineUpdateBody) => {
+      void onUpdateLine(line.id, body);
+    },
+    [onUpdateLine],
+  );
+
+  const columns = React.useMemo<ColumnDef<POVersionLine>[]>(() => {
+    const cellWrap = (
+      line: POVersionLine,
+      children: React.ReactNode,
+      first = false,
+    ) => (
+      <div
+        ref={
+          first
+            ? (element) => {
+                rowRefs.current[line.id] = element;
+              }
+            : undefined
+        }
+        className="min-w-0"
+        onFocusCapture={() => onFocusLine(line)}
+        onClick={() => onFocusLine(line)}
+      >
+        {children}
+      </div>
     );
 
-    const columns = React.useMemo<ColumnDef<POVersionLine>[]>(() => {
-      const cellWrap = (
-        line: POVersionLine,
-        children: React.ReactNode,
-        first = false,
-      ) => (
-        <div
-          ref={
-            first
-              ? (element) => {
-                  rowRefs.current[line.id] = element;
-                }
-              : undefined
-          }
-          className="min-w-0"
-          onFocusCapture={() => onFocusLine(line)}
-          onClick={() => onFocusLine(line)}
-        >
-          {children}
-        </div>
-      );
-
-      return [
-        {
-          accessorKey: 'line_no',
-          header: ({ column }) => <DataGridColumnHeader title="#" column={column} />,
-          cell: ({ row }) =>
-            cellWrap(
-              row.original,
-              <span className="flex items-center gap-1 text-sm tabular-nums">
-                {row.original.line_no}
-                {savingLineIds.includes(row.original.id) && (
-                  <Loader2
-                    className="size-3 animate-spin text-muted-foreground"
-                    aria-hidden
-                  />
-                )}
-              </span>,
-              true,
-            ),
-          size: 64,
-          minSize: 56,
-          meta: { headerTitle: '#', skeleton: <Skeleton className="h-4 w-6" /> },
-        },
-        {
-          accessorKey: 'stock_code_raw',
-          header: ({ column }) => (
-            <DataGridColumnHeader title="Code on the PO" column={column} />
-          ),
-          cell: ({ row }) =>
-            cellWrap(
-              row.original,
-              <CellInput
-                line={row.original}
-                field="stock_code_raw"
-                value={row.original.stock_code_raw ?? ''}
-                readOnly={readOnly}
-                label={`Code on line ${row.original.line_no}`}
-                onCommit={(value) =>
-                  commit(row.original, { stock_code_raw: value || null })
-                }
-              />,
-            ),
-          size: 160,
-          minSize: 120,
-          meta: {
-            headerTitle: 'Code on the PO',
-            skeleton: <Skeleton className="h-4 w-20" />,
-          },
-        },
-        {
-          accessorKey: 'description_raw',
-          header: ({ column }) => (
-            <DataGridColumnHeader title="Description" column={column} />
-          ),
-          cell: ({ row }) =>
-            cellWrap(
-              row.original,
-              <CellInput
-                line={row.original}
-                field="description_raw"
-                value={row.original.description_raw ?? ''}
-                readOnly={readOnly}
-                label={`Description on line ${row.original.line_no}`}
-                onCommit={(value) =>
-                  commit(row.original, { description_raw: value || null })
-                }
-              />,
-            ),
-          size: 260,
-          minSize: 160,
-          meta: {
-            headerTitle: 'Description',
-            skeleton: <Skeleton className="h-4 w-40" />,
-          },
-        },
-        {
-          accessorKey: 'qty',
-          header: ({ column }) => <DataGridColumnHeader title="Qty" column={column} />,
-          cell: ({ row }) =>
-            cellWrap(
-              row.original,
-              <CellInput
-                line={row.original}
-                field="qty"
-                value={row.original.qty}
-                numeric
-                readOnly={readOnly}
-                label={`Quantity on line ${row.original.line_no}`}
-                onCommit={(value) => commit(row.original, { qty: value })}
-              />,
-            ),
-          size: 92,
-          minSize: 72,
-          meta: {
-            headerTitle: 'Qty',
-            skeleton: <Skeleton className="h-4 w-10" />,
-          },
-        },
-        {
-          accessorKey: 'uom_raw',
-          header: ({ column }) => <DataGridColumnHeader title="UOM" column={column} />,
-          cell: ({ row }) =>
-            cellWrap(
-              row.original,
-              <CellInput
-                line={row.original}
-                field="uom_raw"
-                value={row.original.uom_raw ?? ''}
-                readOnly={readOnly}
-                label={`UOM on line ${row.original.line_no}`}
-                onCommit={(value) => commit(row.original, { uom_raw: value || null })}
-              />,
-            ),
-          size: 88,
-          minSize: 72,
-          meta: {
-            headerTitle: 'UOM',
-            skeleton: <Skeleton className="h-4 w-10" />,
-          },
-        },
-        {
-          accessorKey: 'unit_price',
-          header: ({ column }) => (
-            <DataGridColumnHeader title="Unit price" column={column} />
-          ),
-          cell: ({ row }) =>
-            cellWrap(
-              row.original,
-              <CellInput
-                line={row.original}
-                field="unit_price"
-                value={row.original.unit_price}
-                numeric
-                readOnly={readOnly}
-                label={`Unit price on line ${row.original.line_no}`}
-                onCommit={(value) => commit(row.original, { unit_price: value })}
-              />,
-            ),
-          size: 116,
-          minSize: 96,
-          meta: {
-            headerTitle: 'Unit price',
-            skeleton: <Skeleton className="h-4 w-14" />,
-          },
-        },
-        {
-          accessorKey: 'amount',
-          header: ({ column }) => <DataGridColumnHeader title="Amount" column={column} />,
-          cell: ({ row }) =>
-            cellWrap(
-              row.original,
-              <CellInput
-                line={row.original}
-                field="amount"
-                value={row.original.amount}
-                numeric
-                invalid={!row.original.arithmetic_ok}
-                readOnly={readOnly}
-                label={`Amount on line ${row.original.line_no}`}
-                onCommit={(value) => commit(row.original, { amount: value })}
-              />,
-            ),
-          size: 124,
-          minSize: 100,
-          meta: {
-            headerTitle: 'Amount',
-            skeleton: <Skeleton className="h-4 w-16" />,
-          },
-        },
-        {
-          id: 'check',
-          header: ({ column }) => <DataGridColumnHeader title="Flag" column={column} />,
-          cell: ({ row }) => {
-            const line = row.original;
-            const expected = multiplyMoney(line.qty, line.unit_price);
-            const lineNotes = annotationsByLineNo.get(line.line_no) ?? [];
-            return cellWrap(
-              line,
-              <div className="flex flex-wrap items-center gap-1">
-                {!line.arithmetic_ok && (
-                  <Badge
-                    variant="destructive"
-                    className="text-[11px]"
-                    title={
-                      expected
-                        ? `Quantity times unit price is ${formatMyrExact(expected)}`
-                        : undefined
-                    }
-                  >
-                    {expected
-                      ? `Should be ${formatMyrExact(expected)}`
-                      : 'Does not multiply out'}
-                  </Badge>
-                )}
-                {line.is_cancelled && (
-                  <Badge variant="secondary" className="text-[11px]">
-                    Cancelled
-                  </Badge>
-                )}
-                {!line.resolved_product_id && (
-                  <Badge variant="outline" className="text-[11px]">
-                    No product
-                  </Badge>
-                )}
-                {hasSuggestion(line) && (
-                  <Badge
-                    variant="info"
-                    className="text-[11px]"
-                    title={suggestionTitle(line)}
-                  >
-                    Suggested
-                  </Badge>
-                )}
-                {line.resolution_source === 'manual' && (
-                  <Badge variant="outline" className="text-[11px]">
-                    Matched by hand
-                  </Badge>
-                )}
-                <LineNotesIndicator
-                  line={line}
-                  // A viewer without edit rights has nothing to do about a note, but it
-                  // must still show here, muted - otherwise a read-only viewer sees no
-                  // pending handwriting at all. An editor only ever needs the ones still
-                  // waiting on a decision; once resolved, a note has nothing left to show.
-                  notes={
-                    readOnly ? lineNotes : lineNotes.filter((note) => note.state === 'proposed')
-                  }
-                  readOnly={readOnly}
-                  open={openNotesLineId === line.id}
-                  onOpenChange={(next) => setOpenNotesLineId(next ? line.id : null)}
-                  savingAnnotationIds={savingAnnotationIds}
-                  onShowPage={onShowPage}
-                  onAccept={(note) => openAcceptAnnotation(note, line.id)}
-                  onEdit={(note) => setEditingAnnotation(note)}
-                  onReject={(note) => openRejectAnnotation(note, line.id)}
+    return [
+      {
+        accessorKey: 'line_no',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="#" column={column} />
+        ),
+        cell: ({ row }) =>
+          cellWrap(
+            row.original,
+            <span className="flex items-center gap-1 text-sm tabular-nums">
+              {row.original.line_no}
+              {savingLineIds.includes(row.original.id) && (
+                <Loader2
+                  className="size-3 animate-spin text-muted-foreground"
+                  aria-hidden
                 />
-              </div>,
-            );
-          },
-          size: 190,
-          minSize: 130,
-          meta: {
-            headerTitle: 'Flag',
-            skeleton: <Skeleton className="h-4 w-20" />,
-          },
-        },
-        {
-          id: 'product',
-          header: ({ column }) => (
-            <DataGridColumnHeader title="Our product" column={column} />
+              )}
+            </span>,
+            true,
           ),
-          cell: ({ row }) => {
-            const line = row.original;
-            const selected = line.resolved_product_id
-              ? {
-                  value: line.resolved_product_id,
-                  label: line.resolved_product_code ?? 'Matched product',
+        size: 64,
+        minSize: 56,
+        meta: { headerTitle: '#', skeleton: <Skeleton className="h-4 w-6" /> },
+      },
+      {
+        accessorKey: 'stock_code_raw',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Code on the PO" column={column} />
+        ),
+        cell: ({ row }) =>
+          cellWrap(
+            row.original,
+            <CellInput
+              line={row.original}
+              field="stock_code_raw"
+              value={row.original.stock_code_raw ?? ''}
+              readOnly={readOnly}
+              label={`Code on line ${row.original.line_no}`}
+              onCommit={(value) =>
+                commit(row.original, { stock_code_raw: value || null })
+              }
+            />,
+          ),
+        size: 160,
+        minSize: 120,
+        meta: {
+          headerTitle: 'Code on the PO',
+          skeleton: <Skeleton className="h-4 w-20" />,
+        },
+      },
+      {
+        accessorKey: 'description_raw',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Description" column={column} />
+        ),
+        cell: ({ row }) =>
+          cellWrap(
+            row.original,
+            <CellInput
+              line={row.original}
+              field="description_raw"
+              value={row.original.description_raw ?? ''}
+              readOnly={readOnly}
+              label={`Description on line ${row.original.line_no}`}
+              onCommit={(value) =>
+                commit(row.original, { description_raw: value || null })
+              }
+            />,
+          ),
+        size: 260,
+        minSize: 160,
+        meta: {
+          headerTitle: 'Description',
+          skeleton: <Skeleton className="h-4 w-40" />,
+        },
+      },
+      {
+        accessorKey: 'qty',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Qty" column={column} />
+        ),
+        cell: ({ row }) =>
+          cellWrap(
+            row.original,
+            <CellInput
+              line={row.original}
+              field="qty"
+              value={row.original.qty}
+              numeric
+              readOnly={readOnly}
+              label={`Quantity on line ${row.original.line_no}`}
+              onCommit={(value) => commit(row.original, { qty: value })}
+            />,
+          ),
+        size: 92,
+        minSize: 72,
+        meta: {
+          headerTitle: 'Qty',
+          skeleton: <Skeleton className="h-4 w-10" />,
+        },
+      },
+      {
+        accessorKey: 'uom_raw',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="UOM" column={column} />
+        ),
+        cell: ({ row }) =>
+          cellWrap(
+            row.original,
+            <CellInput
+              line={row.original}
+              field="uom_raw"
+              value={row.original.uom_raw ?? ''}
+              readOnly={readOnly}
+              label={`UOM on line ${row.original.line_no}`}
+              onCommit={(value) =>
+                commit(row.original, { uom_raw: value || null })
+              }
+            />,
+          ),
+        size: 88,
+        minSize: 72,
+        meta: {
+          headerTitle: 'UOM',
+          skeleton: <Skeleton className="h-4 w-10" />,
+        },
+      },
+      {
+        accessorKey: 'unit_price',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Unit price" column={column} />
+        ),
+        cell: ({ row }) =>
+          cellWrap(
+            row.original,
+            <CellInput
+              line={row.original}
+              field="unit_price"
+              value={row.original.unit_price}
+              numeric
+              readOnly={readOnly}
+              label={`Unit price on line ${row.original.line_no}`}
+              onCommit={(value) => commit(row.original, { unit_price: value })}
+            />,
+          ),
+        size: 116,
+        minSize: 96,
+        meta: {
+          headerTitle: 'Unit price',
+          skeleton: <Skeleton className="h-4 w-14" />,
+        },
+      },
+      {
+        accessorKey: 'amount',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Amount" column={column} />
+        ),
+        cell: ({ row }) =>
+          cellWrap(
+            row.original,
+            <CellInput
+              line={row.original}
+              field="amount"
+              value={row.original.amount}
+              numeric
+              invalid={!row.original.arithmetic_ok}
+              readOnly={readOnly}
+              label={`Amount on line ${row.original.line_no}`}
+              onCommit={(value) => commit(row.original, { amount: value })}
+            />,
+          ),
+        size: 124,
+        minSize: 100,
+        meta: {
+          headerTitle: 'Amount',
+          skeleton: <Skeleton className="h-4 w-16" />,
+        },
+      },
+      {
+        id: 'check',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Flag" column={column} />
+        ),
+        cell: ({ row }) => {
+          const line = row.original;
+          const expected = multiplyMoney(line.qty, line.unit_price);
+          const lineNotes = annotationsByLineNo.get(line.line_no) ?? [];
+          return cellWrap(
+            line,
+            <div className="flex flex-wrap items-center gap-1">
+              {!line.arithmetic_ok && (
+                <Badge
+                  variant="destructive"
+                  className="text-[11px]"
+                  title={
+                    expected
+                      ? `Quantity times unit price is ${formatMyrExact(expected)}`
+                      : undefined
+                  }
+                >
+                  {expected
+                    ? `Should be ${formatMyrExact(expected)}`
+                    : 'Does not multiply out'}
+                </Badge>
+              )}
+              {line.is_cancelled && (
+                <Badge variant="secondary" className="text-[11px]">
+                  Cancelled
+                </Badge>
+              )}
+              {!line.resolved_product_id && (
+                <Badge variant="outline" className="text-[11px]">
+                  No product
+                </Badge>
+              )}
+              {hasSuggestion(line) && (
+                <Badge
+                  variant="info"
+                  className="text-[11px]"
+                  title={suggestionTitle(line)}
+                >
+                  Suggested
+                </Badge>
+              )}
+              {line.resolution_source === 'manual' && (
+                <Badge variant="outline" className="text-[11px]">
+                  Matched by hand
+                </Badge>
+              )}
+              <LineNotesIndicator
+                line={line}
+                // A viewer without edit rights has nothing to do about a note, but it
+                // must still show here, muted - otherwise a read-only viewer sees no
+                // pending handwriting at all. An editor only ever needs the ones still
+                // waiting on a decision; once resolved, a note has nothing left to show.
+                notes={
+                  readOnly
+                    ? lineNotes
+                    : lineNotes.filter((note) => note.state === 'proposed')
                 }
-              : undefined;
-            return cellWrap(
-              line,
-              readOnly ? (
-                <span
-                  className="block truncate text-sm"
-                  title={line.resolved_product_code ?? ''}
-                >
-                  {line.resolved_product_code ?? 'Not matched'}
-                </span>
-              ) : (
-                <>
-                  {/* SearchableSelect forwards `id`, not arbitrary aria props, so the
+                readOnly={readOnly}
+                open={openNotesLineId === line.id}
+                onOpenChange={(next) =>
+                  setOpenNotesLineId(next ? line.id : null)
+                }
+                savingAnnotationIds={savingAnnotationIds}
+                onShowPage={onShowPage}
+                onAccept={(note) => openAcceptAnnotation(note, line.id)}
+                onEdit={(note) => setEditingAnnotation(note)}
+                onReject={(note) => openRejectAnnotation(note, line.id)}
+              />
+            </div>,
+          );
+        },
+        size: 190,
+        minSize: 130,
+        meta: {
+          headerTitle: 'Flag',
+          skeleton: <Skeleton className="h-4 w-20" />,
+        },
+      },
+      {
+        id: 'product',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Our product" column={column} />
+        ),
+        cell: ({ row }) => {
+          const line = row.original;
+          const selected = line.resolved_product_id
+            ? {
+                value: line.resolved_product_id,
+                label: line.resolved_product_code ?? 'Matched product',
+              }
+            : undefined;
+          return cellWrap(
+            line,
+            readOnly ? (
+              <span
+                className="block truncate text-sm"
+                title={line.resolved_product_code ?? ''}
+              >
+                {line.resolved_product_code ?? 'Not matched'}
+              </span>
+            ) : (
+              <>
+                {/* SearchableSelect forwards `id`, not arbitrary aria props, so the
                       accessible name has to come from a real label. */}
-                  <label
-                    className="sr-only"
-                    htmlFor={`po-line-${line.line_no}-product`}
-                  >
-                    {`Product on line ${line.line_no}`}
-                  </label>
-                  <LineProductPicker
-                    id={`po-line-${line.line_no}-product`}
-                    value={line.resolved_product_id ?? ''}
-                    matchOptions={line.match_options}
-                    fetchProducts={fetchProducts}
-                    selectedOption={selected}
-                    onChange={(value) => {
-                      if (!value && line.resolved_product_id) {
-                        setConfirming({ kind: 'clear-product', line });
-                        return;
-                      }
-                      if (value !== (line.resolved_product_id ?? '')) {
-                        commit(line, { resolved_product_id: value || null });
-                      }
-                    }}
-                  />
-                </>
-              ),
-            );
-          },
-          size: 210,
-          minSize: 150,
-          meta: {
-            headerTitle: 'Our product',
-            skeleton: <Skeleton className="h-4 w-24" />,
-          },
-        },
-        {
-          id: 'actions',
-          header: () => <span className="sr-only">Actions</span>,
-          cell: ({ row }) => {
-            const line = row.original;
-            if (readOnly) return null;
-            return cellWrap(
-              line,
-              line.is_cancelled ? (
-                <Button
-                  type="button"
-                  mode="icon"
-                  variant="ghost"
-                  size="sm"
-                  aria-label={`Restore line ${line.line_no}`}
-                  onClick={() => commit(line, { is_cancelled: false })}
+                <label
+                  className="sr-only"
+                  htmlFor={`po-line-${line.line_no}-product`}
                 >
-                  <RotateCcw className="size-3.5" />
-                </Button>
-              ) : (
-                <Button
-                  type="button"
-                  mode="icon"
-                  variant="ghost"
-                  size="sm"
-                  aria-label={`Cancel line ${line.line_no}`}
-                  onClick={() => setConfirming({ kind: 'cancel', line })}
-                >
-                  <Ban className="size-3.5 text-destructive" />
-                </Button>
-              ),
-            );
-          },
-          size: 68,
-          minSize: 56,
-          meta: {
-            headerTitle: 'Actions',
-            skeleton: <Skeleton className="h-4 w-6" />,
-          },
+                  {`Product on line ${line.line_no}`}
+                </label>
+                <LineProductPicker
+                  id={`po-line-${line.line_no}-product`}
+                  value={line.resolved_product_id ?? ''}
+                  matchOptions={line.match_options}
+                  fetchProducts={fetchProducts}
+                  selectedOption={selected}
+                  onChange={(value) => {
+                    if (!value && line.resolved_product_id) {
+                      setConfirming({ kind: 'clear-product', line });
+                      return;
+                    }
+                    if (value !== (line.resolved_product_id ?? '')) {
+                      commit(line, { resolved_product_id: value || null });
+                    }
+                  }}
+                />
+              </>
+            ),
+          );
         },
-      ];
-    }, [
-      annotationsByLineNo,
-      commit,
-      fetchProducts,
-      onFocusLine,
-      onShowPage,
-      openAcceptAnnotation,
-      openNotesLineId,
-      openRejectAnnotation,
-      readOnly,
-      savingAnnotationIds,
-      savingLineIds,
-    ]);
+        size: 210,
+        minSize: 150,
+        meta: {
+          headerTitle: 'Our product',
+          skeleton: <Skeleton className="h-4 w-24" />,
+        },
+      },
+      {
+        id: 'actions',
+        header: () => <span className="sr-only">Actions</span>,
+        cell: ({ row }) => {
+          const line = row.original;
+          if (readOnly) return null;
+          return cellWrap(
+            line,
+            line.is_cancelled ? (
+              <Button
+                type="button"
+                mode="icon"
+                variant="ghost"
+                size="sm"
+                aria-label={`Restore line ${line.line_no}`}
+                onClick={() => commit(line, { is_cancelled: false })}
+              >
+                <RotateCcw className="size-3.5" />
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                mode="icon"
+                variant="ghost"
+                size="sm"
+                aria-label={`Cancel line ${line.line_no}`}
+                onClick={() => setConfirming({ kind: 'cancel', line })}
+              >
+                <Ban className="size-3.5 text-destructive" />
+              </Button>
+            ),
+          );
+        },
+        size: 68,
+        minSize: 56,
+        meta: {
+          headerTitle: 'Actions',
+          skeleton: <Skeleton className="h-4 w-6" />,
+        },
+      },
+    ];
+  }, [
+    annotationsByLineNo,
+    commit,
+    fetchProducts,
+    onFocusLine,
+    onShowPage,
+    openAcceptAnnotation,
+    openNotesLineId,
+    openRejectAnnotation,
+    readOnly,
+    savingAnnotationIds,
+    savingLineIds,
+  ]);
 
-    const table = useReactTable({
-      columns,
-      data: visibleLines,
-      getRowId: (row) => row.id,
-      getCoreRowModel: getCoreRowModel(),
-      columnResizeMode: 'onChange',
-    });
+  const table = useReactTable({
+    columns,
+    data: visibleLines,
+    getRowId: (row) => row.id,
+    getCoreRowModel: getCoreRowModel(),
+    columnResizeMode: 'onChange',
+  });
 
-    const showAcceptAll = !readOnly && suggestionCount > 0 && Boolean(onAcceptAllSuggestions);
+  const showAcceptAll =
+    !readOnly && suggestionCount > 0 && Boolean(onAcceptAllSuggestions);
 
-    return (
-      <div className="min-w-0 space-y-2">
-        {(showFilterToggle || showAcceptAll) && (
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            {showFilterToggle ? (
+  return (
+    <div className="min-w-0 space-y-2">
+      {(showFilterToggle || showAcceptAll) && (
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          {showFilterToggle ? (
             <ToggleGroup
               type="single"
               variant="outline"
               size="sm"
-              value={flaggedOnly ? 'flagged' : 'all'}
-              onValueChange={(next) => next && setFlaggedOnly(next === 'flagged')}
+              value={view}
+              onValueChange={(next) => next && setView(next as LinesView)}
             >
               <ToggleGroupItem value="flagged" className="px-3">
                 {`Need attention (${flagged.length})`}
               </ToggleGroupItem>
+              {(suggested.length > 0 || view === 'suggested') && (
+                <ToggleGroupItem value="suggested" className="px-3">
+                  {`Suggested (${suggested.length})`}
+                </ToggleGroupItem>
+              )}
               <ToggleGroupItem value="all" className="px-3">
                 {`All lines (${lines.length})`}
               </ToggleGroupItem>
             </ToggleGroup>
-            ) : (
-              <span />
-            )}
-            {showAcceptAll && (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={isAcceptingSuggestions}
-                onClick={() => void onAcceptAllSuggestions?.()}
-              >
-                {isAcceptingSuggestions && (
-                  <Loader2 className="size-3.5 animate-spin" aria-hidden />
-                )}
-                {`Accept all suggestions (${suggestionCount})`}
-              </Button>
-            )}
-          </div>
-        )}
-
-        {nothingLeftToShow ? (
-          <div className="rounded-lg border border-emerald-500/40 bg-emerald-50 px-6 py-10 text-center dark:bg-emerald-950/30">
-            <h3 className="text-sm font-semibold text-emerald-900 dark:text-emerald-300">
-              Nothing left to fix
-            </h3>
+          ) : (
+            <span />
+          )}
+          {showAcceptAll && (
             <Button
               type="button"
               variant="outline"
-              className="mt-4"
-              onClick={() => setFlaggedOnly(false)}
+              size="sm"
+              disabled={isAcceptingSuggestions}
+              onClick={() => void onAcceptAllSuggestions?.()}
             >
-              {`All lines (${lines.length})`}
+              {isAcceptingSuggestions && (
+                <Loader2 className="size-3.5 animate-spin" aria-hidden />
+              )}
+              {`Accept all suggestions (${suggestionCount})`}
             </Button>
-          </div>
-        ) : (
-          <ContextMenu>
-            <ContextMenuTrigger
-              asChild
-              onContextMenu={(event) => {
-                // Right-click is the row action (owner standing rule: no row icon buttons for
-                // it). Only a row with something to accept opens the menu.
-                const id = (event.target as HTMLElement)
-                  .closest('[data-po-line-id]')
-                  ?.getAttribute('data-po-line-id');
-                const hit = lines.find((item) => item.id === id) ?? null;
-                const actionable =
-                  !readOnly && Boolean(onAcceptSuggestion) && hit !== null && hasSuggestion(hit);
-                setMenuLine(actionable ? hit : null);
-                if (!actionable) event.preventDefault();
-              }}
-            >
-              <div className="min-w-0">
-          <DataGrid
-            rowAttributes={(row: POVersionLine) => ({ 'data-po-line-id': row.id })}
-            table={table}
-            recordCount={visibleLines.length}
-            isLoading={false}
-            listingKey={PO_INTAKE_LINES_LISTING_KEY}
-            tableLayout={{
-              width: 'fixed',
-              columnsResizable: true,
-              // The grid's OWN scroller (`data-grid-scroller`) carries both axes - a
-              // Radix `ScrollArea` wrapped around `DataGridTable` used to sit here
-              // instead, but that gives the table a `display: table` ancestor which
-              // shrink-fits, so the scroller never measured an overflow and the Amount
-              // column clipped with no way to reach it (owner hand test, 25 Sep 2026,
-              // item 1). A plain height string keeps the same vertical budget the
-              // ScrollArea's viewport used to cap at, with the horizontal scroll the
-              // scroller already brings for free.
-              scrollerMaxHeight: 'max-h-[calc(100vh-14rem)] overflow-y-auto',
+          )}
+        </div>
+      )}
+
+      {nothingLeftToShow ? (
+        <div className="rounded-lg border border-emerald-500/40 bg-emerald-50 px-6 py-10 text-center dark:bg-emerald-950/30">
+          <h3 className="text-sm font-semibold text-emerald-900 dark:text-emerald-300">
+            Nothing left to fix
+          </h3>
+          <Button
+            type="button"
+            variant="outline"
+            className="mt-4"
+            onClick={() => setView('all')}
+          >
+            {`All lines (${lines.length})`}
+          </Button>
+        </div>
+      ) : (
+        <ContextMenu>
+          <ContextMenuTrigger
+            asChild
+            onContextMenu={(event) => {
+              // Right-click is the row action (owner standing rule: no row icon buttons for
+              // it). Only a row with something to accept opens the menu.
+              const id = (event.target as HTMLElement)
+                .closest('[data-po-line-id]')
+                ?.getAttribute('data-po-line-id');
+              const hit = lines.find((item) => item.id === id) ?? null;
+              const actionable =
+                !readOnly &&
+                Boolean(onAcceptSuggestion) &&
+                hit !== null &&
+                hasSuggestion(hit);
+              setMenuLine(actionable ? hit : null);
+              if (!actionable) event.preventDefault();
             }}
           >
-            <div className="min-w-0 rounded-lg border border-border">
-              <DataGridTable />
-            </div>
-          </DataGrid>
-              </div>
-            </ContextMenuTrigger>
-            {menuLine && (
-              <ContextMenuContent>
-                <ContextMenuItem
-                  disabled={savingLineIds.includes(menuLine.id)}
-                  onSelect={() => void onAcceptSuggestion?.(menuLine)}
-                >
-                  <Check className="size-3.5" aria-hidden />
-                  Accept suggestion
-                </ContextMenuItem>
-              </ContextMenuContent>
-            )}
-          </ContextMenu>
-        )}
-
-        <AlertDialog
-          open={Boolean(confirming)}
-          onOpenChange={(next) => !next && setConfirming(null)}
-        >
-          <AlertDialogContent className="max-h-[85vh] overflow-y-auto">
-            <AlertDialogHeader>
-              <AlertDialogTitle>
-                {confirming?.kind === 'cancel'
-                  ? `Cancel line ${confirming.line.line_no}?`
-                  : 'Remove the matched product?'}
-              </AlertDialogTitle>
-              <AlertDialogDescription>
-                {confirming?.kind === 'cancel'
-                  ? `${describeLine(confirming.line)} stays on the record, marked cancelled, and is left out of our total. This action cannot be undone from the document.`
-                  : confirming
-                    ? `Line ${confirming.line.line_no} goes back to unmatched, and nothing on it will resolve to ${confirming.line.resolved_product_code ?? 'our catalogue'}.`
-                    : ''}
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Keep it</AlertDialogCancel>
-              <AlertDialogAction
-                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                onClick={() => {
-                  if (!confirming) return;
-                  if (confirming.kind === 'cancel') {
-                    commit(confirming.line, { is_cancelled: true });
-                  } else {
-                    commit(confirming.line, { resolved_product_id: null });
-                  }
-                  setConfirming(null);
+            <div className="min-w-0">
+              <DataGrid
+                rowAttributes={(row: POVersionLine) => ({
+                  'data-po-line-id': row.id,
+                })}
+                table={table}
+                recordCount={visibleLines.length}
+                isLoading={false}
+                listingKey={PO_INTAKE_LINES_LISTING_KEY}
+                tableLayout={{
+                  width: 'fixed',
+                  columnsResizable: true,
+                  // The grid's OWN scroller (`data-grid-scroller`) carries both axes - a
+                  // Radix `ScrollArea` wrapped around `DataGridTable` used to sit here
+                  // instead, but that gives the table a `display: table` ancestor which
+                  // shrink-fits, so the scroller never measured an overflow and the Amount
+                  // column clipped with no way to reach it (owner hand test, 25 Sep 2026,
+                  // item 1). A plain height string keeps the same vertical budget the
+                  // ScrollArea's viewport used to cap at, with the horizontal scroll the
+                  // scroller already brings for free.
+                  scrollerMaxHeight:
+                    'max-h-[calc(100vh-14rem)] overflow-y-auto',
                 }}
               >
-                {confirming?.kind === 'cancel' ? 'Cancel the line' : 'Remove it'}
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+                <div className="min-w-0 rounded-lg border border-border">
+                  <DataGridTable />
+                </div>
+              </DataGrid>
+            </div>
+          </ContextMenuTrigger>
+          {menuLine && (
+            <ContextMenuContent>
+              <ContextMenuItem
+                disabled={savingLineIds.includes(menuLine.id)}
+                onSelect={() => void onAcceptSuggestion?.(menuLine)}
+              >
+                <Check className="size-3.5" aria-hidden />
+                Accept suggestion
+              </ContextMenuItem>
+            </ContextMenuContent>
+          )}
+        </ContextMenu>
+      )}
 
-        <AlertDialog
-          open={Boolean(acceptingAnnotation)}
-          onOpenChange={(next) => !next && setAcceptingAnnotation(null)}
-        >
-          <AlertDialogContent className="max-h-[85vh] overflow-y-auto">
-            <AlertDialogHeader>
-              <AlertDialogTitle>Accept this note?</AlertDialogTitle>
-              <AlertDialogDescription>
-                {acceptingAnnotation
-                  ? describeAnnotationEffect(acceptingAnnotation.note, lines)
+      <AlertDialog
+        open={Boolean(confirming)}
+        onOpenChange={(next) => !next && setConfirming(null)}
+      >
+        <AlertDialogContent className="max-h-[85vh] overflow-y-auto">
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {confirming?.kind === 'cancel'
+                ? `Cancel line ${confirming.line.line_no}?`
+                : 'Remove the matched product?'}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {confirming?.kind === 'cancel'
+                ? `${describeLine(confirming.line)} stays on the record, marked cancelled, and is left out of our total. This action cannot be undone from the document.`
+                : confirming
+                  ? `Line ${confirming.line.line_no} goes back to unmatched, and nothing on it will resolve to ${confirming.line.resolved_product_code ?? 'our catalogue'}.`
                   : ''}
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Not yet</AlertDialogCancel>
-              <AlertDialogAction
-                className={
-                  acceptingAnnotation?.note.interpretation === 'cancel_line'
-                    ? 'bg-destructive text-destructive-foreground hover:bg-destructive/90'
-                    : undefined
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep it</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => {
+                if (!confirming) return;
+                if (confirming.kind === 'cancel') {
+                  commit(confirming.line, { is_cancelled: true });
+                } else {
+                  commit(confirming.line, { resolved_product_id: null });
                 }
-                onClick={() => {
-                  if (acceptingAnnotation) {
-                    lastActionedAnnotationId.current = acceptingAnnotation.note.id;
-                    lastActionedLineId.current = acceptingAnnotation.lineId;
-                    void onAcceptAnnotation(acceptingAnnotation.note.id);
-                  }
-                  setAcceptingAnnotation(null);
-                }}
-              >
-                {acceptingAnnotation?.note.interpretation === 'cancel_line'
-                  ? 'Accept and cancel'
-                  : 'Accept'}
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+                setConfirming(null);
+              }}
+            >
+              {confirming?.kind === 'cancel' ? 'Cancel the line' : 'Remove it'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
-        <AlertDialog
-          open={Boolean(rejectingAnnotation)}
-          onOpenChange={(next) => !next && setRejectingAnnotation(null)}
-        >
-          <AlertDialogContent className="max-h-[85vh] overflow-y-auto">
-            <AlertDialogHeader>
-              <AlertDialogTitle>Reject this note?</AlertDialogTitle>
-              <AlertDialogDescription>
-                Nothing is applied. The note stays on the record as rejected, with your
-                reason.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium" htmlFor="po-line-annot-reject-note">
-                Reason
-              </label>
-              <Textarea
-                id="po-line-annot-reject-note"
-                rows={3}
-                value={rejectNote}
-                onChange={(event) => setRejectNote(event.target.value)}
-                placeholder="Why this does not change the PO"
-              />
-            </div>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Keep it open</AlertDialogCancel>
-              <AlertDialogAction
-                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                disabled={!rejectNote.trim()}
-                onClick={() => {
-                  if (rejectingAnnotation) {
-                    lastActionedAnnotationId.current = rejectingAnnotation.note.id;
-                    lastActionedLineId.current = rejectingAnnotation.lineId;
-                    void onRejectAnnotation(rejectingAnnotation.note.id, rejectNote.trim());
-                  }
-                  setRejectingAnnotation(null);
-                }}
-              >
-                Reject the note
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+      <AlertDialog
+        open={Boolean(acceptingAnnotation)}
+        onOpenChange={(next) => !next && setAcceptingAnnotation(null)}
+      >
+        <AlertDialogContent className="max-h-[85vh] overflow-y-auto">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Accept this note?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {acceptingAnnotation
+                ? describeAnnotationEffect(acceptingAnnotation.note, lines)
+                : ''}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Not yet</AlertDialogCancel>
+            <AlertDialogAction
+              className={
+                acceptingAnnotation?.note.interpretation === 'cancel_line'
+                  ? 'bg-destructive text-destructive-foreground hover:bg-destructive/90'
+                  : undefined
+              }
+              onClick={() => {
+                if (acceptingAnnotation) {
+                  lastActionedAnnotationId.current =
+                    acceptingAnnotation.note.id;
+                  lastActionedLineId.current = acceptingAnnotation.lineId;
+                  void onAcceptAnnotation(acceptingAnnotation.note.id);
+                }
+                setAcceptingAnnotation(null);
+              }}
+            >
+              {acceptingAnnotation?.note.interpretation === 'cancel_line'
+                ? 'Accept and cancel'
+                : 'Accept'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
-        {editingAnnotation && (
-          <POIntakeAnnotationEditDialog
-            annotation={editingAnnotation}
-            saving={savingAnnotationIds.includes(editingAnnotation.id)}
-            onClose={() => setEditingAnnotation(null)}
-            onSubmit={async (body) => {
-              const note = editingAnnotation;
-              await onEditAnnotation(note.id, body);
-              setEditingAnnotation(null);
-              // An edit resolves the note the same way an accept does: whichever line's
-              // panel opened this dialog, that is where focus moves on from.
-              const fromLine = lines.find((line) =>
-                (annotationsByLineNo.get(line.line_no) ?? []).some(
-                  (candidate) => candidate.id === note.id,
-                ),
-              );
-              lastActionedAnnotationId.current = note.id;
-              lastActionedLineId.current = fromLine?.id ?? null;
-            }}
-          />
-        )}
+      <AlertDialog
+        open={Boolean(rejectingAnnotation)}
+        onOpenChange={(next) => !next && setRejectingAnnotation(null)}
+      >
+        <AlertDialogContent className="max-h-[85vh] overflow-y-auto">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Reject this note?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Nothing is applied. The note stays on the record as rejected, with
+              your reason.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-1.5">
+            <label
+              className="text-xs font-medium"
+              htmlFor="po-line-annot-reject-note"
+            >
+              Reason
+            </label>
+            <Textarea
+              id="po-line-annot-reject-note"
+              rows={3}
+              value={rejectNote}
+              onChange={(event) => setRejectNote(event.target.value)}
+              placeholder="Why this does not change the PO"
+            />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep it open</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={!rejectNote.trim()}
+              onClick={() => {
+                if (rejectingAnnotation) {
+                  lastActionedAnnotationId.current =
+                    rejectingAnnotation.note.id;
+                  lastActionedLineId.current = rejectingAnnotation.lineId;
+                  void onRejectAnnotation(
+                    rejectingAnnotation.note.id,
+                    rejectNote.trim(),
+                  );
+                }
+                setRejectingAnnotation(null);
+              }}
+            >
+              Reject the note
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
-        {focusedLineId && (
-          <p className="sr-only" aria-live="polite">
-            {`Line ${lines.find((line) => line.id === focusedLineId)?.line_no ?? ''} in focus`}
-          </p>
-        )}
-      </div>
-    );
-  },
-);
+      {editingAnnotation && (
+        <POIntakeAnnotationEditDialog
+          annotation={editingAnnotation}
+          saving={savingAnnotationIds.includes(editingAnnotation.id)}
+          onClose={() => setEditingAnnotation(null)}
+          onSubmit={async (body) => {
+            const note = editingAnnotation;
+            await onEditAnnotation(note.id, body);
+            setEditingAnnotation(null);
+            // An edit resolves the note the same way an accept does: whichever line's
+            // panel opened this dialog, that is where focus moves on from.
+            const fromLine = lines.find((line) =>
+              (annotationsByLineNo.get(line.line_no) ?? []).some(
+                (candidate) => candidate.id === note.id,
+              ),
+            );
+            lastActionedAnnotationId.current = note.id;
+            lastActionedLineId.current = fromLine?.id ?? null;
+          }}
+        />
+      )}
+
+      {focusedLineId && (
+        <p className="sr-only" aria-live="polite">
+          {`Line ${lines.find((line) => line.id === focusedLineId)?.line_no ?? ''} in focus`}
+        </p>
+      )}
+    </div>
+  );
+});
 
 /** What the Suggested pill stands for, in the row's own terms. */
 function suggestionTitle(line: POVersionLine): string {
@@ -1059,7 +1150,8 @@ function suggestionTitle(line: POVersionLine): string {
         (line.match_confidence ? `, ${line.match_confidence} confidence` : ''),
     );
   }
-  if (line.qty_suggested) parts.push(`Suggested quantity ${formatQty(line.qty)}`);
+  if (line.qty_suggested)
+    parts.push(`Suggested quantity ${formatQty(line.qty)}`);
   return parts.join('. ');
 }
 
@@ -1166,7 +1258,9 @@ function LineNotesIndicator({
 }) {
   if (notes.length === 0) return null;
 
-  const unreviewedCount = notes.filter((note) => note.state === 'proposed').length;
+  const unreviewedCount = notes.filter(
+    (note) => note.state === 'proposed',
+  ).length;
   const label = `${notes.length} note${notes.length === 1 ? '' : 's'}${
     unreviewedCount > 0 ? ' to review' : ''
   } on line ${line.line_no}`;
@@ -1206,7 +1300,8 @@ function LineNotesIndicator({
         >
           {notes.map((note, index) => {
             const saving = savingAnnotationIds.includes(note.id);
-            const noteLabel = notes.length > 1 ? `note ${index + 1} on` : 'the note on';
+            const noteLabel =
+              notes.length > 1 ? `note ${index + 1} on` : 'the note on';
             return (
               <div
                 key={note.id}
@@ -1214,7 +1309,9 @@ function LineNotesIndicator({
               >
                 <div className="flex flex-wrap items-center gap-1.5">
                   <Badge
-                    variant={note.state === 'proposed' ? 'warning' : 'secondary'}
+                    variant={
+                      note.state === 'proposed' ? 'warning' : 'secondary'
+                    }
                     className="text-[11px]"
                   >
                     {note.state === 'rejected'
@@ -1222,7 +1319,9 @@ function LineNotesIndicator({
                       : annotationBadgeLabel(note)}
                   </Badge>
                   {note.written_date && (
-                    <span className="text-xs text-muted-foreground">{note.written_date}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {note.written_date}
+                    </span>
                   )}
                   <Button
                     type="button"
@@ -1234,9 +1333,14 @@ function LineNotesIndicator({
                     {`Page ${note.page_no}`}
                   </Button>
                 </div>
-                <p className="text-sm break-words" title={note.raw_text ?? undefined}>
+                <p
+                  className="text-sm break-words"
+                  title={note.raw_text ?? undefined}
+                >
                   {note.raw_text || (
-                    <span className="text-muted-foreground">Nothing legible was read</span>
+                    <span className="text-muted-foreground">
+                      Nothing legible was read
+                    </span>
                   )}
                 </p>
                 {!readOnly && note.state === 'proposed' && (
@@ -1249,7 +1353,10 @@ function LineNotesIndicator({
                       onClick={() => onAccept(note)}
                     >
                       {saving ? (
-                        <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                        <Loader2
+                          className="size-3.5 animate-spin"
+                          aria-hidden
+                        />
                       ) : (
                         <Check className="size-3.5" aria-hidden />
                       )}

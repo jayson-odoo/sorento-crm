@@ -77,8 +77,6 @@ from app.services.project_po_reading import (  # noqa: F401 - shared vocabulary
     dedup_key,
     successor_po_number,
     _looks_like_code,
-    _squash,
-    _code_tokens,
     _proposed_code,
     classify_annotation,
 )
@@ -266,6 +264,7 @@ class POAnnotationReviewMixin:
                         remembered=self._remembered_for_version(
                             self.get_version(line.po_version_id)
                         ),
+                        description=line.description_raw,
                     )
                 applied["amended_line_nos"].append(line.line_no)
         elif interpretation == INTERP_AMEND_DESCRIPTION:

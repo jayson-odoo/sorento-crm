@@ -198,7 +198,14 @@ PO_PAGE_SCHEMA: Dict[str, Any] = _strict_object(
         # PO-UPLOAD-MATCHING AC-T1: the grand total PRINTED on this page, null when the
         # page prints none. Without it the "document total" was only the sum of the
         # amounts read, which cannot catch a line the reader missed.
-        "printed_total": _nullable("number"),
+        "printed_total": {
+            **_nullable("number"),
+            "description": (
+                "The document's printed grand total for the whole order, exactly as printed "
+                "on this page (not a page subtotal, not a line amount). Null when this page "
+                "prints no grand total. Never add the lines up yourself."
+            ),
+        },
     }
 )
 
@@ -390,25 +397,6 @@ def _looks_like_code(token: str) -> bool:
         and any(character.isdigit() for character in token)
         and any(character.isalpha() for character in token)
     )
-
-
-def _squash(text: Optional[str]) -> str:
-    """A code with its punctuation dropped, for comparing spellings of one product.
-
-    `SRTFH15CR` and `SRTFH15-CR` are the same thing written by two people. Nothing here
-    reorders or truncates, so two codes that squash alike really are the same code.
-    """
-    return re.sub(r"[^A-Z0-9]", "", (text or "").upper())
-
-
-def _code_tokens(text: Optional[str]) -> List[str]:
-    """The parts of a code, so a reordering can be recognised.
-
-    The client writes `B2155-BLUE-NL` for what we stock as `B2155-NL-BLUE`. Same
-    product, same parts, different order, and comparing the SET of parts sees that
-    while comparing the strings never will.
-    """
-    return [part for part in re.split(r"[^A-Z0-9]+", (text or "").upper()) if part]
 
 
 def _proposed_code(text: Optional[str]) -> Optional[str]:
