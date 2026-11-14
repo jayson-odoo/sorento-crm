@@ -384,6 +384,17 @@ describe('SalesOrdersPanel', () => {
 
   // ---------------------------------------------------------------- Stage 1B (AC-A03)
 
+  it('opens a sales order with the SO tab as its return address (RELATED-RECORDS-B)', async () => {
+    listProjectSalesOrders.mockResolvedValue({ data: [row()], total: 1, page: 1, limit: 25 });
+
+    renderPanel();
+    fireEvent.click(await screen.findByText('PSO-000123'));
+
+    const [href] = push.mock.calls.at(-1) as [string];
+    const params = new URLSearchParams(href.split('?')[1]);
+    expect(params.get('from')).toMatch(/\?tab=sales-orders$/);
+  });
+
   it('shows the review state pill once the backend has derived one', async () => {
     listProjectSalesOrders.mockResolvedValue({
       data: [row({ review_state: 'needs_cs_review' })],
