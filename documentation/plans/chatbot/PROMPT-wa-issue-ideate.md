@@ -70,6 +70,14 @@ stays a help request. The fix is semantic, in place, no word list and no post-pa
   G01, G03, G05, G08, G09) and run live by `tests/chatbot/test_wa_issue_parser_gate_live.py` (opt-in,
   `CHATBOT_LIVE_LLM=1`, `WA_ISSUE_PROMPT_FILE` points it at a stored version's exported text).
 
+- On a copy that already ran `wa_0001`/`wa_0002` on the old chain (before the 14 Nov re-parent onto
+  `dbr_0001_retention_settings`), do NOT run `alembic downgrade -1 && alembic upgrade head`: that leaves
+  `plr_0001` and `dbr_0001` unapplied. Either `alembic stamp agent_0001_proposal_insights && alembic upgrade head`
+  (`wa_0001` is idempotent; `wa_0002` publishes the round 12 text unlabelled), or publish only the prompt with
+  `documentation/plans/chatbot/sql/wa-issue-r12-publish.sql` (psql from the repo root; it checks both md5s and
+  publishes once). Name the new version by its md5 `46e16236`, not by a number: version numbers are reused after a
+  downgrade.
+
 ## Gate (crew, on the Mac: this sandbox has no funded LLM key and no prod-copy DB)
 
 Console dry-run turns with the new version pinned (or after the owner promotes it), staff and dealer contacts:
