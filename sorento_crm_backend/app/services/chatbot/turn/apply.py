@@ -3751,6 +3751,9 @@ def _apply(
     # when a fresh answer is too long again.
     named_count = _named_count(verdict)
     carried_set = dict(focus.set_page) if isinstance(focus.set_page, dict) else None
+    if task_locked:
+        # A turn whose stock task took the value never pages or narrows a carried browse.
+        carried_set = None
     new_state.focus.set_page = None
     # Round 4 R5: a clarify is answered on the very next turn or not at all; the engine
     # re-arms it only when this turn asks another one.
