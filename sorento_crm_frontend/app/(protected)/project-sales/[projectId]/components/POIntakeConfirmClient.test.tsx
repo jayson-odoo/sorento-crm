@@ -842,6 +842,32 @@ describe('POIntakeConfirmClient issuer', () => {
     );
   });
 
+  it('puts the previous issuer back when the save is refused (review round 3, R5)', async () => {
+    getPOVersion.mockResolvedValue(
+      version({
+        purchase_order: { po_number: 'HQ/26/01/041', issuing_party_id: 'pty2' },
+      } as Partial<POVersion>),
+    );
+    updatePurchaseOrder.mockRejectedValueOnce(new Error('ZZT refused'));
+
+    renderConfirm();
+
+    const select = await screen.findByRole('combobox', { name: /Issued by/i });
+    await waitFor(() => expect(select).toHaveTextContent('ZZT Developer Bhd'));
+    fireEvent.click(select);
+    fireEvent.click(await screen.findByRole('option', { name: /ZZT Contractor Sdn Bhd/ }));
+
+    await waitFor(() => expect(updatePurchaseOrder).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(screen.getByRole('combobox', { name: /Issued by/i })).toHaveTextContent(
+        'ZZT Developer Bhd',
+      ),
+    );
+    expect(screen.getByRole('combobox', { name: /Issued by/i })).not.toHaveTextContent(
+      'ZZT Contractor Sdn Bhd',
+    );
+  });
+
   it('does not offer "Issued by" once the version is confirmed', async () => {
     getPOVersion.mockResolvedValue(version({ confirmed_at: '2026-11-14T08:00:00Z' }));
 

@@ -2142,3 +2142,229 @@ def test_qe_b_a_printed_amount_is_never_moved_by_a_qty_or_price_edit(seeded, mat
 
     assert _amt(lines[1].amount) == Decimal("10.00")
     assert lines[1].arithmetic_ok is False
+
+
+# ======================================================== review round 3 (R1-R4)
+
+
+@pytest.mark.parametrize(
+    "printed, remembered",
+    [
+        ("SRTWT9121 -GM **", "SRTWT9121-GM"),
+        ("srtwt9121-gm", "SRTWT9121-GM"),
+        ("SRTWT9121–GM", "SRTWT9121-GM"),
+        ("SRTWT9121‐GM", "SRTWT9121-GM"),
+        ("SRTWT9121−GM", "SRTWT9121-GM"),
+        ("SRTWT9121 GM*", "SRTWT9121GM"),
+        ("ärmel 1", "ÄRMEL-1"),
+        ("straße-7", "STRASSE7"),
+    ],
+    ids=[
+        "space-dash-marks",
+        "case",
+        "en-dash",
+        "unicode-hyphen",
+        "minus-sign",
+        "nbsp-and-mark",
+        "umlaut-case",
+        "casefold-sharp-s",
+    ],
+)
+def test_r1_only_case_whitespace_dashes_and_asterisks_are_ignored(printed, remembered):
+    from app.services import customer_code_map
+
+    assert customer_code_map.lookup({remembered: "p1"}, printed) == "p1"
+
+
+@pytest.mark.parametrize(
+    "printed, remembered",
+    [
+        ("25MM", "2.5MM"),
+        ("12", "1/2"),
+        ("RMEL-1", "ÄRMEL-1"),
+        ("CB310-CR", "CB310-CR-L"),
+        ("X1(B)", "X1B"),
+    ],
+    ids=["decimal-point", "slash", "non-ascii-letter", "suffix", "brackets"],
+)
+def test_r1_other_characters_still_make_a_different_code(printed, remembered):
+    from app.services import customer_code_map
+
+    assert customer_code_map.lookup({remembered: "p1"}, printed) is None
+    assert customer_code_map.normalise_code(printed) != customer_code_map.normalise_code(
+        remembered
+    )
+
+
+def test_r1_remembering_2_5mm_and_25mm_keeps_two_rows(seeded):
+    from app.services import customer_code_map
+
+    db, project, owner = seeded
+    ids = _products(db, project.company_id, "CKS903", "SRT73-CR")
+    customer = _customer(db, project.company_id)
+    for code, product in (("2.5MM", "CKS903"), ("25MM", "SRT73-CR")):
+        customer_code_map.remember_code(
+            db,
+            company_id=project.company_id,
+            customer_id=customer.id,
+            customer_code=code,
+            product_id=ids[product],
+            actor_user_id=owner,
+        )
+
+    remembered = customer_code_map.remembered_codes(db, customer.id)
+    assert customer_code_map.lookup(remembered, "2.5MM") == ids["CKS903"]
+    assert customer_code_map.lookup(remembered, "25MM") == ids["SRT73-CR"]
+
+
+def test_r2_chinese_only_descriptions_are_separate_codes(seeded, matcher):
+    from app.services import customer_code_map
+
+    db, project, owner = seeded
+    ids = _products(db, project.company_id, "CKS903", "SRT73-CR")
+    po, customer = _customer_po(db, project, owner, "ZZT-R2")
+    basin, tap = "洗手盆", "水龙头"
+    for code, product in ((basin, "CKS903"), (tap, "SRT73-CR")):
+        customer_code_map.remember_code(
+            db,
+            company_id=project.company_id,
+            customer_id=customer.id,
+            customer_code=code,
+            product_id=ids[product],
+            actor_user_id=owner,
+        )
+
+    rows = (
+        db.query(CustomerItemCodeMap)
+        .filter(CustomerItemCodeMap.customer_id == customer.id)
+        .all()
+    )
+    assert {row.customer_code: row.product_id for row in rows} == {
+        basin: ids["CKS903"],
+        tap: ids["SRT73-CR"],
+    }
+
+    version = _version(db, po)
+    service = ProjectPOExtractionService(db)
+    service.persist_pages(
+        version,
+        [_page(1, lines=[_row(1, description=basin), _row(2, description=tap)])],
+    )
+    lines = _lines(service, version)
+    assert (lines[1].resolution_source, lines[1].resolved_product_id) == ("map", ids["CKS903"])
+    assert (lines[2].resolution_source, lines[2].resolved_product_id) == ("map", ids["SRT73-CR"])
+
+
+def test_r2_a_code_that_normalises_to_nothing_is_never_compared(seeded):
+    from app.services import customer_code_map
+
+    db, project, owner = seeded
+    ids = _products(db, project.company_id, "CKS903", "SRT73-CR")
+    customer = _customer(db, project.company_id)
+
+    assert customer_code_map.lookup({"***": "p1"}, "--") is None
+    assert customer_code_map.lookup({"***": "p1"}, "***") is None
+
+    customer_code_map.remember_code(
+        db,
+        company_id=project.company_id,
+        customer_id=customer.id,
+        customer_code="***",
+        product_id=ids["CKS903"],
+        actor_user_id=owner,
+    )
+    customer_code_map.remember_code(
+        db,
+        company_id=project.company_id,
+        customer_id=customer.id,
+        customer_code="- -",
+        product_id=ids["SRT73-CR"],
+        actor_user_id=owner,
+    )
+    for row in db.query(CustomerItemCodeMap).filter(
+        CustomerItemCodeMap.customer_id == customer.id,
+        CustomerItemCodeMap.customer_code == "***",
+    ):
+        assert row.product_id == ids["CKS903"], "an empty key overwrote another empty key"
+
+
+def _legacy_pair(db, project, customer, ids):
+    """Two rows saved before codes were compared normalised: same code, two products."""
+    _map_row(db, company_id=project.company_id, customer_id=customer.id, code="X-1",
+             product_id=ids["CKS903"])
+    _map_row(db, company_id=project.company_id, customer_id=customer.id, code="X 1",
+             product_id=ids["SRT73-CR"])
+
+
+def test_r3_two_remembered_rows_that_disagree_are_no_map_match(seeded, matcher):
+    from app.services import customer_code_map
+
+    db, project, owner = seeded
+    ids = _products(db, project.company_id, "CKS903", "SRT73-CR")
+    po, customer = _customer_po(db, project, owner, "ZZT-R3")
+    _legacy_pair(db, project, customer, ids)
+
+    assert customer_code_map.lookup(customer_code_map.remembered_codes(db, customer.id), "X1") is None
+
+    version = _version(db, po)
+    service = ProjectPOExtractionService(db)
+    service.persist_pages(version, [_page(1, lines=[_row(1, code="X1", description="ZZT X ONE")])])
+
+    line = _lines(service, version)[1]
+    assert line.resolution_source != "map"
+    assert 1 in matcher.sent_line_nos(), "an ambiguous memory sends the line to the matcher"
+
+
+def test_r3_remembering_the_code_updates_every_disagreeing_row(seeded):
+    from app.services import customer_code_map
+
+    db, project, owner = seeded
+    ids = _products(db, project.company_id, "CKS903", "SRT73-CR", "CB310-CR-L")
+    customer = _customer(db, project.company_id)
+    _legacy_pair(db, project, customer, ids)
+
+    customer_code_map.remember_code(
+        db,
+        company_id=project.company_id,
+        customer_id=customer.id,
+        customer_code="X1",
+        product_id=ids["CB310-CR-L"],
+        actor_user_id=owner,
+    )
+    db.flush()
+
+    rows = (
+        db.query(CustomerItemCodeMap)
+        .filter(CustomerItemCodeMap.customer_id == customer.id)
+        .all()
+    )
+    assert rows and {row.product_id for row in rows} == {ids["CB310-CR-L"]}
+    assert (
+        customer_code_map.lookup(customer_code_map.remembered_codes(db, customer.id), "X-1")
+        == ids["CB310-CR-L"]
+    )
+
+
+def test_r4_a_version_read_before_amount_computed_still_computes_an_empty_amount(
+    seeded, matcher
+):
+    db, project, owner = seeded
+    service, version, lines = _amount_version(
+        db, project, owner, "ZZT-R4",
+        {"no": 1, "stock_code": "CKS903", "qty": None, "unit_price": 10.0, "amount": None},
+    )
+    # As read before this deploy: no amount_computed anywhere in line_matches.
+    data = copy.deepcopy(dict(version.extracted_json or {}))
+    for entry in (data.get("line_matches") or {}).values():
+        if isinstance(entry, dict):
+            entry.pop("amount_computed", None)
+    version.extracted_json = data
+    db.flush()
+    assert lines[1].amount is None
+
+    service.update_line(
+        version=version, line=lines[1], payload={"qty": Decimal("3")}, actor_user_id=owner
+    )
+
+    assert _amt(lines[1].amount) == Decimal("30.00")
+    assert lines[1].arithmetic_ok is True
