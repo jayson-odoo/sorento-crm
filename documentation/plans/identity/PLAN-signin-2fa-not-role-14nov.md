@@ -1,6 +1,6 @@
 # PLAN: sign-in verification is 2FA only, never role (SIGNIN-2FA-NOT-ROLE)
 
-Status: Plan (behaviour card filed as crew-ask on PR #2411; build waits on owner answers). Track: M, LEAD pattern, auth change (security-reviewer required).
+Status: Build (behaviour card v2 after owner correction 14 Nov 13:30: landing unchanged; fix = no second code for the user's own linked contact, no auto-send, OTP clock). Track: M, LEAD pattern, auth change (security-reviewer required).
 
 Owner ruling 14 Nov: a verification code is a deliberate 2FA step decided the same way for every user, never because
 of a role; once verified, do not re-prompt.
@@ -32,4 +32,12 @@ of a role; once verified, do not re-prompt.
 - `PortalVerifyCard` `sendCode` (:122) and `handleConfirmIdentity` (:216): reuse; the mount path stops calling `sendCode`.
 - `_utcnow` (portal_service.py:158): reuse as the single clock for both writing and reading `created_at`.
 
-Behaviour card, UAC and test list: see the crew-ask on PR #2411; copied here once answered.
+## Design (v2)
+- Landing: unchanged (owner 13:30: salespeople use the portal).
+- Bridge: `POST /api/v1/public/portal/session-from-crm` (CRM Bearer) mints a verified 30-day portal token for the
+  caller's OWN `respond_contact_id` only; shared helper with `verify_otp`. Refuses other contacts, API keys,
+  impersonation, inactive users.
+- Portal slug page: no device token + CRM session -> bridge -> landing; else verify card.
+- Verify card: no send on mount; Send code button.
+- OTP clock: `created_at` written by `_utcnow()`.
+UAC: `signin-2fa-not-role-14nov-acceptance-criteria.md`.
