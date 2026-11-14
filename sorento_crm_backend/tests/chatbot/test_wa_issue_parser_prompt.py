@@ -132,6 +132,16 @@ def test_R9_apply_issue_rule_raises_when_an_anchor_is_missing(anchor):
         _apply()(text)
 
 
+def test_R11_S5_the_human_clause_on_another_line_raises():
+    """Review S5: the anchor occurs once but not on the ideate bullet's own line: refuse, never publish a
+    text that only half carries the rule."""
+    v72 = _v72()
+    moved = v72.replace(" " + HUMAN_OLD, "", 1) + "\n" + HUMAN_OLD
+    assert moved.count(HUMAN_OLD) == 1
+    with pytest.raises(ValueError):
+        _apply()(moved)
+
+
 def test_R9_apply_issue_rule_is_idempotent():
     apply_issue_rule = _apply()
     once = apply_issue_rule(_v72())
