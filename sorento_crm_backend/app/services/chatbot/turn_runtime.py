@@ -3658,7 +3658,17 @@ def _spec_quantities(
     # typed with its last word ("QWC605-RL soft x 1" is the set QWC605-RL-SOFT,
     # `product_code_family._completed_code`), so the typed token's quantity is keyed by a code
     # no row carries. Rule 5 below, applied to the set codes: a typed token naming no placed
-    # code or set, that is the prefix of exactly ONE placed set's code, is that set.
+    # code or set, that is the prefix of exactly ONE placed set's code the parser did not
+    # name itself, is that set. A set named as typed ("QWC605-RL-NEW") is never another
+    # token's completion, with or without a quantity of its own (reviewer, 14 Nov 2026:
+    # "QWC605 x 3, QWC605-RL-NEW" never asks NEW at 3).
+    typed_keys = {
+        _token_key(value)
+        for e in jsc.array(out.get("entities"))
+        if isinstance(e, dict) and e.get("hint") in (None, "product")
+        for value in (e.get("canonical_code"), e.get("raw"))
+        if isinstance(value, str) and value.strip()
+    }
     set_keys = {
         _token_key(str(c))
         for e in entities
@@ -3673,10 +3683,11 @@ def _spec_quantities(
         for name in ("code", "canonical_code")
         if e.get(name)
     }
+    completions = set_keys - typed_keys
     for token, quantity in list(by_code.items()):
         if token in placed_keys:
             continue
-        completed = [key for key in set_keys if key.startswith(token)]
+        completed = [key for key in completions if key.startswith(token)]
         if len(completed) == 1 and completed[0] not in by_code:
             by_code[completed[0]] = quantity
 

@@ -2679,12 +2679,14 @@ def _one_number_for_every_line(
 ) -> None:
     """CHATBOT-SET-CODES, crew live step 12 (14 Nov 2026): "4" after "How many units for
     each?" over a set's parts answered only the part the parser bound the one number to
-    (by code or by position). The user typed no product in that message, so the number
-    names no part: it fills every line still owed (`StockQtyTask.fill`, owner ruling 26 Sep
-    F2), written as the parser's own fill items so `_open_question_answer` places them.
+    by position. The user typed no product in that message, so the number names no part:
+    it fills every line still owed (`StockQtyTask.fill`, owner ruling 26 Sep F2), written
+    as the parser's own fill items so `_open_question_answer` places them. A number bound
+    to no line spreads the same way.
 
     A product the user typed in this message (a verdict entity with a product hint, "8 for
-    QWCY604") keeps the binding to that line alone (STOCK-QTY-PARTIAL-FILL R1), as do
+    QWCY604") keeps the binding to that line alone (STOCK-QTY-PARTIAL-FILL R1), as do a
+    number the parser bound by CODE (the user named that part),
     quantities bound to two or more lines, a `demand_qty` that is a different number, a
     line already answered (a revision), and lines that are not the parts of one set (R1:
     "5 for the 2nd one" answers that line). Reads the open question's lines, the focus rows
@@ -2713,13 +2715,21 @@ def _one_number_for_every_line(
     for item in answer.get("items") or []:
         if not isinstance(item, dict) or item.get("qty") is None:
             continue
-        index = _placed_line(item, slots)
+        code = item.get("code")
+        if isinstance(code, str) and code.strip():
+            # Bound by CODE ("QWCY604 4", "8 for QWCY604"): the user named that part (R1).
+            return
         qty = _positive(item.get("qty"))
-        if index is None or qty is None:
+        if qty is None:
+            return
+        numbers.add(qty)
+        if item.get("position") is None:
+            continue  # bound to no line
+        index = _placed_line(item, slots)
+        if index is None:
             return
         bound.add(index)
-        numbers.add(qty)
-    if len(bound) != 1 or len(numbers) != 1:
+    if len(bound) > 1 or len(numbers) != 1:
         return
     if any(slots[index].value is not None for index in bound):
         # "make line 1 5": a revision of a line already answered, not the owed question's answer.
