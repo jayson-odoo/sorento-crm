@@ -77,6 +77,8 @@ SIDE_CALL_CAP = 30.0
 FINAL_GRACE = 10.0
 #: Below this many seconds left, compaction and the repair round are skipped.
 SIDE_CALL_MIN = 10.0
+#: The least time a tool round needs: one measured 3 to 10 s with today's tool list (crew pass, 14 Nov), so 12 s.
+ROUND_MIN_SECONDS = 12.0
 CATALOG_TTL_SECONDS = 300
 #: After a failed refresh, the last catalogue is served this long before the next try.
 CATALOG_RETRY_SECONDS = 30
@@ -2229,11 +2231,20 @@ def _run(
                 # Confirming acts on the user's own message only: from the second round on, tool
                 # output and document text of this turn have reached the model, so it is not offered.
                 schemas = [s for s in schemas if s.get("function", {}).get("name") != CONFIRM_ACTION]
+            if run.any_tool_result and 0 < remaining() < ROUND_MIN_SECONDS:
+                # UAC 12a: too little time for another round; answer from the results in hand (crew pass, 14 Nov:
+                # a round started with seconds left timed out and the turn ended in an error).
+                reply, _named = forced_final("the time for this question is nearly up")
+                break
             try:
                 result = chat(messages, schemas, kind="round", tool_choice="required" if dealer_flow else None)
-            except (_ProviderFailed, TimeoutError):
+            except (_ProviderFailed, TimeoutError) as exc:
                 if not run.any_tool_result:
                     raise
+                if isinstance(exc, TimeoutError) or getattr(exc, "timed_out", False):
+                    # UAC 12b: a round that times out with results in hand still answers from them, as answered.
+                    reply, _named = forced_final("the model did not respond in time")
+                    break
                 status, limit_hit = "limited", "error"
                 reply, named = forced_final("the model call failed")
                 if not named:
