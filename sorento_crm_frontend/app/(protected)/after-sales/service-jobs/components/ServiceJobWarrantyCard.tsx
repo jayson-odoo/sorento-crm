@@ -2,6 +2,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { formatCivilDate } from '../../warranty/lib/warrantyLabels';
 import type { WarrantyLine } from '../types/serviceJob.types';
 import WarrantyPill from './WarrantyPill';
+import { codeWithName } from '@/lib/product-display';
 
 const HEADS: { title: string; className: string }[] = [
   { title: 'Product', className: 'w-48' },
@@ -24,7 +25,7 @@ export default function ServiceJobWarrantyCard({ warranty }: { warranty: Warrant
   const rows = warranty.flatMap((line) =>
     line.verdicts.map((v, i) => ({
       key: `${line.id}-${i}`,
-      product: [line.product_code, line.product_name].filter(Boolean).join(' '),
+      product: codeWithName(line.product_code, line.product_name),
       verdict: v,
     })),
   );

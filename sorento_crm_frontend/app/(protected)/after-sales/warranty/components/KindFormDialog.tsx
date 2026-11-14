@@ -8,7 +8,6 @@ import {
   Dialog,
   DialogBody,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -57,10 +56,9 @@ export function KindFormDialog({ open, onOpenChange, kind }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="overflow-hidden sm:max-w-md">
+      <DialogContent className="overflow-hidden sm:max-w-md" aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle>{kind ? 'Edit kind' : 'Create kind'}</DialogTitle>
-          <DialogDescription className="sr-only">Warranty product kind.</DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col gap-4">
           <DialogBody className="min-h-0 space-y-4 overflow-y-auto">

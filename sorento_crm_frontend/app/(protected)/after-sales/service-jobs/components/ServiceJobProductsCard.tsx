@@ -17,6 +17,7 @@ import { formatCivilDate } from '../../warranty/lib/warrantyLabels';
 import { useServiceJobProducts } from '../hooks/useServiceJobProducts';
 import type { ServiceJobProduct } from '../types/serviceJob.types';
 import ServiceJobProductDialog from './ServiceJobProductDialog';
+import { codeWithName, distinctName } from '@/lib/product-display';
 
 function Text({ value }: { value: string | null | undefined }) {
   return (
@@ -57,7 +58,7 @@ export default function ServiceJobProductsCard({ jobId, canEdit }: { jobId: stri
   const columns = useMemo<ColumnDef<ServiceJobProduct>[]>(
     () => [
       col('product_code', 'Product code', 150, (l) => l.product_code),
-      col('product_name', 'Description', 260, (l) => l.product_name),
+      col('product_name', 'Description', 260, (l) => distinctName(l.product_code, l.product_name)),
       col('kind', 'Kind', 160, (l) => l.kind_name),
       col('purchase_date', 'Purchase date', 130, (l) => (l.purchase_date ? formatCivilDate(l.purchase_date) : null)),
       col('defect', 'Defect', 140, (l) => l.defect_label),
@@ -119,7 +120,7 @@ export default function ServiceJobProductsCard({ jobId, canEdit }: { jobId: stri
                   onSelect={() =>
                     remove.run({
                       id: menuLine.id,
-                      subject: [menuLine.product_code, menuLine.product_name].filter(Boolean).join(' '),
+                      subject: codeWithName(menuLine.product_code, menuLine.product_name),
                     })
                   }
                 >

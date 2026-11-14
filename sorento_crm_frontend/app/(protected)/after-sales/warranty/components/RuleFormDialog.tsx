@@ -10,7 +10,6 @@ import {
   Dialog,
   DialogBody,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -73,10 +72,9 @@ export function RuleFormDialog({ open, onOpenChange, rule }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="overflow-hidden sm:max-w-md">
+      <DialogContent className="overflow-hidden sm:max-w-md" aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle>{rule ? 'Edit rule' : 'Create rule'}</DialogTitle>
-          <DialogDescription className="sr-only">Kind rule.</DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col gap-4">
           <DialogBody className="min-h-0 space-y-4 overflow-y-auto">

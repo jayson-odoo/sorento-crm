@@ -10,7 +10,6 @@ import {
   Dialog,
   DialogBody,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -74,10 +73,9 @@ export function PolicyFormDialog({ open, onOpenChange, policy }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="overflow-hidden sm:max-w-lg">
+      <DialogContent className="overflow-hidden sm:max-w-lg" aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle>{policy ? 'Edit policy' : 'Create policy'}</DialogTitle>
-          <DialogDescription className="sr-only">Warranty policy version.</DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col gap-4">
           <DialogBody className="min-h-0 space-y-4 overflow-y-auto">

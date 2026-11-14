@@ -86,7 +86,6 @@ export function KindsTab() {
     });
     return [
       col('name', 'Kind', 260, (k) => <Text value={k.name} className="font-medium" />),
-      col('code', 'Code', 200, (k) => <Text value={k.code} />),
       col('rule_count', 'Rules', 90, (k) => <Text value={String(k.rule_count)} />),
       col('term_count', 'Terms', 90, (k) => <Text value={String(k.term_count)} />),
       col('is_active', 'Active', 110, (k) => (

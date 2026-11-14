@@ -9,7 +9,6 @@ import {
   Dialog,
   DialogBody,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -57,10 +56,9 @@ export function RuleTesterDialog({ open, onOpenChange }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="overflow-hidden sm:max-w-md">
+      <DialogContent className="overflow-hidden sm:max-w-md" aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle>Test a product</DialogTitle>
-          <DialogDescription className="sr-only">See which kind the rules give a product.</DialogDescription>
         </DialogHeader>
         <DialogBody className="min-h-0 space-y-4 overflow-y-auto">
           <div className="space-y-1">
