@@ -567,7 +567,7 @@ def _distance_reply(text: str, kept: list[dict], admitted: list[str]) -> str | N
         narrowed = [f for f in args.get("filters") or [] if not (isinstance(f, dict) and f.get("field") == window)]
         return (
             not _names_a_subject(NEXT_TIER_ENTITY, args) and args.get("subjects") in (None, "all") and not narrowed
-            and not data.get("truncated") and args.get("limit") is None
+            and not data.get("truncated") and args.get("limit") is None and not args.get("offset")
         )
 
     ranked = any(covers_everyone(e) for e in calls)

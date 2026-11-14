@@ -543,6 +543,15 @@ def _offset(spec: dict) -> int:
     return raw
 
 
+def _past_end(db, stmt, skip: int) -> int:
+    """The whole count of a page that found nothing: 0 on the first page; past the end of a list ("more" once too
+    often), the list's own count, never 0, which every caller reads as "nothing found" (review on 5f651cfb)."""
+    if not skip:
+        return 0
+    counted = _run(db, select(func.count()).select_from(stmt.subquery()))
+    return int(counted[0][0] or 0) if counted else 0
+
+
 def _plain(value: Any) -> Any:
     """A value as the answer shows it: a date as dd/mm/yyyy, a stored (naive UTC) timestamp as Malaysian
     dd/mm/yyyy hh:mm (owner ruling, 5 Nov)."""
@@ -813,7 +822,7 @@ def _rows(db, user_id, entity, own_only, paths, filters, spec) -> dict:
         stmt = stmt.where(clause)
     limit, skip = _limit(spec, MAX_ROWS, DEFAULT_ROWS), _offset(spec)
     rows = _run(db, stmt.order_by(*order).limit(limit).offset(skip))
-    total_rows = int(rows[0]._mapping["__total"]) if rows else 0
+    total_rows = int(rows[0]._mapping["__total"]) if rows else _past_end(db, stmt, skip)
     out_rows = []
     for row in rows:
         data = row._mapping
@@ -911,7 +920,7 @@ def _groups(db, user_id, entity, own_only, paths, filters, group_by, aggregates,
         stmt = stmt.order_by(*order)
     limit, skip = _limit(spec, MAX_GROUPS, MAX_GROUPS), _offset(spec)
     rows = _run(db, stmt.limit(limit).offset(skip))
-    total_groups = int(rows[0]._mapping["__total"]) if rows and keys else len(rows)
+    total_groups = int(rows[0]._mapping["__total"]) if rows and keys else (_past_end(db, stmt, skip) if keys else len(rows))
     groups = [{name: _plain(row._mapping[name]) for name in labelled} for row in rows]
     truncated = total_groups > skip + len(groups)
     # Column totals of the counts and sums, over every group (only when the page holds every group).

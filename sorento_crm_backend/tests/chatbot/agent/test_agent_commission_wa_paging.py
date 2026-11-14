@@ -113,14 +113,21 @@ def test_P8_a_next_tier_ranking_pages_by_its_sentences():
         assert out["limit"] == min(asked or NEXT_LINES, NEXT_LINES) and out["offset"] == 10
 
 
-def test_P9_no_ask_for_one_line_every_row_shown_has_its_sentence():
-    import inspect
+def test_P9_every_row_of_a_page_has_its_sentence_and_no_ask_for_one_line():
+    """Review on 5f651cfb: behaviour, not source text. Twelve live commission targets in: twelve lines out, none
+    capped and no "ask for one" line (a page holds at most NEXT_LINES rows, `_next_tier_spec`)."""
+    from datetime import date
 
     from app.services.assistant_registry import sales
 
-    source = inspect.getsource(sales._summary_note)
-    assert "ask for one agent, team or dealer" not in source
-    assert "[:NEXT_LINES]" not in source
+    nxt = {"state": "next", "unit": "RM", "tier": 2, "threshold": 1000.0, "gap": 100.0, "payout": 20.0, "gain": 5.0}
+    rows = [{
+        "owner": f"Agent {i}", "owner_kind": "agent", "_zero": [], "_has_commission": True,
+        "_live": [{"target_no": f"TGT-{i}", "start": date(2026, 11, 1), "end": date(2099, 11, 30), "next": nxt}],
+    } for i in range(12)]
+    said = sales._summary_note(rows, {"to_next_tier"})
+    assert all(f"TGT-{i} (Agent {i}," in said for i in range(12)), said
+    assert "ask for one" not in said
 
 
 # ------------------------------------------------------------------ L51 / L82: what the model is told to write
@@ -150,3 +157,85 @@ def test_P11_every_card_tells_the_model_how_more_works():
     assert summary["next_offset"] == 12 and summary["more"] == 12
     last = as_card(_cut(12, 24, offset=12, ranked=False), panel=True).data
     assert "next_offset" not in last and last["more"] == 0
+
+
+# ------------------------------------------------------------------ review on 5f651cfb: the SQL path and the last page
+
+
+@pytest.fixture
+def five_customers(targets):
+    """Five customers of one code prefix, on the registry's SQL path (`customer`)."""
+    from tests.test_dealer_targets_api import _customer
+
+    from app.models.order import Customer
+
+    db, _client, _t = targets
+
+    any_customer = db.query(Customer).filter(Customer.customer_name == "ZZT DEALER W2").first()
+    rows = [_customer(db, any_customer.company_id, f"ZZTPAGE {i}") for i in range(5)]
+    db.flush()
+    return db, sorted(r.customer_code for r in rows)
+
+
+def _customers(db, **extra):
+    from tests.chatbot.agent.test_ai_tools_wave2 import run as run_
+
+    return run_(db, {
+        "entity": "customer", "fields": ["code"], "sort": [{"field": "code", "dir": "asc"}],
+        "filters": [{"field": "name", "op": "starts_with", "value": "ZZTPAGE"}], **extra,
+    })
+
+
+def test_P12_the_sql_rows_path_pages_with_the_offset(five_customers, grant):
+    db, codes = five_customers
+    grant("order_management.customers.view")
+    page = _customers(db, limit=2, offset=2)
+    assert [r["label"].split(":")[0] for r in page["rows"]] == codes[2:4], page
+    assert page["total"] == 5 and page["truncated"] is True and page["offset"] == 2
+    last = _customers(db, limit=2, offset=4)
+    assert len(last["rows"]) == 1 and last["truncated"] is False
+
+
+def test_P13_an_offset_past_the_end_still_says_the_total_on_the_sql_path(five_customers, grant):
+    """Review on 5f651cfb: the window count came from the returned rows, so a page past the end read total 0, which
+    every caller reads as "nothing found" (`shape_reply`'s miss, `query_as_asker`'s rerun)."""
+    db, _codes = five_customers
+    grant("order_management.customers.view")
+    out = _customers(db, offset=50)
+    assert out["rows"] == [] and out["total"] == 5 and out["truncated"] is False
+
+
+def test_P14_the_sql_groups_path_pages_with_the_offset(five_customers, grant):
+    db, codes = five_customers
+    grant("order_management.customers.view")
+    spec = {"entity": "customer", "group_by": ["code"], "aggregates": [{"fn": "count"}],
+            "filters": [{"field": "name", "op": "starts_with", "value": "ZZTPAGE"}]}
+    from tests.chatbot.agent.test_ai_tools_wave2 import run as run_
+
+    page = run_(db, {**spec, "limit": 2, "offset": 2})
+    assert [g["code"] for g in page["groups"]] == codes[2:4], page
+    assert page["total_groups"] == 5 and page["truncated"] is True and page["offset"] == 2
+    past = run_(db, {**spec, "offset": 50})
+    assert past["groups"] == [] and past["total_groups"] == 5
+
+
+def test_P15_a_later_page_of_a_ranking_is_never_read_as_everyone():
+    """Review on 5f651cfb: the last page of a ranking (not cut, no limit argument) covers rows 41 to 50 only, so a
+    named subject missed in the same turn is still said by the model."""
+    from app.services.chatbot.agent.query_tools import shape_reply
+
+    def entry(args, data):
+        return {"name": "crm_query", "status": "ok", "args": args, "data": data}
+
+    ranking = {
+        "entity": ENTITY, "columns": [{"key": "label", "label": "Owner"}, {"key": "to_next_tier", "label": "To go"}],
+        "rows": [{"id": "41", "label": "Agent 41", "to_next_tier": 1.0}], "total": 41, "truncated": False,
+        "offset": 40,
+    }
+    ledger = {
+        "q1": entry({"entity": ENTITY, "next_tier": "distance", "agent": "Nobody"}, {"entity": ENTITY, "rows": [], "total": 0}),
+        "q2": {**entry({"entity": ENTITY, "next_tier": "closest", "subjects": "all", "offset": 40}, ranking),
+               "display": "Distance to the next tier\n| Owner | To go |"},
+    }
+    reply = shape_reply("Couldn't find Nobody.", ledger, admitted=[])
+    assert "Couldn't find Nobody." in reply, reply
