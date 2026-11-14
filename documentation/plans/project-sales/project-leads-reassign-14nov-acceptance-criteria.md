@@ -1,7 +1,7 @@
 # UAC: Project leads list + reassign back (PROJECT-LEADS-REASSIGN)
 
-Status: DRAFT, provisional on the behaviour card answers (PR #2407). Items tagged [Qn] change if the
-answer to question n differs from the recommendation.
+Status: AGREED (crew 14 Nov 12:05: Q1 b, Q2 b, Q3 a, Q4 a, Q5 a; rules 1-6 accepted). [Qn] tags mark which
+answer each item rests on.
 
 ## A. One reassign path (backend)
 

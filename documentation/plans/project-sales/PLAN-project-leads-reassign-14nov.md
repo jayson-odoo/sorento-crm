@@ -1,6 +1,6 @@
 # PLAN: Project leads list + reassign back (PROJECT-LEADS-REASSIGN)
 
-Status: Plan (behaviour card filed on PR #2407, waiting on answers; UAC drafted alongside). Track: M, LEAD pattern.
+Status: Build (answers in, crew 14 Nov 12:05). Track: L-lite (additive column + backfill), LEAD pattern.
 
 ## Ask (owner, 14 Nov)
 
