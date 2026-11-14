@@ -446,7 +446,9 @@ def test_q1_guard_answers_as_today(session_factory, monkeypatch, stub_access, ga
         # today (the 23 Oct guard, B173_Q1 below keeps that measurement).
         assert "Did you mean" in text and "SRTWT8259-GM" in text, text
         assert "Stock summary" not in text and "*Product Code:*" not in text, f"answered on the parser's pick: {text!r}"
-        assert _offered(c)[0] == "SRTWT8259-GM", _offered(c)
+        assert "Got stock" not in text, f"answered on the parser's pick: {text!r}"
+        # Pinned on the reply, not the storage: a one-row staff offer is stored as the escalate team_pick
+        # (answer_bridge._MIN_ROSTER_OPTIONS = 2), not a product_pick (lead ruling, round 10 follow-up).
         return
     if name == "substring_8259":
         # CHATBOT-CLOSE-CODES AC-34: "8259" sits inside SRTWT8259-GM and VLDWT8259-GM, so the parser's pick (which
