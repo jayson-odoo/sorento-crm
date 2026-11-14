@@ -259,11 +259,11 @@ import {
   ACCESSORY_DEFAULT_BOX_MM,
   accessoryBoxLayout,
   accessoryLineCount,
-  sampleAccessories,
 } from '@/lib/dealer-kit/accessory-box';
 import {
   accessoryDesign,
   accessoryDesignChanged,
+  accessoryDesignSamples,
   accessoryEditItems,
   designKey,
   linkCorrectionPatches,
@@ -2007,7 +2007,8 @@ export function TagCanvasEditor({
     if (!box || box.props.kind !== 'accessories' || box.locked || box.visible === false) return null;
     if (accessoryEdit?.layerId === box.id) return null;
     const display = displayFor(box);
-    const items = display?.accessories ?? sampleAccessories();
+    // The same samples KonvaTagLayer draws for an unbound box, so the header handle sits on them.
+    const items = display?.accessories ?? accessoryDesignSamples(box.props.list);
     const layout = box.props.card
       ? cardBoxLayout(items.length, box.props, box.width_mm, box.height_mm)
       : accessoryBoxLayout(items.length, box.props, box.width_mm, box.height_mm, accessoryLineCount(items));

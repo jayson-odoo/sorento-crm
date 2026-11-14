@@ -62,7 +62,6 @@ import {
   accessoryLineStyle,
   fitLinePt,
   ptToMm,
-  sampleAccessories,
   type AccessoryBoxLayout,
   type AccessoryLineStyle,
 } from '@/lib/dealer-kit/accessory-box';
@@ -1290,7 +1289,8 @@ function AccessoriesContent({
       />
     );
   }
-  const items = accessories ?? sampleAccessories();
+  // Nothing bound: the same full samples "Edit card" shows, so the cards are never blank.
+  const items = accessories ?? accessoryDesignSamples(props.list);
   const lineCount = accessoryLineCount(items);
   const box = accessoryBoxLayout(
     items.length,
@@ -1452,8 +1452,9 @@ function DesignedAccessoriesContent({
   headerHidden?: boolean;
   dropMarker?: boolean;
 }) {
-  // Nothing bound: samples, upgrade ones on an Upgrades box so its Top-up and LP show.
-  const items = accessories ?? (props.list === 'upgrades' ? accessoryDesignSamples('upgrades') : sampleAccessories());
+  // Nothing bound: the full samples "Edit card" shows (brand, code, description; upgrade ones on an
+  // Upgrades box so its Top-up and LP show), never blank cards.
+  const items = accessories ?? accessoryDesignSamples(props.list);
   const box = cardBoxLayout(items.length, props, widthMm, heightMm);
   if (box.shown === 0) {
     return (

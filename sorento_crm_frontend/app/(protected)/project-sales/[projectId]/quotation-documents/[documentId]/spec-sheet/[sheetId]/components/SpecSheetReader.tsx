@@ -1038,26 +1038,33 @@ export function SpecSheetReader({
           </div>
 
           {canEdit && (
-            <CanvasToolbar
-              onAddText={() => addToPage('text')}
-              onAddShape={() => addToPage('shape')}
-              onAddImage={() => addToPage('image')}
-              onAddBadge={() => addToPage('badge')}
-              onAddTable={() => addToPage('table')}
-              onAddAccessories={() => addToPage('accessories')}
-              addDisabled={!toolbarLive}
-              onGroupSelected={() => inputKey && controllerRefFor(inputKey).current?.groupSelected()}
-              onUngroupSelected={() => inputKey && controllerRefFor(inputKey).current?.ungroupSelected()}
-              hasMultiSelection={toolbarLive}
-              selectionIsGroup={toolbarLive}
-              onUndo={() => targetKey && editing.undo(targetKey)}
-              onRedo={() => targetKey && editing.redo(targetKey)}
-              canUndo={editing.canUndo(targetKey)}
-              canRedo={editing.canRedo(targetKey)}
-              onDeleteSelected={() => inputKey && controllerRefFor(inputKey).current?.deleteSelected()}
-              onDuplicateSelected={() => inputKey && controllerRefFor(inputKey).current?.duplicateSelected()}
-              hasSelection={Boolean(selection && selection.pageKey === inputKey)}
-            />
+            // The row scrolls sideways on its own at 375 px; inline-size containment keeps the
+            // tools' width from widening the page, which is what clipped Delete to Ungroup.
+            <div
+              data-testid="spec-sheet-toolbar-row"
+              className="min-w-0 max-w-full overflow-x-auto [contain:inline-size]"
+            >
+              <CanvasToolbar
+                onAddText={() => addToPage('text')}
+                onAddShape={() => addToPage('shape')}
+                onAddImage={() => addToPage('image')}
+                onAddBadge={() => addToPage('badge')}
+                onAddTable={() => addToPage('table')}
+                onAddAccessories={() => addToPage('accessories')}
+                addDisabled={!toolbarLive}
+                onGroupSelected={() => inputKey && controllerRefFor(inputKey).current?.groupSelected()}
+                onUngroupSelected={() => inputKey && controllerRefFor(inputKey).current?.ungroupSelected()}
+                hasMultiSelection={toolbarLive}
+                selectionIsGroup={toolbarLive}
+                onUndo={() => targetKey && editing.undo(targetKey)}
+                onRedo={() => targetKey && editing.redo(targetKey)}
+                canUndo={editing.canUndo(targetKey)}
+                canRedo={editing.canRedo(targetKey)}
+                onDeleteSelected={() => inputKey && controllerRefFor(inputKey).current?.deleteSelected()}
+                onDuplicateSelected={() => inputKey && controllerRefFor(inputKey).current?.duplicateSelected()}
+                hasSelection={Boolean(selection && selection.pageKey === inputKey)}
+              />
+            </div>
           )}
 
           {isMobile && (

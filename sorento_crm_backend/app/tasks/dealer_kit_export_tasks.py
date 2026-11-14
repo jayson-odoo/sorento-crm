@@ -369,12 +369,17 @@ def generate_spec_sheet_pptx(download_id: str) -> dict:
     """
     from app.models.download import UserDownload
     from app.services import project_spec_sheet_service as spec
-    from app.services.spec_sheet_pptx import build_pptx
 
     db = SessionLocal()
     svc = DownloadService(db)
     try:
         svc.mark_processing(download_id)
+        # Inside the try: an import failure (python-pptx missing on the worker) must end the row
+        # Failed with a plain reason, not kill the job and leave it Queued for ever.
+        try:
+            from app.services.spec_sheet_pptx import build_pptx
+        except ImportError as exc:  # the cause stays on the logged traceback below
+            raise RuntimeError("PowerPoint export is not available right now. Try again later.") from exc
         # user_downloads is not company scoped: a plain read.
         download = db.query(UserDownload).filter(UserDownload.id == download_id).first()
         if download is None:
