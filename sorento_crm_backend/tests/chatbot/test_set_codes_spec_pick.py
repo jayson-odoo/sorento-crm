@@ -14,7 +14,7 @@ import uuid
 import pytest
 
 from app.models.product_spec import ProductSpecifications, ProductSpecRegistry
-from app.services.chatbot.head import parser as parser_mod
+from app.services.chatbot.head import access as access_mod, parser as parser_mod
 from tests.chatbot._r9_engine_console import answer, product, reply, stock
 from tests.chatbot._turn_helpers import entity
 from tests.chatbot.test_code_match_dealer_offers import Console, _option_codes
@@ -86,8 +86,31 @@ def test_c_a_did_you_mean_lists_each_option_with_the_spec_that_tells_it_apart(
     assert "eramic" not in json.dumps(shown), shown
 
 
-def test_c_a_spec_only_reply_with_no_pick_asks_the_same_options_again(session_factory, monkeypatch, stub_access):  # noqa: F811
+_PATHS = pytest.mark.parametrize("state_block", [False, True], ids=["open_question_line", "state_block"])
+
+
+@_PATHS
+def test_c_a_spec_key_hidden_from_the_contact_is_never_in_an_option_note(
+    session_factory, monkeypatch, stub_access, state_block  # noqa: F811
+):
     c = _trap_world(session_factory, monkeypatch, stub_access)
+    monkeypatch.setattr(access_mod, "_hidden_spec_keys", lambda db, **k: ["trap_type"])
+    if state_block:
+        _state_block_on(monkeypatch)
+    c.say("qwc604-rl x 2", stock(product("qwc604-rl", 2)))
+    c.say("S trap", reply(open_question_answer=answer(None)))
+    shown = _shown_options(c.blocks[-1])
+    assert [o["code"] for _, o in sorted(shown.items())] == [P_RL, S_RL], shown
+    assert "trap" not in json.dumps(shown).casefold().replace(P_RL.casefold(), "").replace(S_RL.casefold(), ""), shown
+
+
+@_PATHS
+def test_c_a_spec_only_reply_with_no_pick_asks_the_same_options_again(
+    session_factory, monkeypatch, stub_access, state_block  # noqa: F811
+):
+    c = _trap_world(session_factory, monkeypatch, stub_access)
+    if state_block:
+        _state_block_on(monkeypatch)
     c.say("qwc604-rl x 2", stock(product("qwc604-rl", 2)))
     k = len(c.stock_calls)
     text = c.say("S trap", reply(entities=[_spec("S trap", "s_trap")], open_question_answer=answer(None)))
@@ -101,10 +124,13 @@ def test_c_a_spec_only_reply_with_no_pick_asks_the_same_options_again(session_fa
     [({CISTERN: {"trap_type": "s_trap"}}, "S trap", "s_trap"), ({}, "F trap", "f_trap")],
     ids=["both_options_hold_it", "no_option_holds_it"],
 )
+@_PATHS
 def test_c_a_spec_that_does_not_single_out_one_option_asks_the_same_options_again(
-    session_factory, monkeypatch, stub_access, values, word, value  # noqa: F811
+    session_factory, monkeypatch, stub_access, values, word, value, state_block  # noqa: F811
 ):
     c = _trap_world(session_factory, monkeypatch, stub_access, **values)
+    if state_block:
+        _state_block_on(monkeypatch)
     c.say("qwc604-rl x 2", stock(product("qwc604-rl", 2)))
     k = len(c.stock_calls)
     text = c.say(word, reply(entities=[_spec(word, value)], open_question_answer=answer(None)))

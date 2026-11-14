@@ -148,7 +148,7 @@ def held_spec_lines(db: "Session", held_ids: list[str], hidden: frozenset[str] =
 
 #: CHATBOT-SET-CODES C: the most spec notes one offered option carries to the parser.
 CAP_OPTION_NOTES = 3
-SPEC_NOTE_PICKS = ("product_pick", "product_set_pick")
+SPEC_NOTE_PICKS = ("product_pick",)
 
 
 def option_spec_notes(db: "Session", pending: Any, hidden: frozenset[str] = frozenset()) -> dict[int, str]:
@@ -180,22 +180,22 @@ def option_spec_notes(db: "Session", pending: Any, hidden: frozenset[str] = froz
         .filter(ProductSpecifications.product_id.in_(every))
         .all()
     }
-    held: dict[int, set[tuple[str, str]]] = {}
+    held: dict[int, set[tuple[str, Any]]] = {}
     for position, ids in ids_of.items():
-        pairs: set[tuple[str, str]] = set()
+        pairs: set[tuple[str, Any]] = set()
         for product_id in ids:
             for key, entry in stored.get(product_id, {}).items():
                 if key not in registry:
                     continue
                 raw = entry.get("value") if isinstance(entry, dict) else entry
                 for value in raw if isinstance(raw, list) else [raw]:
-                    if value is not None and str(value).strip():
-                        pairs.add((key, str(value)))
+                    if value is not None and not isinstance(value, dict) and str(value).strip():
+                        pairs.add((key, value))
         held[position] = pairs
     shared = set.intersection(*held.values())
     notes: dict[int, str] = {}
     for position, pairs in held.items():
-        own = sorted(pairs - shared)[:CAP_OPTION_NOTES]
+        own = sorted(pairs - shared, key=lambda pair: (pair[0], str(pair[1])))[:CAP_OPTION_NOTES]
         if own:
             notes[position] = ", ".join(
                 f"{registry[key].label or key}: "

@@ -25,6 +25,7 @@ from dataclasses import replace
 from typing import Any
 
 from app.services.chatbot import contracts
+from app.services.chatbot.head import held_family
 from app.services.chatbot.turn import refer
 from app.services.chatbot.turn import task as task_mod
 from app.services.chatbot.turn.chat_state import (
@@ -3120,10 +3121,6 @@ def _stock_pick_requantified(state: State, verdict: dict[str, Any], trace: Trace
     return _stock_pick_asked_again(state, quantity, trace)
 
 
-#: The hints the parser gives a spec word ("S trap").
-_SPEC_HINTS = ("specification", "spec")
-
-
 def _stock_pick_spec_only(state: State, verdict: dict[str, Any], trace: Trace):
     """CHATBOT-SET-CODES C (owner, 14 Nov 2026): while a stock pick is open, a reply the
     parser gave no pick (mode null, no position) and only spec entities ("S trap" that both
@@ -3138,7 +3135,7 @@ def _stock_pick_spec_only(state: State, verdict: dict[str, Any], trace: Trace):
         (isinstance(answer, dict) and answer.get("mode") is not None)
         or verdict.get("reference_positions")
         or not entities
-        or any(str(e.get("hint") or "").strip().lower() not in _SPEC_HINTS for e in entities)
+        or any(str(e.get("hint") or "").strip().lower() not in held_family.SPEC_HINTS for e in entities)
         or domain_in_message(verdict) is True
     ):
         return None
