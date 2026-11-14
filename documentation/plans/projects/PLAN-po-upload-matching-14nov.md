@@ -1,6 +1,6 @@
 # PLAN: PO upload matching (PO-UPLOAD-MATCHING)
 
-Status: building (size M, LEAD pattern). Card answered by crew 14 Nov 13:05: Q1 b, Q2 a, Q3 a, Q4 a, Q5 a. No migration (suggestion meta lives in `extracted_json.line_matches`).
+Status: built, hand test pending (size M, LEAD pattern). Card answered by crew 14 Nov 13:05: Q1 b, Q2 a, Q3 a, Q4 a, Q5 a. No migration (suggestion meta lives in `extracted_json.line_matches`). Live model run: crew on the Mac (sandbox key has no credit).
 
 ## Problem (owner, 14 Nov, 134-line customer PO)
 
