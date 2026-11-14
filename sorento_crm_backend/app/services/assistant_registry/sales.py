@@ -252,7 +252,8 @@ def _summary_rows(
 
     Matching (`computed.names_exact`): an agent by code, name, "CODE - Name" or the person behind several codes
     (`SalesAgent.person_label`); a team with or without "Team"; a dealer by its name or any counted account's code or
-    name. A period with a target of 0 adds nothing to target, achieved and % (no % on the screen either)."""
+    name. A target of 0 over the window adds nothing to target, achieved and % (no % on the screen either); a period
+    of 0 inside a target above 0 adds 0 to its target and its sales to achieved, as the Targets tab sums it (UAC 10)."""
     from app.services.sales import achievement_service as ach
     from app.services.sales import target_service as ts
     from app.services.sales.team_service import agent_label
@@ -299,7 +300,7 @@ def _summary_rows(
             "periods": 0, "targets": set(), "target_value": 0.0,
             "achieved_value": 0.0, "commission": None, "bonus": None, "payout": None,
             "_names": {k: set() for k in ("owner", "agent")}, "_kinds": set(), "_complete": True, "_summed": False,
-            "_zero": set(), "_shares": {}, "_has_commission": False,
+            "_zero": set(), "_shares": {}, "_has_commission": False, "_per_target": {},
         })
         if out["agent"] != extra["agent"]:
             # Dealer targets of one name whose accounts different agents own: no single owning agent.
@@ -313,13 +314,12 @@ def _summary_rows(
         if row["metric"] != "amount" or row["target_value"] is None:
             # Units, or a points target without a ratio: no RM figure to add (the page shows none either).
             out["_complete"] = False
-        elif row["target_value"] <= 0:
-            # A target of 0 has no % on the screen; its sales would swamp the row's % (owner C3, 8 Nov).
-            out["_zero"].add(row["target_no"])
         else:
-            out["target_value"] += row["target_value"]
-            out["achieved_value"] += row["achieved_value"] or 0.0
-            out["_summed"] = True
+            # Each target's own figures over its periods in the window, every period counted (a period of 0 adds
+            # 0 to the target and its sales to achieved), as the Targets tab sums them (UAC 10).
+            figures = out["_per_target"].setdefault(row["target_no"], [0.0, 0.0])
+            figures[0] += row["target_value"]
+            figures[1] += row["achieved_value"] or 0.0
         if row["commission"] is not None:
             out["_has_commission"] = True
         for k in ("commission", "bonus", "payout"):
@@ -329,6 +329,15 @@ def _summary_rows(
             out["_shares"][label] = round(out["_shares"].get(label, 0.0) + share, 2)
     rows = []
     for out in per.values():
+        for target_no, (goal, achieved) in out.pop("_per_target").items():
+            if goal <= 0:
+                # A target of 0 over the window has no % on the screen; its sales would swamp the row's % (owner
+                # C3, 8 Nov).
+                out["_zero"].add(target_no)
+                continue
+            out["target_value"] += goal
+            out["achieved_value"] += achieved
+            out["_summed"] = True
         summed = out.pop("_summed")
         whole = out.pop("_complete")
         complete = whole and summed
@@ -578,7 +587,7 @@ register(
             "achieved_value": FieldDef("Achieved (RM)", kind="number"),
             "achieved_pct": FieldDef("Achieved %", kind="number"),
             "remaining_value": FieldDef(
-                "Remaining (RM)", kind="number", note="Target minus achieved, 0 once reached (achieved % shows any excess).",
+                "Left to target (RM)", kind="number", note="Target minus achieved, 0 once reached (achieved % shows any excess).",
             ),
             "commission": FieldDef("Commission", kind="number"),
             "bonus": FieldDef("Bonus", kind="number"),
@@ -591,8 +600,9 @@ register(
         hint="COMMISSION PAYOUT / TARGET vs ACHIEVED for an agent, a team or a dealer, or per agent / team / dealer: "
              "one row per agent, team and dealer, highest payout first, totals row; no period = this year. One of them: agent=<code or name as said> "
              "(an agent, team or dealer); only dealers or teams: owner_kind eq dealer|team",
-        list_fields=("owner_kind", "target_value", "achieved_value", "achieved_pct", "payout"),
-        row_totals=("targets", "commission", "bonus", "payout"),
+        list_fields=("owner_kind", "target_value", "achieved_value", "achieved_pct", "remaining_value", "payout"),
+        # Sales vs target in one query (UAC 11): RM figures of the amount rows only, a units row has none.
+        row_totals=("targets", "target_value", "achieved_value", "remaining_value", "commission", "bonus", "payout"),
         compute=_summary_rows,
         kind_field="owner_kind",
         window_field="period",
