@@ -2087,8 +2087,9 @@ def test_S4_a_dealer_turn_whose_lookup_ran_but_proposed_nothing_asks_for_the_det
     w = make_world(db)
     person = dealer(db, w, customers=(w.cust_a,))
 
-    result = _turn(db, w, [round_of(tc("crm_contacts_find", {"phones": [person.phone_number]}, "f1")), answer_("x")],
-                   f"what about {person.phone_number}?", dealer_access=True)
+    # #2256 F1: an answer right after a found person is held once for the change; a second answer ends the turn.
+    script = [round_of(tc("crm_contacts_find", {"phones": [person.phone_number]}, "f1")), answer_("x"), answer_("y")]
+    result = _turn(db, w, script, f"what about {person.phone_number}?", dealer_access=True)
 
     assert result.reply_text == TELL_ME
 
