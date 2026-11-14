@@ -1,8 +1,8 @@
 """RED tests for ingest parity standardisation, Phase S4 (retire and clean up).
 
-UAC: documentation/plans/autocount/ingest-parity-standardisation-acceptance-criteria.md
+UAC: documentation/plans/_archive/autocount/ingest-parity-standardisation-acceptance-criteria.md
      Phase S4, AC-P4-1 .. AC-P4-3.
-PLAN: documentation/plans/autocount/PLAN-ingest-parity-standardisation.md sections 2.8, 4.
+PLAN: documentation/plans/_archive/autocount/PLAN-ingest-parity-standardisation.md sections 2.8, 4.
 
 Substrate: the `env` fixture reused byte-for-byte from `tests/test_ingest_documents.py`
 (`blank_session()` + a real `TestClient(app)`), the same one

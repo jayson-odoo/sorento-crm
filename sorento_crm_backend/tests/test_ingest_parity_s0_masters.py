@@ -1,8 +1,8 @@
 """RED tests for ingest parity standardisation, Phase S0 (masters ingest hygiene).
 
-UAC: documentation/plans/autocount/ingest-parity-standardisation-acceptance-criteria.md
+UAC: documentation/plans/_archive/autocount/ingest-parity-standardisation-acceptance-criteria.md
      Phase S0, AC-P0-1 .. AC-P0-7.
-PLAN: documentation/plans/autocount/PLAN-ingest-parity-standardisation.md sections 2.3, 2.4.
+PLAN: documentation/plans/_archive/autocount/PLAN-ingest-parity-standardisation.md sections 2.3, 2.4.
 
 No implementation for this slice exists yet beyond what `master_ingest_service.py`
 already does for Phase C. Every test below targets a SPECIFIC, already-read gap in

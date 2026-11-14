@@ -1,9 +1,9 @@
 """RED tests for ingest parity standardisation, Phase S1 (shared resolver and
 product rules).
 
-UAC: documentation/plans/autocount/ingest-parity-standardisation-acceptance-criteria.md
+UAC: documentation/plans/_archive/autocount/ingest-parity-standardisation-acceptance-criteria.md
      Phase S1, AC-P1-1 .. AC-P1-9.
-PLAN: documentation/plans/autocount/PLAN-ingest-parity-standardisation.md sections 2.1, 2.2.
+PLAN: documentation/plans/_archive/autocount/PLAN-ingest-parity-standardisation.md sections 2.1, 2.2.
 
 `app/services/rules/` does not exist yet (S1's own deliverable). Two shapes of
 test below:
