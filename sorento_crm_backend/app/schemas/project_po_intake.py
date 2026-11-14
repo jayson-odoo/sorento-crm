@@ -91,6 +91,19 @@ class POVersionTotals(BaseModel):
             "is exactly the cancelled amount is a fact and leaves this true."
         ),
     )
+    printed_total_read: bool = Field(
+        False,
+        description=(
+            "True when extracted_total is a grand total printed on the document; false "
+            "when it is only the sum of the line amounts read."
+        ),
+    )
+
+
+class POLineMatchOption(BaseModel):
+    product_id: str
+    product_code: Optional[str] = None
+    product_name: Optional[str] = None
 
 
 class POLineResponse(BaseModel):
@@ -124,8 +137,27 @@ class POLineResponse(BaseModel):
     resolved_product_code: Optional[str] = None
     resolved_product_name: Optional[str] = None
     resolution_source: Optional[str] = Field(
-        None, description="code | description | map | manual"
+        None, description="code | map | suggested | accepted | manual"
     )
+    match_confidence: Optional[str] = Field(
+        None, description="high | medium | low, on a suggested product only"
+    )
+    match_options: List[POLineMatchOption] = Field(
+        default_factory=list,
+        description="Products the matcher offered for this line; the picker lists them first.",
+    )
+    qty_suggested: bool = Field(
+        False,
+        description="The qty was worked out from amount / unit price and is not yet accepted.",
+    )
+    amount_computed: bool = Field(
+        False,
+        description=(
+            "No amount was printed: it is qty x unit price, and a qty or price edit moves "
+            "it until an amount is typed."
+        ),
+    )
+
 
 
 class POAnnotationResponse(BaseModel):
@@ -160,6 +192,8 @@ class POApprovalStamps(BaseModel):
     """The approval handshake, which lives on the PO row but is read on this screen."""
 
     po_number: str = ""
+    issuing_party_id: Optional[str] = None
+    issuing_party_name: Optional[str] = None
     status: Optional[str] = None
     approved_by_name: Optional[str] = None
     approved_at: Optional[datetime] = None
@@ -176,6 +210,16 @@ class POVersionConfirmResult(BaseModel):
     po_amount: Decimal = Decimal("0")
     model_mismatch_count: int = 0
     price_mismatch_count: int = 0
+    codes_not_remembered: Optional[str] = Field(
+        None,
+        description=(
+            "issuer_not_linked when the chosen issuer is not linked to a customer, so the "
+            "codes picked on this document were not remembered. Null when they were."
+        ),
+    )
+    codes_not_remembered_party: Optional[str] = Field(
+        None, description="The issuer's name, when codes_not_remembered is set."
+    )
 
 
 class POVersionDetailResponse(BaseModel):
@@ -225,6 +269,9 @@ class POVersionDetailResponse(BaseModel):
     header: POVersionHeader
     totals: POVersionTotals
     lines: List[POLineResponse] = Field(default_factory=list)
+    suggestion_count: int = Field(
+        0, description="Live lines with a suggested product or qty not yet accepted."
+    )
     annotations: List[POAnnotationResponse] = Field(default_factory=list)
     purchase_order: POApprovalStamps = Field(default_factory=POApprovalStamps)
     confirmed_at: Optional[datetime] = None

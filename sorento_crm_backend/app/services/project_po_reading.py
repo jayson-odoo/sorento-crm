@@ -14,7 +14,7 @@ from __future__ import annotations
 import hashlib
 import re
 from datetime import date, datetime
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_EVEN, Decimal, InvalidOperation
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from app.models.project_so import ProjectPOLine
@@ -150,7 +150,8 @@ def _nullable(kind: str) -> Dict[str, Any]:
 # "'list' object has no attribute 'get'". The keys are exactly the prompt's own. Keys
 # the prompt never asks for (a header total, an annotation's struck_parts) cannot come
 # back under the schema; ``persist_pages`` still reads them when an older answer has
-# them, and the total falls back to the sum of the lines, as it did in practice.
+# them. ``printed_total`` is asked for at the top level; with none printed anywhere the
+# total falls back to the sum of the lines.
 PO_PAGE_SCHEMA: Dict[str, Any] = _strict_object(
     {
         "header": _strict_object(
@@ -192,6 +193,17 @@ PO_PAGE_SCHEMA: Dict[str, Any] = _strict_object(
                     "proposed_code": _nullable("string"),
                     "successor_po_number": _nullable("string"),
                 }
+            ),
+        },
+        # PO-UPLOAD-MATCHING AC-T1: the grand total PRINTED on this page, null when the
+        # page prints none. Without it the "document total" was only the sum of the
+        # amounts read, which cannot catch a line the reader missed.
+        "printed_total": {
+            **_nullable("number"),
+            "description": (
+                "The document's printed grand total for the whole order, exactly as printed "
+                "on this page (not a page subtotal, not a line amount). Null when this page "
+                "prints no grand total. Never add the lines up yourself."
             ),
         },
     }
@@ -280,6 +292,14 @@ def _is_description_fragment(item: Dict[str, Any]) -> bool:
     )
 
 
+def line_amount(qty: Optional[Decimal], unit_price: Optional[Decimal]) -> Optional[Decimal]:
+    """``qty * unit_price`` to the cent, half-even (banker's rounding, the same rule the
+    grid's live preview uses), or None when a factor is missing."""
+    if qty is None or unit_price is None:
+        return None
+    return (qty * unit_price).quantize(_CENTS, rounding=ROUND_HALF_EVEN)
+
+
 def arithmetic_ok(
     qty: Optional[Decimal], unit_price: Optional[Decimal], amount: Optional[Decimal]
 ) -> Optional[bool]:
@@ -291,7 +311,7 @@ def arithmetic_ok(
     """
     if qty is None or unit_price is None or amount is None:
         return None
-    return (qty * unit_price).quantize(_CENTS) == amount.quantize(_CENTS)
+    return line_amount(qty, unit_price) == amount.quantize(_CENTS, rounding=ROUND_HALF_EVEN)
 
 
 def _computed_amount(line: ProjectPOLine) -> Decimal:
@@ -300,8 +320,9 @@ def _computed_amount(line: ProjectPOLine) -> Decimal:
     nothing."""
     qty = _to_decimal(line.qty)
     unit_price = _to_decimal(line.unit_price)
-    if qty is not None and unit_price is not None:
-        return (qty * unit_price).quantize(_CENTS)
+    computed = line_amount(qty, unit_price)
+    if computed is not None:
+        return computed
     return _money(_to_decimal(line.amount))
 
 
@@ -385,25 +406,6 @@ def _looks_like_code(token: str) -> bool:
         and any(character.isdigit() for character in token)
         and any(character.isalpha() for character in token)
     )
-
-
-def _squash(text: Optional[str]) -> str:
-    """A code with its punctuation dropped, for comparing spellings of one product.
-
-    `SRTFH15CR` and `SRTFH15-CR` are the same thing written by two people. Nothing here
-    reorders or truncates, so two codes that squash alike really are the same code.
-    """
-    return re.sub(r"[^A-Z0-9]", "", (text or "").upper())
-
-
-def _code_tokens(text: Optional[str]) -> List[str]:
-    """The parts of a code, so a reordering can be recognised.
-
-    The client writes `B2155-BLUE-NL` for what we stock as `B2155-NL-BLUE`. Same
-    product, same parts, different order, and comparing the SET of parts sees that
-    while comparing the strings never will.
-    """
-    return [part for part in re.split(r"[^A-Z0-9]+", (text or "").upper()) if part]
 
 
 def _proposed_code(text: Optional[str]) -> Optional[str]:

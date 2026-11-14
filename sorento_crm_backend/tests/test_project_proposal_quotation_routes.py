@@ -23,6 +23,33 @@ from .test_project_proposal_quotation import (
 BASE = "/api/v1/project-sales"
 
 
+def _issuer_with_customer(db, project):
+    """A party bridged to a debtor, so a PO it issues has a customer to learn codes for."""
+    import uuid
+
+    from app.models.order import Customer
+    from app.models.projects import ProjectParty
+
+    customer = Customer(
+        id=str(uuid.uuid4()),
+        company_id=project.company_id,
+        customer_code=f"ZZT-{uuid.uuid4().hex[:8]}",
+        customer_name=f"{MARKER} buyer",
+    )
+    db.add(customer)
+    db.flush()
+    party = ProjectParty(
+        id=str(uuid.uuid4()),
+        company_id=project.company_id,
+        party_type="main_contractor",
+        name=f"{MARKER} issuer",
+        customer_id=customer.id,
+    )
+    db.add(party)
+    db.flush()
+    return party
+
+
 @pytest.fixture()
 def env(monkeypatch):
     from app.models.base import company_scope
@@ -289,6 +316,8 @@ def test_s2_confirming_a_scan_over_the_quotation_asks_then_confirms_with_the_rea
             "po_number": f"{MARKER}-SCAN2",
             "po_source": "contractor_direct",
             "quotation_version_id": quotes.current_version(db, q_scope.id).id,
+            # PO-UPLOAD-MATCHING crew pass 2: Confirm needs a known customer (the issuer).
+            "issuing_party_id": _issuer_with_customer(db, project).id,
         },
     )
     version = ProjectPOVersion(
