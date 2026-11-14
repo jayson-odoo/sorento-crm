@@ -3,10 +3,10 @@
 1. `code_sizes._offerable_rows` drops a product hidden from the chat (`chat_searchable_products`),
    fed a hidden row directly. Upstream probes already filter hidden rows today, so this pins the
    safety net itself: it fails if the filter is removed.
-2. Order with a predicate: a letters-only token the parser hands as a PRODUCT (the AC-19 case,
-   "ABCDE", which misses but sits inside catalogue codes ABCDE-K / ABCDE-M) together with a certificate filter gets the certificate
-   miss ("Couldn't find ... certificate"), not AC-19's did-you-mean. AC-19's widening stays on the
-   did-you-mean paths only (answer.py described-set guard).
+2. Order with a predicate: a letters-only token the parser hands as a PRODUCT (the AC-19 case:
+   "ABCDE" misses but sits inside catalogue codes ABCDE-K / ABCDE-M) together with a certificate
+   filter gets the certificate miss ("Couldn't find ... certificate"), not a list of its substring
+   neighbours. AC-19's widening stays on the did-you-mean paths only (answer.py described-set guard).
 """
 
 from __future__ import annotations
@@ -79,7 +79,7 @@ def test_offerable_rows_drops_a_product_hidden_from_the_chat():
     assert kept == [visible.product_code], kept
 
 
-def test_predicate_with_letters_only_parser_product_gets_the_certificate_miss_not_did_you_mean():
+def test_predicate_with_letters_only_parser_product_gets_the_certificate_miss_not_its_neighbours():
     from app.models.base import set_company_scope
     from app.services.chatbot.lanes.business import resolve_gate
     from app.services.chatbot.lanes.business.answer import not_found_error_message
