@@ -18,7 +18,12 @@ Plan: `PLAN-target-achieved-perf-14nov.md`.
    the targets that agent can be credited on: their agent targets, their teams' targets, and every
    dealer target with ANY counted account of theirs. The rows returned are identical to computing
    everything and filtering after; the achievement statement receives no other target's periods.
-   `owner_kind` narrows the same way. Status / reached / pct filters stay in Python (Q5).
+   `owner_kind` narrows the same way (not when an agent filter is also named). Status / reached /
+   pct filters stay in Python (Q5). Two deliberate exceptions: (a) when the narrowed set is empty,
+   everything is computed once so the "Nothing matched" note keeps listing the values that exist
+   (if that is refused for the window cap, the note still says nothing matched); (b) the period cap
+   counts the narrowed set, so a named-agent question over a wide window answers that window where
+   computing everything would have fallen back to the periods containing today.
 6. `agent_target_summary` and `target_list` rows carry `remaining_value` = target - achieved,
    floored at 0 (0 once reached; `achieved_pct` shows any over-achievement), computed by the
    server and listed by crm_describe (Q1).

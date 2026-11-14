@@ -1,6 +1,6 @@
 # PLAN: Invoiced target achievement, period join the planner can hash (lane TARGET-ACHIEVED-PERF)
 
-Status: Plan (scope add) - part 1 (join fix + timeout text) built, reviewed PASS, PR #2420; part 2 (#2419 slice 1) answers in (crew 14 Nov: Q1 floor at 0, Q2 candidate prompt version, Q3 cap 6 counting ran queries, Q4 live x1 US$0.50, Q5 yes); building. Track: full (M after the scope add: agent loop + prompt). UAC:
+Status: Review - part 1 reviewed PASS; part 2 built (84f4cbd6ee), reviewer round 1 CHANGES being fixed (tests: guards for kinds+agent and team names; code: shared label helper, note when recompute refused). Track: full (M after the scope add: agent loop + prompt). Prompt candidate chatbot_agent v1 (md5 d786e5ef...) applied unlabelled on sorento_prod_1112 by crew. UAC:
 `target-achieved-perf-14nov-acceptance-criteria.md`.
 
 ## Why
