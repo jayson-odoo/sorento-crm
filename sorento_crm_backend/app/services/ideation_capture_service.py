@@ -652,6 +652,13 @@ def handle_capture_turn(
         title = normalise_title(extraction.title)
         use_cases = list(extraction.use_cases)
         submission_type = normalise_type(extraction.type)
+        if asked.get("type") == "issue":
+            # The ask was for an issue: its answer files as that issue, whatever type it reads as (review N4).
+            submission_type = "issue"
+        issue_answer = ask_reply and "issue" in (submission_type, asked.get("type"))
+        if issue_answer and extraction.review_action == "cancel":
+            # Review B1: a cancel ends the issue ask. Nothing is filed and the held ask is dropped.
+            return finish("cancelled", "cancelled", {"type": "issue"}, language)
         # An intent-only message ("I have an idea") carries no idea whatever the extractor
         # wrote into problem, so problem is not counted when has_idea is False.
         checked = (
@@ -659,7 +666,7 @@ def handle_capture_turn(
             if extraction.has_idea is False
             else fields
         )
-        if _missing_required(checked) and ask_reply and "issue" in (submission_type, asked.get("type")):
+        if _missing_required(checked) and issue_answer:
             # Round 14: an issue flow asks once and never gives up. The answer to the ask, with no
             # problem in it, files the issue in the user's own words (this answer and the message asked about).
             said = [t for t in (str(asked.get("message_text") or "").strip(), text_in) if t]
@@ -783,7 +790,8 @@ def handle_capture_turn(
     photos = 0 if is_test else attach_chat_photos(db, user_id=user.id, idea_id=result.get("idea_id"))
     facts = {
         "idea_number": result.get("idea_number"),
-        "title": result.get("title") or payload.get("title"),
+        # The title the CRM sent (round 13: the reply uses the payload's value), else what ss echoed.
+        "title": payload.get("title") or result.get("title"),
         "link": link,
         "missing": _missing_list(payload, photos),
         "type": submission_type,

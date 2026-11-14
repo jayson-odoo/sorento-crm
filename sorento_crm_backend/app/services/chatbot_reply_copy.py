@@ -315,6 +315,12 @@ IDEATION_CAPTURE_GIVE_UP_ISSUE = {
     ),
     "zh": "我还是没能弄清楚出了什么问题。准备好后，请在一条消息里告诉我您看到了什么、在哪里看到的，我会把它记录为反馈。",
 }
+#: Rounds 14-15 review B1: the answer to the issue ask was a cancel. Nothing was filed.
+IDEATION_CAPTURE_CANCELLED = {
+    "en": "Okay, I've dropped that. Nothing was logged.",
+    "ms": "Baik, saya batalkan. Tiada apa-apa direkodkan.",
+    "zh": "好的，已取消，没有记录任何内容。",
+}
 #: AI-KEY-PER-PROVIDER: the message could not be read at all (provider or key error, timeout).
 #: Not "no idea": a plain statement of what happened, no apology, no question.
 IDEATION_CAPTURE_READ_FAILED = {
@@ -509,6 +515,7 @@ FALLBACK_REPLY_COPY: dict[str, tuple[dict[str, str], tuple[str, ...]]] = {
     "ideation_capture_ask_idea": (IDEATION_CAPTURE_ASK_IDEA, ()),
     "ideation_capture_give_up": (IDEATION_CAPTURE_GIVE_UP, ()),
     "ideation_capture_give_up_issue": (IDEATION_CAPTURE_GIVE_UP_ISSUE, ()),
+    "ideation_capture_cancelled": (IDEATION_CAPTURE_CANCELLED, ()),
     "ideation_capture_read_failed": (IDEATION_CAPTURE_READ_FAILED, ()),
     "ideation_capture_similar_offered": (IDEATION_CAPTURE_SIMILAR_OFFERED, ()),
     "ideation_capture_similar_offered_reply": (IDEATION_CAPTURE_SIMILAR_OFFERED_REPLY, ()),
