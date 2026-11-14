@@ -172,9 +172,18 @@ function wrap(node: React.ReactNode) {
   return render(<QueryClientProvider client={client}>{node}</QueryClientProvider>);
 }
 const interestedBox = async () => {
-  // AC-R6: the section is a grid card titled Secondary leads (PanelDataGrid), not a plain list.
-  const heading = await screen.findByText('Secondary leads');
-  return heading.closest('[data-slot="card"]') as HTMLElement;
+  // PROJECT-LEADS-REASSIGN B1: the secondary leads are rows of the Access card's one leads grid
+  // (PanelDataGrid, no heading of its own), not a separate "Secondary leads" grid.
+  const access = (await screen.findByText('Access')).closest('[data-slot="card"]') as HTMLElement;
+  const table = await within(access).findByRole('table');
+  return table.closest('[data-slot="card"]') as HTMLElement;
+};
+// PROJECT-LEADS-REASSIGN B5: Reassign and Dismiss moved from row buttons to the row's
+// right-click menu.
+const openRowMenu = async (name: string) => {
+  const box = await interestedBox();
+  const cell = await within(box).findByText(name);
+  fireEvent.contextMenu(cell);
 };
 const posts = (part: string) => calls.filter((c) => c.method === 'POST' && c.url.includes(part));
 
@@ -203,9 +212,9 @@ describe('ProjectAccessPanel: Interested (E1, E2, E4)', () => {
   it('E2 a holder of projects.projects.manage sees Reassign to <name> and Dismiss per row', async () => {
     granted = new Set(['projects.projects.manage']);
     wrap(<ProjectAccessPanel project={project()} />);
-    const box = await interestedBox();
-    expect(await within(box).findByRole('button', { name: 'Reassign to Sales B' })).toBeInTheDocument();
-    expect(within(box).getByRole('button', { name: 'Dismiss' })).toBeInTheDocument();
+    await openRowMenu('Sales B');
+    expect(await screen.findByRole('menuitem', { name: 'Reassign to Sales B' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'Dismiss' })).toBeInTheDocument();
   });
 
   it('E2 the owner without manage does not get them', async () => {
@@ -220,7 +229,8 @@ describe('ProjectAccessPanel: Interested (E1, E2, E4)', () => {
   it('E4 Dismiss decides the interest with reject', async () => {
     granted = new Set(['projects.projects.manage']);
     wrap(<ProjectAccessPanel project={project()} />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Dismiss' }));
+    await openRowMenu('Sales B');
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Dismiss' }));
     await waitFor(() => expect(posts('/takeover-requests/r1/decide')).toHaveLength(1));
     expect(posts('/takeover-requests/r1/decide')[0].body).toMatchObject({ approve: false });
   });
@@ -228,7 +238,14 @@ describe('ProjectAccessPanel: Interested (E1, E2, E4)', () => {
   it('E3 Reassign to <name> decides that interest with approve', async () => {
     granted = new Set(['projects.projects.manage']);
     wrap(<ProjectAccessPanel project={project()} />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Reassign to Sales B' }));
+    await openRowMenu('Sales B');
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Reassign to Sales B' }));
+    // It opens the reassign dialog with Sales B preselected (B5); submitting decides the interest.
+    const dialog = await screen.findByRole('dialog');
+    await waitFor(() =>
+      expect((within(dialog).getByLabelText('Salesperson') as HTMLSelectElement).value).toBe('u-b'),
+    );
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Reassign$/ }));
     await waitFor(() => expect(posts('/takeover-requests/r1/decide')).toHaveLength(1));
     expect(posts('/takeover-requests/r1/decide')[0].body).toMatchObject({ approve: true });
   });
@@ -278,19 +295,23 @@ describe('AC-R6 secondary leads table', () => {
     expect(within(row).queryByRole('button', { name: /Reassign to/ })).toBeNull();
   });
 
-  it('AC-R6 an approved dispute row reads Reassigned', async () => {
+  it('AC-R6 an approved dispute row has a blank Status (PROJECT-LEADS-REASSIGN B2)', async () => {
     approvedDispute = true;
     wrap(<ProjectAccessPanel project={project()} />);
-    const row = await rowOf('Sales D');
-    expect(within(row).getByText('Reassigned')).toBeInTheDocument();
+    // Sales D is not in the active people lookup above, so the row reads "Sales D (inactive)" (B8).
+    const box = await interestedBox();
+    const row = (await within(box).findByText(/^Sales D/)).closest('tr') as HTMLElement;
+    expect(within(row).queryByText('Reassigned')).toBeNull();
+    expect(within(row).queryByText('Pending')).toBeNull();
+    expect(within(row).queryByText('Dismissed')).toBeNull();
   });
 
   it('AC-R6 Reassign to <name> and Dismiss sit on the pending row for a manage holder only', async () => {
     granted = new Set(['projects.projects.manage']);
     wrap(<ProjectAccessPanel project={project()} />);
-    const row = await rowOf('Sales B');
-    expect(within(row).getByRole('button', { name: 'Reassign to Sales B' })).toBeInTheDocument();
-    expect(within(row).getByRole('button', { name: 'Dismiss' })).toBeInTheDocument();
+    await openRowMenu('Sales B');
+    expect(await screen.findByRole('menuitem', { name: 'Reassign to Sales B' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'Dismiss' })).toBeInTheDocument();
   });
 
   it('AC-R6 a viewer without manage sees the row but no actions', async () => {
@@ -310,16 +331,16 @@ describe('AC-R6 secondary leads table', () => {
 });
 
 describe('AC-R4 secondary lead wording on the Access card', () => {
-  it('AC-R4 the heading reads Secondary leads and the old Interested heading is gone', async () => {
+  it('AC-R4 the old Interested heading is gone', async () => {
     wrap(<ProjectAccessPanel project={project()} />);
-    await screen.findByText('Secondary leads');
+    await interestedBox();
     expect(screen.queryByText(/^Interested$/)).toBeNull();
     expect(screen.queryByText(/register interest/i)).toBeNull();
   });
 
   it('AC-R4 no past decision reads "Interest by"; a join decision still reads "Join by"', async () => {
     wrap(<ProjectAccessPanel project={project()} />);
-    await screen.findByText('Secondary leads');
+    await interestedBox();
     expect(screen.queryByText(/Interest by/)).toBeNull();
     expect(screen.queryByText(/Interested/)).toBeNull();
   });
