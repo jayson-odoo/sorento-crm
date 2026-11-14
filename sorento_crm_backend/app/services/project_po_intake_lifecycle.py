@@ -1369,8 +1369,14 @@ class POIntakeLifecycleMixin:
                 self._set_line_match(version, line, amount_computed=False)
         elif ("qty" in payload or "unit_price" in payload) and self._line_match(
             version, line
-        ).get("amount_computed"):
+        ).get(
+            "amount_computed",
+            # A version read before `amount_computed` existed carries no key: an empty
+            # amount there is the same "nothing printed" case.
+            line.amount is None,
+        ):
             line.amount = line_amount(_to_decimal(line.qty), _to_decimal(line.unit_price))
+            self._set_line_match(version, line, amount_computed=True)
 
         line.arithmetic_ok = arithmetic_ok(
             _to_decimal(line.qty), _to_decimal(line.unit_price), _to_decimal(line.amount)

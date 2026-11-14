@@ -271,7 +271,11 @@ export function POIntakeConfirmClient({
                     setIssuer(partyId);
                     poMutations.update.mutate(
                       { id: version.purchase_order_id, body: { issuing_party_id: partyId } },
-                      { onSettled: () => intake.refresh?.() },
+                      {
+                        // A refused save puts the previous issuer back on screen.
+                        onError: () => setIssuer(undefined),
+                        onSettled: () => intake.refresh?.(),
+                      },
                     );
                   }}
                 />
