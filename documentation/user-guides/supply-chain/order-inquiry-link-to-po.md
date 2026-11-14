@@ -5,7 +5,7 @@ the link, not only the CRM. It is the same feature, popup and switch as
 [Stock Debt](./stock-debt-link-to-po.md).
 
 It only appears once an admin has switched on the AutoCount link setting (see
-[Switching it on](#switching-it-on)). With it off, the three items below do not show.
+[Switching it on](#switching-it-on)). With it off, **Link PO...** links in the CRM only.
 
 ## Where
 
@@ -14,25 +14,24 @@ It only appears once an admin has switched on the AutoCount link setting (see
 
 ## Steps
 
-1. Tick the rows you want to decide on. Tick rows of one product at a time.
-2. Open **Actions** and choose one of:
-   * **Link to PO... (n)** - give the rows a PO.
-   * **Change PO... (n)** - move rows from the PO they have to another one.
-   * **Unlink from PO... (n)** - take the PO off in AutoCount.
-3. Or right-click a single row: the same three items appear for that row alone.
-4. In the popup, each row has its own line: pick a PO line and a **Qty**. **Qty** starts at what
-   the sales order line still needs, never more than what is free on the PO line. If you give less
-   than the whole PO line, AutoCount splits the PO row for you.
-5. Untick any line you do not want to send, then press the button at the bottom.
+1. Tick the rows you want to link. Rows of different products can be ticked together.
+2. Open **Actions** and choose **Link PO... (n)**, or right-click a single row and choose
+   **Link PO...**. On an Order Inquiry document the same item is under the gear.
+3. The **Link PO** popup has one row per sales order line:
+   * A line with no PO yet: pick a PO line and a **Qty**. Only PO lines of that line's own product
+     are offered. **Qty** starts at what the sales order line still needs, never more than what is
+     free on the PO line. If you give less than the whole PO line, AutoCount splits the PO row for
+     you. When no PO line of that product has stock free, the row says so; the other rows still
+     work.
+   * A line that already has a PO: its **Action** is **Keep**, **Unlink** or **Change to** another
+     PO line of the same product.
+4. Untick any line you do not want to send, then press **Save**.
 
 ## What the count means
 
 **n** is the number of ticked rows whose sales order line is already in AutoCount. When some are
-not, it reads like **2 of 3**, and only the 2 are sent. An item is greyed with a reason when it
-cannot run:
-
-* **Not in AutoCount yet** - none of the ticked rows has its sales order line in AutoCount.
-* **Tick rows of one product** - the ticked rows are for more than one product.
+not, it reads like **2 of 3**, and only the 2 are sent. The item is greyed with
+**Not in AutoCount yet** when none of the ticked rows has its sales order line in AutoCount.
 
 ## What you see afterwards
 
@@ -40,8 +39,8 @@ Each line answers on its own:
 
 * **Done** - AutoCount recorded it. The row shows the PO in its PO column at once. (This needs the
   Order Inquiry action permission. Without it, the PO appears after the next AutoCount sync.)
-* **Refused** - AutoCount did not accept it. The reason is shown, nothing was changed, and you can
-  press **Try again**.
+* **Not linked** - AutoCount did not accept it. The plain reason is shown (for example, the PO is
+  not in AutoCount), nothing was changed, and you can press **Try again**.
 * **Unknown** - AutoCount did not answer in time. Pressing retry first checks AutoCount for what
   actually happened, so the same change is never made twice.
 
@@ -51,7 +50,7 @@ Two older items on the same menu were renamed so they are not confused with the 
 
 * **Recheck in AutoCount** (was **Link selected**) - re-runs the AutoCount step on ticked rows.
 * **Remove link in CRM** (was **Unlink selected**) - removes the CRM link only. Nothing changes in
-  AutoCount. Use **Unlink from PO...** to remove it in AutoCount.
+  AutoCount. Use **Link PO...** and set the line's **Action** to **Unlink** to remove it in AutoCount.
 
 ## Switching it on
 
