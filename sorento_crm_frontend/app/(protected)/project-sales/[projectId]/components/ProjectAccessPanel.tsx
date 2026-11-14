@@ -59,7 +59,8 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
   const [menuRow, setMenuRow] = React.useState<ProjectLeadRow | null>(null);
   const [reassignTo, setReassignTo] = React.useState<string | null>(null);
   const sourceLabel = useLeadSourceLabel(project.lead_source);
-  // A phone shows four columns: Date and How they found it stay one Columns click away (B4).
+  // A phone shows three columns: Date, How they found it and Status stay one Columns click
+  // away (B4); a pending row still offers Dismiss in its right-click menu.
   const narrow = useIsMobile();
   // The same active-people list the reassign dialog picks from: someone missing from it is
   // inactive, so their row says so and offers no Reassign.
@@ -89,9 +90,9 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
     (request) => request.status !== 'pending' && request.kind !== 'dispute',
   );
 
-  // Sizes are the grid's minimum width; a wider card stretches them in proportion. The four a
-  // phone shows sum to 292px (the card is about 299px there), Status keeps room for the whole
-  // Dismissed pill, and all six (580px) stretch to fill the card on a desktop.
+  // Sizes are the grid's minimum width; a wider card stretches them in proportion. The three a
+  // phone shows sum to 280px (the card is about 299px there), Status keeps room for the whole
+  // Dismissed pill, and all six (720px) stretch to fill the card on a desktop.
   const columns = React.useMemo<ColumnDef<ProjectLeadRow>[]>(
     () => [
       {
@@ -106,7 +107,7 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
             </span>
           );
         },
-        size: 72,
+        size: 120,
         meta: { headerTitle: 'Salesperson' },
       },
       {
@@ -118,7 +119,7 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
             {row.original.lead ?? ''}
           </span>
         ),
-        size: 64,
+        size: 96,
         meta: { headerTitle: 'Lead' },
       },
       {
@@ -133,7 +134,7 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
             </span>
           );
         },
-        size: 88,
+        size: 96,
         meta: { headerTitle: 'Date' },
       },
       {
@@ -145,7 +146,7 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
             {row.original.foundBy ?? '-'}
           </span>
         ),
-        size: 200,
+        size: 240,
         meta: { headerTitle: 'How they found it' },
       },
       {
@@ -155,7 +156,7 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
         cell: ({ row }) => (
           <span className="block truncate text-sm">{row.original.isOwner ? 'Yes' : ''}</span>
         ),
-        size: 56,
+        size: 64,
         meta: { headerTitle: 'Owner' },
       },
       {
@@ -171,7 +172,7 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
             </Badge>
           );
         },
-        size: 100,
+        size: 104,
         meta: { headerTitle: 'Status' },
       },
     ],
@@ -262,7 +263,9 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
                 <PanelDataGrid<ProjectLeadRow>
                   // Column visibility is read at mount, so the grid remounts once the width is known.
                   key={narrow ? 'narrow' : 'wide'}
-                  initialColumnVisibility={narrow ? { date: false, found_by: false } : undefined}
+                  initialColumnVisibility={
+                    narrow ? { date: false, found_by: false, status: false } : undefined
+                  }
                   columns={columns}
                   rows={leads}
                   getRowId={(row) => row.id}

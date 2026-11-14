@@ -361,13 +361,13 @@ describe('B4: the leads grid fits a phone', () => {
     Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: px });
   const original = window.innerWidth;
 
-  it('below the phone breakpoint Date and How they found it are hidden; the other four stay', async () => {
+  it('below the phone breakpoint Date, How they found it and Status are hidden; the other three stay', async () => {
     setWidth(375);
     try {
       wrap(<ProjectAccessPanel project={project()} />);
       const { table } = await leadsTable();
       await waitFor(() =>
-        expect(headers(table).filter(Boolean)).toEqual(['Salesperson', 'Lead', 'Owner', 'Status']),
+        expect(headers(table).filter(Boolean)).toEqual(['Salesperson', 'Lead', 'Owner']),
       );
     } finally {
       setWidth(original);
