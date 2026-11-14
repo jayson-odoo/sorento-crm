@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 from typing import Iterable, Optional
 from urllib.parse import urlsplit
 
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from app.models.ui_page_view import UiPageView
@@ -24,33 +24,49 @@ MAX_ITEMS = 50
 MAX_MS = 600000
 MAX_ROUTE = 200
 RATE_LIMIT_PER_HOUR = 120
+# 120 posts x the hook's batch size of 10: a ceiling on rows, so a few 50-item posts cannot fill the table.
+ROW_LIMIT_PER_HOUR = 1200
 RETENTION_DAYS = 90
 VIEWPORTS = ("phone", "tablet", "desktop")
 
-_UUID = re.compile(r"^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$")
-_DIGITS = re.compile(r"^\d+$")
+_ROUTE_CHARS = re.compile(r"^[A-Za-z0-9/_\-\[\].]*$")
+
+
+def route_path(raw: Optional[str]) -> str:
+    """The path of a posted route, query and fragment dropped."""
+    path = urlsplit(str(raw or "")).path or "/"
+    return path if path.startswith("/") else "/" + path
+
+
+def is_valid_route(raw: Optional[str]) -> bool:
+    """Only `[A-Za-z0-9/_\-\[\].]` survive in the path; anything else is refused, never stored."""
+    return bool(_ROUTE_CHARS.match(route_path(raw)))
 
 
 def normalise_route(raw: Optional[str]) -> str:
-    """Route pattern: no query, no fragment, every id-like segment (UUID, digits) as `[id]`."""
-    path = urlsplit(str(raw or "")).path or "/"
-    if not path.startswith("/"):
-        path = "/" + path
-    segments = ["[id]" if (_UUID.match(s) or _DIGITS.match(s)) else s for s in path.split("/")]
-    out = "/".join(segments).replace("\x00", "")
-    return out[:MAX_ROUTE] or "/"
+    """Route pattern: no query, no fragment, and every segment that holds a digit (UUID, number,
+    order number, code) stored as `[id]`, so no identifier reaches the table."""
+    segments = ["[id]" if any(c.isdigit() for c in seg) else seg for seg in route_path(raw).split("/")]
+    return "/".join(segments)[:MAX_ROUTE] or "/"
 
 
 def is_rate_limited(db: Session, user_id: Optional[str], *, now: Optional[datetime] = None) -> bool:
+    """True once the user has posted `RATE_LIMIT_PER_HOUR` times or stored `ROW_LIMIT_PER_HOUR`
+    rows in the last hour. The count is read under a per-user advisory lock that lasts to the end
+    of the request transaction, so parallel posts cannot all pass the same count."""
     if not user_id:
         return False
+    db.execute(text("SELECT pg_advisory_xact_lock(hashtext(:u))"), {"u": str(user_id)})
     since = (now or datetime.utcnow()) - timedelta(hours=1)
-    count = (
-        db.query(func.count(func.distinct(UiPageView.created_at)))
+    posts, rows = (
+        db.query(
+            func.count(func.distinct(UiPageView.created_at)),
+            func.count(UiPageView.id),
+        )
         .filter(UiPageView.user_id == user_id, UiPageView.created_at >= since)
-        .scalar()
+        .one()
     )
-    return int(count or 0) >= RATE_LIMIT_PER_HOUR
+    return int(posts or 0) >= RATE_LIMIT_PER_HOUR or int(rows or 0) >= ROW_LIMIT_PER_HOUR
 
 
 def _naive_utc(value: Optional[datetime]) -> datetime:

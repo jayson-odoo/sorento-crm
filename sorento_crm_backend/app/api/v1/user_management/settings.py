@@ -331,8 +331,13 @@ _DEFAULT_THEME = {"preset": "sorento-blue", "custom_hex": None}
 
 
 def _theme_or_default(settings) -> dict:
+    """The stored brand input, or the default when it is missing or no longer valid (an old preset
+    id must not turn app-config, read by every signed-in user, into a 500)."""
     stored = getattr(settings, "theme", None) if settings else None
-    return dict(stored) if isinstance(stored, dict) and stored else dict(_DEFAULT_THEME)
+    try:
+        return ThemeInput.model_validate(stored).model_dump()
+    except Exception:  # noqa: BLE001 - any invalid stored value reads as the default
+        return dict(_DEFAULT_THEME)
 
 
 def _quotation_approver_fields(db: Session, settings) -> dict:

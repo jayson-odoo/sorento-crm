@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import List, Literal, Optional
 
 from fastapi import APIRouter, Depends, Request, Response, status
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -26,6 +26,13 @@ class PageViewItem(BaseModel):
     ms_to_first_data: Optional[int] = Field(None, ge=0, le=svc.MAX_MS)
     ui_version: Literal["v1", "v2"]
     at: Optional[datetime] = None
+
+    @field_validator("route")
+    @classmethod
+    def _route_characters(cls, value: str) -> str:
+        if not svc.is_valid_route(value):
+            raise ValueError("route holds characters outside [A-Za-z0-9/_-[].]")
+        return value
 
 
 class PageViewBatch(BaseModel):

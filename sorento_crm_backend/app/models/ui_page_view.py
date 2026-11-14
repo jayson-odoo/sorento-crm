@@ -1,7 +1,7 @@
 """UI v2 page-view telemetry (UI-V2 phase 0, D10).
 
 One row per route change recorded by the v2 shell hook. Written only by
-`POST /api/v1/system/page-views`, which stores a route PATTERN (never an id or a query),
+`POST /api/v1/system/page-views`, which stores a route PATTERN (a segment holding a digit becomes `[id]`; no query),
 caps the batch and rate-limits per user; deleted after 90 days by the daily
 `api_call_log_prune` task.
 """
