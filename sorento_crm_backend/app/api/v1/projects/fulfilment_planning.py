@@ -32,8 +32,7 @@ from app.api.v1.projects._common import permission_slugs
 from app.services.scm.demand_class import DEMAND_CLASSES
 from app.services.scm.so_party_payload import attach_donor_parties
 from app.database import get_db
-from app.services.stock_read_scope import SPARE_PART_READ, quantities_only
-from app.services.user_service import holds_permission
+from app.services.stock_read_scope import SPARE_PART_READ, quantities_only, reads_documents
 from app.dependencies import (
     require_any_permission_with_api_key,
     require_permission,
@@ -1123,7 +1122,7 @@ def get_stock_detail(
             ).stock_detail(
                 product_id, warehouse_id, line_ids=wanted, group=group
             )
-        if holds_permission(db, _user, VIEW):
+        if reads_documents(db, _user, (VIEW,)):
             return detail
         # SPARE-PART-ORDER-REQUEST (C1): a spare part requester gets quantities only.
         return quantities_only(
