@@ -587,8 +587,8 @@ def shape_reply(text: str, ledger: dict | None, user_text: str | None = None, ad
         named = _names_a_subject(entity, args)
         if named and (e.get("data") or {}).get("rows") == [] and not (e.get("data") or {}).get("total"):
             # A named call is the user's name (`agent` as the user said it); the asker's own name the model made up
-            # is stripped before the call runs (`strip_self_agent`), so it never hides a later table (crew live
-            # round 6). Nothing here reads the message (owner rule).
+            # that found nothing is dropped and the call run again (`query_as_asker`), so it never hides a later
+            # table (crew live round 6). Nothing here reads the message (owner rule).
             missed.add(entity)
         if entity in missed and not named and not args.get("subjects"):
             # A whole table nobody asked for, after the named record was not found, is not shown, nor its notes

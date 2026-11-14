@@ -2392,16 +2392,18 @@ def _run(
                     # The asker's own name as the agent: dropped only when the call finds nothing with it and the
                     # model did not say the question is about them (`query_tools.query_as_asker`; data decides, the
                     # message is never read). crm_query is a user read, so it is run here, not in the branch below.
-                    # An asker with no sales agent of their own: their name is left out before the call runs
-                    # (TARGET-ACHIEVED-PERF UAC 14).
+                    # An asker with no sales agent of their own: their name is left out when the call with it finds
+                    # nothing, even with about_self (TARGET-ACHIEVED-PERF UAC 14). Whether they have one is read only
+                    # when the call carries their own name.
                     from app.models.user import User
                     from app.services import own_scope
-                    from app.services.chatbot.agent.query_tools import query_as_asker
+                    from app.services.chatbot.agent.query_tools import query_as_asker, strip_self_agent
 
                     asker = db.query(User.name).filter(User.id == str(ctx.user_id)).scalar()
+                    names_asker = strip_self_agent(args, asker, has_own_agent=False)[1] is not None
                     args, out, self_note = query_as_asker(
                         args, asker, lambda a: writes.run_user_read(db, ctx, name, a, seen_ids),
-                        has_own_agent=bool(own_scope.me(db, str(ctx.user_id)).agent_ids),
+                        has_own_agent=not names_asker or bool(own_scope.me(db, str(ctx.user_id)).agent_ids),
                     )
                 elif name in writes.USER_READS:
                     out = writes.run_user_read(db, ctx, name, args, seen_ids)

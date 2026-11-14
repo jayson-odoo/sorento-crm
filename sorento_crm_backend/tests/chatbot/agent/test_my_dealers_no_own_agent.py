@@ -128,6 +128,7 @@ def test_M1_my_dealers_from_an_asker_with_no_agent_drops_the_own_name(db, asker,
     assert ASKER not in _names(args), f"the asker's own name stayed in the answering call: {reached}"
     assert {"field": "owner_kind", "op": "eq", "value": "dealer"} in args["filters"]
     assert ASKER in (reply.get("message") or ""), reply
+    assert "no sales agent of your own" in (reply.get("message") or ""), reply
 
 
 def test_M2_my_dealers_from_an_asker_with_an_agent_keeps_the_own_name(db, asker, monkeypatch):
