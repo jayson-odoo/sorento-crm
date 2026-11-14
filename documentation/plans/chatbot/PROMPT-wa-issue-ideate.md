@@ -70,6 +70,30 @@ stays a help request. The fix is semantic, in place, no word list and no post-pa
   G01, G03, G05, G08, G09) and run live by `tests/chatbot/test_wa_issue_parser_gate_live.py` (opt-in,
   `CHATBOT_LIVE_LLM=1`, `WA_ISSUE_PROMPT_FILE` points it at a stored version's exported text).
 
+Round 13 (crew LIVE x1 on v83 = 6caef14e, 14 Nov, crew-note 6877017702): the owner turns and the 16 gate turns
+pass. Two misses and one possible regression:
+
+- L2 "hi, the AI bot gave me the wrong stok number for my oder yesterday" went to the order lane. Cause: the
+  DECISIVE signal-word rule (line 58) lets "stok" / "oder" set the domain, and nothing exempts a report that the
+  assistant got it wrong. Edit 6, appended in place after
+  `Only with NO decisive term AND a genuinely ambiguous domain → domain_hint and intent_hint null.`:
+  ` One exception: when the user says the assistant (the bot, the AI, its answer) or a CRM screen got something
+  wrong, a signal word only names what the problem was about and sets no domain; that report is ideate (see the
+  ideate bullet). A user who questions or disputes a record's own figure or status, without blaming the assistant
+  or a screen, keeps the domain.`
+  Still no line added (1037 lines). GD2 "my order shows the wrong status" (order) and G10 (inventory) are the
+  frozen guards that the exception stays narrow.
+- L3 (Malay bug report) was filed with NO title. A title is always required (owner). Two fixes, both at the one
+  shared place: the extractor schema's `title` description says it is never empty once there is a problem
+  statement, whatever the language; and `ideation_capture_service.build_create_payload` (shared by the WhatsApp
+  capture and the agent's `crm_idea_create`) falls back to the problem statement cut by `normalise_title` when the
+  title is empty, so no item is ever filed untitled. The reply's title line uses the same value.
+- A-222 "SRTWC 8366-S (300MM) picture" gave a 42-row list on v83 (1 of 1) where an earlier v72 run gave the
+  did-you-mean. None of the round 12 edits touches attachments, product codes or lists. Crew runs A-222 x3 on v74
+  AND v83 at the same head: if v74 also gives the list it is code-side (like A-55's lost quantity, which both
+  prompts lose on this head), not this prompt.
+- The frozen file gains L2 (ideate), L3 (ideate) and A-222 (product_attachment, the 8366 product as an entity).
+
 - On a copy that already ran `wa_0001`/`wa_0002` on the old chain (before the 14 Nov re-parent onto
   `dbr_0001_retention_settings`), do NOT run `alembic downgrade -1 && alembic upgrade head`: that leaves
   `plr_0001` and `dbr_0001` unapplied. Either `alembic stamp agent_0001_proposal_insights && alembic upgrade head`
