@@ -24,6 +24,7 @@ export default async function OrderChangeNoticeDetailPage({
           <BackToList
             listPath="/procurement-management/order-change-notices"
             label="Back to order change notices"
+            originLabel="Back to project"
           />
         }
       />

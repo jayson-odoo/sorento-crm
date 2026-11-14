@@ -26,6 +26,7 @@ export default function ComplaintDetailPage({
           <BackToList hideForLimited="complaint"
             listPath="/complaint-management/complaints"
             label="Back to complaints"
+            originLabel="Back to project"
           />
         }
       />

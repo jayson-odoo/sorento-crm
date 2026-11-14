@@ -1,6 +1,7 @@
 import { Metadata } from 'next';
 import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
+import BackToList from '@/components/common/BackToList';
 import { projectCrumbs } from '@/app/(protected)/project-sales/_shared/lib/crumbs';
 import RequireAccess from '@/app/components/common/RequireAccess';
 import { PurchaseOrderDetailClient } from './components/PurchaseOrderDetailClient';
@@ -27,7 +28,14 @@ export default async function ProjectPurchaseOrderPage({
       <Container className="space-y-6 pb-64">
         <PageHeader
           title="Purchase Order"
-          crumbs={projectCrumbs(projectId, { title: 'Purchase Order' })}
+          crumbs={projectCrumbs(projectId, { tab: 'orders' }, { title: 'Purchase Order' })}
+          actions={
+            <BackToList
+              listPath={`/project-sales/${projectId}?tab=orders`}
+              label="Back to project"
+              appendListState={false}
+            />
+          }
         />
         <PurchaseOrderDetailClient projectId={projectId} poId={poId} />
       </Container>

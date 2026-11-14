@@ -1,7 +1,6 @@
 'use client';
 
-import { BACK_PARAM } from '@/components/common/BackToList';
-import { projectTabOriginHref } from '../../_shared/lib/reviewOrigin';
+import { withProjectBack } from '../../_shared/lib/reviewOrigin';
 import * as React from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import type {
@@ -445,14 +444,15 @@ export function RelatedRecordsPanel({
         onRowClick={(row) => {
           const def = RELATED_RECORD_TYPES[row.kind];
           if (!def) return;
-          // A sponsorship form's page reads `?back=` (BackToList originLabel): its Back returns to
-          // this project's sponsorship forms, where its Cancel and Submit land too.
+          // Every record's page reads `?back=` (BackToList originLabel): its Back returns to this
+          // project's Related tab. A sponsorship form names the retired tab, which opens Related
+          // filtered to sponsorship forms, where its Cancel and Submit land too.
           router.push(
-            row.kind === 'sponsorship_form'
-              ? `${def.href(row.id)}?${BACK_PARAM}=${encodeURIComponent(
-                  projectTabOriginHref(project.id, 'sponsorships'),
-                )}`
-              : def.href(row.id),
+            withProjectBack(
+              def.href(row.id),
+              project.id,
+              row.kind === 'sponsorship_form' ? 'sponsorships' : 'related',
+            ),
           );
         }}
       />

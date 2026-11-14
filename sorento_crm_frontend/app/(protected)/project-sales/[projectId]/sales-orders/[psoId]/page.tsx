@@ -1,6 +1,7 @@
 import { Metadata } from 'next';
 import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
+import BackToList from '@/components/common/BackToList';
 import { projectCrumbs } from '@/app/(protected)/project-sales/_shared/lib/crumbs';
 import RequireAccess from '@/app/components/common/RequireAccess';
 import { SalesOrderDetailClient } from './components/SalesOrderDetailClient';
@@ -22,7 +23,14 @@ export default async function ProjectSalesOrderPage({
       <Container className="space-y-6">
         <PageHeader
           title="Sales Order"
-          crumbs={projectCrumbs(projectId, { title: 'Sales Order' })}
+          crumbs={projectCrumbs(projectId, { tab: 'sales-orders' }, { title: 'Sales Order' })}
+          actions={
+            <BackToList
+              listPath={`/project-sales/${projectId}?tab=sales-orders`}
+              label="Back to project"
+              appendListState={false}
+            />
+          }
         />
         <SalesOrderDetailClient projectId={projectId} psoId={psoId} />
       </Container>

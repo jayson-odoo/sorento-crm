@@ -5,6 +5,8 @@
  * Absent (deep link, bookmark) means stay, exactly as before this slice.
  */
 
+import { BACK_PARAM } from '@/components/common/BackToList';
+
 const ORIGIN_PARAM = 'from';
 
 /**
@@ -41,6 +43,15 @@ export function withReviewOrigin(url: string, originHref?: string | null): strin
 /** The origin for an upload launched from a project's own tab (unchanged call site, R4). */
 export function projectTabOriginHref(projectId: string, tab: string): string {
   return `/project-sales/${projectId}?tab=${tab}`;
+}
+
+/**
+ * A record opened from a project tab, with that tab as its page's Back (`back=`, read by
+ * `BackToList originLabel`): the page then shows "Back to project" and returns to the tab.
+ */
+export function withProjectBack(href: string, projectId: string, tab: string): string {
+  const origin = encodeURIComponent(projectTabOriginHref(projectId, tab));
+  return `${href}${href.includes('?') ? '&' : '?'}${BACK_PARAM}=${origin}`;
 }
 
 /**

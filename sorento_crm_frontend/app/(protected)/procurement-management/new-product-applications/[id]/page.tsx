@@ -24,6 +24,7 @@ export default async function NewProductApplicationDetailPage({
           <BackToList hideForLimited="new_product_application"
             listPath="/procurement-management/new-product-applications"
             label="Back to new product applications"
+            originLabel="Back to project"
           />
         }
       />
