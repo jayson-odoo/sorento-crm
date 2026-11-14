@@ -32,6 +32,7 @@ import {
   Redo2,
   RectangleHorizontal,
   Shapes,
+  Table2,
   Tag,
   Trash2,
   Type,
@@ -97,20 +98,24 @@ export interface ToolbarTrailingMenuAction {
 export type ToolbarTrailingAction = ToolbarTrailingButtonAction | ToolbarTrailingMenuAction;
 
 interface CanvasToolbarProps {
-  tool: CanvasTool;
-  onToolChange: (tool: CanvasTool) => void;
+  /** Select / Hand: absent hides the pair (the spec sheet reader pans and zooms itself). */
+  tool?: CanvasTool;
+  onToolChange?: (tool: CanvasTool) => void;
   onAddText: () => void;
   onAddShape: () => void;
   onAddImage: () => void;
-  onAddProductSlot: () => void;
-  onAddPriceBadge: () => void;
+  /** The product-bound tools below are absent on a spec sheet page: absent hides the button. */
+  onAddProductSlot?: () => void;
+  onAddPriceBadge?: () => void;
   onAddBadge: () => void;
-  onAddBarcode: () => void;
+  onAddBarcode?: () => void;
   /** Feature icons (PRICETAG-DESIGNER-GAPS item 3). Absent hides the button. */
   onAddFeatureIcons?: () => void;
-  onAddProduct: () => void;
-  onAddSet: () => void;
-  onAddAlternativesRow: () => void;
+  /** B4: add a 3 x 2 table. */
+  onAddTable?: () => void;
+  onAddProduct?: () => void;
+  onAddSet?: () => void;
+  onAddAlternativesRow?: () => void;
   /** PRICETAG-ACCESSORIES: the data-driven "Accessories" box. Absent hides the button. */
   onAddAccessories?: () => void;
   /** Saved accessories templates offered under the Accessories button (with Default box). */
@@ -123,22 +128,26 @@ interface CanvasToolbarProps {
     onAddElement: (kind: 'picture' | 'text' | 'colour_dots' | 'shape' | 'feature_icons') => void;
     onDone: () => void;
   };
+  /** The add buttons are shown but disabled (the spec sheet has no live page to add to). */
+  addDisabled?: boolean;
   onUndo: () => void;
   onRedo: () => void;
   canUndo: boolean;
   canRedo: boolean;
-  zoom: number;
-  onZoomIn: () => void;
-  onZoomOut: () => void;
-  onZoomReset: () => void;
-  onFit: () => void;
+  /** Zoom controls: absent hides the group. */
+  zoom?: number;
+  onZoomIn?: () => void;
+  onZoomOut?: () => void;
+  onZoomReset?: () => void;
+  onFit?: () => void;
   onDeleteSelected: () => void;
   onDuplicateSelected: () => void;
-  onGroupSelected: () => void;
-  onUngroupSelected: () => void;
+  /** Group / Ungroup: absent hides the pair. */
+  onGroupSelected?: () => void;
+  onUngroupSelected?: () => void;
   hasSelection: boolean;
-  hasMultiSelection: boolean;
-  selectionIsGroup: boolean;
+  hasMultiSelection?: boolean;
+  selectionIsGroup?: boolean;
   /**
    * Right-aligned actions, one more `ToolbarButton` group at the right end
    * (S7, AC-S7-6) - Full screen / the Template dropdown / Save for the
@@ -147,6 +156,20 @@ interface CanvasToolbarProps {
    * round.
    */
   trailing?: ToolbarTrailingAction[];
+  /**
+   * SPEC-SHEET-PARITY-B2 v3 (AC-C1.4): what the selection brings into the row (the text format
+   * controls, or a table's actions), after Undo / Redo. Absent or null: nothing.
+   */
+  contextual?: ReactNode;
+  /** v3 (AC-C1.3): Delete / Duplicate / Group / Ungroup sit in a "More" menu instead of icons. */
+  foldEdits?: boolean;
+  /** v3 (AC-C1.1): the Fit button's name ("Fit width" on the spec sheet). */
+  fitLabel?: string;
+  /** v3 (AC-C1.1): the host's full screen toggle and save state, at the right end of the row. */
+  fullScreen?: ReactNode;
+  saveState?: ReactNode;
+  /** v3 (AC-C1.1): someone who cannot edit: only zoom, fit and the right end show. */
+  viewOnly?: boolean;
 }
 
 /**
@@ -338,6 +361,7 @@ export function CanvasToolbar({
   onAddBadge,
   onAddBarcode,
   onAddFeatureIcons,
+  onAddTable,
   onAddProduct,
   onAddSet,
   onAddAlternativesRow,
@@ -345,6 +369,7 @@ export function CanvasToolbar({
   accessoryTemplates,
   onInsertAccessoryTemplate,
   accessoryEdit,
+  addDisabled,
   onUndo,
   onRedo,
   canUndo,
@@ -362,6 +387,12 @@ export function CanvasToolbar({
   hasMultiSelection,
   selectionIsGroup,
   trailing,
+  contextual,
+  foldEdits,
+  fitLabel = 'Fit to View',
+  fullScreen,
+  saveState,
+  viewOnly,
 }: CanvasToolbarProps) {
   const mac = useIsMac();
   if (accessoryEdit) {
@@ -405,143 +436,190 @@ export function CanvasToolbar({
         <ToolbarButton icon={Undo2} label="Undo" onClick={onUndo} disabled={!canUndo} shortcut={shortcutLabel('Z', mac)} />
         <ToolbarButton icon={Redo2} label="Redo" onClick={onRedo} disabled={!canRedo} shortcut={shortcutLabel('Z', mac, true)} />
         <Separator orientation="vertical" className="mx-1 h-5 shrink-0" />
-        <ToolbarButton icon={Minus} label="Zoom Out" onClick={onZoomOut} />
-        <ToolbarButton icon={Plus} label="Zoom In" onClick={onZoomIn} />
-        <ToolbarButton icon={Expand} label="Fit to View" onClick={onFit} shortcut={shortcutLabel('0', mac)} />
+        {onZoomOut && <ToolbarButton icon={Minus} label="Zoom Out" onClick={onZoomOut} />}
+        {onZoomIn && <ToolbarButton icon={Plus} label="Zoom In" onClick={onZoomIn} />}
+        {onFit && <ToolbarButton icon={Expand} label="Fit to View" onClick={onFit} shortcut={shortcutLabel('0', mac)} />}
       </div>
     );
   }
-  return (
-    // `relative` is load-bearing, not decoration (r4d): each button's label is
-    // an `sr-only` span, which is `position: absolute`, and a static row is not
-    // in its containing-block chain - so `overflow-x-auto` never clipped the
-    // labels and they grew the document instead. At 375px that left
-    // `documentElement.scrollWidth` at 898 and the whole page scrolling
-    // sideways while the toolbar itself sat still.
-    <div className="relative flex h-10 min-w-0 shrink-0 flex-nowrap items-center gap-1 overflow-x-auto border-b bg-background px-2">
+  const body = (
+    <>
       {/* Tools */}
-      <ToolbarButton
-        icon={MousePointer2}
-        label="Select"
-        onClick={() => onToolChange('select')}
-        active={tool === 'select'}
-        shortcut="V • Arrow 0.25mm, Shift 1mm, Alt 0.1mm"
-      />
-      <ToolbarButton
-        icon={Hand}
-        label="Hand"
-        onClick={() => onToolChange('hand')}
-        active={tool === 'hand'}
-        shortcut="H"
-      />
+      {!viewOnly && tool && onToolChange && (
+        <>
+          <ToolbarButton
+            icon={MousePointer2}
+            label="Select"
+            onClick={() => onToolChange('select')}
+            active={tool === 'select'}
+            shortcut="V • Arrow 0.25mm, Shift 1mm, Alt 0.1mm"
+          />
+          <ToolbarButton
+            icon={Hand}
+            label="Hand"
+            onClick={() => onToolChange('hand')}
+            active={tool === 'hand'}
+            shortcut="H"
+          />
 
-      <Separator orientation="vertical" className="mx-1 h-5 shrink-0" />
-
-      {/* Add layer buttons */}
-      <ToolbarButton icon={Type} label="Add Text" onClick={onAddText} />
-      <ToolbarButton icon={Shapes} label="Add Shape" onClick={onAddShape} />
-      <ToolbarButton icon={ImageIcon} label="Add Image" onClick={onAddImage} />
-      <ToolbarButton
-        icon={RectangleHorizontal}
-        label="Add Product Slot"
-        onClick={onAddProductSlot}
-      />
-      <ToolbarButton
-        icon={Banknote}
-        label="Add Price Badge"
-        onClick={onAddPriceBadge}
-      />
-      <ToolbarButton icon={Tag} label="Add Badge" onClick={onAddBadge} />
-      <ToolbarButton icon={Barcode} label="Add Barcode" onClick={onAddBarcode} />
-      {onAddFeatureIcons && (
-        <ToolbarButton icon={BadgeCheck} label="Add Feature icons" onClick={onAddFeatureIcons} />
+          <Separator orientation="vertical" className="mx-1 h-5 shrink-0" />
+        </>
       )}
 
-      <Separator orientation="vertical" className="mx-1 h-5 shrink-0" />
+      {!viewOnly && (
+        <>
+          {/* Add layer buttons */}
+          <ToolbarButton icon={Type} label="Add Text" onClick={onAddText} disabled={addDisabled} />
+          <ToolbarButton icon={Shapes} label="Add Shape" onClick={onAddShape} disabled={addDisabled} />
+          <ToolbarButton icon={ImageIcon} label="Add Image" onClick={onAddImage} disabled={addDisabled} />
+          {onAddProductSlot && (
+            <ToolbarButton icon={RectangleHorizontal} label="Add Product Slot" onClick={onAddProductSlot} />
+          )}
+          {onAddPriceBadge && <ToolbarButton icon={Banknote} label="Add Price Badge" onClick={onAddPriceBadge} />}
+          <ToolbarButton icon={Tag} label="Add Badge" onClick={onAddBadge} disabled={addDisabled} />
+          {onAddBarcode && <ToolbarButton icon={Barcode} label="Add Barcode" onClick={onAddBarcode} />}
+          {onAddTable && <ToolbarButton icon={Table2} label="Add Table" onClick={onAddTable} disabled={addDisabled} />}
+          {onAddFeatureIcons && (
+            <ToolbarButton icon={BadgeCheck} label="Add Feature icons" onClick={onAddFeatureIcons} />
+          )}
 
-      {/* Product-bound blocks and presets */}
-      <ToolbarButton icon={Package} label="Add Product" onClick={onAddProduct} />
-      <ToolbarButton icon={Boxes} label="Add Set" onClick={onAddSet} />
-      <ToolbarButton
-        icon={Shuffle}
-        label="Add Alternatives Row"
-        onClick={onAddAlternativesRow}
-      />
-      {onAddAccessories && onInsertAccessoryTemplate ? (
-        <AccessoriesMenuButton
-          templates={accessoryTemplates ?? []}
-          onDefault={onAddAccessories}
-          onPick={onInsertAccessoryTemplate}
-        />
-      ) : (
-        onAddAccessories && (
-          <ToolbarButton icon={Sparkles} label="Add Accessories" onClick={onAddAccessories} />
-        )
+          <Separator orientation="vertical" className="mx-1 h-5 shrink-0" />
+
+          {/* Product-bound blocks and presets */}
+          {onAddProduct && <ToolbarButton icon={Package} label="Add Product" onClick={onAddProduct} />}
+          {onAddSet && <ToolbarButton icon={Boxes} label="Add Set" onClick={onAddSet} />}
+          {onAddAlternativesRow && (
+            <ToolbarButton icon={Shuffle} label="Add Alternatives Row" onClick={onAddAlternativesRow} />
+          )}
+          {onAddAccessories && onInsertAccessoryTemplate ? (
+            <AccessoriesMenuButton
+              templates={accessoryTemplates ?? []}
+              onDefault={onAddAccessories}
+              onPick={onInsertAccessoryTemplate}
+            />
+          ) : (
+            onAddAccessories && (
+              <ToolbarButton icon={Sparkles} label="Add Accessories" onClick={onAddAccessories} disabled={addDisabled} />
+            )
+          )}
+
+          <Separator orientation="vertical" className="mx-1 h-5 shrink-0" />
+
+          {/* Undo / Redo */}
+          <ToolbarButton
+            icon={Undo2}
+            label="Undo"
+            onClick={onUndo}
+            disabled={!canUndo}
+            shortcut={shortcutLabel('Z', mac)}
+          />
+          <ToolbarButton
+            icon={Redo2}
+            label="Redo"
+            onClick={onRedo}
+            disabled={!canRedo}
+            shortcut={shortcutLabel('Z', mac, true)}
+          />
+
+          <Separator orientation="vertical" className="mx-1 h-5 shrink-0" />
+
+          {contextual && (
+            <>
+              {contextual}
+              <Separator orientation="vertical" className="mx-1 h-5 shrink-0" />
+            </>
+          )}
+        </>
       )}
 
-      <Separator orientation="vertical" className="mx-1 h-5 shrink-0" />
+      {onZoomIn && onZoomOut && onZoomReset && onFit && zoom !== undefined && (
+        <>
+          {/* Zoom controls */}
+          <ToolbarButton icon={Minus} label="Zoom Out" onClick={onZoomOut} />
+          <button
+            type="button"
+            className="min-w-[48px] shrink-0 rounded px-1 text-center text-xs tabular-nums text-muted-foreground hover:bg-accent"
+            onClick={onZoomReset}
+            title={`Zoom to 100% (${shortcutLabel('1', mac)})`}
+          >
+            {Math.round(zoom * 100)}%
+          </button>
+          <ToolbarButton icon={Plus} label="Zoom In" onClick={onZoomIn} />
+          <ToolbarButton icon={Expand} label={fitLabel} onClick={onFit} shortcut={shortcutLabel('0', mac)} />
 
-      {/* Undo / Redo */}
-      <ToolbarButton
-        icon={Undo2}
-        label="Undo"
-        onClick={onUndo}
-        disabled={!canUndo}
-        shortcut={shortcutLabel('Z', mac)}
-      />
-      <ToolbarButton
-        icon={Redo2}
-        label="Redo"
-        onClick={onRedo}
-        disabled={!canRedo}
-        shortcut={shortcutLabel('Z', mac, true)}
-      />
+          <Separator orientation="vertical" className="mx-1 h-5 shrink-0" />
+        </>
+      )}
 
-      <Separator orientation="vertical" className="mx-1 h-5 shrink-0" />
-
-      {/* Zoom controls */}
-      <ToolbarButton icon={Minus} label="Zoom Out" onClick={onZoomOut} />
-      <button
-        type="button"
-        className="min-w-[48px] shrink-0 rounded px-1 text-center text-xs tabular-nums text-muted-foreground hover:bg-accent"
-        onClick={onZoomReset}
-        title={`Zoom to 100% (${shortcutLabel('1', mac)})`}
-      >
-        {Math.round(zoom * 100)}%
-      </button>
-      <ToolbarButton icon={Plus} label="Zoom In" onClick={onZoomIn} />
-      <ToolbarButton icon={Expand} label="Fit to View" onClick={onFit} shortcut={shortcutLabel('0', mac)} />
-
-      <Separator orientation="vertical" className="mx-1 h-5 shrink-0" />
-
-      {/* Selection actions */}
-      <ToolbarButton
-        icon={Trash2}
-        label="Delete"
-        onClick={onDeleteSelected}
-        disabled={!hasSelection}
-        shortcut="Del"
-      />
-      <ToolbarButton
-        icon={Copy}
-        label="Duplicate"
-        onClick={onDuplicateSelected}
-        disabled={!hasSelection}
-        shortcut={shortcutLabel('D', mac)}
-      />
-      <ToolbarButton
-        icon={Group}
-        label="Group"
-        onClick={onGroupSelected}
-        disabled={!hasMultiSelection}
-        shortcut={shortcutLabel('G', mac)}
-      />
-      <ToolbarButton
-        icon={Ungroup}
-        label="Ungroup"
-        onClick={onUngroupSelected}
-        disabled={!selectionIsGroup}
-      />
+      {/* Selection actions: icons, or (foldEdits) one More menu */}
+      {!viewOnly && foldEdits && (
+        <DropdownMenu>
+          <Tooltip delayDuration={300}>
+            <TooltipTrigger asChild>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="sm" className="h-8 w-8 shrink-0 p-0" aria-label="More">
+                  <MoreHorizontal className="size-4" />
+                </Button>
+              </DropdownMenuTrigger>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="text-xs">
+              More
+            </TooltipContent>
+          </Tooltip>
+          <DropdownMenuContent align="start">
+            <DropdownMenuItem onSelect={onDeleteSelected} disabled={!hasSelection}>
+              <Trash2 className="size-4" />
+              Delete
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={onDuplicateSelected} disabled={!hasSelection}>
+              <Copy className="size-4" />
+              Duplicate
+            </DropdownMenuItem>
+            {onGroupSelected && (
+              <DropdownMenuItem onSelect={onGroupSelected} disabled={!hasMultiSelection}>
+                <Group className="size-4" />
+                Group
+              </DropdownMenuItem>
+            )}
+            {onUngroupSelected && (
+              <DropdownMenuItem onSelect={onUngroupSelected} disabled={!selectionIsGroup}>
+                <Ungroup className="size-4" />
+                Ungroup
+              </DropdownMenuItem>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
+      {!viewOnly && !foldEdits && (
+        <>
+          <ToolbarButton
+            icon={Trash2}
+            label="Delete"
+            onClick={onDeleteSelected}
+            disabled={!hasSelection}
+            shortcut="Del"
+          />
+          <ToolbarButton
+            icon={Copy}
+            label="Duplicate"
+            onClick={onDuplicateSelected}
+            disabled={!hasSelection}
+            shortcut={shortcutLabel('D', mac)}
+          />
+          {onGroupSelected && (
+            <ToolbarButton
+              icon={Group}
+              label="Group"
+              onClick={onGroupSelected}
+              disabled={!hasMultiSelection}
+              shortcut={shortcutLabel('G', mac)}
+            />
+          )}
+          {onUngroupSelected && (
+            <ToolbarButton icon={Ungroup} label="Ungroup" onClick={onUngroupSelected} disabled={!selectionIsGroup} />
+          )}
+        </>
+      )}
 
       {trailing && trailing.length > 0 && (
         <>
@@ -636,6 +714,36 @@ export function CanvasToolbar({
           </DropdownMenu>
         </>
       )}
+    </>
+  );
+
+  // `relative` is load-bearing, not decoration (r4d): each button's label is
+  // an `sr-only` span, which is `position: absolute`, and a static row is not
+  // in its containing-block chain - so `overflow-x-auto` never clipped the
+  // labels and they grew the document instead. At 375px that left
+  // `documentElement.scrollWidth` at 898 and the whole page scrolling
+  // sideways while the toolbar itself sat still.
+  if (fullScreen || saveState) {
+    // v3 (browser F2): full screen and the save state sit OUTSIDE the scrolling tools, pinned at
+    // the right, so a wide contextual group never pushes "Saved" off screen.
+    return (
+      <div className="relative flex h-10 min-w-0 shrink-0 items-center border-b bg-background">
+        <div
+          data-testid="canvas-toolbar-tools"
+          className="relative flex h-full min-w-0 flex-1 flex-nowrap items-center gap-1 overflow-x-auto px-2"
+        >
+          {body}
+        </div>
+        <div className="flex shrink-0 items-center gap-1 border-l border-border px-2">
+          {fullScreen}
+          {saveState}
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="relative flex h-10 min-w-0 shrink-0 flex-nowrap items-center gap-1 overflow-x-auto border-b bg-background px-2">
+      {body}
     </div>
   );
 }

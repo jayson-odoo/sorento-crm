@@ -14,6 +14,7 @@
  */
 
 import { useMemo } from 'react';
+import { isHeaderCell, tableCellFill, tableFontMm, tableLayout, tableMeasure } from '@/lib/dealer-kit/table-layout';
 import { Ellipse, Group, Image as KonvaImage, Line, Path, Rect, Text } from 'react-konva';
 import type Konva from 'konva';
 import type {
@@ -47,7 +48,7 @@ import {
   textFace,
   textLayerLines,
 } from '@/lib/dealer-kit/text-layout';
-import { isRich, parseRichText, type RichBlock } from '@/lib/dealer-kit/rich-text';
+import { isRich, parseRichText, type RichBlock, uppercaseBlocks } from '@/lib/dealer-kit/rich-text';
 import { isAdditiveClick, isMacContextClick, isMacPlatform } from '@/lib/dealer-kit/canvas-input';
 import { useFontsEpoch } from '@/lib/dealer-kit/use-fonts-epoch';
 import { cropPixels, fittedCropDraw, type CropRect } from '@/lib/dealer-kit/image-crop';
@@ -61,7 +62,6 @@ import {
   accessoryLineStyle,
   fitLinePt,
   ptToMm,
-  sampleAccessories,
   type AccessoryBoxLayout,
   type AccessoryLineStyle,
 } from '@/lib/dealer-kit/accessory-box';
@@ -80,7 +80,7 @@ import {
   footerElementsFor,
   type ResolvedCardElement,
 } from '@/lib/dealer-kit/accessory-card';
-import { useHtmlImage } from './useHtmlImage';
+import { useHtmlImage, useHtmlImageState } from './useHtmlImage';
 
 // `TagLayerDisplay` is resolved by whoever owns the data (the editor, the
 // designer) and handed DOWN: the canvas draws layers and knows nothing about
@@ -243,6 +243,74 @@ export function KonvaTagLayer({
   );
 }
 
+/**
+ * B4: a table. Laid out by `table-layout.ts`, the module the print page uses, so a row is the same
+ * height here: a Rect per filled cell, a Line per border side, a Text per cell.
+ */
+function TableContent({
+  props,
+  widthMm,
+  scale,
+}: {
+  props: TagLayerProps;
+  widthMm: number;
+  scale: number;
+}) {
+  const epoch = useFontsEpoch();
+  const layout = useMemo(
+    () => (props.kind === 'table' ? tableLayout(props, widthMm, tableMeasure(props)) : null),
+    [props, widthMm],
+  );
+  void epoch;
+  if (props.kind !== 'table' || !layout) return null;
+  const fontPx = mm2px(tableFontMm(props), scale);
+  return (
+    <>
+      {layout.cells.map((c) => {
+        const x = mm2px(c.x_mm, scale);
+        const y = mm2px(c.y_mm, scale);
+        const w = mm2px(c.width_mm, scale);
+        const h = mm2px(c.height_mm, scale);
+        const pad = mm2px(c.cell.padding_mm ?? 1, scale);
+        const fill = tableCellFill(props, c.row, c.cell);
+        return (
+          <Group key={`${c.row}-${c.col}`}>
+            {fill ? <Rect x={x} y={y} width={w} height={h} fill={fill} listening={false} /> : null}
+            <Rect x={x} y={y} width={w} height={h} fill="rgba(0,0,0,0.001)" />
+            {c.text ? (
+              <Text
+                x={x + pad}
+                y={y + pad}
+                width={Math.max(0, w - 2 * pad)}
+                height={Math.max(0, h - 2 * pad)}
+                text={c.text}
+                fontFamily={props.fontFamily}
+                fontStyle={isHeaderCell(props, c.row) ? 'bold' : 'normal'}
+                fontSize={fontPx}
+                fill={props.color ?? '#000000'}
+                align={props.align ?? 'left'}
+                verticalAlign={props.verticalAlign ?? 'middle'}
+                lineHeight={1.2}
+                listening={false}
+              />
+            ) : null}
+          </Group>
+        );
+      })}
+      {layout.edges.map((e) => (
+        <Line
+          key={`${e.orientation}-${e.line}-${e.index}`}
+          points={[mm2px(e.x1_mm, scale), mm2px(e.y1_mm, scale), mm2px(e.x2_mm, scale), mm2px(e.y2_mm, scale)]}
+          stroke={e.color}
+          strokeWidth={mm2px(e.width_mm, scale)}
+          lineCap="square"
+          listening={false}
+        />
+      ))}
+    </>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Type-specific content rendering
 // ---------------------------------------------------------------------------
@@ -267,9 +335,12 @@ function LayerContent({
 }) {
   switch (props.kind) {
     case 'text': {
-      const text = display?.text ?? props.text;
+      const raw = display?.text ?? props.text;
       // A rich description is drawn run by run; plain text keeps its single Text node.
-      const blocks = display?.blocks ?? (isRich(text) ? parseRichText(text) : null);
+      const parsed = display?.blocks ?? (isRich(raw) ? parseRichText(raw) : null);
+      // ALL CAPS (AC-C5.2) changes what is drawn, never the stored text.
+      const blocks = parsed && props.uppercase ? uppercaseBlocks(parsed) : parsed;
+      const text = props.uppercase && !blocks ? raw.toUpperCase() : raw;
       if (blocks) {
         return (
           <RichTextContent
@@ -411,6 +482,9 @@ function LayerContent({
           />
         </>
       );
+
+    case 'table':
+      return <TableContent props={display?.table ?? props} widthMm={widthMm} scale={scale} />;
 
     case 'feature_icons':
       return (
@@ -573,7 +647,7 @@ function ImageContent({
   flipX?: boolean;
   flipY?: boolean;
 }) {
-  const image = useHtmlImage(url);
+  const { image, failed } = useHtmlImageState(url);
 
   // A not-yet-loaded (or genuinely 0x0) `HTMLImageElement` reads
   // `naturalWidth`/`naturalHeight` (and so `.width`/`.height`) as 0, which
@@ -592,7 +666,7 @@ function ImageContent({
         <Text
           width={w}
           height={h}
-          text={url ? 'Fetching image' : 'No image'}
+          text={!url ? 'No image' : failed ? 'Image not available' : 'Fetching image'}
           align="center"
           verticalAlign="middle"
           fontSize={10}
@@ -1220,7 +1294,8 @@ function AccessoriesContent({
       />
     );
   }
-  const items = accessories ?? sampleAccessories();
+  // Nothing bound: the same full samples "Edit card" shows, so the cards are never blank.
+  const items = accessories ?? accessoryDesignSamples(props.list);
   const lineCount = accessoryLineCount(items);
   const box = accessoryBoxLayout(
     items.length,
@@ -1382,8 +1457,9 @@ function DesignedAccessoriesContent({
   headerHidden?: boolean;
   dropMarker?: boolean;
 }) {
-  // Nothing bound: samples, upgrade ones on an Upgrades box so its Top-up and LP show.
-  const items = accessories ?? (props.list === 'upgrades' ? accessoryDesignSamples('upgrades') : sampleAccessories());
+  // Nothing bound: the full samples "Edit card" shows (brand, code, description; upgrade ones on an
+  // Upgrades box so its Top-up and LP show), never blank cards.
+  const items = accessories ?? accessoryDesignSamples(props.list);
   const box = cardBoxLayout(items.length, props, widthMm, heightMm);
   if (box.shown === 0) {
     return (

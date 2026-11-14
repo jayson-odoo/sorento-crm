@@ -5,6 +5,8 @@ import * as React from 'react';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { InspectorPanel } from '@/app/(protected)/dealer-kit/tag-templates/components/InspectorPanel';
 import { InsertFieldDialog } from '@/app/(protected)/dealer-kit/tag-templates/components/InsertFieldDialog';
+import { ManageFontsDialog } from '@/app/(protected)/dealer-kit/tag-templates/components/ManageFontsDialog';
+import { useHasPermission } from '@/hooks/usePermissions';
 import { insertMergeFieldText } from '@/components/ui/rich-text-editor';
 import type { Editor } from '@tiptap/react';
 import { useKitLibrary } from '@/app/(protected)/dealer-kit/tag-templates/components/useTagBindings';
@@ -33,6 +35,8 @@ export function ReaderInspector({
   mode,
   onModeChange,
   onApplyAll,
+  onManageFonts,
+  tableCell,
 }: {
   pageKey: string | null;
   layer: TagLayer | null;
@@ -41,11 +45,19 @@ export function ReaderInspector({
   mode: ApplyMode;
   onModeChange: (mode: ApplyMode) => void;
   onApplyAll: (layerId: string, changes: ApplyAllChanges) => void;
+  /** The host's one font dialog (the reader shares it with the toolbar); absent: this opens its own. */
+  onManageFonts?: () => void;
+  /** The table cell picked on the page: the Cell section shows its row height / column width. */
+  tableCell?: { row: number; col: number } | null;
 }) {
   const library = useKitLibrary();
   // Insert field (owner hand test #2331): the template designer's own dialog and registry, so a
   // page offers every field a template can (product, line, doc).
   const [insertOpen, setInsertOpen] = React.useState(false);
+  // v3 (AC-C6.1/C6.2): Manage fonts, only with the server's gate on font upload / rename / delete;
+  // the host's one dialog when it gives one, else the shared `ManageFontsDialog` here.
+  const canManageFonts = useHasPermission('dealer_kit.library.manage');
+  const [fontUploadOpen, setFontUploadOpen] = React.useState(false);
   const textLayer = layer && layer.props.kind === 'text' ? layer : null;
   // A layer bound to a slot, or already showing an override, draws `text_override`: the field
   // goes there, as in the template designer, or it would land where it is never drawn.
@@ -135,6 +147,8 @@ export function ReaderInspector({
           onUpdateProps={onUpdateProps}
           layers={layers}
           fontOptions={library.fontOptions}
+          tableCell={tableCell}
+          onUploadFont={canManageFonts ? (onManageFonts ?? (() => setFontUploadOpen(true))) : undefined}
           specSheet
           specKeys={library.specKeys}
           onInsertField={textLayer ? () => setInsertOpen(true) : undefined}
@@ -149,6 +163,10 @@ export function ReaderInspector({
         onCancel={() => setInsertOpen(false)}
         onDone={insert}
       />
+      {canManageFonts && !onManageFonts && (
+        <ManageFontsDialog open={fontUploadOpen} onClose={() => setFontUploadOpen(false)} />
+      )}
     </div>
   );
 }
+

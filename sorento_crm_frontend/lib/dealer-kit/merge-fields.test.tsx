@@ -445,8 +445,8 @@ describe('mergeFieldCatalog', () => {
 
   it('offers the fixed groups plus one entry per registry key', () => {
     const groups = new Set(catalog.map((field) => field.group));
-    // PS-SPEC-SHEET: the Spec sheet group joins; a price tag editor filters it out by `groups`.
-    expect(groups).toEqual(new Set(['Product', 'Specs', 'Set', 'Line', 'Combo', 'Combo positions', 'Spec sheet']));
+    // PS-SPEC-SHEET: the Spec sheet group joins, B3 adds Accessories; a price tag editor filters it out by `groups`.
+    expect(groups).toEqual(new Set(['Product', 'Specs', 'Set', 'Line', 'Combo', 'Combo positions', 'Accessories', 'Spec sheet']));
 
     const specs = catalog.filter((field) => field.group === 'Specs');
     expect(specs.map((field) => field.token)).toEqual([
@@ -931,5 +931,136 @@ describe('{{product.description}} (SPEC-SHEET-DESIGNER-PARITY A4)', () => {
 
   it('prints empty, never the token, on a row frozen before the field existed', () => {
     expect(renderMergeFields('{{product.description}}', line(), 'print')).toBe('');
+  });
+});
+
+describe('{{product.spec_sheet_description}} (SPEC-SHEET-DESIGNER-PARITY B1)', () => {
+  it('is offered in the Product group of Insert field', () => {
+    const field = mergeFieldCatalog([]).find((f) => f.path === 'product.spec_sheet_description');
+    expect(field).toMatchObject({ group: 'Product', label: 'Spec sheet description' });
+  });
+
+  it('prints the product spec sheet description, else its plain description', () => {
+    const token = '{{product.spec_sheet_description}}';
+    expect(
+      renderMergeFields(token, product({ spec_sheet_description: 'Sheet copy', description: 'Plain' }), 'print'),
+    ).toBe('Sheet copy');
+    expect(renderMergeFields(token, product({ description: 'Plain' }), 'print')).toBe('Plain');
+  });
+
+  it('prints the line value on a spec sheet page, else the line description', () => {
+    const token = '{{product.spec_sheet_description}}';
+    expect(
+      renderMergeFields(token, line({ spec_sheet_description: 'Sheet copy', description: 'Plain' }), 'print'),
+    ).toBe('Sheet copy');
+    expect(renderMergeFields(token, line({ description: 'Close coupled WC' }), 'print')).toBe('Close coupled WC');
+  });
+
+  it("a layer pointed at a part prints that PART's text, not the line's", () => {
+    const part: TagPartData = {
+      product_id: 'part-1',
+      code: 'AV-0120',
+      name: 'AV-0120',
+      dimensions: '',
+      description: 'Angle valve, chrome',
+      spec_sheet_description: 'Valve sheet copy',
+    };
+    const data = line({ spec_sheet_description: 'Wall hung WC', parts: [part] });
+    const layer = { props: { kind: 'text' as const, subjectPart: 0 } };
+    expect(renderMergeFields('{{product.spec_sheet_description}}', data, 'print', layer)).toBe('Valve sheet copy');
+  });
+
+  it('prints empty, never the token, on a row with neither', () => {
+    expect(renderMergeFields('{{product.spec_sheet_description}}', line(), 'print')).toBe('');
+  });
+});
+
+describe('spec sheet line and document variables (SPEC-SHEET-DESIGNER-PARITY B3)', () => {
+  const lineFields: [string, string, Record<string, unknown>, string][] = [
+    ['line.description', 'Description', { line_description: 'Quoted basin text' }, 'Quoted basin text'],
+    ['line.uom', 'UOM', { uom: 'unit' }, 'unit'],
+    ['line.technical_spec', 'Technical spec', { technical_spec: 'IP44' }, 'IP44'],
+    ['line.notes', 'Notes', { notes: 'Deliver late' }, 'Deliver late'],
+    ['line.item_label', 'Item label', { item_label: 'A1' }, 'A1'],
+  ];
+
+  it.each(lineFields)('%s is in the Line group and resolves the line value', (path, _label, over, expected) => {
+    const field = mergeFieldCatalog([]).find((f) => f.path === path);
+    expect(field).toMatchObject({ group: 'Line' });
+    expect(renderMergeFields(`{{${path}}}`, line(over as Partial<LineTagData>), 'print')).toBe(expected);
+  });
+
+  it('line.quantity prints the real quoted quantity', () => {
+    expect(renderMergeFields('{{line.quantity}}', line({ quantity: 7 }), 'print')).toBe('7');
+  });
+
+  it.each(lineFields.map((f) => f[0]))('%s prints empty, never the token, on a row without it', (path) => {
+    expect(renderMergeFields(`{{${path}}}`, line(), 'print')).toBe('');
+    expect(renderMergeFields(`{{${path}}}`, product(), 'print')).toBe('');
+  });
+
+  const docFields: [string, string][] = [
+    ['doc.subject_title', 'subject_title'],
+    ['doc.attn', 'attn'],
+    ['doc.recipient', 'recipient'],
+    ['doc.project_code', 'project_code'],
+    ['doc.page_no', 'page_no'],
+    ['doc.page_count', 'page_count'],
+  ];
+
+  it.each(docFields)('%s is in the Spec sheet group and resolves the row value', (path, key) => {
+    expect(mergeFieldCatalog([]).find((f) => f.path === path)).toMatchObject({ group: 'Spec sheet' });
+    const doc = { [key]: 'V-1' } as never;
+    const data = { kind: 'line', line: { ...lineData(), doc, page_no: 'V-1' } } as TagBindingData;
+    expect(renderMergeFields(`{{${path}}}`, data, 'print')).toBe('V-1');
+  });
+
+  it.each(docFields.map((f) => f[0]))('%s prints empty on a price tag line', (path) => {
+    expect(renderMergeFields(`{{${path}}}`, line(), 'print')).toBe('');
+  });
+});
+
+describe('{{accessory.N.*}} (SPEC-SHEET-DESIGNER-PARITY B3)', () => {
+  const accessories = [
+    {
+      kind: 'product',
+      id: 'a1',
+      code: 'AV-1',
+      name: 'Angle valve',
+      brand: 'Acme',
+      description: 'Plain valve',
+      spec_sheet_description: 'Valve sheet text',
+      dimensions: '15 mm',
+      spec: null,
+      image: null,
+    },
+    { kind: 'product', id: 'a2', code: 'HS-2', name: 'Hose', spec: null, image: null },
+  ];
+  const data = () => line({ accessories: accessories as never });
+
+  it('is offered for N 1..3 in an Accessories group', () => {
+    const catalog = mergeFieldCatalog([]).filter((f) => f.group === ('Accessories' as never));
+    const paths = catalog.map((f) => f.path);
+    for (const n of [1, 2, 3]) {
+      for (const k of ['code', 'name', 'brand', 'description', 'spec_sheet_description', 'dimensions']) {
+        expect(paths).toContain(`accessory.${n}.${k}`);
+      }
+    }
+    expect(paths).not.toContain('accessory.4.code');
+  });
+
+  it('resolves the Nth accessory of the page, 1-based', () => {
+    expect(renderMergeFields('{{accessory.1.code}}', data(), 'print')).toBe('AV-1');
+    expect(renderMergeFields('{{accessory.1.brand}}', data(), 'print')).toBe('Acme');
+    expect(renderMergeFields('{{accessory.1.spec_sheet_description}}', data(), 'print')).toBe('Valve sheet text');
+    expect(renderMergeFields('{{accessory.1.dimensions}}', data(), 'print')).toBe('15 mm');
+    expect(renderMergeFields('{{accessory.2.name}}', data(), 'print')).toBe('Hose');
+  });
+
+  it('accepts any N and prints empty, never the token, when missing', () => {
+    expect(renderMergeFields('{{accessory.2.brand}}', data(), 'print')).toBe('');
+    expect(renderMergeFields('{{accessory.9.code}}', data(), 'print')).toBe('');
+    expect(renderMergeFields('{{accessory.1.code}}', line(), 'print')).toBe('');
+    expect(renderMergeFields('{{accessory.1.code}}', product(), 'print')).toBe('');
   });
 });

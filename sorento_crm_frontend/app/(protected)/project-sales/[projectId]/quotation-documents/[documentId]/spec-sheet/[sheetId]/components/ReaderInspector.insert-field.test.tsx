@@ -16,6 +16,8 @@ if (!(globalThis as { ResizeObserver?: unknown }).ResizeObserver) {
   };
 }
 
+// v3 fix round (AC-C6.2): the Inspector reads dealer_kit.library.manage for Manage fonts.
+vi.mock('@/hooks/usePermissions', () => ({ useHasPermission: () => false }));
 vi.mock('@/app/(protected)/dealer-kit/tag-templates/components/useTagBindings', () => ({
   useKitLibrary: () => ({ assetUrls: {}, thumbUrls: {}, fonts: [], specKeys: [], fontOptions: [] }),
 }));
@@ -155,5 +157,12 @@ describe('Insert field on the spec sheet page Inspector', () => {
     } finally {
       rich.editor = null;
     }
+  });
+
+  it('offers the slice B document fields too (Subject title)', () => {
+    mount();
+    fireEvent.click(screen.getByRole('button', { name: 'Insert field' }));
+    fireEvent.change(screen.getByPlaceholderText('Search fields...'), { target: { value: 'doc.subject' } });
+    expect(screen.getByText('Subject title')).toBeInTheDocument();
   });
 });

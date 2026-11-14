@@ -21,6 +21,7 @@ import {
   getSpecSheetPreview,
   applySpecSheetLayerToAll,
   listSpecSheets,
+  addSpecSheetLayerToAll,
   queueSpecSheetPdf,
   saveSpecSheetPageEdit,
   updateSpecSheet,
@@ -343,9 +344,32 @@ export function useSpecSheetMutations(projectId: string, documentId: string) {
     onError: (error: Error) => toast.error(error.message),
   });
 
+  // B6: a new element added to every page. The server changes the other pages, so the previews are
+  // read again exactly as for `applyAll`.
+  const addToAll = useMutation({
+    mutationFn: ({
+      sheetId,
+      layer,
+      originPageKey,
+    }: {
+      sheetId: string;
+      layer: TagLayer;
+      originPageKey?: string;
+    }) => addSpecSheetLayerToAll(projectId, documentId, sheetId, layer, originPageKey),
+    onSuccess: async (detail, { sheetId }) => {
+      if (detail) queryClient.setQueryData(specSheetDetailKey(documentId, sheetId), detail);
+      queryClient.invalidateQueries({ queryKey: specSheetListKey(documentId), refetchType: 'none' });
+      await queryClient.invalidateQueries({ queryKey: specSheetPreviewPrefix(documentId, sheetId) });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
   const exportPdf = useMutation({
-    mutationFn: (sheetId: string) =>
-      queueSpecSheetPdf(projectId, documentId, sheetId),
+    // A bare sheet id is a PDF (the sheets list); the reader also asks for PowerPoint.
+    mutationFn: (target: string | { sheetId: string; format: 'pdf' | 'pptx' }) =>
+      typeof target === 'string'
+        ? queueSpecSheetPdf(projectId, documentId, target)
+        : queueSpecSheetPdf(projectId, documentId, target.sheetId, target.format),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ENTITY_DOWNLOADS_QUERY_KEY });
       queryClient.invalidateQueries({ queryKey: MY_DOWNLOADS_QUERY_KEY });
@@ -357,5 +381,5 @@ export function useSpecSheetMutations(projectId: string, documentId: string) {
     onError: (error: Error) => toast.error(error.message),
   });
 
-  return { create, update, savePageEdit, autosavePage, applyAll, exportPdf };
+  return { create, update, savePageEdit, autosavePage, applyAll, addToAll, exportPdf };
 }

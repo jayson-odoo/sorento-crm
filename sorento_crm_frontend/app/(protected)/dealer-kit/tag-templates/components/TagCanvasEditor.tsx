@@ -57,6 +57,7 @@ import type {
   PolygonPoint,
   TagBindingData,
   TagLayer,
+  TableLayerProps,
   TagLayerProps,
   TagPartData,
   TagTemplateDoc,
@@ -85,6 +86,7 @@ import {
   SET_BLOCK_SIZE,
 } from '@/lib/dealer-kit/product-block';
 import {
+  mergeFieldLabelOf,
   renderMergeFields,
   soleMergeField,
   PRICE_TAG_FIELD_GROUPS,
@@ -116,6 +118,7 @@ import {
   topmostChildAt,
   transformGroup,
   ungroupLayers,
+  nextLayerZ,
   zoomAt,
   CANVAS_MAX_ZOOM,
   CANVAS_MIN_ZOOM,
@@ -145,6 +148,7 @@ import {
 } from '@/lib/dealer-kit/ruler-guides';
 import {
   ContextMenu,
+  ContextMenuCheckboxItem,
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
@@ -180,7 +184,6 @@ import {
 } from 'lucide-react';
 import type { ImperativePanelHandle } from 'react-resizable-panels';
 import { AssetPickerDialog } from './AssetPickerDialog';
-import { FontUploadDialog } from './FontUploadDialog';
 import { ProductPickDialog, type PickMode } from './ProductPickDialog';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -189,6 +192,9 @@ import { getProductTagData, comboOptions } from '../../services/tagDataService';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { toast } from '@/lib/toast';
 import { CanvasToolbar, type CanvasTool, type ToolbarTrailingAction } from './CanvasToolbar';
+import { ManageFontsDialog } from './ManageFontsDialog';
+import { TableEdgeHandles } from './TableEdgeHandles';
+import { TableToolbarActions } from './TableToolbarActions';
 import { CanvasRulers, RULER_THICKNESS as RULER_BASE } from './CanvasRulers';
 import { LayersPanel } from './LayersPanel';
 import { InspectorPanel } from './InspectorPanel';
@@ -258,11 +264,11 @@ import {
   ACCESSORY_DEFAULT_BOX_MM,
   accessoryBoxLayout,
   accessoryLineCount,
-  sampleAccessories,
 } from '@/lib/dealer-kit/accessory-box';
 import {
   accessoryDesign,
   accessoryDesignChanged,
+  accessoryDesignSamples,
   accessoryEditItems,
   designKey,
   linkCorrectionPatches,
@@ -272,9 +278,23 @@ import {
   cardBoxLayout,
   cardDropped,
   cardFromLegacy,
+  defaultAccessoriesPropsFor,
   newCardElement,
   type CardEditTarget,
 } from '@/lib/dealer-kit/accessory-card';
+import {
+  cellAnchor,
+  cellAt,
+  defaultTableProps,
+  deleteColumn,
+  deleteRow,
+  insertColumn,
+  insertRow,
+  mergeCells,
+  tableLayout,
+  tableMeasure,
+  unmergeCell,
+} from '@/lib/dealer-kit/table-layout';
 import { AccessoryEditOverlay } from './AccessoryEditOverlay';
 import { HeaderDragOverlay } from './HeaderDragOverlay';
 import type { SaveTemplateRequest } from './AccessoryTemplatesBridge';
@@ -450,6 +470,22 @@ const CROP_HANDLE_SIZE_PX = 8;
 
 const ZOOM_LIMITS = { min: CANVAS_MIN_ZOOM, max: CANVAS_MAX_ZOOM };
 
+/**
+ * Every table's height set to its laid-out rows; the SAME array when none changes (a host compares
+ * identities to tell its own echo from an edit).
+ */
+function fitTableHeights(layers: TagLayer[]): TagLayer[] {
+  let changed = false;
+  const next = layers.map((layer) => {
+    if (layer.props.kind !== 'table') return layer;
+    const height = tableLayout(layer.props, layer.width_mm, tableMeasure(layer.props)).height_mm;
+    if (Math.abs(height - layer.height_mm) <= 0.05) return layer;
+    changed = true;
+    return { ...layer, height_mm: height };
+  });
+  return changed ? next : layers;
+}
+
 /** A start position so a box of `size` starting there stays inside `0..limit` (mm). */
 function clampInto(start: number, size: number, limit: number): number {
   return Math.max(0, Math.min(start, limit - size));
@@ -467,9 +503,23 @@ function clampInto(start: number, size: number, limit: number): number {
  * delete, nudge) answer on the ONE canvas the host marks `active`, the same handlers the
  * template editor runs (SPEC-SHEET-DESIGNER-PARITY), so a paste never lands on several pages.
  */
+export type EmbeddedAddKind = 'text' | 'shape' | 'image' | 'table' | 'accessories' | 'badge';
+
 export interface EmbeddedController {
   updateLayer: (id: string, changes: Partial<TagLayer>) => void;
   updateLayerProps: (id: string, changes: Partial<TagLayerProps>) => void;
+  /** B6: add an element through the editor's own handlers (placement, defaults and selection as
+   *  in the template designer). The new layer is reported like any edit. */
+  addLayer: (kind: EmbeddedAddKind) => void;
+  /** B6: the toolbar's Delete / Duplicate act on this canvas's selection. */
+  deleteSelected: () => void;
+  duplicateSelected: () => void;
+  groupSelected: () => void;
+  ungroupSelected: () => void;
+  /** v3 (AC-C3.2): open this canvas's field picker for the selected table's picked cell. */
+  insertField?: () => void;
+  /** v3 review S2: a brand font was renamed; this page's layers follow it, as the designer's do. */
+  renameFontFamily?: (oldName: string, newName: string) => void;
 }
 
 export interface EmbeddedMode {
@@ -500,6 +550,8 @@ export interface EmbeddedMode {
   active?: boolean;
   /** Ctrl/Cmd+Z (`-1`) and Shift+Ctrl/Cmd+Z or Ctrl/Cmd+Y (`1`) on the active page: the host's undo. */
   onHistory?: (step: -1 | 1) => void;
+  /** v3: the table cell picked on this page, so the host's Inspector edits that cell's row / column. */
+  onTableCell?: (cell: { layerId: string; row: number; col: number } | null) => void;
 }
 
 interface TagCanvasEditorProps {
@@ -676,7 +728,21 @@ export function TagCanvasEditor({
 }: TagCanvasEditorProps) {
   // An embedded canvas has no rulers, so its artboard sits at the stage's corner.
   const RULER_THICKNESS = embedded ? 0 : RULER_BASE;
-  const [layers, setLayers] = useState<TagLayer[]>(doc.layers);
+  // B4: a table's height follows its laid-out rows (a row grows to fit its text). Fitted inside
+  // every layer change, so an edit and its fitted height are ONE state, one report to a host and
+  // one undo step there (v3 browser F1: a separate fit-up made each table edit two page undo
+  // steps, and Undo seemed to do nothing). A read-only page is left exactly as it came.
+  const fitTablesRef = useRef(!embedded?.readOnly);
+  fitTablesRef.current = !embedded?.readOnly;
+  const [layers, setLayersState] = useState<TagLayer[]>(() =>
+    fitTablesRef.current ? fitTableHeights(doc.layers) : doc.layers,
+  );
+  const setLayers = useCallback<React.Dispatch<React.SetStateAction<TagLayer[]>>>((update) => {
+    setLayersState((prev) => {
+      const next = typeof update === 'function' ? update(prev) : update;
+      return fitTablesRef.current ? fitTableHeights(next) : next;
+    });
+  }, []);
   /** Which change-request marker has its comment open (r9 S2/D6). */
   const [openPinId, setOpenPinId] = useState<string | null>(null);
   // Embedded (spec sheet reader): start from the host's selection, so a canvas the host restarts
@@ -686,6 +752,12 @@ export function TagCanvasEditor({
   );
   /** The text layer the inline editor (S2, D5) is currently open on, if any. */
   const [editingLayerId, setEditingLayerId] = useState<string | null>(null);
+  /** v3 (AC-C3.1): with a table in `editingLayerId`, the cell being typed in (fixed for the edit). */
+  const [editingCell, setEditingCell] = useState<{ row: number; col: number } | null>(null);
+  /** The cell editor's rich editor, so a picked field goes in at its caret (AC-C3.2). */
+  const cellEditorRef = useRef<Editor | null>(null);
+  /** The character that opened the cell editor by typing (AC-C3.1), put in once it is ready. */
+  const typedIntoCellRef = useRef<string | null>(null);
   /**
    * The corners a handle drag is CURRENTLY at, so the shape follows the
    * cursor. Never committed here: `handlePolygonDragEnd` writes once, so one
@@ -733,7 +805,7 @@ export function TagCanvasEditor({
   const [pickerBusy, setPickerBusy] = useState(false);
   /** Feature icons: the icon library dialog, opened from the layer's inspector. */
   const [iconLibraryOpen, setIconLibraryOpen] = useState(false);
-  const [imagePicker, setImagePicker] = useState<{ layerId: string; badge: boolean } | null>(
+  const [imagePicker, setImagePicker] = useState<{ layerId: string; badge: boolean; fresh?: boolean } | null>(
     null,
   );
   const [fontUploadOpen, setFontUploadOpen] = useState(false);
@@ -1089,7 +1161,7 @@ export function TagCanvasEditor({
     const minY = Math.min(...children.map((l) => l.y_mm));
     const maxX = Math.max(...children.map((l) => l.x_mm + l.width_mm));
     const maxY = Math.max(...children.map((l) => l.y_mm + l.height_mm));
-    const maxZ = Math.max(...layers.map((l) => l.z_index)) + 1;
+    const maxZ = nextLayerZ(layers);
 
     const groupId = newLayerId();
     const groupLayer: TagLayer = {
@@ -1147,7 +1219,7 @@ export function TagCanvasEditor({
   const centerX = doc.width_mm / 2;
   const centerY = doc.height_mm / 2;
   const maxZ = useMemo(
-    () => (layers.length > 0 ? Math.max(...layers.map((l) => l.z_index)) + 1 : 1),
+    () => nextLayerZ(layers),
     [layers],
   );
 
@@ -1259,8 +1331,9 @@ export function TagCanvasEditor({
     addLayer(layer);
     // Straight into the picker: a badge with no artwork is an empty square, and
     // the reason somebody pressed the button was to place a specific badge.
-    setImagePicker({ layerId: layer.id, badge: true });
-  }, [addLayer, makeBaseLayer]);
+    // On a spec sheet page a badge left unpicked is removed again (`fresh`).
+    setImagePicker({ layerId: layer.id, badge: true, fresh: Boolean(embedded) });
+  }, [addLayer, makeBaseLayer, embedded]);
 
   const handleAddBarcode = useCallback(() => {
     // Bound to slot 'barcode' on creation, not left null like the generic
@@ -1270,6 +1343,14 @@ export function TagCanvasEditor({
       ...makeBaseLayer('barcode', 40, 22),
       slot_binding: 'barcode',
       props: defaultBarcodeProps(),
+    });
+  }, [addLayer, makeBaseLayer]);
+
+  // B4: a 3 x 2 table, in price tag and spec sheet templates alike.
+  const handleAddTable = useCallback(() => {
+    addLayer({
+      ...makeBaseLayer('table', 80, 30),
+      props: defaultTableProps(3, 2, 80),
     });
   }, [addLayer, makeBaseLayer]);
 
@@ -1288,9 +1369,9 @@ export function TagCanvasEditor({
         ACCESSORY_DEFAULT_BOX_MM.width_mm,
         ACCESSORY_DEFAULT_BOX_MM.height_mm,
       ),
-      props: defaultAccessoriesProps(),
+      props: defaultAccessoriesPropsFor(specSheet),
     });
-  }, [addLayer, makeBaseLayer]);
+  }, [addLayer, makeBaseLayer, specSheet]);
 
   // -- Bound blocks (D27) and preview (D41) ----------------------------------
 
@@ -1583,9 +1664,35 @@ export function TagCanvasEditor({
     });
   }, []);
 
+  /** B4: the table cell last clicked, right-clicked (or picked in the Inspector): the menu and the cell
+   *  section of the Inspector act on it. */
+  const [tableCell, setTableCell] = useState<{ layerId: string; row: number; col: number } | null>(null);
+  // The host (a spec sheet page) hears the pick, so its Inspector shows the picked row / column.
+  const onTableCellRef = useRef(embedded?.onTableCell);
+  onTableCellRef.current = embedded?.onTableCell;
+  useEffect(() => {
+    onTableCellRef.current?.(tableCell);
+  }, [tableCell]);
+  // The pointer reads the stage, which is declared below the click handler.
+  const pointerMmRef = useRef<() => { x_mm: number; y_mm: number } | null>(() => null);
+  /** v3 (AC-C3.6): a table as the canvas DRAWS it (fields resolved or named), so a click, a
+   *  right-click and the cell editor find the same cell the user sees. Set below `displayFor`. */
+  const drawnTableRef = useRef<(layer: TagLayer) => TableLayerProps>((layer) => layer.props as TableLayerProps);
   const handleCanvasSelect = useCallback(
     (rawId: string, additive: boolean) => {
       const id = resolveTarget(rawId);
+      // B4: a click on a table cell makes that cell the Inspector's current one.
+      const clicked = layers.find((l) => l.id === id);
+      const point = clicked && clicked.props.kind === 'table' ? pointerMmRef.current() : null;
+      if (clicked && clicked.props.kind === 'table' && point) {
+        const drawn = drawnTableRef.current(clicked);
+        const found = cellAt(
+          tableLayout(drawn, clicked.width_mm, tableMeasure(drawn)),
+          point.x_mm - clicked.x_mm,
+          point.y_mm - clicked.y_mm,
+        );
+        if (found) setTableCell({ layerId: id, row: found.row, col: found.col });
+      }
       setSelectedGuideId(null);
       // A press on the box (not on its header handle, which stops the event) selects the box again.
       setHeaderSelId(null);
@@ -1602,13 +1709,14 @@ export function TagCanvasEditor({
         return new Set([id]);
       });
     },
-    [resolveTarget],
+    [resolveTarget, layers],
   );
 
   const pointerMm = useCallback(() => {
     const point = stageRef.current?.getPointerPosition();
     return point ? stageToMm(view, point.x, point.y) : null;
   }, [view]);
+  pointerMmRef.current = pointerMm;
 
   /**
    * A layer's own hover state (S6, D10) - not yet resolved to a BLOCK, which
@@ -1953,13 +2061,15 @@ export function TagCanvasEditor({
       accessoryEditing: true,
     };
   };
+  drawnTableRef.current = (layer) => (displayFor(layer)?.table ?? layer.props) as TableLayerProps;
   /** PRICETAG-HEADER-DRAG: the layout of a box whose header can be handled on the canvas (the one
    *  KonvaTagLayer draws), else null: not a box, locked, hidden, or under card edit. */
   const headerLayoutFor = (box: TagLayer | undefined) => {
     if (!box || box.props.kind !== 'accessories' || box.locked || box.visible === false) return null;
     if (accessoryEdit?.layerId === box.id) return null;
     const display = displayFor(box);
-    const items = display?.accessories ?? sampleAccessories();
+    // The same samples KonvaTagLayer draws for an unbound box, so the header handle sits on them.
+    const items = display?.accessories ?? accessoryDesignSamples(box.props.list);
     const layout = box.props.card
       ? cardBoxLayout(items.length, box.props, box.width_mm, box.height_mm)
       : accessoryBoxLayout(items.length, box.props, box.width_mm, box.height_mm, accessoryLineCount(items));
@@ -2004,8 +2114,25 @@ export function TagCanvasEditor({
         setEditingLayerId(target.id);
         return;
       }
+      // v3 (AC-C3.1): a table cell opens the same in-place editor over that cell.
+      if (target.props.kind === 'table') {
+        setSelectedIds(new Set([target.id]));
+        if (embedded?.readOnly) return;
+        const point = pointerMm();
+        const drawn = drawnTableRef.current(target);
+        const found = point
+          ? cellAt(tableLayout(drawn, target.width_mm, tableMeasure(drawn)), point.x_mm - target.x_mm, point.y_mm - target.y_mm)
+          : null;
+        const at =
+          found ??
+          (tableCell?.layerId === target.id ? cellAnchor(target.props, tableCell.row, tableCell.col) : { row: 0, col: 0 });
+        setTableCell({ layerId: target.id, ...at });
+        setEditingCell(at);
+        setEditingLayerId(target.id);
+        return;
+      }
       // An accessories box steps into its card (card rule V1).
-      if (target.props.kind === 'accessories' && !specSheet && !embedded?.readOnly) {
+      if (target.props.kind === 'accessories' && !embedded?.readOnly) {
         enterAccessoryEdit(target.id, 'card');
         return;
       }
@@ -2041,7 +2168,7 @@ export function TagCanvasEditor({
       const pick = childId ?? fallback;
       if (pick) setSelectedIds(new Set([pick]));
     },
-    [layers, resolveTarget, pointerMm, embedded, enterAccessoryEdit, specSheet],
+    [layers, resolveTarget, pointerMm, embedded, enterAccessoryEdit, tableCell],
   );
 
   // -- Polygon corner handles (S4, r4b; select vs edit-points modes, S5) -----
@@ -3415,6 +3542,21 @@ export function TagCanvasEditor({
       setMenuOnEmpty(!drawnHit && hits.length === 0);
       const next = selectionForContextMenu(selectedIds, hits, drawnHit);
       if (next) setSelectedIds(next);
+      // A table: which cell is under the pointer (the layout the canvas and print both use).
+      const ofKind = (id: string | null | undefined) => {
+        const hit = id ? layers.find((l) => l.id === id) : undefined;
+        return hit && hit.props.kind === 'table' ? hit : undefined;
+      };
+      const tableHit = ofKind(drawnHit) ?? hits.map(ofKind).find(Boolean);
+      if (tableHit && tableHit.props.kind === 'table' && point) {
+        const drawn = drawnTableRef.current(tableHit);
+        const found = cellAt(
+          tableLayout(drawn, tableHit.width_mm, tableMeasure(drawn)),
+          point.x_mm - tableHit.x_mm,
+          point.y_mm - tableHit.y_mm,
+        );
+        setTableCell({ layerId: tableHit.id, row: found?.row ?? 0, col: found?.col ?? 0 });
+      }
     },
     [view, layers, entered, selectedIds, resolveTarget, konvaLayerIdAt],
   );
@@ -3646,6 +3788,33 @@ export function TagCanvasEditor({
         setSpaceHeld(true);
         return;
       }
+      // v3 (AC-C3.1): typing on a picked table cell opens its in-place editor with that character.
+      if (
+        !modifier &&
+        !e.altKey &&
+        e.key.length === 1 &&
+        e.key !== ' ' &&
+        selectedIds.size === 1 &&
+        tableCell &&
+        selectedIds.has(tableCell.layerId)
+      ) {
+        const table = layers.find((l) => l.id === tableCell.layerId);
+        if (table && table.props.kind === 'table' && !table.locked) {
+          e.preventDefault();
+          // The cell that is there now (review B3), so the editor always has a cell to open on.
+          const at = cellAnchor(table.props, tableCell.row, tableCell.col);
+          setTableCell({ layerId: table.id, ...at });
+          // "{" opens the field picker (AC-C3.2); the field goes after the cell's text.
+          if (e.key === '{') {
+            setInsertFieldOpen(true);
+            return;
+          }
+          typedIntoCellRef.current = e.key;
+          setEditingCell(at);
+          setEditingLayerId(table.id);
+          return;
+        }
+      }
       // Leaving a card / footer edit comes first: Escape steps out of the box, it does not deselect.
       if (e.key === 'Escape' && accessoryEdit) {
         e.preventDefault();
@@ -3741,7 +3910,7 @@ export function TagCanvasEditor({
       // in, if select mode is showing the Transformer's anchors; back out,
       // if the vertex/edge handles are already up.
       // Enter on a selected accessories box steps into its card.
-      if (e.key === 'Enter' && !accessoryEdit && !enterOnButton && !specSheet && selectedIds.size === 1) {
+      if (e.key === 'Enter' && !accessoryEdit && !enterOnButton && selectedIds.size === 1) {
         const only = layers.find((l) => selectedIds.has(l.id));
         if (only && only.props.kind === 'accessories') {
           e.preventDefault();
@@ -3900,9 +4069,9 @@ export function TagCanvasEditor({
     deleteAccessoryElement,
     nudgeAccessoryElement,
     enterAccessoryEdit,
-    specSheet,
     layers,
     activeHeaderSel,
+    tableCell,
   ]);
 
   // -- System clipboard (DESIGNER-PASTE) -------------------------------------
@@ -3943,7 +4112,7 @@ export function TagCanvasEditor({
             delete props.cropRect;
             next = prev.map((l) => (l.id === target.id ? { ...l, props } : l));
           } else {
-            const z = prev.length ? Math.max(...prev.map((l) => l.z_index)) + 1 : 1;
+            const z = nextLayerZ(prev);
             const fitted = fitPastedImage(natural, canvas);
             // A menu Paste: the picture's corner at the click point, pulled back to stay on the canvas.
             if (at) {
@@ -4130,11 +4299,53 @@ export function TagCanvasEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedIds]);
   useEffect(() => {
-    if (embeddedController) embeddedController.current = { updateLayer, updateLayerProps };
+    if (embeddedController) {
+      const adders: Record<EmbeddedAddKind, () => void> = {
+        text: handleAddText,
+        shape: handleAddShape,
+        // On a page the picture is chosen at once (as a badge is): the reader's Inspector has no
+        // "choose image" of its own.
+        image: () => {
+          const layer = { ...makeBaseLayer('image', 40, 30), props: defaultImageProps() };
+          addLayer(layer);
+          setImagePicker({ layerId: layer.id, badge: false, fresh: true });
+        },
+        table: handleAddTable,
+        accessories: handleAddAccessories,
+        badge: handleAddBadge,
+      };
+      embeddedController.current = {
+        updateLayer,
+        updateLayerProps,
+        addLayer: (kind) => adders[kind]?.(),
+        deleteSelected: deleteSelectedLayers,
+        duplicateSelected: duplicateSelectedLayers,
+        groupSelected: groupSelectedLayers,
+        ungroupSelected: ungroupSelectedLayers,
+        insertField: () => setInsertFieldOpen(true),
+        renameFontFamily: renameFontFamilyInOpenDoc,
+      };
+    }
     return () => {
       if (embeddedController) embeddedController.current = null;
     };
-  }, [embeddedController, updateLayer, updateLayerProps]);
+  }, [
+    embeddedController,
+    updateLayer,
+    updateLayerProps,
+    handleAddText,
+    handleAddShape,
+    addLayer,
+    makeBaseLayer,
+    handleAddTable,
+    handleAddAccessories,
+    handleAddBadge,
+    deleteSelectedLayers,
+    duplicateSelectedLayers,
+    groupSelectedLayers,
+    ungroupSelectedLayers,
+    renameFontFamilyInOpenDoc,
+  ]);
   // Layers the host changed (undo, redo, apply): adopted when they are not what this canvas holds.
   useEffect(() => {
     if (embeddedLayers && embeddedLayers !== layersRef.current) setLayers(embeddedLayers);
@@ -4149,6 +4360,24 @@ export function TagCanvasEditor({
     }
     return null;
   }, [selectedIds, layers]);
+
+  // The table menu acts on the right-clicked cell of the single selected table.
+  const tableMenu = useMemo(() => {
+    if (!selectedLayer || selectedLayer.props.kind !== 'table') return null;
+    const props = selectedLayer.props;
+    const at = tableCell?.layerId === selectedLayer.id ? cellAnchor(props, tableCell.row, tableCell.col) : { row: 0, col: 0 };
+    const cell = props.cells[at.row]?.[at.col];
+    return {
+      layerId: selectedLayer.id,
+      props,
+      row: at.row,
+      col: at.col,
+      rowSpan: Math.max(1, cell?.rowSpan ?? 1),
+      colSpan: Math.max(1, cell?.colSpan ?? 1),
+      merged: Boolean(cell && ((cell.rowSpan ?? 1) > 1 || (cell.colSpan ?? 1) > 1)),
+    };
+  }, [selectedLayer, tableCell]);
+
 
   const selectionIsGroup = selectedLayer?.props.kind === 'group';
   /** The context menu's "Crop image" (S8): an image layer only, entered ONLY
@@ -4252,6 +4481,24 @@ export function TagCanvasEditor({
    * writes to. A slot-bound layer is edited through `text_override` so the
    * binding survives, an unbound one through its own text.
    */
+  /** The table cell an edit of `layerId` reads and writes: the one being typed in, else the picked one. */
+  const cellOf = useCallback(
+    (layerId: string): { row: number; col: number } | null => {
+      const layer = layers.find((l) => l.id === layerId);
+      if (!layer || layer.props.kind !== 'table') return null;
+      const raw =
+        editingCell && editingLayerId === layerId
+          ? editingCell
+          : tableCell?.layerId === layerId
+            ? tableCell
+            : null;
+      // v3 review B3: a pick made before a row / column went (Delete, Undo, a merge) means the
+      // cell that is there now.
+      return raw ? cellAnchor(layer.props, raw.row, raw.col) : null;
+    },
+    [layers, editingCell, editingLayerId, tableCell],
+  );
+
   const contentFor = useCallback(
     (layer: TagLayer) => {
       if (layer.slot_binding) {
@@ -4261,9 +4508,13 @@ export function TagCanvasEditor({
           (layer.props.kind === 'text' ? layer.props.text : '')
         );
       }
+      if (layer.props.kind === 'table') {
+        const at = cellOf(layer.id);
+        return at ? (layer.props.cells[at.row]?.[at.col]?.text ?? '') : '';
+      }
       return layer.props.kind === 'text' ? layer.props.text : '';
     },
-    [dataOf],
+    [dataOf, cellOf],
   );
 
   /**
@@ -4281,9 +4532,17 @@ export function TagCanvasEditor({
         updateLayer(layer.id, { text_override: content });
       } else if (layer.props.kind === 'text') {
         updateLayerProps(layer.id, { ...layer.props, text: content });
+      } else if (layer.props.kind === 'table') {
+        // Insert field / the cell editor on a table write into the cell being edited, else the picked one.
+        const at = cellOf(layer.id);
+        if (!at) return;
+        const cells = layer.props.cells.map((cellRow, r) =>
+          cellRow.map((cell, c) => (r === at.row && c === at.col ? { ...cell, text: content } : cell)),
+        );
+        updateLayerProps(layer.id, { cells });
       }
     },
-    [layers, updateLayer, updateLayerProps],
+    [layers, updateLayer, updateLayerProps, cellOf],
   );
 
   /** The Inspector's rich Content box, so Insert field lands at its caret. */
@@ -4380,16 +4639,22 @@ export function TagCanvasEditor({
   // The canvas unmounting with typing still open (the spec sheet reader unloads a page scrolled far
   // away): no blur or click outside will come, so hand the host the typed text now, the same way a
   // commit writes it, or it is lost without a word.
-  const unloadRef = useRef({ editingLayerId, layers, onLayersChange });
-  unloadRef.current = { editingLayerId, layers, onLayersChange };
+  const unloadRef = useRef({ editingLayerId, editingCell, layers, onLayersChange });
+  unloadRef.current = { editingLayerId, editingCell, layers, onLayersChange };
   useEffect(
     () => () => {
-      const { editingLayerId: id, layers: now, onLayersChange: report } = unloadRef.current;
+      const { editingLayerId: id, editingCell: at, layers: now, onLayersChange: report } = unloadRef.current;
       const text = editingTextRef.current;
       if (!id || !report || text === editingSeedRef.current) return;
       report(
         now.map((layer) => {
           if (layer.id !== id) return layer;
+          if (layer.props.kind === 'table' && at) {
+            const cells = layer.props.cells.map((cellRow, r) =>
+              cellRow.map((cell, c) => (r === at.row && c === at.col ? { ...cell, text } : cell)),
+            );
+            return { ...layer, props: { ...layer.props, cells } };
+          }
           if (layer.slot_binding) return { ...layer, text_override: text };
           return layer.props.kind === 'text' ? { ...layer, props: { ...layer.props, text } } : layer;
         }),
@@ -4407,6 +4672,8 @@ export function TagCanvasEditor({
     (content: string) => {
       if (editingLayerId && !editingIsDescription) writeContentToLayer(editingLayerId, content);
       setEditingLayerId(null);
+      setEditingCell(null);
+      cellEditorRef.current = null;
     },
     [editingLayerId, editingIsDescription, writeContentToLayer],
   );
@@ -4414,6 +4681,8 @@ export function TagCanvasEditor({
   /** The inline editor's own no-op close (B2): nothing was typed, nothing to write. */
   const cancelInlineEdit = useCallback(() => {
     setEditingLayerId(null);
+    setEditingCell(null);
+    cellEditorRef.current = null;
   }, []);
 
   /**
@@ -4428,12 +4697,83 @@ export function TagCanvasEditor({
    */
   useEffect(() => {
     if (!editingLayerId) return;
-    if (selectedLayer && selectedLayer.id === editingLayerId) return;
+    // A table cell edit also ends when another cell of the same table is picked.
+    const sameCell =
+      !editingCell ||
+      (tableCell?.layerId === editingLayerId && tableCell.row === editingCell.row && tableCell.col === editingCell.col);
+    if (selectedLayer && selectedLayer.id === editingLayerId && sameCell) return;
     if (editingTextRef.current !== editingContent) {
       writeContentToLayer(editingLayerId, editingTextRef.current);
     }
     setEditingLayerId(null);
-  }, [editingLayerId, selectedLayer, editingContent, writeContentToLayer]);
+    setEditingCell(null);
+    cellEditorRef.current = null;
+  }, [editingLayerId, editingCell, tableCell, selectedLayer, editingContent, writeContentToLayer]);
+
+  /** Where the cell being typed in sits on the canvas (mm), for the in-place editor (AC-C3.1). */
+  const editingCellRect = useMemo(() => {
+    if (!editingLayer || editingLayer.props.kind !== 'table' || !editingCell) return null;
+    const drawn = drawnTableRef.current(editingLayer);
+    const laid = tableLayout(drawn, editingLayer.width_mm, tableMeasure(drawn));
+    const hit = laid.cells.find((c) => c.row === editingCell.row && c.col === editingCell.col);
+    return hit
+      ? {
+          x_mm: editingLayer.x_mm + hit.x_mm,
+          y_mm: editingLayer.y_mm + hit.y_mm,
+          width_mm: hit.width_mm,
+          height_mm: hit.height_mm,
+        }
+      : null;
+  }, [editingLayer, editingCell]);
+
+  // Never an edit with nothing to type in (review B3): the keyboard would be dead until a click.
+  useEffect(() => {
+    if (editingLayerId && editingLayer?.props.kind === 'table' && !editingCellRect) cancelInlineEdit();
+  }, [editingLayerId, editingLayer, editingCellRect, cancelInlineEdit]);
+
+  /** v3 (AC-C3.1, review B2): the picked cell of the selected table, outlined on the canvas. */
+  const pickedCellRect = useMemo(() => {
+    if (editingLayerId || !selectedLayer || selectedLayer.props.kind !== 'table') return null;
+    if (tableCell?.layerId !== selectedLayer.id) return null;
+    const at = cellAnchor(selectedLayer.props, tableCell.row, tableCell.col);
+    const drawn = drawnTableRef.current(selectedLayer);
+    const laid = tableLayout(drawn, selectedLayer.width_mm, tableMeasure(drawn));
+    const hit = laid.cells.find((c) => c.row === at.row && c.col === at.col);
+    return hit
+      ? {
+          ...at,
+          x_mm: selectedLayer.x_mm + hit.x_mm,
+          y_mm: selectedLayer.y_mm + hit.y_mm,
+          width_mm: hit.width_mm,
+          height_mm: hit.height_mm,
+        }
+      : null;
+  }, [editingLayerId, selectedLayer, tableCell]);
+
+  /**
+   * v3 (AC-C3.2): the field picker hands back ONE field for a table: into the open cell editor at
+   * its caret, else after the picked cell's text (never in front of it).
+   */
+  const fieldPickForTable = selectedLayer?.props.kind === 'table' || (editingCell !== null && editingLayerId !== null);
+  const pickFieldIntoCell = useCallback(
+    (token: string) => {
+      setInsertFieldOpen(false);
+      const editor = cellEditorRef.current;
+      if (editingCell && editor && !editor.isDestroyed) {
+        insertMergeFieldText(editor, token);
+        return;
+      }
+      if (!selectedLayer || selectedLayer.props.kind !== 'table') return;
+      const at = cellOf(selectedLayer.id) ?? { row: 0, col: 0 };
+      const text = selectedLayer.props.cells[at.row]?.[at.col]?.text ?? '';
+      if (!cellOf(selectedLayer.id)) setTableCell({ layerId: selectedLayer.id, ...at });
+      const cells = selectedLayer.props.cells.map((cellRow, r) =>
+        cellRow.map((cell, c) => (r === at.row && c === at.col ? { ...cell, text: text + token } : cell)),
+      );
+      updateLayerProps(selectedLayer.id, { cells });
+    },
+    [editingCell, selectedLayer, cellOf, updateLayerProps],
+  );
 
   /** The bound thing, named the way a person recognises it. Never a UUID. */
   const selectedBindingLabel = describeBindingData(selectedData);
@@ -4889,8 +5229,11 @@ export function TagCanvasEditor({
                               'bottom-right',
                               'middle-left',
                               'middle-right',
-                              'top-center',
-                              'bottom-center',
+                              // A table's height follows its rows: its bottom edge drags a row
+                              // instead (v3 AC-C5.1), so no top / bottom centre handle.
+                              ...(selectedLayer?.props.kind === 'table' && selectedIds.size === 1
+                                ? []
+                                : (['top-center', 'bottom-center'] as const)),
                             ]
                       }
                       boundBoxFunc={(_oldBox, newBox) => {
@@ -5316,12 +5659,177 @@ export function TagCanvasEditor({
                   onCancel={cancelInlineEdit}
                 />
                 )}
+              {/* v3 (AC-C3.1-C3.3): the same rich editor over the table cell being typed in, in the
+                  template designer and on a spec sheet page alike. */}
+              {editingLayerId && editingLayer && editingLayer.props.kind === 'table' && editingCell && editingCellRect && (
+                <InlineTextEditor
+                  key={`${editingLayer.id}:${editingCell.row}:${editingCell.col}`}
+                  layer={editingLayer}
+                  value={editingContent}
+                  cell={editingCellRect}
+                  scale={scale}
+                  originX={RULER_THICKNESS + view.panX}
+                  originY={RULER_THICKNESS + view.panY}
+                  onChangeText={(text) => {
+                    editingTextRef.current = text;
+                  }}
+                  onCommit={commitInlineEdit}
+                  onCancel={cancelInlineEdit}
+                  onRequestField={() => setInsertFieldOpen(true)}
+                  fieldLabel={mergeFieldLabelOf}
+                  holdBlur={insertFieldOpen}
+                  onEditorReady={(editor) => {
+                    cellEditorRef.current = editor;
+                    const typed = typedIntoCellRef.current;
+                    typedIntoCellRef.current = null;
+                    if (typed) editor.chain().focus('end').insertContent(typed).run();
+                  }}
+                />
+              )}
+              {pickedCellRect && !selectedLayer?.rotation_deg && (
+                <div
+                  data-testid="table-cell-outline"
+                  data-row={pickedCellRect.row}
+                  data-col={pickedCellRect.col}
+                  aria-hidden
+                  className="pointer-events-none absolute z-10 border-2 border-primary"
+                  style={{
+                    left: RULER_THICKNESS + view.panX + pickedCellRect.x_mm * scale,
+                    top: RULER_THICKNESS + view.panY + pickedCellRect.y_mm * scale,
+                    width: pickedCellRect.width_mm * scale,
+                    height: pickedCellRect.height_mm * scale,
+                  }}
+                />
+              )}
+              {/* v3 (AC-C5.1): the selected table's row / column edges drag, in this same overlay. */}
+              {!editingLayerId &&
+                !embedded?.readOnly &&
+                selectedLayer &&
+                selectedLayer.props.kind === 'table' &&
+                !selectedLayer.locked &&
+                selectedLayer.visible &&
+                !selectedLayer.rotation_deg && (
+                  <TableEdgeHandles
+                    layer={selectedLayer as TagLayer & { props: TableLayerProps }}
+                    drawn={drawnTableRef.current(selectedLayer)}
+                    scale={scale}
+                    originX={RULER_THICKNESS + view.panX}
+                    originY={RULER_THICKNESS + view.panY}
+                    onChange={(next) => updateLayerProps(selectedLayer.id, next)}
+                  />
+                )}
             </div>
           </ContextMenuTrigger>
 
-          <ContextMenuContent className="w-56">
+          {/* Radix opens a context menu right of the pointer or flips it left, never shifting it
+              sideways: below sm it is at most half the screen wide (less the padding), so one side
+              always fits on a phone, and it drops the keyboard shortcuts there (a menu that fits
+              neither side is the likely source of the placement loop seen at 375 px). From sm up
+              it sizes to its longest item. */}
+          <ContextMenuContent
+            collisionPadding={8}
+            avoidCollisions
+            className="w-[calc(50vw-8px)] max-sm:[&_[data-slot=context-menu-shortcut]]:hidden sm:w-max sm:min-w-56 sm:max-w-[calc(100vw-16px)]"
+          >
             {hasSelection && !menuOnEmpty ? (
               <>
+                {tableMenu && (
+                  <>
+                    <ContextMenuItem onSelect={() => setInsertFieldOpen(true)}>Insert field</ContextMenuItem>
+                    <ContextMenuSeparator />
+                    <ContextMenuItem
+                      onSelect={() => updateLayerProps(tableMenu.layerId, insertRow(tableMenu.props, tableMenu.row))}
+                    >
+                      Insert row above
+                    </ContextMenuItem>
+                    <ContextMenuItem
+                      onSelect={() =>
+                        updateLayerProps(tableMenu.layerId, insertRow(tableMenu.props, tableMenu.row + tableMenu.rowSpan))
+                      }
+                    >
+                      Insert row below
+                    </ContextMenuItem>
+                    <ContextMenuItem
+                      onSelect={() => updateLayerProps(tableMenu.layerId, insertColumn(tableMenu.props, tableMenu.col))}
+                    >
+                      Insert column left
+                    </ContextMenuItem>
+                    <ContextMenuItem
+                      onSelect={() =>
+                        updateLayerProps(
+                          tableMenu.layerId,
+                          insertColumn(tableMenu.props, tableMenu.col + tableMenu.colSpan),
+                        )
+                      }
+                    >
+                      Insert column right
+                    </ContextMenuItem>
+                    <ContextMenuItem
+                      onSelect={() => updateLayerProps(tableMenu.layerId, deleteRow(tableMenu.props, tableMenu.row))}
+                      disabled={tableMenu.props.rows.length <= 1}
+                    >
+                      Delete row
+                    </ContextMenuItem>
+                    <ContextMenuItem
+                      onSelect={() =>
+                        updateLayerProps(tableMenu.layerId, deleteColumn(tableMenu.props, tableMenu.col))
+                      }
+                      disabled={tableMenu.props.columns.length <= 1}
+                    >
+                      Delete column
+                    </ContextMenuItem>
+                    <ContextMenuSeparator />
+                    <ContextMenuItem
+                      onSelect={() =>
+                        updateLayerProps(
+                          tableMenu.layerId,
+                          mergeCells(
+                            tableMenu.props,
+                            tableMenu.row,
+                            tableMenu.col,
+                            tableMenu.row + tableMenu.rowSpan - 1,
+                            tableMenu.col + tableMenu.colSpan,
+                          ),
+                        )
+                      }
+                      disabled={tableMenu.col + tableMenu.colSpan >= tableMenu.props.columns.length}
+                    >
+                      Merge right
+                    </ContextMenuItem>
+                    <ContextMenuItem
+                      onSelect={() =>
+                        updateLayerProps(
+                          tableMenu.layerId,
+                          mergeCells(
+                            tableMenu.props,
+                            tableMenu.row,
+                            tableMenu.col,
+                            tableMenu.row + tableMenu.rowSpan,
+                            tableMenu.col + tableMenu.colSpan - 1,
+                          ),
+                        )
+                      }
+                      disabled={tableMenu.row + tableMenu.rowSpan >= tableMenu.props.rows.length}
+                    >
+                      Merge down
+                    </ContextMenuItem>
+                    <ContextMenuItem
+                      onSelect={() =>
+                        updateLayerProps(tableMenu.layerId, unmergeCell(tableMenu.props, tableMenu.row, tableMenu.col))
+                      }
+                      disabled={!tableMenu.merged}
+                    >
+                      Unmerge cells
+                    </ContextMenuItem>
+                    <ContextMenuCheckboxItem
+                      checked={Boolean(tableMenu.props.headerRow)}
+                      onCheckedChange={(on) => updateLayerProps(tableMenu.layerId, { headerRow: Boolean(on) })}
+                    >
+                      Header row
+                    </ContextMenuCheckboxItem>
+                    <ContextMenuSeparator />
+                  </>
+                )}
                 <ContextMenuItem
                   onSelect={() => {
                     handleCut();
@@ -5459,7 +5967,42 @@ export function TagCanvasEditor({
   );
 
   if (embedded) {
-    return <div className="relative flex h-full w-full overflow-hidden">{canvasArea}</div>;
+    return (
+      <div className="relative flex h-full w-full overflow-hidden">
+        {canvasArea}
+        {/* B6: the asset picker the add handlers open (a badge, an image) works on a page too. */}
+        <AssetPickerDialog
+          open={imagePicker !== null}
+          productImages={pickerProductImages}
+          allowProductPhotos={!imagePicker?.badge}
+          uploadKind={imagePicker?.badge ? 'badge' : 'decorative'}
+          title={imagePicker?.badge ? 'Choose a badge' : 'Choose an image'}
+          onCancel={() => {
+            // A frame the toolbar just added, with no artwork chosen, is not left behind.
+            const fresh = imagePicker?.fresh ? imagePicker.layerId : null;
+            setImagePicker(null);
+            if (fresh) {
+              setLayers((prev) => {
+                const next = prev.filter((l) => l.id !== fresh);
+                history.pushState(next);
+                return next;
+              });
+            }
+          }}
+          onPick={handleImagePicked}
+        />
+        {/* v3 (AC-C3.2): the table cell field picker on a page, the designer's own dialog. */}
+        <InsertFieldDialog
+          open={insertFieldOpen && fieldPickForTable}
+          value=""
+          data={selectedData ?? null}
+          specKeys={library.specKeys}
+          onCancel={() => setInsertFieldOpen(false)}
+          onDone={() => setInsertFieldOpen(false)}
+          onPick={pickFieldIntoCell}
+        />
+      </div>
+    );
   }
 
   return (
@@ -5476,14 +6019,13 @@ export function TagCanvasEditor({
         onAddBadge={handleAddBadge}
         onAddBarcode={handleAddBarcode}
         onAddFeatureIcons={specSheet ? undefined : handleAddFeatureIcons}
+        onAddTable={handleAddTable}
         onAddProduct={() => setPicker({ kind: 'add-product' })}
         onAddSet={() => setPicker({ kind: 'add-set' })}
         onAddAlternativesRow={() => setPicker({ kind: 'alternatives' })}
-        onAddAccessories={specSheet ? undefined : handleAddAccessories}
+        onAddAccessories={handleAddAccessories}
         accessoryTemplates={accessoryTemplates}
-        onInsertAccessoryTemplate={
-          specSheet || !hasQueryClient ? undefined : handleInsertAccessoryTemplate
-        }
+        onInsertAccessoryTemplate={!hasQueryClient ? undefined : handleInsertAccessoryTemplate}
         accessoryEdit={
           accessoryEdit
             ? {
@@ -5510,6 +6052,16 @@ export function TagCanvasEditor({
         hasMultiSelection={selectedIds.size >= 2}
         selectionIsGroup={selectionIsGroup}
         trailing={toolbarTrailing}
+        contextual={
+          tableMenu ? (
+            <TableToolbarActions
+              props={tableMenu.props}
+              cell={{ row: tableMenu.row, col: tableMenu.col }}
+              onChange={(next) => updateLayerProps(tableMenu.layerId, next)}
+              onInsertField={() => setInsertFieldOpen(true)}
+            />
+          ) : null
+        }
       />
 
       {hasQueryClient && (
@@ -5733,6 +6285,7 @@ export function TagCanvasEditor({
                 setInsertFieldContext(editor ? textAroundMergeFieldCaret(editor) : undefined);
                 setInsertFieldOpen(true);
               }}
+              tableCell={tableCell && selectedLayer && tableCell.layerId === selectedLayer.id ? tableCell : null}
               onContentEditorReady={(editor) => {
                 contentEditorRef.current = editor;
               }}
@@ -5759,10 +6312,10 @@ export function TagCanvasEditor({
               onManageIcons={() => setIconLibraryOpen(true)}
               featureIconCount={selectedLayer ? featureIconFits.counts.get(selectedLayer.id) : undefined}
               accessoryFit={selectedLayer ? accessoryFits.fits.get(selectedLayer.id) : undefined}
-              onEditAccessoryCard={specSheet ? undefined : (id) => enterAccessoryEdit(id, 'card')}
-              onEditAccessoryFooter={specSheet ? undefined : (id) => enterAccessoryEdit(id, 'footer')}
+              onEditAccessoryCard={(id) => enterAccessoryEdit(id, 'card')}
+              onEditAccessoryFooter={(id) => enterAccessoryEdit(id, 'footer')}
               onSaveAccessoryTemplate={
-                specSheet || !hasQueryClient
+                !hasQueryClient
                   ? undefined
                   : (id) => {
                       const target = layers.find((l) => l.id === id);
@@ -5886,33 +6439,13 @@ export function TagCanvasEditor({
           if (editor) insertMergeFieldText(editor, content);
           else writeSelectedContent(content);
         }}
+        onPick={fieldPickForTable ? pickFieldIntoCell : undefined}
       />
 
-      <FontUploadDialog
+      <ManageFontsDialog
         open={fontUploadOpen}
-        fonts={library.fonts}
-        onCancel={() => {
-          setFontUploadOpen(false);
-          // A delete started inside the dialog keeps counting down after it
-          // closes (D7 - the window is the server's, not the dialog's), so
-          // whatever happened while it was open - a commit, a cancel, a
-          // failure - has to be caught up on here, or the Font Family
-          // dropdown can go on offering a family the server already deleted.
-          void library.reload();
-        }}
-        onUploaded={(asset) => {
-          library.remember(asset);
-          setFontUploadOpen(false);
-        }}
-        onRenamed={(asset, oldName) => {
-          library.rename(asset.id, asset.name);
-          renameFontFamilyInOpenDoc(oldName, asset.name);
-          void library.reload();
-        }}
-        onDeleted={(id) => {
-          library.forget(id);
-          void library.reload();
-        }}
+        onClose={() => setFontUploadOpen(false)}
+        onFamilyRenamed={renameFontFamilyInOpenDoc}
       />
 
       {/* Save bar (sticky bottom). Absent when the host owns saving. */}

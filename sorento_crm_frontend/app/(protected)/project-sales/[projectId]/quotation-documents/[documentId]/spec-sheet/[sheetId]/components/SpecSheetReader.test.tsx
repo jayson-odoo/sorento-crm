@@ -601,11 +601,11 @@ describe('SpecSheetReader: a 30-page sheet mounts only the pages in view', () =>
     expect(
       screen.getByRole('button', { name: 'Use latest templates' }),
     ).toBeInTheDocument();
-    // Page N of M stays in the toolbar.
-    expect(screen.getByTestId('spec-sheet-page-of')).toBeInTheDocument();
+    // Page N of M sits under the Pages side bar thumbnails (v3 AC-C2.1; the page bar is gone).
+    expect(screen.getByTestId('spec-rail-page-of')).toBeInTheDocument();
   });
 
-  it('uses the system header: BackToList, then the gear before the primary Export PDF', async () => {
+  it('uses the system header: BackToList, then the gear before the primary Export', async () => {
     renderReader();
     await screen.findByTestId('spec-page-k29');
 
@@ -615,7 +615,7 @@ describe('SpecSheetReader: a 30-page sheet mounts only the pages in view', () =>
       '/project-sales/p1/quotation-documents/d1/spec-sheet',
     );
     const gear = screen.getByRole('button', { name: 'Spec sheet actions' });
-    const exportPdf = screen.getByRole('button', { name: /export pdf/i });
+    const exportPdf = screen.getByRole('button', { name: /^export$/i });
     // The gear (and the pager) stand LEFT of the one primary button, never to its right.
     expect(
       gear.compareDocumentPosition(exportPdf) &
@@ -667,8 +667,8 @@ describe('rail clicks move only the page stack (crew browser pass r6, item e)', 
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
     });
-    expect(screen.getByTestId('spec-sheet-page-of').textContent).toMatch(
-      /^4 of/,
+    expect(screen.getByTestId('spec-rail-page-of').textContent).toMatch(
+      /^Page 4 of/,
     );
     // The user scrolls: the counter follows the position again.
     fireEvent.wheel(stack);
@@ -676,8 +676,8 @@ describe('rail clicks move only the page stack (crew browser pass r6, item e)', 
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
     });
-    expect(screen.getByTestId('spec-sheet-page-of').textContent).not.toMatch(
-      /^4 of/,
+    expect(screen.getByTestId('spec-rail-page-of').textContent).not.toMatch(
+      /^Page 4 of/,
     );
   });
 
@@ -690,13 +690,13 @@ describe('rail clicks move only the page stack (crew browser pass r6, item e)', 
         name: /CODE-k3/,
       }),
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Fit width' }));
+    fireEvent.click(screen.getByRole('button', { name: /^fit (width|to view)$/i }));
     fireEvent.scroll(screen.getByTestId('spec-sheet-stack'));
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
     });
-    expect(screen.getByTestId('spec-sheet-page-of').textContent).not.toMatch(
-      /^4 of/,
+    expect(screen.getByTestId('spec-rail-page-of').textContent).not.toMatch(
+      /^Page 4 of/,
     );
   });
 

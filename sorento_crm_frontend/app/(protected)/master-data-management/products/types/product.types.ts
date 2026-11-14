@@ -57,6 +57,8 @@ export interface Product {
   // CRM-owned (r10 S4): staff-authored price tag copy, never touched by the
   // AutoCount masters push.
   price_tag_description?: string | null;
+  // CRM-owned (SPEC-SHEET-DESIGNER-PARITY B1): copy for the project spec sheet.
+  spec_sheet_description?: string | null;
   list_price: number;
   cost_price?: number | null;
   invoice_price?: number | null;
@@ -251,6 +253,8 @@ export interface ProductFormData {
   product_name: string;
   description?: string;
   price_tag_description?: string | null;
+  // CRM-owned (SPEC-SHEET-DESIGNER-PARITY B1): copy for the project spec sheet.
+  spec_sheet_description?: string | null;
   category_id: string;
   brand_id?: string | null;
   item_class_id?: string | null;

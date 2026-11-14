@@ -4,6 +4,7 @@ import { useCallback, useMemo, useRef, useState } from 'react';
 import { Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import type { Editor } from '@tiptap/react';
 import { RichTextEditor } from '@/components/ui/rich-text-editor';
 import { RichTextView } from '@/components/dealer-kit/RichTextView';
@@ -371,6 +372,83 @@ function PriceTagDescriptionBlock({
   );
 }
 
+/** "Spec sheet description" (SPEC-SHEET-DESIGNER-PARITY B1): plain multi-line copy the project
+ *  spec sheet prints; empty falls back to the product description. */
+function SpecSheetDescriptionBlock({
+  productId,
+  stored,
+  canEdit,
+}: {
+  productId: string;
+  stored: string | null;
+  canEdit: boolean;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const { mutateAsync, isPending } = useUpdateProduct();
+
+  const startEdit = () => {
+    setDraft(stored ?? '');
+    setEditing(true);
+  };
+  const cancelEdit = () => setEditing(false);
+  const save = async () => {
+    await mutateAsync({ id: productId, data: { spec_sheet_description: draft } });
+    setEditing(false);
+  };
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div
+        id={`${productId}-spec-sheet-description-label`}
+        className="text-xs uppercase tracking-wide text-muted-foreground"
+      >
+        Spec sheet description
+      </div>
+      {editing ? (
+        <div
+          className="flex flex-col gap-2"
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') cancelEdit();
+          }}
+        >
+          <Textarea
+            aria-labelledby={`${productId}-spec-sheet-description-label`}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            rows={5}
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" onClick={save} disabled={isPending}>
+              Save
+            </Button>
+            <Button size="sm" variant="ghost" onClick={cancelEdit} disabled={isPending}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2">
+          <div className="rounded-md border bg-muted/30 p-3">
+            {stored ? (
+              <p className="text-sm whitespace-pre-line break-words">{stored}</p>
+            ) : (
+              <p className="text-sm">Not set, the spec sheet uses the product description</p>
+            )}
+          </div>
+          {canEdit && (
+            <div>
+              <Button size="sm" variant="outline" onClick={startEdit}>
+                Edit spec sheet description
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /**
  * "Reading and search" (AC-S2.1, AC-S2.5, D9): the read values line and one
  * search box, nothing else. No "Read this product again" - the product is read
@@ -556,6 +634,12 @@ export default function ProductSpecificationsTab({ productId }: { productId: str
             productCode={product?.product_code ?? detail.product_code}
             productName={product?.product_name ?? ''}
             listPrice={product?.list_price ?? null}
+          />
+
+          <SpecSheetDescriptionBlock
+            productId={productId}
+            stored={product?.spec_sheet_description ?? null}
+            canEdit={canEdit}
           />
 
           <ReadingAndSearch productId={productId} renderedText={detail.spec?.rendered_text ?? null} />

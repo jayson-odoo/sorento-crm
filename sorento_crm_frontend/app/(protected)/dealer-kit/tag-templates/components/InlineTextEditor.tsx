@@ -40,6 +40,11 @@
  * bare, over the drawn text: tokens are chips, and Cmd+B / I / U on a selection mark only that
  * range (TipTap's own keys; the canvas's whole-layer format skips a focused rich editor). It
  * stores through `contentFromEditorHtml`, the Inspector's rule, so unformatted text stays plain.
+ *
+ * `cell` (SPEC-SHEET-PARITY-B2 v3, AC-C3.1-C3.3): the same rich editor over ONE table cell, placed on
+ * the cell's rect (canvas mm) in the table's own face. A cell keeps plain text (formatting is the
+ * table's), Enter saves, Shift+Enter breaks the line, Escape cancels, and `{` asks the host for the
+ * field picker (`onRequestField`), whose pick the host puts in at this editor's caret.
  */
 
 import { useEffect, useId, useRef, useState, type CSSProperties } from 'react';
@@ -47,7 +52,7 @@ import type { Editor } from '@tiptap/react';
 
 import { RichTextEditor } from '@/components/ui/rich-text-editor';
 import { contentFromEditorHtml } from '@/lib/dealer-kit/layer-content';
-import { toEditorHtml } from '@/lib/dealer-kit/rich-text';
+import { isRich, richPlainText, toEditorHtml } from '@/lib/dealer-kit/rich-text';
 import type { TagLayer, TagLayerProps } from '@/lib/dealer-kit/tag-template-types';
 
 interface InlineTextEditorProps {
@@ -71,6 +76,16 @@ interface InlineTextEditorProps {
   readOnly?: boolean;
   /** The layer's own content: edit it as rich text (see the module docstring). */
   rich?: boolean;
+  /** A table cell's rect in canvas mm: edit that cell (see the module docstring). */
+  cell?: { x_mm: number; y_mm: number; width_mm: number; height_mm: number };
+  /** A chip's readable name (AC-C3.2); null shows the token. */
+  fieldLabel?: (path: string) => string | null;
+  /** `{` typed in a cell: the host opens the field picker. */
+  onRequestField?: () => void;
+  /** The host's field picker is open: losing focus to it is not leaving the editor. */
+  holdBlur?: boolean;
+  /** The rich editor, once ready, so the host can put a picked field in at its caret. */
+  onEditorReady?: (editor: Editor) => void;
 }
 
 export function InlineTextEditor({
@@ -83,9 +98,16 @@ export function InlineTextEditor({
   onCancel,
   onChangeText,
   readOnly = false,
-  rich = false,
+  rich: richProp = false,
+  cell,
+  onRequestField,
+  fieldLabel,
+  holdBlur = false,
+  onEditorReady,
 }: InlineTextEditorProps) {
+  const rich = richProp || Boolean(cell);
   const props = layer.props as Extract<TagLayerProps, { kind: 'text' }>;
+  const tableProps = layer.props.kind === 'table' ? layer.props : null;
   const [text, setText] = useState(value);
   /** The live value, for a commit that runs in the same tick as the last edit. */
   const textRef = useRef(value);
@@ -110,6 +132,12 @@ export function InlineTextEditor({
     // Only on mount - re-focusing on every keystroke would fight the caret.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const cancel = () => {
+    if (committedRef.current) return;
+    committedRef.current = true;
+    onCancel?.();
+  };
 
   const commit = () => {
     if (committedRef.current) return;
@@ -146,26 +174,41 @@ export function InlineTextEditor({
     // Plain Enter falls through to the textarea's own default: a newline.
   };
 
+  const face: CSSProperties =
+    cell && tableProps
+      ? {
+          fontFamily: tableProps.fontFamily,
+          fontSize: (tableProps.fontSize ?? 10) * scale * 0.35,
+          color: tableProps.color,
+          textAlign: tableProps.align,
+          lineHeight: 1.2,
+        }
+      : {
+          fontFamily: props.fontFamily,
+          fontSize: props.fontSize * scale * 0.35,
+          fontWeight: props.fontWeight,
+          fontStyle: props.italic ? 'italic' : 'normal',
+          textDecoration:
+            [props.underline && 'underline', props.strikethrough && 'line-through']
+              .filter(Boolean)
+              .join(' ') || 'none',
+          color: props.color,
+          textAlign: props.align,
+          lineHeight: props.lineHeight,
+          letterSpacing: props.letterSpacing ? props.letterSpacing * scale * 0.1 : undefined,
+        };
+  const box = cell ?? layer;
   const style: CSSProperties = {
     position: 'absolute',
-    left: originX + layer.x_mm * scale,
-    top: originY + layer.y_mm * scale,
-    width: layer.width_mm * scale,
-    height: layer.height_mm * scale,
-    transform: layer.rotation_deg ? `rotate(${layer.rotation_deg}deg)` : undefined,
+    left: originX + box.x_mm * scale,
+    top: originY + box.y_mm * scale,
+    width: box.width_mm * scale,
+    // A cell's editor may grow past a short row while typing; the row grows on save.
+    height: cell ? undefined : box.height_mm * scale,
+    minHeight: cell ? box.height_mm * scale : undefined,
+    transform: !cell && layer.rotation_deg ? `rotate(${layer.rotation_deg}deg)` : undefined,
     transformOrigin: 'top left',
-    fontFamily: props.fontFamily,
-    fontSize: props.fontSize * scale * 0.35,
-    fontWeight: props.fontWeight,
-    fontStyle: props.italic ? 'italic' : 'normal',
-    textDecoration:
-      [props.underline && 'underline', props.strikethrough && 'line-through']
-        .filter(Boolean)
-        .join(' ') || 'none',
-    color: props.color,
-    textAlign: props.align,
-    lineHeight: props.lineHeight,
-    letterSpacing: props.letterSpacing ? props.letterSpacing * scale * 0.1 : undefined,
+    ...face,
     padding: 0,
     margin: 0,
     border: '1px solid #3b82f6',
@@ -183,6 +226,22 @@ export function InlineTextEditor({
         style={{ ...style, resize: undefined, cursor: 'text' }}
         onKeyDownCapture={(e) => {
           const modifier = e.ctrlKey || e.metaKey;
+          if (cell) {
+            if (e.key === 'Escape') {
+              e.preventDefault();
+              e.stopPropagation();
+              cancel();
+            } else if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              e.stopPropagation();
+              commit();
+            } else if (e.key === '{' && onRequestField) {
+              e.preventDefault();
+              e.stopPropagation();
+              onRequestField();
+            }
+            return;
+          }
           if (e.key === 'Escape' || (modifier && e.key === 'Enter')) {
             e.preventDefault();
             e.stopPropagation();
@@ -190,8 +249,10 @@ export function InlineTextEditor({
           }
         }}
         onBlur={(e) => {
-          // Moving within the editor is not leaving it.
-          if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+          // Moving within the editor is not leaving it, nor is focus going to the field picker.
+          const to = e.relatedTarget as HTMLElement | null;
+          if (e.currentTarget.contains(to)) return;
+          if (holdBlur || to?.closest?.('[role="dialog"]')) return;
           commit();
         }}
       >
@@ -201,16 +262,20 @@ export function InlineTextEditor({
         <RichTextEditor
           toolbar="none"
           mergeFields
+          mergeFieldLabel={fieldLabel}
           className="h-full"
           value={seedHtml}
           aria-labelledby={labelId}
           onChange={(html) => {
-            const next = contentFromEditorHtml(html);
+            const stored = contentFromEditorHtml(html);
+            // A cell keeps plain text: its face is the table's (canvas, print and PowerPoint).
+            const next = cell && isRich(stored) ? richPlainText(stored) : stored;
             textRef.current = next;
             setText(next);
             onChangeText?.(next);
           }}
           onEditorReady={(editor: Editor) => {
+            onEditorReady?.(editor);
             // Once, on open: caret at the end (AC-S2-1), never re-grabbed on a later render.
             if (focusedRef.current) return;
             focusedRef.current = true;

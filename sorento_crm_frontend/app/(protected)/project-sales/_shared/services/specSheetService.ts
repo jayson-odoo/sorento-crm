@@ -29,6 +29,10 @@ export interface SpecSheetRow {
   marker: string;
   hidden: boolean;
   accessories: string[];
+  /** Per-sheet "Spec sheet description" override of the page's item; '' = none. */
+  description?: string;
+  /** The same for accessories, by product id. */
+  accessory_descriptions?: Record<string, string>;
 }
 
 export interface SpecSheetAccessory {
@@ -39,6 +43,8 @@ export interface SpecSheetAccessory {
   code: string;
   name: string;
   brand: string;
+  /** The product's own spec sheet text (field, else description). */
+  spec_sheet_description?: string;
 }
 
 export type SpecSheetPageTemplate = 'cover' | 'page' | 'single';
@@ -59,6 +65,10 @@ export interface SpecSheetPage {
   hidden: boolean;
   picked: string[];
   accessories: SpecSheetAccessory[];
+  /** The override typed on this sheet ('' = none), and the product text it replaces. */
+  description?: string;
+  accessory_descriptions?: Record<string, string>;
+  spec_sheet_description_default?: string;
   edited: boolean;
   template: SpecSheetPageTemplate;
 }
@@ -336,6 +346,27 @@ export interface ApplyAllChanges {
   props?: Record<string, string | number | boolean>;
 }
 
+/** B6: add a new element (the client's layer) to every page; the server gives each copy its own id. */
+export async function addSpecSheetLayerToAll(
+  projectId: string,
+  documentId: string,
+  sheetId: string,
+  layer: TagLayer,
+  originPageKey?: string,
+): Promise<SpecSheetDetail> {
+  return read(
+    await apiFetch(
+      url(projectId, documentId, `/${sheetId}/layers/${encodeURIComponent(layer.id)}/apply-all`),
+      {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ op: 'add', layer, origin_page_key: originPageKey }),
+      },
+    ),
+    'Could not add the element to every page',
+  );
+}
+
 /** Move or restyle one layer on every page of the sheet that has it. */
 export async function applySpecSheetLayerToAll(
   projectId: string,
@@ -366,9 +397,10 @@ export async function queueSpecSheetPdf(
   projectId: string,
   documentId: string,
   sheetId: string,
+  format: 'pdf' | 'pptx' = 'pdf',
 ): Promise<QueuedDownload> {
   return read(
-    await apiFetch(url(projectId, documentId, `/${sheetId}/export`), {
+    await apiFetch(url(projectId, documentId, `/${sheetId}/export?format=${format}`), {
       method: 'POST',
     }),
     'Could not queue the spec sheet',

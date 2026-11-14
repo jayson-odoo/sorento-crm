@@ -35,6 +35,9 @@ const PROP_KEYS = new Set([
   'strokeWidth',
   'cornerRadius',
   'maskShape',
+  // SPEC-SHEET-PARITY-B2 v3: ALL CAPS (text, table) and a table's Header row are style too.
+  'uppercase',
+  'headerRow',
 ]);
 
 /** The part of an inspector change that may go to every page, or null when none of it may. */

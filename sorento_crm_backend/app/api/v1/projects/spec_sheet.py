@@ -9,7 +9,7 @@ Plan: ``documentation/plans/project-sales/PLAN-spec-sheet-v2-03nov.md``.
 """
 from __future__ import annotations
 
-from typing import Annotated, List, Optional
+from typing import Annotated, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
@@ -40,6 +40,11 @@ class SpecSheetRowIn(BaseModel):
     accessories: List[Annotated[str, Field(min_length=1, max_length=120)]] = Field(
         default_factory=list, max_length=20
     )
+    # B1: per-sheet "Spec sheet description" overrides; left out = the stored ones are kept.
+    description: Optional[str] = Field(None, max_length=spec.DESCRIPTION_MAX)
+    accessory_descriptions: Optional[
+        Dict[Annotated[str, Field(max_length=120)], Annotated[str, Field(max_length=spec.DESCRIPTION_MAX)]]
+    ] = Field(None, max_length=spec.ACCESSORY_DESCRIPTIONS_MAX)
 
 
 class SpecSheetCreateIn(BaseModel):
@@ -65,7 +70,11 @@ class SpecSheetLayersIn(BaseModel):
 
 
 class SpecSheetApplyIn(BaseModel):
+    # `change` (default): move / restyle the layer the URL names on every page that has it.
+    # `add` (B6): add `layer` (whose id is the URL's) to every page.
+    op: Literal["change", "add"] = "change"
     changes: dict = Field(default_factory=dict)
+    layer: Optional[dict] = None
     # The page the change was made on: a cover applies to the cover, an item page to item pages.
     origin_page_key: Optional[str] = Field(None, max_length=200)
 
@@ -285,19 +294,30 @@ def apply_spec_sheet_layer_to_all(
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
 ):
-    """Move or restyle one layer on every page of the sheet that has it."""
+    """Move or restyle one layer on every page of the sheet that has it, or (``op: add``) add a
+    new layer to every page."""
     try:
         _editable_project(db, project_id, current_user)
         document = _document(db, project_id, document_id)
         sheet = _sheet(db, document, sheet_id, lock=True)
-        spec.apply_to_all_pages(
-            db,
-            sheet,
-            layer_id,
-            payload.changes,
-            user_id=str(current_user["id"]),
-            origin_page_key=payload.origin_page_key,
-        )
+        if payload.op == "add":
+            spec.add_layer_to_all_pages(
+                db,
+                sheet,
+                layer_id,
+                payload.layer,
+                user_id=str(current_user["id"]),
+                origin_page_key=payload.origin_page_key,
+            )
+        else:
+            spec.apply_to_all_pages(
+                db,
+                sheet,
+                layer_id,
+                payload.changes,
+                user_id=str(current_user["id"]),
+                origin_page_key=payload.origin_page_key,
+            )
         db.commit()
         db.refresh(sheet)
         return spec.detail_view(db, document, sheet, can_edit=True)
@@ -311,15 +331,16 @@ def export_spec_sheet(
     document_id: str,
     sheet_id: str,
     current_user: dict = Depends(require_any_permission_with_api_key(READ)),
+    format: Annotated[str, Query(pattern="^(pdf|pptx)$")] = "pdf",
     db: Session = Depends(get_db),
 ):
-    """Queue the PDF; it appears in My Downloads when it is ready."""
+    """Queue the PDF (or ``format=pptx`` for a PowerPoint deck); it appears in My Downloads when ready."""
     from app.schemas.download import DownloadResponse
 
     try:
         document = _document(db, project_id, document_id)
         sheet = _sheet(db, document, sheet_id)
-        download = spec.request_export(db, sheet, user_id=str(current_user["id"]))
+        download = spec.request_export(db, sheet, user_id=str(current_user["id"]), fmt=format)
         db.commit()
         return DownloadResponse.model_validate(download)
     except Exception as exc:

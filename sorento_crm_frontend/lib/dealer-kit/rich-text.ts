@@ -41,6 +41,14 @@ export function isRich(value: string | null | undefined): boolean {
   return !!value && RICH_START.test(value);
 }
 
+/** SPEC-SHEET-PARITY-B2 v3 (AC-C5.2): the same blocks with every run in capitals (ALL CAPS). */
+export function uppercaseBlocks(blocks: RichBlock[]): RichBlock[] {
+  return blocks.map((block) => ({
+    ...block,
+    runs: block.runs.map((run) => ({ ...run, text: run.text.toUpperCase() })),
+  }));
+}
+
 const COLOUR =
   /^(?:#[0-9a-fA-F]{3}|#[0-9a-fA-F]{6}|rgb\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*\))$/;
 

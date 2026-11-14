@@ -1,8 +1,7 @@
 # PLAN: spec sheet designer parity with the price tag designer
 
-Status: Slice A in review, hand test posted (small fix track: FE + one additive backend field, no
-migration, no auth/RBAC change). Slice B: owner answered 1 (a), 3 (a), 4 (a) via the standard
-export/download flow, mock approved; Q2 pending. Slice B build starts after slice A's hand test.
+Status: merged, PR #2331 (c3169d9c, 11 Nov 2026). Slice B continues in
+`PLAN-spec-sheet-designer-parity-b-11nov.md` (PR #2349).
 
 Lane: SPEC-SHEET-DESIGNER-PARITY. Owner feedback 11 Nov 2026 (spec sheet SS1 Draft).
 

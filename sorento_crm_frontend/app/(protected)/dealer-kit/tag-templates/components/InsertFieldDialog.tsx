@@ -34,7 +34,7 @@ import type { MergeField, MergeFieldGroup, SpecKeyOption } from '@/lib/dealer-ki
 import { mergeFieldCatalog, renderMergeFields } from '@/lib/dealer-kit/merge-fields';
 import type { TagBindingData } from '@/lib/dealer-kit/tag-template-types';
 
-const GROUP_ORDER: MergeFieldGroup[] = ['Product', 'Specs', 'Set', 'Line', 'Combo', 'Parts', 'Combo positions', 'Spec sheet'];
+const GROUP_ORDER: MergeFieldGroup[] = ['Product', 'Specs', 'Set', 'Line', 'Combo', 'Parts', 'Combo positions', 'Accessories', 'Spec sheet'];
 
 interface InsertFieldDialogProps {
   open: boolean;
@@ -63,6 +63,12 @@ interface InsertFieldDialogProps {
   context?: { before: string; after: string };
   onCancel: () => void;
   onDone: (content: string) => void;
+  /**
+   * SPEC-SHEET-PARITY-B2 v3 (AC-C3.2): insert ONE field at the caller's cursor. Given, a click on a
+   * field hands back its token at once (the caller puts it in at its own caret) and the dialog shows
+   * only the list; `value` and `onDone` are not used.
+   */
+  onPick?: (token: string) => void;
 }
 
 export function InsertFieldDialog({
@@ -77,6 +83,7 @@ export function InsertFieldDialog({
   context,
   onCancel,
   onDone,
+  onPick,
 }: InsertFieldDialogProps) {
   const [content, setContent] = useState(value);
   const [query, setQuery] = useState('');
@@ -128,6 +135,10 @@ export function InsertFieldDialog({
   };
 
   const insert = (field: MergeField) => {
+    if (onPick) {
+      onPick(field.token);
+      return;
+    }
     // With a context the content is only the picked fields, and the insert point follows them.
     if (context) {
       setContent((current) => current + field.token);
@@ -158,71 +169,73 @@ export function InsertFieldDialog({
           <DialogTitle>Insert field</DialogTitle>
         </DialogHeader>
         <DialogBody className="flex flex-col gap-3">
-          <div className="flex flex-col gap-1">
-            <Label
-              id="merge-field-content-label"
-              htmlFor="merge-field-content"
-              className="text-xs text-muted-foreground"
-            >
-              Content
-            </Label>
-            {context ? (
-              <div
-                id="merge-field-content"
-                role="textbox"
-                aria-readonly="true"
-                aria-multiline="true"
-                aria-labelledby="merge-field-content-label"
-                tabIndex={0}
-                className="min-h-[72px] w-full whitespace-pre-wrap rounded-md border bg-background px-2 py-1 text-xs"
+          {!onPick && (
+            <div className="flex flex-col gap-1">
+              <Label
+                id="merge-field-content-label"
+                htmlFor="merge-field-content"
+                className="text-xs text-muted-foreground"
               >
-                {context.before}
-                {content}
-                <span
-                  data-testid="insert-point"
-                  role="img"
-                  aria-label="Insert point"
-                  className="inline-block h-3 w-px translate-y-0.5 bg-primary align-baseline"
+                Content
+              </Label>
+              {context ? (
+                <div
+                  id="merge-field-content"
+                  role="textbox"
+                  aria-readonly="true"
+                  aria-multiline="true"
+                  aria-labelledby="merge-field-content-label"
+                  tabIndex={0}
+                  className="min-h-[72px] w-full whitespace-pre-wrap rounded-md border bg-background px-2 py-1 text-xs"
+                >
+                  {context.before}
+                  {content}
+                  <span
+                    data-testid="insert-point"
+                    role="img"
+                    aria-label="Insert point"
+                    className="inline-block h-3 w-px translate-y-0.5 bg-primary align-baseline"
+                  />
+                  {context.after}
+                </div>
+              ) : tokenLabel ? (
+                <div
+                  id="merge-field-content"
+                  role="textbox"
+                  aria-readonly="true"
+                  aria-multiline="true"
+                  aria-labelledby="merge-field-content-label"
+                  tabIndex={0}
+                  className="min-h-[72px] w-full whitespace-pre-wrap rounded-md border bg-background px-2 py-1 text-xs"
+                >
+                  {content.split(/(\{\{\s*[A-Za-z0-9_.]+\s*\}\})/).map((piece, index) => {
+                    const path = piece.match(/^\{\{\s*([A-Za-z0-9_.]+)\s*\}\}$/)?.[1];
+                    return path ? (
+                      <span key={index} className="rounded bg-sky-50 px-0.5 text-sky-700 dark:bg-sky-950/40 dark:text-sky-300">
+                        {tokenLabel(path) ?? piece}
+                      </span>
+                    ) : (
+                      <span key={index}>{piece}</span>
+                    );
+                  })}
+                </div>
+              ) : (
+                <textarea
+                  id="merge-field-content"
+                  ref={contentRef}
+                  className="min-h-[72px] w-full rounded-md border bg-background px-2 py-1 text-xs"
+                  value={content}
+                  onChange={(e) => {
+                    setContent(e.target.value);
+                    rememberCaret();
+                  }}
+                  onSelect={rememberCaret}
+                  onKeyUp={rememberCaret}
+                  onClick={rememberCaret}
                 />
-                {context.after}
-              </div>
-            ) : tokenLabel ? (
-              <div
-                id="merge-field-content"
-                role="textbox"
-                aria-readonly="true"
-                aria-multiline="true"
-                aria-labelledby="merge-field-content-label"
-                tabIndex={0}
-                className="min-h-[72px] w-full whitespace-pre-wrap rounded-md border bg-background px-2 py-1 text-xs"
-              >
-                {content.split(/(\{\{\s*[A-Za-z0-9_.]+\s*\}\})/).map((piece, index) => {
-                  const path = piece.match(/^\{\{\s*([A-Za-z0-9_.]+)\s*\}\}$/)?.[1];
-                  return path ? (
-                    <span key={index} className="rounded bg-sky-50 px-0.5 text-sky-700 dark:bg-sky-950/40 dark:text-sky-300">
-                      {tokenLabel(path) ?? piece}
-                    </span>
-                  ) : (
-                    <span key={index}>{piece}</span>
-                  );
-                })}
-              </div>
-            ) : (
-              <textarea
-                id="merge-field-content"
-                ref={contentRef}
-                className="min-h-[72px] w-full rounded-md border bg-background px-2 py-1 text-xs"
-                value={content}
-                onChange={(e) => {
-                  setContent(e.target.value);
-                  rememberCaret();
-                }}
-                onSelect={rememberCaret}
-                onKeyUp={rememberCaret}
-                onClick={rememberCaret}
-              />
-            )}
-          </div>
+              )}
+            </div>
+          )}
 
           <Input
             placeholder="Search fields..."
@@ -275,18 +288,20 @@ export function InsertFieldDialog({
             </div>
           </ScrollArea>
 
-          <div className="flex flex-col gap-1">
-            <span className="text-xs text-muted-foreground">Preview:</span>
-            <span className="whitespace-pre-wrap rounded-md bg-muted px-2 py-1 text-xs">
-              {preview ?? '(preview a product to see values)'}
-            </span>
-          </div>
+          {!onPick && (
+            <div className="flex flex-col gap-1">
+              <span className="text-xs text-muted-foreground">Preview:</span>
+              <span className="whitespace-pre-wrap rounded-md bg-muted px-2 py-1 text-xs">
+                {preview ?? '(preview a product to see values)'}
+              </span>
+            </div>
+          )}
         </DialogBody>
         <DialogFooter>
           <Button variant="outline" onClick={onCancel}>
             Cancel
           </Button>
-          <Button onClick={() => onDone(content)}>Done</Button>
+          {!onPick && <Button onClick={() => onDone(content)}>Done</Button>}
         </DialogFooter>
       </DialogContent>
     </Dialog>

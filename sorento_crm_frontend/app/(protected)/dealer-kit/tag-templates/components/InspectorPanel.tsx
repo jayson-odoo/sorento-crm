@@ -14,6 +14,7 @@ import type {
   FeatureIconsLayerProps,
 } from '@/lib/dealer-kit/tag-template-types';
 import { featureIconFit } from '@/lib/dealer-kit/feature-icons';
+import { cellAnchor, setCellBorder, TABLE_COLUMN_MIN_MM, TABLE_ROW_MIN_MM } from '@/lib/dealer-kit/table-layout';
 import {
   accessoryBoxLayout,
   accessoryHeaderStyle,
@@ -301,6 +302,8 @@ interface InspectorPanelProps {
   /** PRICETAG-HEADER-DRAG round 2: the box's header is selected (its band as drawn, box mm); the
    *  header inspector replaces the box one, as the element inspector does in card editing. */
   accessoryHeaderSelected?: AccessoryRect | null;
+  /** B4: the table cell the Inspector edits (a right-click picks it); null = the first cell. */
+  tableCell?: { row: number; col: number } | null;
 }
 
 export function InspectorPanel({
@@ -313,6 +316,7 @@ export function InspectorPanel({
   fontOptions,
   onUploadFont,
   onInsertField,
+  tableCell,
   onContentEditorReady,
   onChooseImage,
   onChooseBadge,
@@ -439,7 +443,7 @@ export function InspectorPanel({
               usedColours={usedColours}
               fontOptions={fontOptions ?? STATIC_FONT_OPTIONS}
               onUploadFont={onUploadFont}
-              onChange={(changes) => onUpdateProps(layer.id, { ...layer.props, ...changes })}
+              onChange={(changes) => onUpdateProps(layer.id, { ...layer.props, ...changes } as Partial<TagLayerProps>)}
             />
           </div>
         ) : layer.props.kind === 'accessories' &&
@@ -641,6 +645,16 @@ export function InspectorPanel({
               onUploadFont={onUploadFont}
             />
           )}
+          {layer.props.kind === 'table' && (
+            <TableInspector
+              props={layer.props}
+              cellAt={tableCell ?? { row: 0, col: 0 }}
+              onChange={updateProps}
+              layerWidth={layer.width_mm}
+              onResize={(width_mm) => onUpdate(layer.id, { width_mm })}
+              usedColours={usedColours}
+            />
+          )}
           {layer.props.kind === 'shape' && (
             <ShapeInspector props={layer.props} onChange={updateProps} usedColours={usedColours} />
           )}
@@ -668,7 +682,7 @@ export function InspectorPanel({
               onManageIcons={onManageIcons}
               iconCount={featureIconCount ?? 0}
               boxWidth_mm={layer.width_mm}
-              onChange={(changes) => onUpdateProps(layer.id, { ...layer.props, ...changes })}
+              onChange={(changes) => onUpdateProps(layer.id, { ...layer.props, ...changes } as Partial<TagLayerProps>)}
             />
           )}
           {layer.props.kind === 'accessories' && (
@@ -680,7 +694,7 @@ export function InspectorPanel({
               usedColours={usedColours}
               fontOptions={fontOptions ?? STATIC_FONT_OPTIONS}
               onUploadFont={onUploadFont}
-              onChange={(changes) => onUpdateProps(layer.id, { ...layer.props, ...changes })}
+              onChange={(changes) => onUpdateProps(layer.id, { ...layer.props, ...changes } as Partial<TagLayerProps>)}
               onEditCard={onEditAccessoryCard ? () => onEditAccessoryCard(layer.id) : undefined}
               onEditFooter={onEditAccessoryFooter ? () => onEditAccessoryFooter(layer.id) : undefined}
               onSaveTemplate={
@@ -897,6 +911,13 @@ function TextInspector({
         {layer.slot_binding != null && layer.slot_binding in UPGRADE_SLOT_PREFIX && (
           <UpgradeFigureControls props={props} onChange={onChange} />
         )}
+        <label className="flex items-center gap-1.5 text-xs">
+          <Checkbox
+            checked={!!props.uppercase}
+            onCheckedChange={(v) => onChange({ ...props, uppercase: !!v })}
+          />
+          ALL CAPS
+        </label>
         <TypographyControls
           values={{
             fontFamily: props.fontFamily,
@@ -1254,6 +1275,146 @@ function withShape(
     // in place.
     points: shape === 'polygon' ? (props.points ?? defaultPolygonPoints()) : undefined,
   };
+}
+
+/** A millimetre value to 0.1 mm, as the boxes show it (v3 browser F3). */
+const tenthMm = (value: number) => Math.round(value * 10) / 10;
+
+const TABLE_SIDE_OPTIONS = [
+  { value: 'all', label: 'All sides' },
+  { value: 'top', label: 'Top' },
+  { value: 'right', label: 'Right' },
+  { value: 'bottom', label: 'Bottom' },
+  { value: 'left', label: 'Left' },
+];
+
+/**
+ * B4: the table's size, then the picked cell (picked and typed on the page, v3 AC-C3.4): its row
+ * height and column width, borders, padding and fill.
+ */
+function TableInspector({
+  props,
+  cellAt,
+  onChange,
+  layerWidth,
+  onResize,
+  usedColours,
+}: {
+  props: Extract<TagLayerProps, { kind: 'table' }>;
+  cellAt: { row: number; col: number };
+  onChange: (changes: Partial<TagLayerProps>) => void;
+  /** The table layer's width (mm): stored column widths are relative to it (v3 review S1). */
+  layerWidth: number;
+  /** A one-column table's Column width is the table's own width. */
+  onResize: (width_mm: number) => void;
+  usedColours: string[];
+}) {
+  const [side, setSide] = useState('all');
+  const { row, col } = cellAnchor(props, cellAt.row, cellAt.col);
+  // Stored widths are relative: the layout scales them to the layer width (`tableLayout`), the
+  // same scale the canvas edge drag converts through (`TableEdgeHandles`).
+  const storedTotal = props.columns.reduce((sum, c) => sum + c.width_mm, 0);
+  const scale = storedTotal > 0 ? layerWidth / storedTotal : 1;
+  const printedWidth = (index: number) => props.columns[index].width_mm * scale;
+  /** Column width (printed mm): the neighbour (right, else left) gives the width up. */
+  const setColumnWidth = (value: number) => {
+    if (props.columns.length === 1) {
+      onResize(tenthMm(Math.max(TABLE_COLUMN_MIN_MM, value)));
+      return;
+    }
+    const other = col + 1 < props.columns.length ? col + 1 : col - 1;
+    const pair = printedWidth(col) + printedWidth(other);
+    const mine = Math.min(pair - TABLE_COLUMN_MIN_MM, Math.max(TABLE_COLUMN_MIN_MM, value));
+    const stored = tenthMm(mine / scale);
+    const pairStored = props.columns[col].width_mm + props.columns[other].width_mm;
+    onChange({
+      ...props,
+      columns: props.columns.map((c, i) =>
+        i === col ? { ...c, width_mm: stored } : i === other ? { ...c, width_mm: tenthMm(pairStored - stored) } : c,
+      ),
+    });
+  };
+  const cell = props.cells[row][col];
+  const shown = cell.border?.[side === 'all' ? 'top' : (side as 'top' | 'right' | 'bottom' | 'left')] ?? {
+    color: '#000000',
+    width_mm: 0,
+  };
+
+  const patchCell = (changes: Partial<(typeof props.cells)[number][number]>) =>
+    onChange({
+      ...props,
+      cells: props.cells.map((cells, r) => cells.map((c, i) => (r === row && i === col ? { ...c, ...changes } : c))),
+    });
+  // Both sides of a shared edge are written, so the drawn line shows what was edited.
+  const patchBorder = (changes: Partial<{ color: string; width_mm: number }>) =>
+    onChange(setCellBorder(props, row, col, side as 'all' | 'top' | 'right' | 'bottom' | 'left', { ...shown, ...changes }));
+
+  return (
+    <section>
+      <h4 className="mb-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">Table</h4>
+      <div className="flex flex-col gap-2">
+        <p className="text-xs text-muted-foreground">
+          {props.rows.length} rows x {props.columns.length} columns
+        </p>
+        <label className="flex items-center gap-1.5 text-xs">
+          <Checkbox
+            checked={!!props.headerRow}
+            onCheckedChange={(v) => onChange({ ...props, headerRow: !!v })}
+          />
+          Header row
+        </label>
+        <label className="flex items-center gap-1.5 text-xs">
+          <Checkbox
+            checked={!!props.uppercase}
+            onCheckedChange={(v) => onChange({ ...props, uppercase: !!v })}
+          />
+          ALL CAPS
+        </label>
+        <h4 className="mt-1 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">Cell</h4>
+        <div className="grid grid-cols-2 gap-2">
+          <NumberInput
+            label="Row height (mm)"
+            value={tenthMm(props.rows[row].height_mm)}
+            step={0.5}
+            min={TABLE_ROW_MIN_MM}
+            onChange={(v) => {
+              const height_mm = tenthMm(Math.max(TABLE_ROW_MIN_MM, v));
+              onChange({ ...props, rows: props.rows.map((r, i) => (i === row ? { ...r, height_mm } : r)) });
+            }}
+          />
+          <NumberInput
+            label="Column width (mm)"
+            value={tenthMm(props.columns.length === 1 ? layerWidth : printedWidth(col))}
+            step={0.5}
+            min={TABLE_COLUMN_MIN_MM}
+            onChange={setColumnWidth}
+          />
+        </div>
+        <div className="flex flex-col gap-1">
+          <Label className="text-xs text-muted-foreground">Border</Label>
+          <SearchableSelect value={side} onChange={(v: string) => setSide(v)} options={TABLE_SIDE_OPTIONS} />
+        </div>
+        <ColorPicker label="Border colour" value={shown.color} onChange={(v) => patchBorder({ color: v })} usedColours={usedColours} />
+        <div className="grid grid-cols-2 gap-2">
+          <NumberInput
+            label="Border width"
+            value={shown.width_mm}
+            step={0.1}
+            min={0}
+            onChange={(v) => patchBorder({ width_mm: v })}
+          />
+          <NumberInput
+            label="Padding"
+            value={cell.padding_mm ?? 1}
+            step={0.5}
+            min={0}
+            onChange={(v) => patchCell({ padding_mm: v })}
+          />
+        </div>
+        <ColorPicker label="Fill" value={cell.fill ?? ''} onChange={(v) => patchCell({ fill: v || undefined })} usedColours={usedColours} />
+      </div>
+    </section>
+  );
 }
 
 function ShapeInspector({
@@ -2791,6 +2952,10 @@ function FeatureIconsInspector({
 const TEXT_FIELD_OPTIONS = [
   { value: 'name', label: 'Name' },
   { value: 'code', label: 'Code' },
+  { value: 'brand', label: 'Brand' },
+  { value: 'description', label: 'Description' },
+  { value: 'spec_sheet_description', label: 'Spec sheet description' },
+  { value: 'dimensions', label: 'Dimensions' },
   { value: 'spec', label: 'Spec lines' },
   { value: 'remark', label: 'Remark' },
   { value: 'price', label: 'Price' },

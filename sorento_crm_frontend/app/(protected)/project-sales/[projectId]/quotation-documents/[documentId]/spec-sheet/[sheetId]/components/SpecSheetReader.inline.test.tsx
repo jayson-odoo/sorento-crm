@@ -90,6 +90,8 @@ const getSpecSheet = vi.fn();
 const getSpecSheetPreview = vi.fn();
 const saveSpecSheetPageEdit = vi.fn();
 const applySpecSheetLayerToAll = vi.fn();
+// B6: the apply-all `add` operation (contract: layer + origin page key).
+const addSpecSheetLayerToAll = vi.fn();
 const updateSpecSheet = vi.fn();
 const listSpecSheets = vi.fn();
 vi.mock(
@@ -105,6 +107,7 @@ vi.mock(
     saveSpecSheetPageEdit: (...a: unknown[]) => saveSpecSheetPageEdit(...a),
     applySpecSheetLayerToAll: (...a: unknown[]) =>
       applySpecSheetLayerToAll(...a),
+    addSpecSheetLayerToAll: (...a: unknown[]) => addSpecSheetLayerToAll(...a),
     queueSpecSheetPdf: vi.fn(),
   }),
 );
@@ -137,6 +140,17 @@ vi.mock('@/services/pendingActionService', () => ({
 vi.mock('@/lib/dealer-kit/fonts', () => ({
   ensureFontsLoaded: vi.fn(async () => undefined),
   ensureSeedFontsLoaded: vi.fn(async () => undefined),
+}));
+// B7: a deferred action commits the moment it starts (the 5 s window is not under test).
+vi.mock('@/hooks/useDeferredAction', () => ({
+  useDeferredAction: (input: { onCommitted?: () => void }) => ({
+    pending: null,
+    isPending: false,
+    isBlocked: false,
+    start: () => input.onCommitted?.(),
+    cancel: () => undefined,
+    countdown: null,
+  }),
 }));
 let mobile = false;
 vi.mock('@/hooks/use-mobile', () => ({ useIsMobile: () => mobile }));
@@ -218,6 +232,9 @@ type FakeProps = {
   };
 };
 const liveSeen = new Set<string>();
+// B6: what the toolbar asked each page's canvas to add.
+const addCalls: { key: string; kind: string }[] = [];
+const groupCalls: string[] = [];
 const mounts = new Map<string, number>();
 let lastDocLayers: Record<string, unknown>[] = [];
 let livePeak = 0;
@@ -263,6 +280,26 @@ vi.mock(
                 : l,
             ),
           ),
+        groupSelected: () => groupCalls.push(key),
+        ungroupSelected: () => groupCalls.push(`un:${key}`),
+        addLayer: (kind: string) => {
+          addCalls.push({ key, kind });
+          change([
+            ...latest.current,
+            {
+              id: `new-${kind}`,
+              type: kind,
+              x_mm: 10,
+              y_mm: 10,
+              width_mm: 30,
+              height_mm: 8,
+              rotation_deg: 0,
+              z_index: 9,
+              visible: true,
+              props: { kind },
+            },
+          ]);
+        },
       };
       return (
         <div
@@ -292,6 +329,38 @@ vi.mock(
             onClick={() => props.embedded.onEditField?.('area')}
           >
             {`double-click area ${key}`}
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              change(
+                latest.current.map((l) =>
+                  l.id === 'new-image'
+                    ? { ...l, props: { ...(l.props as object), source: { type: 'asset', assetId: 'a1' } } }
+                    : l,
+                ),
+              )
+            }
+          >
+            {`pick artwork ${key}`}
+          </button>
+          <button
+            type="button"
+            onClick={() => change(latest.current.filter((l) => l.id !== 'new-image'))}
+          >
+            {`drop new image ${key}`}
+          </button>
+          <button
+            type="button"
+            onClick={() => props.embedded.onEditField?.('desc')}
+          >
+            {`double-click description ${key}`}
+          </button>
+          <button
+            type="button"
+            onClick={() => props.embedded.onEditField?.('desc0')}
+          >
+            {`double-click accessory description ${key}`}
           </button>
         </div>
       );
@@ -332,6 +401,21 @@ const AREA = {
   props: { ...LOGO.props, text: 'AREA : {{line.area}}' },
 };
 
+// B1: a text layer printing the spec sheet description, for the main item and for accessory 1.
+const DESC = {
+  ...LOGO,
+  id: 'desc',
+  y_mm: 60,
+  z_index: 3,
+  props: { ...LOGO.props, text: '{{product.spec_sheet_description}}' },
+};
+const DESC0 = {
+  ...DESC,
+  id: 'desc0',
+  y_mm: 80,
+  props: { ...DESC.props, subjectPart: 0 },
+};
+
 function detail() {
   return {
     id: 'sheet-1',
@@ -360,7 +444,23 @@ function detail() {
       marker: '',
       hidden: false,
       picked: [],
-      accessories: [],
+      accessories:
+        key === 'k2'
+          ? [
+              {
+                key: null,
+                source: 'set',
+                product_id: 'acc-1',
+                code: 'AV-1',
+                name: 'Angle valve',
+                brand: '',
+                spec_sheet_description: 'Valve default',
+              },
+            ]
+          : [],
+      description: key === 'k3' ? 'Typed before' : '',
+      accessory_descriptions: {},
+      spec_sheet_description_default: `Default of ${key}`,
       edited: false,
       template: key === 'cover' ? 'cover' : 'page',
     })),
@@ -392,7 +492,7 @@ function previewFor(keys: string[]) {
             y_mm: 0,
             width_mm: 338.7,
             height_mm: 190.5,
-            layers: [LOGO, AREA],
+            layers: [LOGO, AREA, DESC, DESC0],
           },
         ],
       })),
@@ -425,6 +525,9 @@ const live = () => document.querySelectorAll('[data-testid^="live-canvas-"]');
 beforeEach(() => {
   observers.length = 0;
   liveSeen.clear();
+  addCalls.length = 0;
+  groupCalls.length = 0;
+  addSpecSheetLayerToAll.mockReset().mockResolvedValue(detail());
   livePeak = 0;
   liveNow = 0;
   mobile = false;
@@ -899,6 +1002,78 @@ describe('AREA, COMMENT and marker on a live page', () => {
   });
 });
 
+describe('the spec sheet description override on a live page (B1)', () => {
+  async function openLive(key: string) {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report([key]);
+    await screen.findByTestId(`live-canvas-${key}`);
+    return screen.getByTestId(`live-canvas-${key}`);
+  }
+  const lastRows = () =>
+    (updateSpecSheet.mock.calls.at(-1)![3] as { rows: Record<string, unknown>[] })
+      .rows;
+
+  it('a double-click opens a multi-line box with the product text; Enter adds a line, Ctrl+Enter saves the override', async () => {
+    const canvas = await openLive('k1');
+    fireEvent.click(within(canvas).getByText('double-click description k1'));
+    const box = (await screen.findByRole('textbox', {
+      name: 'Spec sheet description',
+    })) as HTMLTextAreaElement;
+    expect(box.tagName).toBe('TEXTAREA');
+    expect(box.value).toBe('Default of k1');
+
+    fireEvent.change(box, { target: { value: 'Line one\nLine two' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    expect(updateSpecSheet).not.toHaveBeenCalled();
+    fireEvent.keyDown(box, { key: 'Enter', ctrlKey: true });
+    await waitFor(() => expect(updateSpecSheet).toHaveBeenCalled());
+    expect(lastRows().find((r) => r.key === 'k1')).toMatchObject({
+      description: 'Line one\nLine two',
+    });
+  });
+
+  it('Escape cancels without saving', async () => {
+    const canvas = await openLive('k1');
+    fireEvent.click(within(canvas).getByText('double-click description k1'));
+    const box = await screen.findByRole('textbox', { name: 'Spec sheet description' });
+    fireEvent.change(box, { target: { value: 'Never saved' } });
+    fireEvent.keyDown(box, { key: 'Escape' });
+    expect(screen.queryByRole('textbox', { name: 'Spec sheet description' })).toBeNull();
+    expect(updateSpecSheet).not.toHaveBeenCalled();
+  });
+
+  it('shows the stored override, and "Reset to product text" clears it', async () => {
+    const canvas = await openLive('k3');
+    fireEvent.click(within(canvas).getByText('double-click description k3'));
+    const box = (await screen.findByRole('textbox', {
+      name: 'Spec sheet description',
+    })) as HTMLTextAreaElement;
+    expect(box.value).toBe('Typed before');
+    fireEvent.mouseDown(screen.getByRole('button', { name: 'Reset to product text' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Reset to product text' }));
+    await waitFor(() => expect(updateSpecSheet).toHaveBeenCalled());
+    expect(lastRows().find((r) => r.key === 'k3')).toMatchObject({ description: '' });
+  });
+
+  it('a layer pointed at an accessory edits that accessory by product id', async () => {
+    const canvas = await openLive('k2');
+    fireEvent.click(
+      within(canvas).getByText('double-click accessory description k2'),
+    );
+    const box = (await screen.findByRole('textbox', {
+      name: 'Spec sheet description',
+    })) as HTMLTextAreaElement;
+    expect(box.value).toBe('Valve default');
+    fireEvent.change(box, { target: { value: 'Valve typed' } });
+    fireEvent.keyDown(box, { key: 'Enter', metaKey: true });
+    await waitFor(() => expect(updateSpecSheet).toHaveBeenCalled());
+    const row = lastRows().find((r) => r.key === 'k2')!;
+    expect(row).toMatchObject({ accessory_descriptions: { 'acc-1': 'Valve typed' } });
+    expect(row.description).toBe('');
+  });
+});
+
 describe('the save state in the toolbar', () => {
   it('has a fixed width and never wraps, so "Saving..." vs "Saved" cannot reflow the toolbar', async () => {
     renderReader();
@@ -951,7 +1126,7 @@ describe('thumbnail rail', () => {
     expect(getSpecSheetPreview).toHaveBeenCalledTimes(2);
   });
 
-  it('shows an edited dot and greys a left-out page', async () => {
+  it('shows an edited dot, and a left-out page is listed under Removed pages, not as a thumbnail (v3 AC-C2.3)', async () => {
     getSpecSheet.mockResolvedValue({
       ...detail(),
       pages: detail().pages.map((p) =>
@@ -967,7 +1142,8 @@ describe('thumbnail rail', () => {
     expect(
       within(screen.getByTestId('spec-rail-k3')).getByLabelText('Edited'),
     ).toBeInTheDocument();
-    expect(screen.getByTestId('spec-rail-k4').className).toMatch(/opacity-50/);
+    expect(screen.queryByTestId('spec-rail-k4')).toBeNull();
+    expect(screen.getByTestId('spec-rail-removed')).toHaveTextContent('CODE-k4');
   });
 });
 
@@ -1171,34 +1347,31 @@ describe('a page that does not move under the pointer', () => {
     expect(header().className).not.toContain('flex-wrap');
     expect(header().className).toContain('h-8');
     fireEvent.mouseEnter(wrap);
-    const actions = await screen.findByTestId('spec-sheet-leave-out-k29');
+    // v3 AC-C2.4: no Leave out button; the floating actions hold the Add accessory picker.
+    const label = await within(wrap).findByText('Add accessory', { selector: 'label' });
     expect(header().className).not.toContain('flex-wrap');
     expect(header().className).toContain('h-8');
-    expect(actions.parentElement!.className).toContain('absolute');
+    expect(label.closest('.absolute')).not.toBeNull();
     fireEvent.mouseLeave(wrap);
   });
 
-  it('the toolbar holds the SAME format bar in every selection state (only hidden), so its height never changes', async () => {
+  it('the one toolbar row keeps its fixed height whether or not the text format controls show (v3 AC-C1.4)', async () => {
     renderReader();
     await screen.findByTestId('spec-page-k29');
-    // Nothing selected: the real bar, invisible and out of the accessibility tree.
-    const hidden = document.querySelector(
-      '[role="group"][aria-label="Text formatting"]',
-    ) as HTMLElement;
-    expect(hidden).not.toBeNull();
-    expect(hidden.className).toContain('invisible');
-    const shape = (el: HTMLElement) =>
-      Array.from(el.querySelectorAll('*')).map((n) => n.tagName).join(',');
-    const before = shape(hidden);
+    const row = () => screen.getByTestId('spec-sheet-toolbar-row');
+    const bar = () => row().firstElementChild as HTMLElement;
+    // Nothing selected: no text format controls at all.
+    expect(screen.queryByRole('group', { name: 'Text formatting' })).toBeNull();
+    expect(bar().className.split(/\s+/)).toContain('h-10');
 
     report(['k1']);
     await screen.findByTestId('live-canvas-k1');
     fireEvent.click(
       within(screen.getByTestId('live-canvas-k1')).getByText('select k1'),
     );
-    const shown = await screen.findByRole('group', { name: 'Text formatting' });
-    expect(shown.className).not.toContain('invisible');
-    expect(shape(shown)).toBe(before);
+    const shown = await within(row()).findByRole('group', { name: 'Text formatting' });
+    expect(shown).toBeInTheDocument();
+    expect(bar().className.split(/\s+/)).toContain('h-10');
   });
 });
 
@@ -1371,7 +1544,7 @@ describe('SPEC-SHEET-EDITOR-UX: full screen, folding panels, Apply to, templates
     await screen.findByTestId('spec-page-k29');
     report(['k1']);
     const before = await screen.findByTestId('live-canvas-k1');
-    expect(before).toHaveAttribute('data-layers', 'logo,area');
+    expect(before).toHaveAttribute('data-layers', 'logo,area,desc,desc0');
 
     // The server now draws every unedited page from the other template.
     const switched = {
@@ -1431,7 +1604,7 @@ describe('SPEC-SHEET-EDITOR-UX: full screen, folding panels, Apply to, templates
     report(['cover', 'k1']);
     expect(await screen.findByTestId('live-canvas-k1')).toHaveAttribute(
       'data-layers',
-      'logo,area',
+      'logo,area,desc,desc0',
     );
     await screen.findByTestId('live-canvas-cover');
 
@@ -1488,7 +1661,7 @@ describe('SPEC-SHEET-EDITOR-UX: full screen, folding panels, Apply to, templates
 
     await switchTo('Page');
     await waitFor(() =>
-      expect(screen.getByTestId('live-canvas-k1')).toHaveAttribute('data-layers', 'logo,area'),
+      expect(screen.getByTestId('live-canvas-k1')).toHaveAttribute('data-layers', 'logo,area,desc,desc0'),
     );
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 1300));
@@ -1518,7 +1691,7 @@ describe('SPEC-SHEET-EDITOR-UX: full screen, folding panels, Apply to, templates
     report(['k13']);
     expect(await screen.findByTestId('live-canvas-k13')).toHaveAttribute(
       'data-layers',
-      'logo,area',
+      'logo,area,desc,desc0',
     );
     report(['k1']);
     await screen.findByTestId('live-canvas-k1');
@@ -1596,3 +1769,243 @@ describe('SPEC-SHEET-EDITOR-UX: full screen, folding panels, Apply to, templates
   });
 
 });
+
+describe('the page toolbar (B6)', () => {
+  const ADDS = ['Add Text', 'Add Image', 'Add Shape', 'Add Table', 'Add Accessories', 'Add Badge'];
+  const NOT_ON_A_SPEC_SHEET = [
+    'Add Product',
+    'Add Set',
+    'Add Alternatives Row',
+    'Add Price Badge',
+    'Add Barcode',
+    'Add Product Slot',
+  ];
+
+  it('offers the shared add buttons and Undo / Redo, Delete / Duplicate in the More menu, and not the price tag only ones', async () => {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    for (const name of [...ADDS, 'Undo', 'Redo']) {
+      expect(screen.getByRole('button', { name }), name).toBeInTheDocument();
+    }
+    // v3 AC-C1.3: no visible Delete / Duplicate icons; they are in the toolbar's More menu.
+    for (const name of ['Delete', 'Duplicate']) {
+      expect(screen.queryByRole('button', { name }), name).toBeNull();
+    }
+    const more = within(screen.getByTestId('spec-sheet-toolbar-row')).getAllByRole('button', {
+      name: /^More( actions)?$/,
+    })[0];
+    fireEvent.pointerDown(more, new MouseEvent('pointerdown', { bubbles: true, button: 0 }));
+    const menu = await screen.findByRole('menu');
+    for (const name of ['Delete', 'Duplicate']) {
+      expect(within(menu).getByRole('menuitem', { name: new RegExp(`^${name}`) }), name).toBeInTheDocument();
+    }
+    for (const name of NOT_ON_A_SPEC_SHEET) {
+      expect(screen.queryByRole('button', { name }), name).toBeNull();
+    }
+  });
+
+  it('a viewer who cannot edit gets no add buttons', async () => {
+    getSpecSheet.mockResolvedValue({ ...detail(), can_edit: false });
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    expect(screen.queryByRole('button', { name: 'Add Text' })).toBeNull();
+  });
+
+  it('at 375 px the toolbar row scrolls sideways, and Delete / Duplicate / Group / Ungroup stay reachable in More (SPEC-SHEET-PARITY-B2, v3 AC-C1.3/C1.5)', async () => {
+    mobile = true;
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    const row = screen.getByTestId('spec-sheet-toolbar-row');
+    // A row that scrolls on its own and never widens the page (inline-size containment).
+    for (const cls of ['min-w-0', 'max-w-full', 'overflow-x-auto', '[contain:inline-size]']) {
+      expect(row.className.split(/\s+/), cls).toContain(cls);
+    }
+    const more = within(row).getAllByRole('button', { name: /^More( actions)?$/ })[0];
+    fireEvent.pointerDown(more, new MouseEvent('pointerdown', { bubbles: true, button: 0 }));
+    const menu = await screen.findByRole('menu');
+    for (const name of ['Delete', 'Duplicate', 'Group', 'Ungroup']) {
+      expect(within(menu).getByRole('menuitem', { name: new RegExp(`^${name}`) }), name).toBeInTheDocument();
+    }
+  });
+
+  it('Add Text adds to the page the user last pressed, and to no other', async () => {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['k4', 'k5', 'k6']);
+    await screen.findByTestId('live-canvas-k6');
+    fireEvent.pointerDown(screen.getByTestId('spec-page-k5'));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add Text' }));
+
+    await waitFor(() => expect(addCalls).toEqual([{ key: 'k5', kind: 'text' }]));
+  });
+
+  it('with no press, the page holding the selection is the target', async () => {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['k4', 'k5', 'k6']);
+    await screen.findByTestId('live-canvas-k6');
+    fireEvent.click(within(screen.getByTestId('live-canvas-k6')).getByText('select k6'));
+    await screen.findByTestId('inspector');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add Table' }));
+
+    await waitFor(() => expect(addCalls).toEqual([{ key: 'k6', kind: 'table' }]));
+  });
+
+  it('This page: nothing goes to the every-page endpoint', async () => {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['k1', 'k2']);
+    await screen.findByTestId('live-canvas-k1');
+    fireEvent.pointerDown(screen.getByTestId('spec-page-k1'));
+    fireEvent.click(screen.getByRole('button', { name: 'Add Text' }));
+    await waitFor(() => expect(addCalls).toHaveLength(1));
+    await new Promise((r) => setTimeout(r, 900));
+    expect(addSpecSheetLayerToAll).not.toHaveBeenCalled();
+  });
+
+  it('Every page: Add Text also sends the add operation with the new layer and the origin page', async () => {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['k1', 'k2']);
+    await screen.findByTestId('live-canvas-k1');
+    fireEvent.click(within(screen.getByTestId('live-canvas-k1')).getByText('select k1'));
+    await screen.findByTestId('inspector');
+    fireEvent.click(screen.getByRole('radio', { name: 'Every page' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add Text' }));
+
+    await waitFor(() => expect(addSpecSheetLayerToAll).toHaveBeenCalledTimes(1));
+    expect(addSpecSheetLayerToAll).toHaveBeenCalledWith(
+      'p1',
+      'd1',
+      'sheet-1',
+      expect.objectContaining({ id: 'new-text', type: 'text' }),
+      'k1',
+    );
+  });
+});
+
+describe('Reset to template drops the page draft (B7)', () => {
+  it('after a reset the next edit saves the template layers plus ONE nudge, not the old two', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true });
+    const base = detail();
+    const edited = {
+      ...base,
+      pages: base.pages.map((p) => (p.key === 'k1' ? { ...p, edited: true } : p)),
+    };
+    getSpecSheet.mockResolvedValue(edited);
+    saveSpecSheetPageEdit.mockResolvedValue(edited);
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['k1', 'k2']);
+    await screen.findByTestId('live-canvas-k1');
+    fireEvent.pointerDown(screen.getByTestId('spec-page-k1'));
+
+    fireEvent.click(within(screen.getByTestId('live-canvas-k1')).getByText('nudge k1'));
+    await act(async () => {
+      vi.advanceTimersByTime(1100);
+    });
+    await waitFor(() => expect(saveSpecSheetPageEdit).toHaveBeenCalledTimes(1));
+    expect((saveSpecSheetPageEdit.mock.calls[0][4] as { x_mm: number }[])[0].x_mm).toBe(6);
+
+    fireEvent.mouseEnter(document.querySelector('[data-page-wrap="k1"]')!);
+    fireEvent.click(await screen.findByRole('button', { name: /Reset to template/ }));
+
+    await waitFor(() => expect(screen.getByTestId('live-canvas-k1')).toBeInTheDocument());
+    fireEvent.click(within(await screen.findByTestId('live-canvas-k1')).getByText('nudge k1'));
+    await act(async () => {
+      vi.advanceTimersByTime(1100);
+    });
+    await waitFor(() => expect(saveSpecSheetPageEdit).toHaveBeenCalledTimes(2));
+    expect((saveSpecSheetPageEdit.mock.calls[1][4] as { x_mm: number }[])[0].x_mm).toBe(6);
+  });
+});
+
+describe('Every page + Add Image waits for the artwork (B6 fix round)', () => {
+  async function everyPageOnK1() {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['k1', 'k2']);
+    await screen.findByTestId('live-canvas-k1');
+    fireEvent.click(within(screen.getByTestId('live-canvas-k1')).getByText('select k1'));
+    await screen.findByTestId('inspector');
+    fireEvent.click(screen.getByRole('radio', { name: 'Every page' }));
+  }
+
+  it('an empty image frame is not sent; the layer with its artwork is', async () => {
+    await everyPageOnK1();
+    fireEvent.click(screen.getByRole('button', { name: 'Add Image' }));
+    await waitFor(() => expect(addCalls).toEqual([{ key: 'k1', kind: 'image' }]));
+    await new Promise((r) => setTimeout(r, 300));
+    expect(addSpecSheetLayerToAll).not.toHaveBeenCalled();
+
+    fireEvent.click(within(screen.getByTestId('live-canvas-k1')).getByText('pick artwork k1'));
+    await waitFor(() => expect(addSpecSheetLayerToAll).toHaveBeenCalledTimes(1));
+    expect(addSpecSheetLayerToAll.mock.calls[0][3]).toMatchObject({
+      id: 'new-image',
+      props: { source: { type: 'asset', assetId: 'a1' } },
+    });
+  });
+
+  it('a frame that is dropped (picker cancelled) is never sent', async () => {
+    await everyPageOnK1();
+    fireEvent.click(screen.getByRole('button', { name: 'Add Image' }));
+    await waitFor(() => expect(addCalls).toHaveLength(1));
+    fireEvent.click(within(screen.getByTestId('live-canvas-k1')).getByText('drop new image k1'));
+    await new Promise((r) => setTimeout(r, 300));
+    expect(addSpecSheetLayerToAll).not.toHaveBeenCalled();
+  });
+});
+
+describe('Group / Ungroup on the page toolbar (B6 fix round)', () => {
+  it('act on the input page through its controller', async () => {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['k1', 'k2']);
+    await screen.findByTestId('live-canvas-k1');
+    fireEvent.pointerDown(screen.getByTestId('spec-page-k2'));
+    // v3 AC-C1.3: Group / Ungroup live in the toolbar's More menu, not as visible buttons.
+    expect(screen.queryByRole('button', { name: 'Group' })).toBeNull();
+    const more = within(screen.getByTestId('spec-sheet-toolbar-row')).getAllByRole('button', { name: /^More( actions)?$/ })[0];
+    fireEvent.pointerDown(more, new MouseEvent('pointerdown', { bubbles: true, button: 0 }));
+    const menu = await screen.findByRole('menu');
+    expect(within(menu).getByRole('menuitem', { name: /^Group/ })).toBeInTheDocument();
+    expect(within(menu).getByRole('menuitem', { name: /^Ungroup/ })).toBeInTheDocument();
+  });
+});
+
+describe('Reset to template: an edit reported while the page is read again is dropped (B6 fix round)', () => {
+  it('the nudge made between the reset and the restart is not saved', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true });
+    const base = detail();
+    const edited = { ...base, pages: base.pages.map((p) => (p.key === 'k1' ? { ...p, edited: true } : p)) };
+    getSpecSheet.mockResolvedValue(edited);
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['k1', 'k2']);
+    await screen.findByTestId('live-canvas-k1');
+    fireEvent.pointerDown(screen.getByTestId('spec-page-k1'));
+    // The refetch after the reset is slow; the old canvas is still on screen meanwhile.
+    let finish: () => void = () => undefined;
+    getSpecSheetPreview.mockImplementation(
+      (_p: string, _d: string, _s: string, keys: string[]) =>
+        new Promise((resolve) => {
+          finish = () => resolve(previewFor(keys));
+        }),
+    );
+    fireEvent.mouseEnter(document.querySelector('[data-page-wrap="k1"]')!);
+    fireEvent.click(await screen.findByRole('button', { name: /Reset to template/ }));
+    fireEvent.click(within(screen.getByTestId('live-canvas-k1')).getByText('nudge k1'));
+    await act(async () => {
+      finish();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(2500);
+    });
+    expect(saveSpecSheetPageEdit).not.toHaveBeenCalled();
+  });
+});
+

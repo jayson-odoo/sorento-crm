@@ -1225,6 +1225,10 @@ class ProductService:
             data["price_tag_description"] = clean_description(
                 data["price_tag_description"], "Price tag description"
             )
+        if data.get("spec_sheet_description") is not None:
+            data["spec_sheet_description"] = clean_description(
+                data["spec_sheet_description"], "Spec sheet description"
+            )
         if data.get("item_class_id"):
             from app.models.base import get_company_scope
             from app.services.company_scope import resolve_write_company_id
@@ -1279,6 +1283,10 @@ class ProductService:
         if update_data.get("price_tag_description") is not None:
             update_data["price_tag_description"] = clean_description(
                 update_data["price_tag_description"], "Price tag description"
+            )
+        if update_data.get("spec_sheet_description") is not None:
+            update_data["spec_sheet_description"] = clean_description(
+                update_data["spec_sheet_description"], "Spec sheet description"
             )
         if update_data.get("item_class_id"):
             self._assert_item_class(update_data["item_class_id"], product.company_id)
