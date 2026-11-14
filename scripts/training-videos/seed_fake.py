@@ -69,7 +69,16 @@ CS_ROLE = ("customer_service_demo", "Customer Service")
 CS_PERMS = [
     "projects.projects.view",
     "projects.projects.edit",
-    "projects.order_inquiries.acknowledge",
+]
+# Acknowledging (Confirm) and rejecting an order inquiry row is purchasing's grant, never CS's:
+# "CS ... must not be able to acknowledge their own instructions"
+# (sorento_crm_backend/app/api/v1/projects/order_inquiries.py, ACKNOWLEDGE).
+CS_PERMS_REMOVED = ("projects.order_inquiries.acknowledge",)
+PURCHASING = {"name": "Pat Purchasing", "email": "purchasing@example.com", "phone": "012-000 1003"}
+PURCHASING_ROLE = ("purchasing", "Purchasing")  # the existing role; only the two grants below are added
+PURCHASING_PERMS = [
+    "projects.projects.view",  # reading an inquiry (order_inquiries.py VIEW) and the menu entry
+    "projects.order_inquiries.acknowledge",  # Confirm / Reject on a row (order_inquiries.py ACKNOWLEDGE)
 ]
 
 AGENT_CODE = "SAM I"
@@ -895,6 +904,22 @@ def reset_p2_video_rows(db):
         n = db.query(SOLineSplit).filter(SOLineSplit.project_sales_order_id.in_(ids)).delete(synchronize_session=False)
         if n:
             say(f"removed {n} video line splits")
+        # The order inquiry video confirms a Tower A row: put it back to awaiting purchasing.
+        from app.models.project_so import ACK_ACKNOWLEDGED, ACK_AWAITING, OrderInquiry, OrderInquiryRow
+
+        tower_a = db.query(ProjectSalesOrder.id).filter(ProjectSalesOrder.provisional_ref == ORDERS[0]["ref"])
+        inquiry_ids = db.query(OrderInquiry.id).filter(
+            OrderInquiry.project_sales_order_id.in_(tower_a.scalar_subquery()))
+        n = db.query(OrderInquiryRow).filter(
+            OrderInquiryRow.order_inquiry_id.in_(inquiry_ids.scalar_subquery()),
+            OrderInquiryRow.ack_state == ACK_ACKNOWLEDGED,
+        ).update({
+            OrderInquiryRow.ack_state: ACK_AWAITING, OrderInquiryRow.acknowledged_by: None,
+            OrderInquiryRow.acknowledged_at: None, OrderInquiryRow.ack_override: None,
+            OrderInquiryRow.ack_override_by: None, OrderInquiryRow.ack_override_at: None,
+        }, synchronize_session=False)
+        if n:
+            say(f"reset {n} confirmed video inquiry rows")
     db.flush()
 
 
@@ -916,8 +941,10 @@ def seed_p2(db) -> dict:
     for wh in db.query(Warehouse).filter(Warehouse.warehouse_code.in_([w[0] for w in WAREHOUSES])):
         wh.fulfilment_planning = True
 
-    role_with_perms(db, CS_ROLE[0], CS_ROLE[1], CS_PERMS)
+    role_with_perms(db, CS_ROLE[0], CS_ROLE[1], CS_PERMS, remove=CS_PERMS_REMOVED)
     chloe = user(db, CS, CS_ROLE[0])
+    role_with_perms(db, PURCHASING_ROLE[0], PURCHASING_ROLE[1], PURCHASING_PERMS)
+    user(db, PURCHASING, PURCHASING_ROLE[0])
 
     seed_party_roles(db)
     reset_p2_video_rows(db)
