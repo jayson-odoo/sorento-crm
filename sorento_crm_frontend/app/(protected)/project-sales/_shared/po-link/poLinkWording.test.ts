@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { poLinkResultText, poLinkMenu } from './poLinkWording';
-import type { PoLinkCapabilities, PoLinkResult } from '../types/stockDebtSnapshot.types';
+import type { PoLinkCapabilities, PoLinkResult } from '../../stock-debt/types/stockDebtSnapshot.types';
 
 function result(over: Partial<PoLinkResult>): PoLinkResult {
   return {
@@ -89,60 +89,14 @@ describe('poLinkResultText', () => {
   });
 });
 
-describe('poLinkMenu', () => {
-  it('nothing ticked: every item greyed with "Tick the lines to decide on"', () => {
-    const menu = poLinkMenu({ ticked: 0, linked: 0, capabilities: CAPS, loading: false });
-    expect(menu.link).toEqual({ enabled: false, reason: 'Tick the lines to decide on' });
-  });
-
-  it('link follows split_link; unlink and move need a linked line and the capability', () => {
+describe('poLinkMenu: move', () => {
+  it('Move PO needs a linked line and the relink capability', () => {
     const menu = poLinkMenu({ ticked: 2, linked: 1, capabilities: CAPS, loading: false });
-    expect(menu.link).toEqual({ enabled: true, reason: null });
-    expect(menu.unlink).toEqual({ enabled: false, reason: 'Waiting for AutoCount' });
     expect(menu.relink).toEqual({ enabled: false, reason: 'Waiting for AutoCount' });
-  });
-
-  it('unlink on lines with no PO says so', () => {
-    const on = { ...CAPS, unlink_row: { enabled: true, reason: null } };
-    const menu = poLinkMenu({ ticked: 2, linked: 0, capabilities: on, loading: false });
-    expect(menu.unlink).toEqual({ enabled: false, reason: 'No PO linked to the ticked lines' });
-  });
-
-  it('every ticked line already covered: Link greyed "Already covered by PO …"', () => {
-    const menu = poLinkMenu({
-      ticked: 1, linked: 1, capabilities: CAPS, loading: false, coveredBy: ['FXT-1104d-1'],
-    });
-    expect(menu.link).toEqual({ enabled: false, reason: 'Already covered by PO FXT-1104d-1' });
-  });
-
-  it('while AutoCount is being asked, items wait', () => {
-    const menu = poLinkMenu({ ticked: 1, linked: 0, capabilities: null, loading: true });
-    expect(menu.link).toEqual({ enabled: false, reason: 'Checking AutoCount…' });
-    expect(menu.change).toEqual({ enabled: false, reason: 'Checking AutoCount…' });
-  });
-
-  it('Change PO needs link and unlink from AutoCount, and one PO line on every ticked line', () => {
-    const on = { ...CAPS, unlink_row: { enabled: true, reason: null } };
-    expect(poLinkMenu({ ticked: 2, linked: 2, singleLinked: 2, capabilities: CAPS, loading: false }).change)
-      .toEqual({ enabled: false, reason: 'Waiting for AutoCount' });
-    expect(poLinkMenu({ ticked: 2, linked: 2, singleLinked: 1, capabilities: on, loading: false }).change)
-      .toEqual({ enabled: false, reason: 'Each ticked line needs exactly one PO linked' });
-    expect(poLinkMenu({ ticked: 2, linked: 2, singleLinked: 2, capabilities: on, loading: false }).change)
-      .toEqual({ enabled: true, reason: null });
-    // A covered line greys Link but not Change.
-    const menu = poLinkMenu({
-      ticked: 1, linked: 1, singleLinked: 1, capabilities: on, loading: false, coveredBy: ['202609-S0029'],
-    });
-    expect(menu.link.enabled).toBe(false);
-    expect(menu.change.enabled).toBe(true);
-  });
-
-  it('Change PO is greyed when the one PO line has nothing left to arrive', () => {
-    const on = { ...CAPS, unlink_row: { enabled: true, reason: null } };
-    const menu = poLinkMenu({
-      ticked: 1, linked: 1, singleLinked: 1, capabilities: on, loading: false, nothingOpenOn: '202609-S0029',
-    });
-    expect(menu.change).toEqual({ enabled: false, reason: 'Nothing is left open on PO 202609-S0029 to change' });
+    const on = { ...CAPS, relink_row: { enabled: true, reason: null } };
+    expect(poLinkMenu({ ticked: 2, linked: 0, capabilities: on, loading: false }).relink)
+      .toEqual({ enabled: false, reason: 'No PO linked to the ticked lines' });
+    expect(poLinkMenu({ ticked: 2, linked: 1, capabilities: on, loading: false }).relink.enabled).toBe(true);
   });
 });
 
@@ -171,5 +125,33 @@ describe('Change PO answers (STOCKDEBT-LIVE-ACTIONS review, unlink first)', () =
     expect(poLinkResultText(result({ action: 'link', unlinked_po: null }), 'link').text).toBe(
       'SO425045 line 140 now covered by PO 202609-S0029 (120).',
     );
+  });
+});
+
+describe('poLinkMenu: one manage state (owner, 13 Nov 18:55)', () => {
+  it('returns manage and relink, not link / change / unlink', () => {
+    const menu = poLinkMenu({ ticked: 1, linked: 0, capabilities: CAPS, loading: false }) as unknown as Record<string, unknown>;
+    expect(Object.keys(menu).sort()).toEqual(['manage', 'relink']);
+  });
+
+  it('manage is on whenever AutoCount answered, whatever the individual capabilities say', () => {
+    const menu = poLinkMenu({ ticked: 2, linked: 0, capabilities: CAPS, loading: false }) as unknown as Record<string, { enabled: boolean }>;
+    expect(menu.manage.enabled).toBe(true);
+  });
+
+  it('a fully covered line is not a reason to grey it', () => {
+    const menu = poLinkMenu({
+      ticked: 1, linked: 1, capabilities: CAPS, loading: false, coveredBy: ['202609-S0029'],
+    }) as unknown as Record<string, { enabled: boolean }>;
+    expect(menu.manage.enabled).toBe(true);
+  });
+
+  it('is greyed with the reason when nothing is ticked, while AutoCount is checked, or when it cannot be reached', () => {
+    const none = poLinkMenu({ ticked: 0, linked: 0, capabilities: CAPS, loading: false }) as unknown as Record<string, unknown>;
+    expect(none.manage).toEqual({ enabled: false, reason: 'Tick the lines to decide on' });
+    const loading = poLinkMenu({ ticked: 1, linked: 0, capabilities: null, loading: true }) as unknown as Record<string, unknown>;
+    expect(loading.manage).toEqual({ enabled: false, reason: 'Checking AutoCount…' });
+    const down = poLinkMenu({ ticked: 1, linked: 0, capabilities: null, loading: false }) as unknown as Record<string, unknown>;
+    expect(down.manage).toEqual({ enabled: false, reason: 'Could not reach AutoCount' });
   });
 });

@@ -278,7 +278,9 @@ def test_change_refuses_a_line_not_covered_by_exactly_one_po_line(scm_app, fake_
     w["db"].flush()
     resp = _change(w)
     assert resp.status_code == 422
-    assert "not covered by exactly one PO line" in resp.json()["message"]
+    # Owner, 13 Nov: two covering PO lines need `from_po_line_id` (a line covered twice is changed
+    # one PO line at a time).
+    assert "Pick which PO to change." in resp.json()["message"]
     assert not [r for r in fake_ss.calls if "po-links" in r.url.path]
 
 

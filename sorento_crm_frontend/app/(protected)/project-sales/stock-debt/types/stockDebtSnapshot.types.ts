@@ -147,6 +147,8 @@ export interface PoLinkOption {
   supplier_name: string | null;
   /** The AutoCount book the PO line lives in (never shown). */
   book?: string | null;
+  /** The product of the PO line (Order Inquiry rows of several products). */
+  product_id?: string | null;
 }
 
 export interface PoLinkOptions {
@@ -154,6 +156,7 @@ export interface PoLinkOptions {
   po_lines: PoLinkOption[];
   /** sales_order_line_id -> its AutoCount book: a PO line links only within its own book. */
   so_books?: Record<string, string>;
+  so_products?: Record<string, string>;
 }
 
 export type PoLinkOutcome =
@@ -161,6 +164,7 @@ export type PoLinkOutcome =
   | 'refused'
   | 'mismatch'
   | 'pending_verification'
+  | 'skipped'
   | 'vendor_error'
   | 'recovered'
   | 'needs_attention';

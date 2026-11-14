@@ -2,9 +2,11 @@
  * AC-LINK-CRM-UI: what a PO link answer and the Decide menu say, in plain words (owner, Lavish
  * mock v1: "dont use jargon"). The Shared Service's codes are branched on here and never shown.
  */
-import type { PoLinkCapabilities, PoLinkResult } from '../types/stockDebtSnapshot.types';
+import type { PoLinkCapabilities, PoLinkResult } from '../../stock-debt/types/stockDebtSnapshot.types';
 
 export type PoLinkKind = 'link' | 'unlink' | 'relink' | 'change';
+/** The popup's mode: the old single-purpose ones, or `manage` (Link PO: link, change or unlink in one grid). */
+export type PoLinkDialogMode = PoLinkKind | 'manage';
 
 export interface PoLinkResultText {
   tone: 'ok' | 'warn' | 'error';
@@ -63,6 +65,10 @@ function resultText(r: PoLinkResult, kind: PoLinkKind): PoLinkResultText {
     }
     return { tone: 'ok', title: DONE_TITLE[kind], text, action: null };
   }
+  if (r.outcome === 'skipped') {
+    // The Shared Service named why in plain words already; the code is never shown.
+    return { tone: 'error', title: FAIL_TITLE[kind], text: r.message || `${so} was not linked.`, action: null };
+  }
   if (r.outcome === 'needs_attention' || r.outcome === 'pending_verification') {
     return {
       tone: 'error',
@@ -96,53 +102,36 @@ export interface MenuItemState {
   reason: string | null;
 }
 
-/** The Decide menu's PO items: on, or greyed with the reason (never hidden). */
+/** The Decide menu's PO items: ONE Link PO (link, change or unlink is chosen inside its popup, an
+ *  option AutoCount cannot do being greyed there with its reason) and Move PO. On, or greyed with
+ *  the reason (never hidden). */
 export function poLinkMenu(input: {
   ticked: number;
   /** Ticked lines that already have a PO linked. */
   linked: number;
   capabilities: PoLinkCapabilities | null;
   loading: boolean;
-  /** When every ticked line is already fully covered by POs: those PO numbers. */
+  /** Retired: a fully covered line is no reason to grey Link PO. */
   coveredBy?: string[] | null;
-  /** Ticked lines covered by exactly one PO line (Change PO needs every ticked line so). */
+  /** Retired (13 Nov). */
   singleLinked?: number;
-  /** A ticked line's one PO with nothing left to arrive: Change PO has nothing to move. */
+  /** Retired (13 Nov). */
   nothingOpenOn?: string | null;
-}): { link: MenuItemState; unlink: MenuItemState; relink: MenuItemState; change: MenuItemState } {
+}): { manage: MenuItemState; relink: MenuItemState } {
   const off = (reason: string): MenuItemState => ({ enabled: false, reason });
   if (input.ticked === 0) {
     const none = off('Tick the lines to decide on');
-    return { link: none, unlink: none, relink: none, change: none };
+    return { manage: none, relink: none };
   }
   if (!input.capabilities) {
     const wait = off(input.loading ? 'Checking AutoCount…' : 'Could not reach AutoCount');
-    return { link: wait, unlink: wait, relink: wait, change: wait };
+    return { manage: wait, relink: wait };
   }
-  const caps = input.capabilities;
-  const from = (cap: { enabled: boolean; reason: string | null }, needsLink: boolean): MenuItemState => {
-    if (!cap.enabled) return off(cap.reason ?? 'Waiting for AutoCount');
-    if (needsLink && input.linked === 0) return off('No PO linked to the ticked lines');
-    return { enabled: true, reason: null };
-  };
-  const covered = input.coveredBy?.length
-    ? off(`Already covered by PO ${input.coveredBy.join(', ')}`)
-    : null;
-  // Owner, 11 Nov (card 1a): Change PO links the new PO line, then unlinks the old one, so
-  // it needs both writes; greyed unless every ticked line has exactly one PO line on it.
-  const change = !caps.split_link.enabled
-    ? off(caps.split_link.reason ?? 'Waiting for AutoCount')
-    : !caps.unlink_row.enabled
-      ? off(caps.unlink_row.reason ?? 'Waiting for AutoCount')
-      : (input.singleLinked ?? 0) !== input.ticked
-        ? off('Each ticked line needs exactly one PO linked')
-        : input.nothingOpenOn
-          ? off(`Nothing is left open on PO ${input.nothingOpenOn} to change`)
-          : { enabled: true, reason: null };
-  return {
-    link: covered ?? from(caps.split_link, false),
-    unlink: from(caps.unlink_row, true),
-    relink: from(caps.relink_row, true),
-    change,
-  };
+  const cap = input.capabilities.relink_row;
+  const relink: MenuItemState = !cap.enabled
+    ? off(cap.reason ?? 'Waiting for AutoCount')
+    : input.linked === 0
+      ? off('No PO linked to the ticked lines')
+      : { enabled: true, reason: null };
+  return { manage: { enabled: true, reason: null }, relink };
 }

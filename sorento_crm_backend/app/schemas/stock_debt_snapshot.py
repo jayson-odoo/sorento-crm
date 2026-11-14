@@ -194,6 +194,8 @@ class PoLinkOption(BaseModel):
     supplier_name: Optional[str] = None
     #: The AutoCount book (database) the PO line lives in.
     book: Optional[str] = None
+    #: The product of the PO line (Order Inquiry rows of several products).
+    product_id: Optional[str] = None
 
 
 class PoLinkOptions(BaseModel):
@@ -201,6 +203,8 @@ class PoLinkOptions(BaseModel):
     po_lines: List[PoLinkOption]
     #: sales_order_line_id -> its AutoCount book: a PO line links only within its own book.
     so_books: Dict[str, str] = {}
+    #: sales_order_line_id -> its product id: a PO line links only to a line of its own product.
+    so_products: Dict[str, str] = {}
 
 
 class PoLinkLineIn(BaseModel):
@@ -230,6 +234,8 @@ class PoChangeLineIn(BaseModel):
     """Change PO: the SO line, and the PO line to cover it instead of the one covering it now."""
     sales_order_line_id: str
     po_line_id: str
+    #: Which of the PO lines now covering the SO line to change (needed when there are 2 or more).
+    from_po_line_id: Optional[str] = None
 
 
 class PoChangeIn(BaseModel):
@@ -243,6 +249,54 @@ class PoRelocateIn(BaseModel):
 class PoResumeIn(BaseModel):
     po_line_id: str
     sales_order_line_id: Optional[str] = None
+
+
+class OiPoLinkRowsIn(BaseModel):
+    """Order Inquiry PO link (OI-PO-LINK): the ticked rows the press is for."""
+    row_ids: List[str] = Field(min_length=1, max_length=200)
+
+
+class OiPoLinkLinkIn(OiPoLinkRowsIn, PoLinkIn):
+    pass
+
+
+class OiPoUnlinkIn(OiPoLinkRowsIn, PoUnlinkIn):
+    pass
+
+
+class OiPoChangeIn(OiPoLinkRowsIn, PoChangeIn):
+    pass
+
+
+class OiPoRelocateIn(OiPoLinkRowsIn, PoRelocateIn):
+    pass
+
+
+class OiPoResumeIn(OiPoLinkRowsIn, PoResumeIn):
+    pass
+
+
+class OiPoLinkLine(BaseModel):
+    """One distinct SO line of the ticked rows, as the dialog draws it."""
+    sales_order_line_id: str
+    so_number: str
+    line_no: Optional[int] = None
+    open_qty: float = 0.0
+    location_code: Optional[str] = None
+    delivery_date: Optional[DateType] = None
+    po_links: List[SnapshotLinePoLink] = []
+    now: SnapshotLineNow
+
+
+class OiPoLinkSkipped(BaseModel):
+    inquiry_no: Optional[str] = None
+    item_code: Optional[str] = None
+    reason: str
+
+
+class OiPoLinkOptions(PoLinkOptions):
+    lines: List[OiPoLinkLine]
+    skipped: List[OiPoLinkSkipped] = []
 
 
 class PoLinkResult(BaseModel):

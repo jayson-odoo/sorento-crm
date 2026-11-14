@@ -27,11 +27,12 @@ import { reserveIneligibleReason } from '../../_shared/lib/reserveEligibility';
 import { reserveRowsOfLines } from '../../_shared/lib/orderInquiryLineFold';
 import {
   SNAPSHOTS_KEY,
-  usePoLinkOptions,
-  usePoLinkSwitch,
   useSnapshotLinesQuery,
 } from '../hooks/useStockDebtSnapshots';
-import { poLinkMenu, type PoLinkKind } from '../lib/poLinkWording';
+import { PoLinkDialog } from '../../_shared/po-link/PoLinkDialog';
+import { usePoLinkOptions, usePoLinkSwitch } from '../../_shared/po-link/usePoLink';
+import { poLinkMenu, type PoLinkDialogMode } from '../../_shared/po-link/poLinkWording';
+import { snapshotPoLinkTarget } from '../lib/poLinkTarget';
 import { buildDemandColumns, sumDemand } from '../lib/stockDebtDemandColumns';
 import { signed } from '../lib/stockDebtColumns';
 import type {
@@ -41,7 +42,6 @@ import type {
 } from '../types/stockDebtSnapshot.types';
 import { decisionText } from './SnapshotDecisionPopover';
 import { SnapshotDecideControl, type DecideItem } from './SnapshotDecideControl';
-import { PoLinkDialog, coveredText } from './PoLinkDialog';
 
 const ACKNOWLEDGE_PERMISSION = 'projects.order_inquiries.acknowledge';
 /** AC-LINK-CRM-UI: link / unlink / move a PO line through AutoCount. */
@@ -242,7 +242,7 @@ function OiGroupGrid({
   onRequested: () => void;
 }) {
   const [requestOpen, setRequestOpen] = React.useState(false);
-  const [poDialog, setPoDialog] = React.useState<PoLinkKind | null>(null);
+  const [poDialog, setPoDialog] = React.useState<PoLinkDialogMode | null>(null);
   const [menuOpen, setMenuOpen] = React.useState(false);
   const [rowSelection, setRowSelection] = React.useState<RowSelectionState>({});
   const totals = React.useMemo(() => sumDemand(group.lines), [group.lines]);
@@ -286,24 +286,14 @@ function OiGroupGrid({
     ]),
   ];
 
+  const poTarget = React.useMemo(() => snapshotPoLinkTarget(snapshotId, rowId), [snapshotId, rowId]);
   // The capabilities are read when the menu opens and while a PO popup is up: never cached.
-  const options = usePoLinkOptions(snapshotId, rowId, canLinkPo && (menuOpen || poDialog !== null));
+  const options = usePoLinkOptions(poTarget, canLinkPo && (menuOpen || poDialog !== null));
   const menu = poLinkMenu({
     ticked: tickedLines.length,
     linked: tickedLines.filter((line) => (line.now.po_links ?? []).length > 0).length,
-    singleLinked: tickedLines.filter((line) => (line.now.po_links ?? []).length === 1).length,
-    nothingOpenOn:
-      tickedLines
-        .map((line) => line.now.po_links ?? [])
-        .find((links) => links.length === 1 && (links[0].open_qty ?? links[0].qty) <= 0)?.[0]
-        .po_number ?? null,
     capabilities: options.data?.capabilities ?? null,
     loading: options.isFetching,
-    // Crew round 3: every ticked line already covered by POs -> Link greyed, naming them.
-    coveredBy:
-      tickedLines.length > 0 && tickedLines.every((line) => coveredText(line) !== null)
-        ? [...new Set(tickedLines.flatMap((line) => (line.now.po_links ?? []).map((po) => po.po_number)))]
-        : null,
   });
   const items: DecideItem[][] = [
     showRequest
@@ -319,9 +309,7 @@ function OiGroupGrid({
       : [],
     canLinkPo
       ? [
-          { key: 'link', label: 'Link to PO…', ...menu.link, onSelect: () => setPoDialog('link') },
-          { key: 'change', label: 'Change PO…', ...menu.change, onSelect: () => setPoDialog('change') },
-          { key: 'unlink', label: 'Unlink from PO…', ...menu.unlink, onSelect: () => setPoDialog('unlink') },
+          { key: 'link', label: 'Link PO…', ...menu.manage, onSelect: () => setPoDialog('manage') },
           {
             key: 'relink',
             label: 'Move PO to another sales order…',
@@ -381,8 +369,7 @@ function OiGroupGrid({
       {poDialog && options.data ? (
         <PoLinkDialog
           mode={poDialog}
-          snapshotId={snapshotId}
-          rowId={rowId}
+          target={poTarget}
           lines={tickedLines}
           allLines={group.lines}
           capabilities={options.data.capabilities}
