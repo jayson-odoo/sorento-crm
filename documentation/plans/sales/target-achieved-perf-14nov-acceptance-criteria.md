@@ -12,15 +12,25 @@ Plan: `PLAN-target-achieved-perf-14nov.md`.
 4. When a computed assistant entity (targets, commission) times out, the message no longer tells
    the model to narrow the question with a filter.
 
-## Part 2 (#2419 slice 1; final wording after the crew answers)
+## Part 2 (#2419 slice 1; crew answers 14 Nov, from owner rulings)
 
-5. A target question naming an agent (or "my dealers") computes only the targets that agent can be
-   credited on (their own, their teams', dealer targets with any account of theirs): the rows
-   returned are identical to today's, and the achievement statement reads no other target's periods.
-6. `agent_target_summary` and `target_list` rows carry the remaining-to-target figure next to
-   `achieved_pct`, computed by the server; the panel answer prints it without a repair round.
-7. The per-question cap counts only crm_query calls that ran; crm_describe and refused calls do not
-   use it up; reaching it never ends the answer with a limit message.
-8. Panel, on a copy of prod data: "how are my dealers' sales this year against their targets?",
+5. A target question naming an agent (or asked as "my dealers" by an own-only user) computes only
+   the targets that agent can be credited on: their agent targets, their teams' targets, and every
+   dealer target with ANY counted account of theirs. The rows returned are identical to computing
+   everything and filtering after; the achievement statement receives no other target's periods.
+   `owner_kind` narrows the same way. Status / reached / pct filters stay in Python (Q5).
+6. `agent_target_summary` and `target_list` rows carry `remaining_value` = target - achieved,
+   floored at 0 (0 once reached; `achieved_pct` shows any over-achievement), computed by the
+   server and listed by crm_describe (Q1).
+7. The per-question cap counts only crm_query calls that ran (ok, empty or timed out); crm_describe
+   and refused calls are free. The cap is 6, a runaway stop only; a refused call is a tool reply,
+   the answer still gives its best full result, and the user never sees a "limit" message (Q3, owner
+   D4 19:27: "I would rather wait if it is within reason than you say hit limit").
+8. The `chatbot_agent` prompt no longer conflicts with the tools: an agent filter on crm_query needs
+   no crm_resolve first, and a target question gets the target's own basis only (no "show invoiced,
+   delivered and ordered" that the loop refuses). Shipped as an unlabelled candidate version (md5 +
+   publish SQL as a crew ask); prod labelling only with the release (Q2).
+9. Panel, on a copy of prod data: "how are my dealers' sales this year against their targets?",
    then "and last year?", then a typo version: each answered in 2 model calls, under 35,000 input
-   tokens, under 15 s, no timeout, figures equal to the Targets screen.
+   tokens, under 15 s, no timeout, figures equal to the Targets screen. One live x1 run (frozen set
+   dev part + these 3 phrasings), cap US$0.50, logged on the crew ledger (Q4).

@@ -1,6 +1,6 @@
 # PLAN: Invoiced target achievement, period join the planner can hash (lane TARGET-ACHIEVED-PERF)
 
-Status: Plan (scope add) - part 1 (join fix + timeout text) built, reviewed PASS, PR #2420; part 2 (#2419 slice 1) waits on the behaviour-card answers. Track: full (M after the scope add: agent loop + prompt). UAC:
+Status: Plan (scope add) - part 1 (join fix + timeout text) built, reviewed PASS, PR #2420; part 2 (#2419 slice 1) answers in (crew 14 Nov: Q1 floor at 0, Q2 candidate prompt version, Q3 cap 6 counting ran queries, Q4 live x1 US$0.50, Q5 yes); building. Track: full (M after the scope add: agent loop + prompt). UAC:
 `target-achieved-perf-14nov-acceptance-criteria.md`.
 
 ## Why
@@ -102,13 +102,13 @@ Measured today (discovery, file:line in `sorento_crm_backend/`):
   `query_tools.py:278` "pass the agent ... no crm_resolve"; :1116 "show invoiced, delivered and
   ordered" vs the loop refusing a second basis (`loop.py:2301-2304`).
 
-Design (pending crew answers Q1-Q5):
+Design (crew answers Q1-Q5 in the UAC):
 - Narrowing: `run_computed` resolves the agent filter to candidate agent ids and passes them (and
   owner kind) to `compute`; `sales.py` keeps a target when its agent, a team member, or ANY of its
   dealer accounts' agents is a candidate (95 of 164 dealer targets have accounts of two agents).
   The Python row filter still runs after: the answer can only lose work, never rows.
-- Server-side gap: one field beside `achieved_pct` on both entities (Q1 decides its sign).
-- Query cap: counts only crm_query calls that ran (Q3: timed-out ones count).
+- Server-side gap: `remaining_value` = max(target - achieved, 0) beside `achieved_pct` on both entities.
+- Query cap: 6, counting only crm_query calls that ran (timed-out ones count); describe and refused free.
 - Prompt: draft a new `chatbot_agent` version through the repo's prompt-version path (Q2).
 
 Lead pattern: tester writes the red tests from the UAC (part 2 lines), coder implements, reviewer
