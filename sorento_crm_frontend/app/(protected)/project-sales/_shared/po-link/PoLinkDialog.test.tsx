@@ -876,4 +876,14 @@ describe('Link PO popup: rows of several products and the Qty / Action columns',
     expect(headers[columnOf(qty)]).toBe('Qty');
     expect(headers[columnOf(action)]).toBe('Action');
   });
+
+  // Crew db3 pass on fb7c04172 (14 Nov): at 1280 px the popup's grid area is 974 px wide, the
+  // seven columns of a new + linked popup summed 1015 px and the Action picker was cut off. The
+  // columns of the fullest popup must fit that area with no sideways scroll.
+  it('with new and linked rows together every column fits the 1280 px popup (no sideways scroll)', () => {
+    const dialog = renderMulti([newLine('sol-1', 'SO425045'), linkedLine], { 'sol-1': 'prod-A', 'sol-2': 'prod-B' });
+    const widths = Array.from(dialog.querySelectorAll('thead th')).map((th) => parseFloat((th as HTMLElement).style.width) || 0);
+    expect(widths.length).toBeGreaterThanOrEqual(8);
+    expect(widths.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(974);
+  });
 });
