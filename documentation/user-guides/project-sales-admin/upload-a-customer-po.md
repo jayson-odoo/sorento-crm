@@ -9,23 +9,33 @@ A quotation is not needed. A PO can be uploaded on any project, with or without 
 Each line the customer printed is matched to one of our catalogue products, in this order:
 
 1. **Exact code.** The customer printed our product code as it is. The line is matched, nothing to do.
-2. **A code this customer used before.** Every match a person confirms is remembered for that customer. The next PO from the same customer that prints the same code (or, when the line has no code, the same description) is matched straight away.
+2. **A code this customer used before.** Every match a person confirms is remembered for that customer. The next PO from the same customer that prints the same code (or, when the line has no code, the same description) is matched straight away. Capital letters, spaces, dashes and `*` marks do not matter here: `SRTWT9121 -GM **` and `SRTWT9121-GM` are the same code. Any other difference does: `2.5MM` and `25MM` are different codes.
 3. **Suggested.** Anything else is judged by the AI reader, which looks at the line's code and description the way a person would: it ignores brand words, the customer's own code prefix, stray spaces and marks such as `*`. It only picks from products that could fit: this project's quotation lines first, then the codes this customer used before, then the closest catalogue products. The line shows a **Suggested** pill until you accept it.
 
 When two products fit equally (for example a code that exists in two finishes), nothing is picked. Open the product picker on that line: the possible products are listed first, choose one.
 
+When a line's description names a variant (a size or finish) that only one of the possible products carries, while another product has exactly the printed code, nothing is picked either: both are offered.
+
 When no product fits, the line stays without a product. You can still confirm it if it has the customer's stock code.
 
 ## Accepting suggestions
+
+Hover the **Suggested** pill to see why the line was suggested.
 
 - **One line:** right-click the line and choose **Accept suggestion**.
 - **All lines:** click **Accept all suggestions (N)** above the lines.
 - **Check them first:** choose the **Suggested (N)** view to see only the lines with a suggestion.
 - **Wrong suggestion:** pick the right product on that line instead. That choice is remembered for this customer.
 
+## Which customer the codes belong to
+
+Codes are remembered for the customer who issued the PO. Pick it in **Issued by** at the top of the PO while it is waiting to be confirmed. When nothing is picked there, the project's customer is used. A party that is not linked to a customer record teaches nothing.
+
 ## Quantity
 
 If the document shows an amount and a unit price but no quantity, and the amount divided by the price is a whole number, that number is filled in as a **Suggested** quantity. Otherwise the quantity stays empty for you to type.
+
+When the document printed no amount for a line, the amount follows quantity times unit price as you type, and stays in step whenever either changes. An amount printed on the document, or one you type yourself, is never changed for you.
 
 **Confirm this PO** refuses while any line still has an empty (or zero) quantity, or a suggestion nobody accepted, and names those lines.
 
