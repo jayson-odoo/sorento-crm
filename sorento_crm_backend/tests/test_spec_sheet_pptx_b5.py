@@ -226,6 +226,46 @@ def test_a_browser_failure_marks_the_pptx_download_failed(monkeypatch):
     assert len(seen["failed"]) == 1 and "browser crashed" in seen["failed"][0][1]
 
 
+class _KeepOpen:
+    """The test session, handed to the worker; its close() is a no-op so the row stays readable."""
+
+    def __init__(self, db):
+        self._db = db
+
+    def __getattr__(self, name):
+        return getattr(self._db, name)
+
+    def close(self):
+        pass
+
+
+def test_a_pptx_builder_that_cannot_be_imported_marks_the_row_failed_not_queued_forever(monkeypatch):
+    """SPEC-SHEET-PARITY-B2 crew pass: the import sat outside the task's try, so an ImportError killed
+    the job and the My Downloads row stayed Queued. It must end Failed with a plain reason."""
+    import sys
+
+    from app.models.download import UserDownload
+    from app.services import project_spec_sheet_service as spec
+    from app.tasks import dealer_kit_export_tasks as tasks
+
+    monkeypatch.setattr("app.services.queue_service.enqueue_job", lambda *a, **k: None)
+    # A None entry makes `from app.services.spec_sheet_pptx import ...` raise ImportError.
+    monkeypatch.setitem(sys.modules, "app.services.spec_sheet_pptx", None)
+    with blank_session() as db:
+        c = _chain(db)
+        sheet = _sheet(db, c)
+        download = spec.request_export(db, sheet, user_id=c["owner"], fmt="pptx")
+        assert download.status == "pending"
+        monkeypatch.setattr(tasks, "SessionLocal", lambda: _KeepOpen(db))
+
+        result = tasks.generate_spec_sheet_pptx(str(download.id))
+
+        assert result["status"] == "failed"
+        row = db.query(UserDownload).filter(UserDownload.id == download.id).first()
+        assert row.status == "failed"
+        assert row.error == "PowerPoint export is not available right now. Try again later."
+
+
 # ------------------------------------------------------------------ builder
 
 

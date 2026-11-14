@@ -1801,6 +1801,20 @@ describe('the page toolbar (B6)', () => {
     expect(screen.queryByRole('button', { name: 'Add Text' })).toBeNull();
   });
 
+  it('at 375 px the toolbar row scrolls sideways, so Delete / Duplicate / Group / Ungroup stay reachable (SPEC-SHEET-PARITY-B2)', async () => {
+    mobile = true;
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    const row = screen.getByTestId('spec-sheet-toolbar-row');
+    // A row that scrolls on its own and never widens the page (inline-size containment).
+    for (const cls of ['min-w-0', 'max-w-full', 'overflow-x-auto', '[contain:inline-size]']) {
+      expect(row.className.split(/\s+/), cls).toContain(cls);
+    }
+    for (const name of ['Delete', 'Duplicate', 'Group', 'Ungroup']) {
+      expect(within(row).getByRole('button', { name }), name).toBeInTheDocument();
+    }
+  });
+
   it('Add Text adds to the page the user last pressed, and to no other', async () => {
     renderReader();
     await screen.findByTestId('spec-page-k29');
