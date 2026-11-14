@@ -54,7 +54,8 @@ export type FormSLASourceType =
   | 'workflow_submission'
   | 'price_tag_request'
   | 'sample_request'
-  | 'new_product_application';
+  | 'new_product_application'
+  | 'spare_part_request';
 
 export async function getFormSLATrackers(
   sourceEntityType: FormSLASourceType,
@@ -384,6 +385,9 @@ export const FORM_SLA_EVENT_OPTIONS: Record<FormSLASourceType, readonly string[]
     'purchasing_respond',
     'completed',
   ],
+  // SPARE-PART-ORDER-REQUEST: spare_part_request_service emits these three; every approval
+  // level resolves on approved / rejected, and a level is chained to the next on approved.
+  spare_part_request: ['submitted', 'approved', 'rejected'],
 };
 
 export const FORM_SLA_TYPE_LABELS: Record<FormSLASourceType, string> = {
@@ -396,4 +400,5 @@ export const FORM_SLA_TYPE_LABELS: Record<FormSLASourceType, string> = {
   price_tag_request: 'Price Tag Request',
   sample_request: 'Sample Request',
   new_product_application: 'New Product Application',
+  spare_part_request: 'Order Request',
 };

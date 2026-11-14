@@ -294,6 +294,8 @@ PERMISSION_REGISTRY.extend([
     {"slug": "procurement.new_product_applications.create", "name": "Create New Product Applications", "description": "Raise, submit, revise and cancel your own new product applications."},
     {"slug": "procurement.new_product_applications.approve", "name": "Approve New Product Applications", "description": "Approve or reject a submitted new product application, and revise one. Approvers are told when one is submitted."},
     {"slug": "procurement.new_product_applications.open_code", "name": "Open Codes for New Product Applications", "description": "Purchasing grant: link each line of an approved application to the product AutoCount sent, or close it as not opening. Told when one is approved."},
+    {"slug": "procurement.spare_part_requests.view", "name": "View Order Requests", "description": "Open the Order Requests list and the requests you can decide on as an approver of their current stage in Form SLA configuration."},
+    {"slug": "procurement.spare_part_requests.create", "name": "Create Order Requests", "description": "Raise, edit, submit and revise your own order requests, and open them on the Order Inquiries page. Approval runs on the order request stages in Form SLA configuration."},
 ])
 PERMISSION_REGISTRY.extend(_crud("procurement", "purchase_requests", "Purchase Requests"))
 PERMISSION_REGISTRY.extend(_crud("procurement", "sponsorship_forms", "Sponsorship Forms"))

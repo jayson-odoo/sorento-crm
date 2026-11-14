@@ -15,13 +15,15 @@ import logging
 import re
 from typing import List, Literal, Optional
 
-from fastapi import APIRouter, Body, Depends, Query, Response
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import (
+    get_current_user_or_api_key,
     require_any_permission,
     require_permission,
+    require_any_permission_with_api_key,
     require_permission_with_api_key,
 )
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
@@ -86,6 +88,8 @@ from app.services.decision_trail_service import DecisionTrailService
 from app.services.download_service import DownloadService
 from app.services.error_handler import AppException, handle_internal_error, handle_unprocessable
 from app.services import order_inquiry_history_service
+from app.services import spare_part_request_service
+from app.services.stock_read_scope import SPARE_PART_READ
 from app.services.order_inquiry_header_service import OrderInquiryHeaderService
 from app.services.order_inquiry_reserve_service import OrderInquiryReserveService, as_utc
 from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
@@ -112,6 +116,52 @@ ACKNOWLEDGE = "projects.order_inquiries.acknowledge"
 #: whoever may commit stock against a request - separate from `ACKNOWLEDGE`, which is
 #: purchasing's own grant to raise the request in the first place.
 RESERVE = "projects.order_inquiries.reserve"
+#: SPARE-PART-ORDER-REQUEST: a holder of only a spare part grant (create or view) opens the
+#: OI list, page and lines for their own and decidable spare part requests (`_visibility`
+#: narrows every read).
+_VIEW_GATE = require_permission_with_api_key(VIEW)
+_SPARE_PART_GATE = require_any_permission_with_api_key(list(SPARE_PART_READ))
+
+
+def _OI_READ(
+    current_user: dict = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+) -> dict:
+    """The projects view grant, or a spare part grant: the same two gates every other OI
+    read uses, one after the other (module guard and admin shortcut included)."""
+    try:
+        return _VIEW_GATE(current_user=current_user, db=db)
+    except HTTPException:
+        return _SPARE_PART_GATE(current_user=current_user, db=db)
+
+
+def _visibility(db: Session, user: dict):
+    """The header visibility clause for this caller (`spare_part_request_service.
+    visibility_clause`): a pre-approval spare part request only for its requester, its
+    approvers and admins; a create-only requester sees only their own requests."""
+    uid = str(user.get("id") or "")
+    # The same cached check the route's own gate just made (`_OI_READ`).
+    has_view = UserPermissionService(db).check_user_has_permission(uid, VIEW)
+    return spare_part_request_service.visibility_clause(db, uid, has_view=has_view)
+
+
+def _holds_oi_read(db: Session, user: dict) -> bool:
+    """One of the three grants that open every order inquiry's own reads (view, acknowledge,
+    reserve); without them the caller is a spare part requester scoped to their own."""
+    service = UserPermissionService(db)
+    uid = str(user.get("id") or "")
+    return any(service.check_user_has_permission(uid, slug) for slug in (VIEW, ACKNOWLEDGE, RESERVE))
+
+
+def _assert_inquiry_visible(db: Session, inquiry_id: str, user: dict) -> OrderInquiry:
+    inquiry = (
+        db.query(OrderInquiry)
+        .filter(OrderInquiry.id == inquiry_id, _visibility(db, user))
+        .first()
+    )
+    if inquiry is None:
+        raise AppException(404, "This order inquiry no longer exists.", code="oi_header_not_found")
+    return inquiry
 #: Lane B (`PLAN-order-sheet-oi-reports-22sep.md`, AC-B7 / `app/dependencies.py`'s own
 #: rule): a WRITE endpoint - it creates a `user_downloads` row and enqueues a
 #: background render - is never reachable by `X-API-Key` alone, unlike the sync GET it
@@ -464,7 +514,7 @@ def list_order_inquiry_worklist(
             "fetch. An explicit `state` still wins. Off, the response is unchanged."
         ),
     ),
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    _user: dict = Depends(_OI_READ),
     db: Session = Depends(get_db),
 ):
     """Everything purchasing has been told to buy, whoever it belongs to.
@@ -478,12 +528,13 @@ def list_order_inquiry_worklist(
     the worker is serving.
     """
     try:
-        return OrderInquiryWorklistService(db).list_rows(
+        result = OrderInquiryWorklistService(db).list_rows(
             page=page,
             limit=limit,
             sort=sort,
             direction=direction,
             include_cancelled=include_history,
+            visibility=_visibility(db, _user),
             **_worklist_filters(
                 query,
                 delivery_month,
@@ -512,6 +563,9 @@ def list_order_inquiry_worklist(
                 reserve_request=reserve_request,
             ),
         )
+        # SPARE-PART-ORDER-REQUEST (G8): a spare part line's price is supplier cost.
+        spare_part_request_service.mask_row_prices(db, result["data"], str(_user.get("id") or ""))
+        return result
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
@@ -555,12 +609,13 @@ def order_inquiry_worklist_summary(
     dead_document: Optional[Literal["po_cancelled", "spo_withdrawn"]] = Query(None),
     inquiry_no: Optional[list[str]] = Query(None),
     reserve_request: Optional[list[str]] = Query(None),
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    _user: dict = Depends(_OI_READ),
     db: Session = Depends(get_db),
 ):
     """The strip above the list, and the month / supplier / project controls beside it."""
     try:
         return OrderInquiryWorklistService(db).summary(
+            visibility=_visibility(db, _user),
             **_worklist_filters(
                 query,
                 delivery_month,
@@ -1465,14 +1520,18 @@ def commit_order_inquiry_reserve(
     "/order-inquiries/reserve-status/summary", response_model=ReserveStatusSummaryOut
 )
 def order_inquiry_reserve_status_summary(
-    current_user: dict = Depends(require_any_permission([VIEW, ACKNOWLEDGE, RESERVE])),
+    current_user: dict = Depends(
+        require_any_permission([VIEW, ACKNOWLEDGE, RESERVE, *SPARE_PART_READ])
+    ),
     db: Session = Depends(get_db),
 ):
     """OI-STAGED-NOTIFY (AC-SN-31): OIs per reserve status (everyone's) and the caller's
-    own parked requests / notices."""
+    own parked requests / notices. A spare part requester (none of the three OI grants)
+    counts their own requests only."""
     try:
         return OrderInquiryReserveService(db).reserve_status_summary(
-            actor_user_id=current_user["id"]
+            actor_user_id=current_user["id"],
+            visibility=None if _holds_oi_read(db, current_user) else _visibility(db, current_user),
         )
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
@@ -1664,7 +1723,9 @@ def sales_order_line_decision_trail(
 )
 def list_order_inquiry_reserve_requests(
     inquiry_id: str,
-    current_user: dict = Depends(require_any_permission([VIEW, ACKNOWLEDGE, RESERVE])),
+    current_user: dict = Depends(
+        require_any_permission([VIEW, ACKNOWLEDGE, RESERVE, *SPARE_PART_READ])
+    ),
     db: Session = Depends(get_db),
 ):
     """Every reserve request this header has ever raised, newest first - the Lines tab's
@@ -1677,6 +1738,9 @@ def list_order_inquiry_reserve_requests(
     inquiry's own Lines tab at all."""
     try:
         validate_uuid_path(inquiry_id, resource="Order inquiry")
+        if not _holds_oi_read(db, current_user):
+            # A spare part requester: their own request only.
+            _assert_inquiry_visible(db, inquiry_id, current_user)
         requests = (
             db.query(OrderInquiryReserveRequest)
             .filter(OrderInquiryReserveRequest.order_inquiry_id == inquiry_id)
@@ -1980,6 +2044,7 @@ HeaderListSort = Literal[
     "agent",
     "so_date",
     "status",
+    "inquiry_type",
 ]
 _MAX_HEADER_QUERY_LENGTH = WORKLIST_QUERY_MAX_LENGTH
 
@@ -2025,11 +2090,15 @@ def list_order_inquiry_headers(
             "OR-ed. The reserve emails' button lists exactly the OIs the email covers."
         ),
     ),
+    inquiry_type: Optional[list[str]] = Query(
+        None,
+        description="sales_order and/or spare_part_request; several are OR-ed.",
+    ),
     sort: Optional[HeaderListSort] = Query(None, description="Defaults to raised_at."),
     direction: Optional[Literal["asc", "desc"]] = Query("asc", alias="dir"),
     page: int = Query(1, ge=1),
     limit: int = Query(25, ge=1, le=MAX_PAGE_LIMIT),
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    _user: dict = Depends(_OI_READ),
     db: Session = Depends(get_db),
 ):
     """One row per order inquiry - Documents view, default (AC-LS-01..07)."""
@@ -2050,6 +2119,8 @@ def list_order_inquiry_headers(
             project=project,
             reserve=reserve,
             inquiry_no=inquiry_no,
+            inquiry_type=inquiry_type,
+            visibility=_visibility(db, _user),
             sort=sort,
             direction=direction,
             page=page,
@@ -2068,7 +2139,7 @@ def list_order_inquiry_headers(
 )
 def get_order_inquiry_header(
     inquiry_id: str,
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    _user: dict = Depends(_OI_READ),
     db: Session = Depends(get_db),
 ):
     """The detail page's own header card + Order/Customer blocks + raise history
@@ -2076,7 +2147,18 @@ def get_order_inquiry_header(
     the session's own `do_orm_execute` listener, not a filter written here."""
     try:
         validate_uuid_path(inquiry_id, resource="Order inquiry")
-        return OrderInquiryHeaderService(db).get(inquiry_id)
+        header = OrderInquiryHeaderService(db).get(
+            inquiry_id, visibility=_visibility(db, _user)
+        )
+        if header.inquiry_type == spare_part_request_service.KIND:
+            inquiry = db.query(OrderInquiry).filter(OrderInquiry.id == inquiry_id).one()
+            uid = str(_user.get("id") or "")
+            header.can_decide = spare_part_request_service.can_decide(db, inquiry, uid)
+            header.can_edit = spare_part_request_service.can_edit(inquiry, uid)
+            header.can_revise = spare_part_request_service.can_revise(db, inquiry, uid)
+            if spare_part_request_service.prices_visible(db, inquiry, uid):
+                header.total = spare_part_request_service.request_total(db, inquiry)
+        return header
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
@@ -2087,7 +2169,7 @@ def get_order_inquiry_header(
 )
 def get_order_inquiry_history(
     inquiry_id: str,
-    _user: dict = Depends(require_permission(VIEW)),
+    _user: dict = Depends(require_any_permission([VIEW, *SPARE_PART_READ])),
     db: Session = Depends(get_db),
 ):
     """The detail page's History tab (STANDARD-HISTORY wave 1, AC-SH-B1 to B6): every
@@ -2101,9 +2183,10 @@ def get_order_inquiry_history(
     company-scope listener before any trail is."""
     try:
         validate_uuid_path(inquiry_id, resource="Order inquiry")
-        if db.query(OrderInquiry.id).filter(OrderInquiry.id == inquiry_id).first() is None:
-            raise AppException(404, "This order inquiry no longer exists.", code="oi_header_not_found")
-        return {"events": order_inquiry_history_service.history(db, inquiry_id)}
+        inquiry = _assert_inquiry_visible(db, inquiry_id, _user)
+        # SPARE-PART-ORDER-REQUEST (G8): a price change is cost, masked like every cost.
+        mask = not spare_part_request_service.prices_visible(db, inquiry, str(_user.get("id") or ""))
+        return {"events": order_inquiry_history_service.history(db, inquiry_id, mask_cost=mask)}
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
@@ -2114,13 +2197,14 @@ def get_order_inquiry_history(
 )
 def get_order_inquiry_related_documents(
     inquiry_id: str,
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    _user: dict = Depends(_OI_READ),
     db: Session = Depends(get_db),
 ):
     """Related PO / Related SPO tabs (AC-DT-03): every document this header's own
     non-cancelled rows are linked to, empty lists when nothing is linked yet."""
     try:
         validate_uuid_path(inquiry_id, resource="Order inquiry")
+        _assert_inquiry_visible(db, inquiry_id, _user)
         return OrderInquiryHeaderService(db).related_documents(inquiry_id)
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
