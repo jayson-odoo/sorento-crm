@@ -94,6 +94,12 @@ function renderForm(props: { requestId?: string; projectId?: string } = {}) {
   );
 }
 
+/** Owner 12 Nov: every section starts collapsed; open Items to work its rows. */
+function openItems() {
+  const trigger = screen.getByRole('button', { name: /^Items/ });
+  if (trigger.getAttribute('aria-expanded') === 'false') fireEvent.click(trigger);
+}
+
 const rows = () =>
   Array.from(document.querySelectorAll<HTMLElement>('[data-testid="sample-request-line"]'));
 const rowText = (r: HTMLElement) =>
@@ -110,6 +116,7 @@ describe('SFQ-20 the staff form starts from the project quotation', () => {
   it('a project from the stage action fills the rows', async () => {
     renderForm({ projectId: 'proj-1' });
     await waitFor(() => expect(rows()).toHaveLength(2));
+    openItems();
     expect(getSampleRequestQuotationPrefill).toHaveBeenCalledWith('proj-1', undefined);
     expect(rowText(rows()[0])).toContain('BASIN-1');
     expect(rowText(rows()[1])).toContain('TAP-2');
@@ -118,6 +125,7 @@ describe('SFQ-20 the staff form starts from the project quotation', () => {
   it('saves the source quotation with the draft', async () => {
     renderForm({ projectId: 'proj-1' });
     await waitFor(() => expect(rows()).toHaveLength(2));
+    openItems();
     fireEvent.click(screen.getByRole('button', { name: /^save as draft$/i }));
     await waitFor(() => expect(mut.createAsync).toHaveBeenCalled());
     expect(mut.createAsync.mock.calls[0][0]).toMatchObject({
@@ -136,6 +144,7 @@ describe('SFQ-20 the staff form starts from the project quotation', () => {
   it('each pre-filled row has Remove line', async () => {
     renderForm({ projectId: 'proj-1' });
     await waitFor(() => expect(rows()).toHaveLength(2));
+    openItems();
     fireEvent.click(within(rows()[1]).getByRole('button', { name: 'Remove line' }));
     expect(rows()).toHaveLength(1);
   });
@@ -166,6 +175,7 @@ describe('SFQ-27 owner hand test: Add row offers only the quotation products', (
   it('searches with the source quotation once the request comes from one', async () => {
     renderForm({ projectId: 'proj-1' });
     await waitFor(() => expect(rows()).toHaveLength(2));
+    openItems();
     fireEvent.click(screen.getByRole('button', { name: /^\+?\s*add row$/i }));
     const row = rows()[2];
     const box = within(row).getByRole('combobox', { name: /item code/i });
@@ -187,6 +197,7 @@ describe('SFQ-27 owner hand test: Add row offers only the quotation products', (
   it('lists the quotation products when the box is opened without typing (phone)', async () => {
     renderForm({ projectId: 'proj-1' });
     await waitFor(() => expect(rows()).toHaveLength(2));
+    openItems();
     fireEvent.click(screen.getByRole('button', { name: /^\+?\s*add row$/i }));
     const box = within(rows()[2]).getByRole('combobox', { name: /item code/i });
     if (box.tagName === 'INPUT') fireEvent.focus(box);

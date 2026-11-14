@@ -69,7 +69,7 @@ def test_gap_so_lost_stage_without_a_reason_is_422_and_the_row_is_not_lost(world
 
 
 # --------------------------------------------------------------------------- #
-# 3. E: sample request, processing -> customer_confirmed -> delivered         #
+# 3. E: sample request, processing -> delivered (linking the consignment)     #
 # --------------------------------------------------------------------------- #
 
 
@@ -82,12 +82,15 @@ def test_gap_sample_request_staff_moves_to_delivered_show_in_my_requests(world):
     path = f"{srso.SR}/{sid}/move"
 
     s.ok(w.staff(coord, "POST", path, json={"to": "processing", "date_feasible": True}))
-    no_date = w.staff(coord, "POST", path, json={"to": "customer_confirmed"})
-    assert no_date.status_code == 422, no_date.text
-    assert no_date.json()["code"] == "SAMPLE_REQUEST_DATE_REQUIRED"
-    s.ok(w.staff(coord, "POST", path, json={"to": "customer_confirmed", "date": (date.today() + timedelta(days=5)).isoformat()}))
-    assert w.rep.me.call("GET", f"{srso.SR_PORTAL}/{sid}").json()["status"] == "customer_confirmed"
-    s.ok(w.staff(coord, "POST", path, json={"to": "delivered", "date": (date.today() + timedelta(days=9)).isoformat()}))
+    # Owner ruling 11 Nov: Delivered comes only from linking the AutoCount consignment.
+    by_hand = w.staff(coord, "POST", path, json={"to": "delivered", "date": (date.today() + timedelta(days=9)).isoformat()})
+    assert by_hand.status_code == 409, by_hand.text
+    assert w.rep.me.call("GET", f"{srso.SR_PORTAL}/{sid}").json()["status"] == "processing"
+    from tests._sample_request_seed import make_consignment
+
+    cg = make_consignment(w.sc.db, w.company_id)
+    w.sc.db.commit()
+    s.ok(w.staff(coord, "PUT", f"{srso.SR}/{sid}/consignment", json={"consignment_order_id": cg.id}))
 
     got = s.ok(w.rep.me.call("GET", f"{srso.SR_PORTAL}/{sid}")).json()
     assert got["status"] == "delivered"
