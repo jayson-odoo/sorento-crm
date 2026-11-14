@@ -483,6 +483,12 @@ class SystemSetting(Base):
     project_autocount_write_enabled = Column(
         Boolean, nullable=False, server_default="false", default=False
     )
+    # AC-PROJECT-REGISTER (owner, 13 Nov): "AutoCount project registration". OFF on deploy. Off,
+    # the project page shows nothing new and both register routes answer 403 without calling the
+    # Shared Service.
+    project_autocount_register_enabled = Column(
+        Boolean, nullable=False, server_default="false", default=False
+    )
     # AC-LINK-CRM-UI (owner, 5 Nov): "AutoCount links from Stock Debt". OFF on deploy; the
     # owner turns it on only after the full AutoCount + Shared Service test. Off, the Stock
     # Debt drill offers no PO actions and every po-link route answers 403.
