@@ -938,7 +938,7 @@ function ManageDialog({
       {
         id: 'po',
         header: 'PO',
-        size: 220,
+        size: 200,
         cell: ({ row }) => {
           const r = row.original;
           if (r.kind === 'linked') return <span className="tabular-nums">{r.poLabel}</span>;
@@ -976,7 +976,7 @@ function ManageDialog({
       {
         id: 'qty',
         header: 'Qty',
-        size: 120,
+        size: 100,
         cell: ({ row }) => {
           const r = row.original;
           if (r.kind === 'new') {
@@ -1013,7 +1013,7 @@ function ManageDialog({
       {
         id: 'action',
         header: 'Action',
-        size: 240,
+        size: 190,
         cell: ({ row }) => {
           const r = row.original;
           if (r.kind !== 'linked') return null;
