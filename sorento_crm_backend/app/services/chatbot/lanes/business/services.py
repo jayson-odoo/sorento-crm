@@ -187,8 +187,11 @@ def _resolve_entity(db: Session) -> ResolveEntityFn:
         principal = {"id": staff.user_id if staff is not None else getattr(settings, "external_api_key_act_as_user_id", None)}
         # The chat's own resolver flag is no request field (`references.resolve_reference`).
         offerable_only = bool(body.get("alternatives_offerable_only"))
-        body = {k: v for k, v in body.items() if k != "alternatives_offerable_only"}
-        extra = {"alternatives_offerable_only": True} if offerable_only else {}
+        answered = frozenset(body.get("answered_codes") or ())
+        body = {k: v for k, v in body.items() if k not in ("alternatives_offerable_only", "answered_codes")}
+        extra: dict[str, Any] = {"alternatives_offerable_only": True} if offerable_only else {}
+        if answered:
+            extra["answered_codes"] = answered
         result = resolve_reference_post(ResolveReferenceRequest(**body), current_user=principal, db=db, **extra)
         return without_denied_kinds(db, result)
 

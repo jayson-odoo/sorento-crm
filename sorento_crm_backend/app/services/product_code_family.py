@@ -332,11 +332,20 @@ def _pick(family: list[tuple[str, str]], descriptor: list[str]) -> tuple[list[st
 
 
 def narrow_code_tokens(
-    db: Session, *, query: str, tokens: list[str] | None, allowed_types: list[str] | None
+    db: Session,
+    *,
+    query: str,
+    tokens: list[str] | None,
+    allowed_types: list[str] | None,
+    answered: frozenset[str] = frozenset(),
 ) -> list[str] | None:
     """`tokens` with each code-plus-descriptor token replaced by the variant codes its
     descriptor picks, and the description tokens those words came from dropped. None when
-    nothing changes, so the caller's request stays byte-identical."""
+    nothing changes, so the caller's request stays byte-identical.
+
+    `answered` (CHATBOT-CLOSE-CODES AC-37): the folded codes the chat's grounding answered on a
+    stock or incoming ask (`grounding.picked_code_verdict`). Such a token whose words picked
+    nothing stays that code, never its bare family code. Empty for every other caller."""
     if not tokens:
         return None
     # The code is a whole word of the message ("SRTWC8840-SC" is one code, never
@@ -379,11 +388,10 @@ def narrow_code_tokens(
         else:
             picked = _pick(family, descriptor)
         if picked is None:
-            if folded != code_word and folded not in variants:
+            if _fold(token) != code_word and folded not in answered:
                 # "Srtwc7604ptrap" whose words picked nothing: the code alone, rather
-                # than a folded phrase no product is coded as. A token that IS one of the
-                # family's codes (the parser's code the grounding answered, "SRTWT8259-GLD"
-                # for "SRTWT8259 gold": CHATBOT-CLOSE-CODES AC-37) stays that code.
+                # than a folded phrase no product is coded as. A code the grounding
+                # answered ("SRTWT8259-GLD" for "SRTWT8259 gold", `answered`) stays.
                 replaced[i] = [code_word]
             continue
         codes, terms = picked

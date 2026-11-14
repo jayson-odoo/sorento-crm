@@ -495,8 +495,8 @@ def picked_code_verdict(entity: Any, name: str | None = None) -> str:
     The parser's `code_match` on the entity decides: "as_typed" or "named" answers, "guessed"
     offers. With no known value (prod prompt today), the code is answered only when it IS what
     was typed: its `turn_state.token_key` equals the raw's, or that of a run of the raw's
-    adjacent words (`_types_the_code_whole`), or the raw is the picked product's own catalogue
-    `name` (or a run of its words, when the caller read it); any other code is offered. An
+    adjacent words (`_types_the_code_whole`), or the whole raw is the picked product's whole
+    catalogue `name` (when the caller read it); any other code is offered. An
     exact compare of folded keys, nothing else: no spelling, distance or word rule
     second-guesses the model."""
     from app.services.chatbot.turn.state import token_key
@@ -513,7 +513,7 @@ def picked_code_verdict(entity: Any, name: str | None = None) -> str:
         return OFFER
     if token_key(raw) == token_key(canonical) or _types_the_code_whole(raw, canonical):
         return ANSWER
-    if raw and name and _types_the_code_whole(name, raw):
+    if raw and name and token_key(raw) == token_key(name):
         return ANSWER
     return OFFER
 

@@ -3382,6 +3382,7 @@ def _narrowed_payload(
     payload: "ResolveReferenceRequest",
     exact_kept: list[str] | None = None,
     spec_none: list[dict[str, Any]] | None = None,
+    answered: frozenset[str] = frozenset(),
 ) -> "ResolveReferenceRequest":
     """The typed codes narrowed to the variants the message picks, two ways: by the words on
     the code's line (`narrow_code_tokens`, PR #833) and by grounded spec values
@@ -3399,7 +3400,8 @@ def _narrowed_payload(
 
     typed = payload
     narrowed = narrow_code_tokens(
-        db, query=payload.query or "", tokens=payload.tokens, allowed_types=payload.allowed_entity_types
+        db, query=payload.query or "", tokens=payload.tokens, allowed_types=payload.allowed_entity_types,
+        **({"answered": answered} if answered else {}),
     )
     if narrowed is not None:
         payload = payload.model_copy(
@@ -3538,12 +3540,18 @@ def _not_from_a_request() -> bool:
     return False
 
 
+def _no_codes_from_a_request() -> frozenset[str]:
+    """A route argument no request can set: FastAPI always resolves it to no codes."""
+    return frozenset()
+
+
 @router.post("/resolve")
 def resolve_reference_post(
     payload: ResolveReferenceRequest,
     current_user: dict = Depends(get_external_api_user),
     db: Session = Depends(get_db),
     alternatives_offerable_only: bool = Depends(_not_from_a_request),
+    answered_codes: frozenset[str] = Depends(_no_codes_from_a_request),
 ):
     """POST variant for external callers that send JSON body (e.g. n8n HTTP node).
 
@@ -3552,11 +3560,17 @@ def resolve_reference_post(
     same-family) hold only products the chat may offer, and the chat ranks the whole list. No
     request body or query sets it (`_not_from_a_request`); the chatbot passes it in process
     (`lanes/business/services._resolve_entity`), so every API caller keeps the capped,
-    unfiltered alternatives."""
+    unfiltered alternatives.
+
+    `answered_codes` (CHATBOT-CLOSE-CODES AC-37): the folded codes the chat's grounding answered
+    on a stock or incoming ask, kept as typed by the code narrowing (`narrow_code_tokens`).
+    Passed in process the same way; no request sets it."""
     typed_tokens = list(payload.tokens or [])
     exact_kept: list[str] = []
     spec_none: list[dict[str, Any]] = []
-    payload = _narrowed_payload(db, payload, exact_kept, spec_none)
+    # A direct Python call that omits it holds the `Depends` marker, never a frozenset.
+    answered = answered_codes if isinstance(answered_codes, frozenset) else frozenset()
+    payload = _narrowed_payload(db, payload, exact_kept, spec_none, answered)
     picked_variants = (
         _picked_variants(typed_tokens, payload.tokens)
         if (payload.match_mode or "").strip().lower() == "or"
