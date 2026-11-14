@@ -255,3 +255,13 @@ def test_t2g_lock_a_bare_number_with_a_browse_just_shown_and_no_answered_parts_s
     c.state["focus"]["set_page"] = {"set_key": {**_TRAP_SPEC, "shown": 0}}
     c.say("4", reply(demand_qty=4))
     assert "set_count_answered" in c.turn_traces[-1].rules_fired, c.turn_traces[-1].rules_fired
+
+
+# Reviewer, crew pass 2: a one-product stock answer that left a listed browse carried still lets "another N" page it.
+def test_t2g_lock_another_n_after_a_one_product_answer_still_pages_the_carried_browse(session_factory, monkeypatch, stub_access):  # noqa: F811
+    c = _owner_world(session_factory, monkeypatch, stub_access)
+    answered = c.say("QWCY604 stock", stock(product(CISTERN)))
+    assert CISTERN in answered, answered
+    c.state["focus"]["set_page"] = {"set_key": {**_TRAP_SPEC, "shown": 10, "total": 141}}
+    c.say("another 10", reply(demand_qty=10))
+    assert "set_count_answered" in c.turn_traces[-1].rules_fired, c.turn_traces[-1].rules_fired
