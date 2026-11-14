@@ -863,7 +863,9 @@ def _pivot(ctx: QueryContext, view: ReportViewConfig, cap: bool, strict_sort: bo
                                   row_column, strict=strict_sort)
     value_labels = _value_labels(col_column, col_values)
 
-    if cap and len(row_values) * len(col_values) > PIVOT_CELL_CAP:
+    # Cells that hold data, not rows x columns: an empty cell is never sent, and counting
+    # the empty ones refused a two-week Customer x Month summary (REPORT-PIVOT-MONTHS).
+    if cap and len(grouped) > PIVOT_CELL_CAP:
         raise ReportCapped(
             f"This summary is more than {PIVOT_CELL_CAP:,} cells. "
             "Group by something coarser or export to Excel instead."
@@ -925,12 +927,17 @@ def _axis_values(
 ) -> List[str]:
     """The values an axis prints, in order.
 
-    A FIXED axis (months of the year, the period's years, the period's months) prints
-    every value whether the data holds it or not; any other axis prints what is present,
+    A FIXED axis (the months of the year the period touches, the period's years, the
+    period's months) prints every value whether the data holds it or not; any other axis prints what is present,
     ranked naturally. The blank bucket is kept and sorts last either way.
     """
     fixed: Optional[List[str]] = None
-    if column.fixed_values is not None:
+    if column.fixed_values == reg.MONTHS_OF_YEAR:
+        # Months of the year are the months the PERIOD touches, in JAN..DEC order: two
+        # weeks of November is one column, a year (or more) is all twelve.
+        in_period = {key[5:] for key in ctx.period.months}
+        fixed = [value for value, _label in column.fixed_values if value in in_period]
+    elif column.fixed_values is not None:
         fixed = [value for value, _label in column.fixed_values]
     elif column.period_years:
         fixed = _period_years(ctx)
