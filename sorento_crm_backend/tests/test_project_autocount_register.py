@@ -4,8 +4,8 @@ UAC: `documentation/plans/autocount/ac-project-register-acceptance-criteria.md` 
 screen rules R16-R18 are in the vitest file beside `ProjectDetailClient.tsx`).
 Plan: `documentation/plans/autocount/PLAN-ac-project-register-13nov.md`, "Design".
 
-    GET  /api/v1/project-sales/{project_id}/autocount-register   (status)
-    POST /api/v1/project-sales/{project_id}/autocount-register   (register, no body)
+    GET  /api/v1/project-sales/projects/{project_id}/autocount-register   (status)
+    POST /api/v1/project-sales/projects/{project_id}/autocount-register   (register, no body)
 
 Guard order: permission `projects.autocount.write` -> switch (403 `ac_register_switched_off`, the
 Shared Service is never touched) -> project (404) -> write access -> eligibility (409
@@ -55,7 +55,7 @@ NOT_DONE_PREFIX = "AutoCount registration not completed: "
 
 
 def _url(project_id) -> str:
-    return f"{BASE}/{project_id}/autocount-register"
+    return f"{BASE}/projects/{project_id}/autocount-register"
 
 
 def _status(body: dict) -> dict:

@@ -193,7 +193,7 @@ function statusAnswer(overrides: Record<string, unknown> = {}) {
 
 function registerCalls(method?: 'GET' | 'POST') {
   return apiFetch.mock.calls.filter(([url, init]) => {
-    if (!String(url).includes('/project-sales/p1/autocount-register')) return false;
+    if (!String(url).includes('/project-sales/projects/p1/autocount-register')) return false;
     if (!method) return true;
     const sent = String((init as RequestInit | undefined)?.method ?? 'GET').toUpperCase();
     return sent === method;
@@ -244,7 +244,7 @@ beforeEach(() => {
         project_autocount_register_enabled: switchOn,
       });
     }
-    if (path.includes('/project-sales/p1/autocount-register')) {
+    if (path.includes('/project-sales/projects/p1/autocount-register')) {
       const method = String(init?.method ?? 'GET').toUpperCase();
       return json(method === 'POST' ? registerAnswer : registerStatus);
     }
