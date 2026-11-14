@@ -203,3 +203,39 @@ describe('AC-8.3: hidden icons are skipped on print', () => {
     expect(imgs.map((i) => i.getAttribute('alt'))).toEqual(['Cold', 'Hot', 'Warm']);
   });
 });
+
+describe('AC-8.2: hiding an icon is per tag (each PlacedTag has its own layer copy)', () => {
+  it('tag A hides Cold, tag B of the same template still prints it', () => {
+    const layerA = iconsLayer({ hiddenIconIds: ['cold'] });
+    const layerB = iconsLayer({});
+    const doc = {
+      kind: 'tag_sheet',
+      imposition: { preset: 'a4_3up', page_width_mm: 210, page_height_mm: 297, bleed_mm: 0, gap_mm: 2 },
+      sheets: [
+        {
+          id: 's1',
+          tags: [
+            { id: 'tA', template_id: 'tpl', request_tag_id: 'rt-A', x_mm: 5, y_mm: 5, width_mm: 95, height_mm: 60, layers: [layerA] },
+            { id: 'tB', template_id: 'tpl', request_tag_id: 'rt-B', x_mm: 105, y_mm: 5, width_mm: 95, height_mm: 60, layers: [layerB] },
+          ],
+        },
+      ],
+    } as TagSheetDoc;
+    const extra = { featureIcons: ICONS } as Record<string, unknown>;
+    const { container } = render(
+      <TagSheetRenderer
+        doc={doc}
+        resolvedData={{ 'rt-A': lineData({ tag_id: 'rt-A' }), 'rt-B': lineData({ tag_id: 'rt-B' }) }}
+        assets={ASSETS}
+        {...extra}
+      />,
+    );
+    const alts = Array.from(container.querySelectorAll('img')).map((i) => i.getAttribute('alt'));
+    // Tag A: Hot, Warm. Tag B: Cold, Hot, Warm.
+    expect(alts.filter((a) => a === 'Cold')).toHaveLength(1);
+    expect(alts.filter((a) => a === 'Hot')).toHaveLength(2);
+    expect(alts).toHaveLength(5);
+    // The tag props were not shared: B's own copy still has nothing hidden.
+    expect((layerB.props as { hiddenIconIds?: string[] }).hiddenIconIds).toBeUndefined();
+  });
+});

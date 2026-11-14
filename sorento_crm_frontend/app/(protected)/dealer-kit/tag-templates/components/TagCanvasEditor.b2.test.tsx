@@ -241,15 +241,15 @@ describe('AC-6.3: one image box per picked image', () => {
 
   it('picking 3 images adds 3 image boxes, in order, each below the previous one', async () => {
     const onChange = vi.fn();
-    render(<TagCanvasEditor doc={doc()} onChange={onChange} />);
+    render(<TagCanvasEditor doc={doc()} onChange={vi.fn()} onLayersChange={onChange} />);
     fireEvent.click(screen.getAllByRole('button', { name: 'Add Image' })[0]);
     fireEvent.click(await screen.findByRole('button', { name: 'stand-in pick three' }));
 
     await waitFor(() => {
-      const last = onChange.mock.calls.at(-1)?.[0] as TagTemplateDoc | undefined;
-      expect(last?.layers.filter((l) => l.type === 'image')).toHaveLength(3);
+      const last = { layers: (onChange.mock.calls.at(-1)?.[0] ?? []) as TagLayer[] };
+      expect(last.layers.filter((l) => l.type === 'image')).toHaveLength(3);
     });
-    const last = onChange.mock.calls.at(-1)![0] as TagTemplateDoc;
+    const last = { layers: onChange.mock.calls.at(-1)![0] as TagLayer[] };
     const images = last.layers.filter((l) => l.type === 'image');
     expect(images.map((l) => (l.props as { source?: unknown }).source)).toEqual([
       { type: 'asset', assetId: 'as-1' },
@@ -259,5 +259,84 @@ describe('AC-6.3: one image box per picked image', () => {
     for (let i = 1; i < images.length; i += 1) {
       expect(images[i].y_mm).toBeGreaterThanOrEqual(images[i - 1].y_mm + images[i - 1].height_mm - 1e-6);
     }
+  });
+});
+
+describe('AC-5.3: a card that crosses the tag edge is named on the canvas', () => {
+  function manyBound(count: number): TagBindingData {
+    const accessories = Array.from({ length: count }, (_, i) => ({
+      kind: 'product', id: `p-acc-${i + 1}`, name: `ZZT ITEM ${i + 1}`, spec: null, remark: null, image: null,
+      images: [], colours: [], code: `ZZTACC${i + 1}`, list_price: null, photo_attachment_id: null,
+    }));
+    const base = bound(null) as unknown as { product: Record<string, unknown> };
+    return { kind: 'product', product: { ...base.product, accessories } } as unknown as TagBindingData;
+  }
+
+  function lowBox(): TagLayer {
+    // 8 mm tall box sitting 2 mm above the bottom of a 100 mm tag: six 20 mm cards stacked can
+    // never fit, whatever the readable minimum is, so the last ones grow past the tag edge.
+    return { ...accessoriesBox(), y_mm: 90, height_mm: 8 } as TagLayer;
+  }
+
+  it('shows a visible warning naming the card that crosses the tag edge', async () => {
+    render(<TagCanvasEditor doc={doc(lowBox())} onChange={vi.fn()} boundData={manyBound(6)} />);
+    await waitFor(() => expect(screen.getByText(/ZZTACC6/)).toBeInTheDocument());
+  });
+
+  it('says nothing when every card stays inside the tag', async () => {
+    render(<TagCanvasEditor doc={doc(accessoriesBox())} onChange={vi.fn()} boundData={manyBound(2)} />);
+    // Let effects settle, then expect no warning naming a card.
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Add Image' }).length).toBeGreaterThan(0));
+    expect(screen.queryByText(/ZZTACC1|ZZTACC2/)).toBeNull();
+  });
+});
+
+describe('AC-6.3: the new boxes are selected; replacing an image stays single pick', () => {
+  it('after picking 3 images all 3 new boxes are selected (one nudge moves all three)', async () => {
+    const onChange = vi.fn();
+    render(<TagCanvasEditor doc={doc()} onChange={vi.fn()} onLayersChange={onChange} />);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Add Image' })[0]);
+    fireEvent.click(await screen.findByRole('button', { name: 'stand-in pick three' }));
+    await waitFor(() => {
+      const last = { layers: (onChange.mock.calls.at(-1)?.[0] ?? []) as TagLayer[] };
+      expect(last.layers.filter((l) => l.type === 'image')).toHaveLength(3);
+    });
+    const before = (onChange.mock.calls.at(-1)![0] as TagLayer[]).filter((l) => l.type === 'image');
+
+    fireEvent.keyDown(window, { key: 'ArrowRight', shiftKey: true });
+    await waitFor(() => {
+      const after = (onChange.mock.calls.at(-1)![0] as TagLayer[]).filter((l) => l.type === 'image');
+      after.forEach((layer, i) => expect(layer.x_mm).toBeCloseTo(before[i].x_mm + 1, 6));
+    });
+  });
+
+  it('Choose image on an existing image box opens a single-pick dialog that applies and closes', async () => {
+    const onChange = vi.fn();
+    const existing = {
+      id: 'img1', type: 'image', x_mm: 5, y_mm: 5, width_mm: 20, height_mm: 10, rotation_deg: 0, z_index: 1,
+      locked: false, visible: true, slot_binding: null, text_override: null,
+      props: { kind: 'image', source: null, fit: 'contain', maskShape: 'none' },
+    } as TagLayer;
+    const { container } = render(<TagCanvasEditor doc={doc(existing)} onChange={vi.fn()} onLayersChange={onChange} />);
+    // A right-click selects the clicked layer (TagCanvasEditor.context-menu.test.tsx).
+    rightClick(container, { clientX: 10 * CANVAS_PX_PER_MM, clientY: 10 * CANVAS_PX_PER_MM });
+    // Close the menu without Escape (Escape also clears the selection): a harmless item.
+    fireEvent.click(screen.getByRole('menuitem', { name: /Bring to Front/ }));
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+    fireEvent.click(await screen.findByRole('button', { name: 'Choose image' }));
+
+    const dialog = await screen.findByRole('dialog', { name: 'Choose an image' });
+    expect(dialog).toHaveAttribute('data-pick-many', 'false');
+    fireEvent.click(screen.getByRole('button', { name: 'stand-in pick one' }));
+
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Choose an image' })).toBeNull());
+    await waitFor(() => {
+      const last = { layers: (onChange.mock.calls.at(-1)?.[0] ?? []) as TagLayer[] };
+      expect(last.layers.filter((l) => l.type === 'image')).toHaveLength(1);
+      expect((last!.layers[0].props as { source?: unknown }).source).toEqual({
+        type: 'product_attachment',
+        attachmentId: 'att-side',
+      });
+    });
   });
 });
