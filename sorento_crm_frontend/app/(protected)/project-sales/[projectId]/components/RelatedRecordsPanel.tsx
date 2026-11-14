@@ -1,5 +1,7 @@
 'use client';
 
+import { BACK_PARAM } from '@/components/common/BackToList';
+import { projectTabOriginHref } from '../../_shared/lib/reviewOrigin';
 import * as React from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import type {
@@ -161,11 +163,16 @@ export function RelatedRecordsPanel({
   const searchQuery = useDebouncedValue(search.trim(), 300);
 
   // Mirror the grid's state into the address bar, keeping every other param (the tab, the
-  // projects list's own prev/next query).
+  // projects list's own prev/next query). Only its own `rel_*` params, and only while the page
+  // shows Related: the tab is the page's to write, so a tab click (or Back into another tab)
+  // is never written over while this panel is still mounted.
   React.useEffect(() => {
     const next = new URLSearchParams(urlKey);
+    const tab = next.get('tab');
+    if (tab !== 'related' && tab !== 'sponsorships') return;
+    // The retired Sponsorship Form tab's links open Related: the alias becomes its own name.
+    if (tab === 'sponsorships') next.set('tab', 'related');
     for (const key of Object.values(URL_KEYS)) next.delete(key);
-    next.set('tab', 'related');
     if (pagination.pageIndex > 0) next.set(URL_KEYS.page, String(pagination.pageIndex + 1));
     if (pagination.pageSize !== PAGE_SIZE) next.set(URL_KEYS.limit, String(pagination.pageSize));
     const sort = sorting[0];
@@ -437,7 +444,16 @@ export function RelatedRecordsPanel({
         }
         onRowClick={(row) => {
           const def = RELATED_RECORD_TYPES[row.kind];
-          if (def) router.push(def.href(row.id));
+          if (!def) return;
+          // A sponsorship form's page reads `?back=` (BackToList originLabel): its Back returns to
+          // this project's sponsorship forms, where its Cancel and Submit land too.
+          router.push(
+            row.kind === 'sponsorship_form'
+              ? `${def.href(row.id)}?${BACK_PARAM}=${encodeURIComponent(
+                  projectTabOriginHref(project.id, 'sponsorships'),
+                )}`
+              : def.href(row.id),
+          );
         }}
       />
     </div>

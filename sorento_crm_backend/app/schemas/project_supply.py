@@ -501,6 +501,8 @@ class ConfirmedLine(BaseModel):
 
 
 class CancelledLineEcho(BaseModel):
+    #: The mirror line the entry is about, so the board can match it to the line it posted.
+    project_line_id: Optional[str] = None
     line_no: Optional[int] = None
     so_line_no: Optional[int] = None
     item_code: Optional[str] = None
@@ -515,6 +517,9 @@ class ConfirmResult(BaseModel):
     confirmed_at: Optional[datetime] = None
     review_state: str = "confirmed"
     inquiry_rows_created: int = 0
+    #: Purchasing handover lines this confirm queued (raised, changed, cancelled): what the
+    #: board's result sentence counts. `inquiry_rows_created` is 0 on a date move.
+    inquiry_rows_handed_over: int = 0
     exceptions: List[ConfirmException] = []
     #: What this revision covers, and what is still open on the order after it (13.4).
     #: `lines_undecided > 0` is a normal, deliberate outcome, not a warning.
@@ -718,6 +723,9 @@ class ConfirmManyOrderResult(BaseModel):
     a slower reply."""
 
     pso_id: str
+    #: The core sales order's number, so a result line can name the order after the board
+    #: refetch has dropped it.
+    so_number: Optional[str] = None
     ok: bool
     #: True on a preview: nothing below was committed.
     preview: Optional[bool] = None
@@ -725,6 +733,7 @@ class ConfirmManyOrderResult(BaseModel):
     transfers: Optional[List[PreviewTransfer]] = None
     decision_revision: Optional[int] = None
     inquiry_rows_created: Optional[int] = None
+    inquiry_rows_handed_over: Optional[int] = None
     lines_decided: Optional[int] = None
     lines_undecided: Optional[int] = None
     lines_confirmed: Optional[List[ConfirmedLine]] = None

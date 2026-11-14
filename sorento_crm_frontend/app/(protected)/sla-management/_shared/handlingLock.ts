@@ -111,4 +111,5 @@ export const HANDLING_LOCK_TYPE_LABELS: Record<FormSLASourceType, string> = {
   price_tag_request: 'Price Tag Request',
   sample_request: 'Sample Request',
   new_product_application: 'New Product Application',
+  order_change_notice: 'Order Change Notice',
 };
