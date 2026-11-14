@@ -60,9 +60,10 @@ PROMPT_KEY = "chatbot_agent"
 FEATURE = "chatbot_agent"
 DEFAULT_PROVIDER = "gemini"
 DEFAULT_MODEL = "gemini-3.5-flash"
-# The effort the agent thinks at when its label sets none (owner, 31 Oct): without one a flash model gets a
-# one-token thinking budget, so it barely thinks and the console has no reasoning to show.
-DEFAULT_EFFORT = "low"
+# The effort the agent thinks at when its label sets none: without one a flash model gets a one-token thinking
+# budget, so it barely thinks and the console has no reasoning to show (owner, 31 Oct). Medium, not low, so a
+# comparison gets room to rank its findings (owner, 14 Nov, AGENT-PROPOSAL-INSIGHTS).
+DEFAULT_EFFORT = "medium"
 MCP_CALL_TIMEOUT = 10.0
 NOT_VERIFIED = "(not verified)"
 #: Per-call ceilings. Every call also counts against the turn's max_seconds.

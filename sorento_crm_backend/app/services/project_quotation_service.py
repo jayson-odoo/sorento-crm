@@ -1746,6 +1746,10 @@ def serialize_quotations(
         .filter(ProjectQuotationDocument.id.in_(document_ids))
         .all()
     } if document_ids else {}
+    # Prepared By per row: the document's creator, never the project owner (one users query).
+    from app.services.project_quotation_template_service import prepared_by_names
+
+    prepared_by = prepared_by_names(db, documents.values())
 
     out: List[Dict[str, Any]] = []
     for quotation in quotations:
@@ -1759,6 +1763,7 @@ def serialize_quotations(
                 "document_id": quotation.document_id,
                 "document_no": document.document_no if document is not None else None,
                 "document_kind": (document.kind or "proposal") if document is not None else None,
+                "prepared_by": prepared_by.get(document.id) if document is not None else None,
                 "scope_label": quotation.scope_label,
                 "series_id": quotation.series_id,
                 "series_name": series_names.get(quotation.series_id or ""),

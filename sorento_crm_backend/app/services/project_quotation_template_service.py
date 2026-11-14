@@ -261,6 +261,18 @@ def prepared_by_of(db: Session, document: Any) -> Optional[str]:
     return user.name if user else None
 
 
+def prepared_by_names(db: Session, documents: Any) -> Dict[str, Optional[str]]:
+    """``prepared_by_of`` for many documents in one users query: document id -> creator name (None
+    when the creator is unset or unknown)."""
+    from app.models.user import User
+
+    creator_ids = {d.created_by for d in documents if getattr(d, "created_by", None)}
+    names = (
+        dict(db.query(User.id, User.name).filter(User.id.in_(creator_ids)).all()) if creator_ids else {}
+    )
+    return {d.id: names.get(getattr(d, "created_by", None) or "") for d in documents}
+
+
 def build_document_context(
     db: Session, *, document: Any, grand_total: Optional[Decimal] = None
 ) -> Dict[str, Any]:

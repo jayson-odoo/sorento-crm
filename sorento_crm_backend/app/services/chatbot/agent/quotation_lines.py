@@ -2,7 +2,8 @@
 
 Local and in process as the user (company scope and the project route's own 404 apply). The list tool answers
 "what did we quote" per scope; this one answers "what is on it": each document's scopes at their CURRENT version,
-or at the versions an issued revision pinned (`refs`). Photos and signed URLs are not read.
+or at the versions an issued revision pinned (`refs`). Photos and signed URLs are not read. Each document carries
+its Prepared By and per-document facts; two or more carry a computed `comparison` (AGENT-PROPOSAL-INSIGHTS).
 """
 from __future__ import annotations
 
@@ -15,6 +16,10 @@ from sqlalchemy.orm import Session
 from app.services import project_quotation_service as svc
 from app.services import project_service as projects
 from app.services.project_quotation_document_service import quotation_no
+from app.services.project_quotation_template_service import prepared_by_names
+
+#: The most entries each comparison list holds; the rest are counted in `<name>_not_shown`.
+COMPARE_CAP = 20
 
 
 def _num(value: Any) -> float | None:
@@ -23,12 +28,14 @@ def _num(value: Any) -> float | None:
 
 def vs_list(listed: Any, unit: Any) -> str | None:
     """The unit price against the list price, as words the model can quote as is: "74.52% below list",
-    "12% above list", "at list". None without a list price. A bare percent in an answer left the reader
-    guessing what it measured (owner, 11 Nov), so the tool never hands one out."""
+    "12% above list", "at list", "no charge" (unit price 0). None without a list price. A bare percent in an
+    answer left the reader guessing what it measured (owner, 11 Nov), so the tool never hands one out."""
     if not listed:
         return None
     listed = Decimal(listed)
     unit = Decimal(unit or 0)
+    if not unit:  # "100% below list" read as a discount; a line at 0 is given away (owner, 14 Nov)
+        return "no charge"
     pct = round(abs(listed - unit) / listed * 100, 2)
     if not pct:  # equal, or a difference that rounds to 0.00
         return "at list"
@@ -108,6 +115,7 @@ def project_quotation_lines(db: Session, project_id: str, refs: list[str], cap: 
         if documents and wanted
         else []
     )
+    prepared_by = prepared_by_names(db, documents)  # the document's creator, never the project owner
     out: list[dict] = []
     matched: set[str] = set()
 
@@ -116,7 +124,7 @@ def project_quotation_lines(db: Session, project_id: str, refs: list[str], cap: 
         built = [_scope(r["scope_label"], r["current_version_no"], r["current_version_id"], r["current_total"]) for r in rows]
         return {
             "ref": doc.document_no, "document_no": doc.document_no, "revision": None,
-            "total": round(sum(s["total"] for s in built), 2), "scopes": built,
+            "prepared_by": prepared_by[doc.id], "total": round(sum(s["total"] for s in built), 2), "scopes": built,
         }
 
     def issued_doc(doc: Any, issue: Any) -> dict:
@@ -132,7 +140,7 @@ def project_quotation_lines(db: Session, project_id: str, refs: list[str], cap: 
         ref = quotation_no(doc.document_no, issue.issue_no, issue.revision_label)
         return {
             "ref": ref, "document_no": doc.document_no, "revision": issue.revision_label or f"R{issue.issue_no}",
-            "total": _num(issue.grand_total) or 0.0, "scopes": built,
+            "prepared_by": prepared_by[doc.id], "total": _num(issue.grand_total) or 0.0, "scopes": built,
         }
 
     if not wanted:
@@ -150,8 +158,94 @@ def project_quotation_lines(db: Session, project_id: str, refs: list[str], cap: 
                     out.append(issued_doc(doc, issue))
     _fill(db, [sc for d in out for sc in d["scopes"]])
     not_found = [r for r in wanted if r.lower() not in matched]
-    data: dict[str, Any] = {"documents": out, "not_found": not_found}
+    for doc in out:
+        _facts(doc)
+    data: dict[str, Any] = {"documents": out, "not_found": not_found, "total_lines": sum(d["line_count"] for d in out)}
+    if len(out) > 1:
+        data["comparison"] = _compare(out)  # from every line, before `_fit` cuts any
     return data, _fit(data, cap)
+
+
+def _doc_lines(doc: dict) -> list[dict]:
+    return [ln for s in doc["scopes"] for ln in s["lines"]]
+
+
+def _facts(doc: dict) -> None:
+    """What a reader checks first in one document, computed so the model never counts."""
+    lines = _doc_lines(doc)
+    codes = [ln["code"] for ln in lines if ln["code"]]
+    doc["line_count"] = len(lines)
+    doc["no_charge_lines"] = list(dict.fromkeys(
+        ln["code"] for ln in lines
+        if ln["code"] and not ln["unit_price"] and (ln["qty"] or 0) > 0 and not ln["rate_only"]
+    ))
+    doc["repeated_codes"] = [
+        {"code": c, "times": codes.count(c)} for c in dict.fromkeys(codes) if codes.count(c) > 1
+    ]
+    doc["rate_only_lines"] = sum(1 for ln in lines if ln["rate_only"])
+    doc["empty"] = not doc["scopes"]
+
+
+def _capped(block: dict, name: str, entries: list) -> None:
+    block[name] = entries[:COMPARE_CAP]
+    if len(entries) > COMPARE_CAP:
+        block[f"{name}_not_shown"] = len(entries) - COMPARE_CAP
+
+
+def _compare(docs: list[dict]) -> dict:
+    """The differences between two or more documents (UAC C1 to C6): every figure the answer needs is here,
+    so the model compares without arithmetic."""
+    refs = [d["ref"] for d in docs]
+    ranked = sorted(docs, key=lambda d: d["total"])  # stable: a tie keeps document order
+    low = ranked[0]["total"]
+    block: dict[str, Any] = {
+        "totals": [{"ref": d["ref"], "total": d["total"], "gap_to_lowest": round(d["total"] - low, 2)} for d in ranked],
+        "lowest": ranked[0]["ref"],
+        "highest": ranked[-1]["ref"],
+    }
+
+    by_code: dict[str, dict[str, list[dict]]] = {}  # code -> ref -> its lines, both in first-seen order
+    by_scope: dict[str, dict[str, float]] = {}  # scope label -> ref -> total
+    for d in docs:
+        for s in d["scopes"]:
+            totals = by_scope.setdefault(s["scope"], {})
+            totals[d["ref"]] = round(totals.get(d["ref"], 0.0) + s["total"], 2)
+        for ln in _doc_lines(d):
+            if ln["code"]:
+                by_code.setdefault(ln["code"], {}).setdefault(d["ref"], []).append(ln)
+
+    def only_in(groups: dict[str, dict], key: str) -> list[dict]:
+        return [{key: k, "refs": [r for r in refs if r in v]} for k, v in groups.items() if len(v) < len(refs)]
+
+    shared = []
+    for code, per_ref in by_code.items():
+        if len(per_ref) < 2:
+            continue
+        rows = [{
+            "ref": ref,
+            "qty": round(sum(ln["qty"] or 0 for ln in lines), 4),
+            "unit_prices": sorted({ln["unit_price"] for ln in lines}),
+            "line_total": round(sum(ln["line_total"] or 0 for ln in lines), 2),
+        } for ref, lines in ((r, per_ref[r]) for r in refs if r in per_ref)]
+        same_uom = len({(ln["uom"] or "").strip().lower() for lines in per_ref.values() for ln in lines}) == 1
+        mins = [row["unit_prices"][0] for row in rows]
+        cheapest = rows[mins.index(min(mins))]["ref"] if same_uom and len(set(mins)) > 1 else None
+        totals = [row["line_total"] for row in rows]
+        shared.append({
+            "code": code, "docs": rows, "cheapest": cheapest,
+            "unit_price_gap": round(max(mins) - min(mins), 2) if same_uom else None,
+            "line_total_gap": round(max(totals) - min(totals), 2), "same_uom": same_uom,
+        })
+    shared.sort(key=lambda e: -e["line_total_gap"])  # stable: a tie keeps first-seen order
+
+    _capped(block, "only_in", only_in(by_code, "code"))
+    _capped(block, "shared", shared)
+    _capped(block, "scopes_only_in", only_in(by_scope, "scope"))
+    _capped(block, "scope_totals", [
+        {"scope": label, "totals": [{"ref": r, "total": v[r]} for r in refs if r in v]}
+        for label, v in by_scope.items() if len(v) > 1
+    ])
+    return block
 
 
 def _fit(data: dict, cap: int) -> int:
