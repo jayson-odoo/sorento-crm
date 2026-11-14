@@ -399,8 +399,21 @@ class TestOneCustomerGroupIsOneChoice:
         assert sorted(options[0]["uuids"]) == sorted([a.id, b.id])
 
     def test_a_real_second_customer_still_gets_its_own_line(self, db):
-        """The fix merges by identity, not by name: a different customer outside the group,
-        with its own code, is still a choice."""
+        """The fix merges by identity: a different customer (another trading name) outside the
+        group, with its own code, is still a choice."""
+        gid = _group(db)
+        cust = _customer(db, group_id=gid)
+        other = _customer(db, f"{MARKER} TRADING HOUSE SDN BHD")
+        _do(db, DO_NAME, code=cust.customer_code, customer_id=cust.id)
+        _do(db, other.customer_name, code=other.customer_code, customer_id=other.id)
+
+        _gate, options = _roster(db, TOKEN)
+
+        assert len(options) == 2, [o["label"] for o in options]
+
+    def test_an_ungrouped_ledger_of_the_groups_trading_name_is_answered_with_the_group(self, db):
+        """Owner Q1, 9 Nov 2026 ("we should treat it as part of group also ... be more lenient"): "(JB)" is a ledger
+        of the group's trading name with no group, so it is the group's line, not a second choice."""
         gid = _group(db)
         cust = _customer(db, group_id=gid)
         other = _customer(db, f"{MARKER} TRADING (JB) SDN BHD")
@@ -409,4 +422,4 @@ class TestOneCustomerGroupIsOneChoice:
 
         _gate, options = _roster(db, TOKEN)
 
-        assert len(options) == 2, [o["label"] for o in options]
+        assert len(options) <= 1, [o["label"] for o in options]

@@ -143,7 +143,9 @@ def test_ac12_two_families_merge_into_one_line_once_grouped():
     assert sorted(options[0]["uuids"]) == sorted([a, b])
 
 
-def test_ac13_a_name_the_rule_merges_splits_when_only_one_is_grouped():
+def test_ac13_a_name_the_rule_merges_stays_one_when_only_one_is_grouped():
+    """Owner Q1, 9 Nov 2026: grouping one of two same-trading-name ledgers never splits them apart (the ungrouped one
+    is answered with the group, "we should be more lenient")."""
     lf = _seam()
     ns, y1990 = _u(), _u()
     cands = [_cand(f"{JUBIN_NS} [A/C I]", ns), _cand(f"{JUBIN_1990} [A/C I]", y1990)]
@@ -152,8 +154,9 @@ def test_ac13_a_name_the_rule_merges_splits_when_only_one_is_grouped():
 
     with lf.customer_groups({f"{JUBIN_1990} [A/C I]": JUBIN_1990}):
         options = _roster(cands)
-    assert len(options) == 2
-    assert {o["uuids"][0] for o in options} == {ns, y1990}
+    assert len(options) == 1
+    assert sorted(options[0]["uuids"]) == sorted([ns, y1990])
+    assert options[0]["label"] == JUBIN_1990
 
 
 def test_ac13_jubin_real_scenario_roster_and_exact_name_gate():
@@ -172,11 +175,9 @@ def test_ac13_jubin_real_scenario_roster_and_exact_name_gate():
 
     with lf.customer_groups(mapping):
         options = _roster([_cand(names[u], u) for u in (plain, a1, a3, ns)])
-        assert len(options) == 2
-        by_label = {o["label"]: o for o in options}
-        assert sorted(by_label[group]["uuids"]) == sorted([plain, a1, a3])
-        (ns_line,) = [o for o in options if o["label"] != group]
-        assert ns_line["uuids"] == [ns]
+        # Owner Q1 (9 Nov 2026): the ungrouped NS ledger carries the group's trading name, so it is the group's line.
+        assert [o["label"] for o in options] == [group]
+        assert sorted(options[0]["uuids"]) == sorted([plain, a1, a3, ns])
 
         matches = [
             {"uuid": u, "entity_type": "customer", "display": {"customer_name": names[u]}}
@@ -192,7 +193,7 @@ def test_ac13_jubin_real_scenario_roster_and_exact_name_gate():
 
     assert refusal is None
     kept = {m["uuid"] for m in resolved["resolutions"][0]["matches"]}
-    assert kept == {a1}, f"the NS ledger must not answer for the group's name: {kept}"
+    assert kept == {a1, ns}, f"Q1: the NS ledger answers with the group's Account 1: {kept}"
 
 
 # ============================================================ AC-14 one test per call site

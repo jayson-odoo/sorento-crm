@@ -46,7 +46,13 @@ from app.services.chatbot.lanes.business.gate import run_gate
 from app.services.chatbot.lanes.business.predicate import derive_predicate_words, derive_require
 from app.services.chatbot.lanes.business.services import ResolveGateServices
 from app.services.chatbot.lanes.business.tier_gate import tier_gate as run_tier_gate
-from app.services.ledger_family import ledger_family_key, ledger_family_label
+from app.services.ledger_family import (
+    group_named,
+    ledger_family_key,
+    ledger_family_label,
+    trading_name_key,
+    without_ledger_marker,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1174,7 +1180,8 @@ def measure_customer_picker(
     out["customer_probe_window_days"] = CUSTOMER_PROBE_DEFAULT_WINDOW_DAYS if probe_windowed else None
     bases = pickers.customer_bases_with_do(probe)
     out["customer_bases_with_do"] = sorted(bases) if bases is not None else None
-    out["customer_probe_hits"] = len(bases) if bases is not None else None
+    # Customers with a DO, counted once each (a set also carries each one's search-side entry).
+    out["customer_probe_hits"] = len(pickers.ledger_bases(bases)) if bases is not None else None
     if bases is not None:
         out["customer_probe_skip_reason"] = None
     elif pickers.probe_rows(probe) is None:
@@ -1368,8 +1375,15 @@ def narrow_by_account(
             # alone (crew ruling, 2 Oct 2026): the names merely carrying its words (SOON
             # GUAN HENG TRADING) are dropped for this word, so neither their levels nor
             # their rows answer it. No match of that exact name -> every match counts.
+            # A word that is a customer group's own name speaks for that group's ledgers; any
+            # other word matches by trading name (search only, CUSTOMER-GROUP-GATE).
+            group = group_named(typed)
             exact = (
-                [m for m in customers if ledger_family_key(_match_name(m)) == ledger_family_key(typed)]
+                [
+                    m for m in customers
+                    if (ledger_family_key(_match_name(m), m.get("uuid")) == group if group
+                        else trading_name_key(_match_name(m)) == trading_name_key(typed))
+                ]
                 if exact_names
                 else []
             )
@@ -1458,10 +1472,14 @@ def _no_such_account(
 ) -> str:
     """Q4: one trading name says which levels it has; several names say the word has none."""
     names = [_match_name(m) for m in customers]
-    if len({ledger_family_key(n) for n in names}) > 1:
+    # One customer entry (a group, or one trading name: `ledger_family_key`).
+    groups = {ledger_family_key(_match_name(m), m.get("uuid")) for m in customers}
+    if len(groups) == 1:
+        subject = ledger_family_label(names[0], customers[0].get("uuid"))
+    else:
         return f'None of the customers matching "{typed}" has Account {account}.'
     have = sorted({lvl for m in customers if (lvl := levels.get(str(m.get("uuid")))) is not None})
-    line = f"{ledger_family_label(names[0])} has no Account {account}."
+    line = f"{subject} has no Account {account}."
     return f"{line} It has {_account_list(have)}." if have else line
 
 
@@ -1813,19 +1831,17 @@ def span_supplier_group(entity: Any, ctx: dict[str, Any]) -> list[tuple[str, str
 
 
 def _supplier_family(name: str) -> str:
-    """A supplier line's trading-name key, the `ledger_family` rule with no customer group in play."""
-    from app.services.ledger_family import customer_groups, ledger_family_key
+    """A supplier line's family key (`ledger_family.supplier_family_key`: one trading name, one supplier)."""
+    from app.services.ledger_family import supplier_family_key
 
-    with customer_groups({}):
-        return ledger_family_key(str(name or ""))
+    return supplier_family_key(str(name or ""))
 
 
 def _supplier_family_label(name: str) -> str:
     """The trading name a family of supplier records is called by (its line without the bracketed code)."""
-    from app.services.ledger_family import customer_groups, ledger_family_label
+    from app.services.ledger_family import supplier_family_label
 
-    with customer_groups({}):
-        return ledger_family_label(str(name or ""))
+    return supplier_family_label(str(name or ""))
 
 
 def bind_span_suppliers(parser: dict[str, Any], resolved: dict[str, Any], ctx: dict[str, Any]) -> None:

@@ -265,21 +265,46 @@ class CustomerGroupService:
         return True
 
 
-def family_overrides(db: Session) -> dict[str, str]:
-    """`{normalised customer name: group name}` for the chatbot turn, in the caller's scope.
+def _group_labels(db: Session) -> dict[str, str]:
+    """`{group id: the name the chatbot calls it}`, for the groups in the caller's scope.
 
-    A name whose rows do not all sit in one group (two groups, or a group and none) is
-    left out, so it falls back to the name rule instead of guessing a side.
+    The group's own name. A group name that exists in both Sorento and Mocha (190 names on the
+    20 Oct prod copy) is ONE customer to the chatbot: the bot never asks "Sorento or Mocha?" for
+    it (owner 3 Nov R2 on #2105; crew Q2 (a), 9 Nov 2026). The company codes still print on the
+    line (`gate._company_suffix`, `narrow._options`).
     """
-    rows = (
-        db.query(Customer.customer_name, CustomerGroup.name)
-        .outerjoin(CustomerGroup, CustomerGroup.id == Customer.customer_group_id)
-        .all()
-    )
+    return {str(gid): name for gid, name in db.query(CustomerGroup.id, CustomerGroup.name).all()}
+
+
+def family_maps(db: Session) -> tuple[dict[str, str], dict[str, str]]:
+    """The chatbot turn's explicit links, in the caller's scope, read once:
+
+    - `{normalised customer name: group name}` for callers that hold only a name. A name whose
+      rows do not all sit in one group (two groups, in one company or two, or a group and none)
+      is left out, so it stays ungrouped by name instead of guessing a side;
+    - `{customer id: group name}` for every grouped ledger, for callers that hold the row's id
+      (two rows of one full name can sit apart)."""
+    labels = _group_labels(db)
+    rows = db.query(Customer.id, Customer.customer_name, Customer.customer_group_id).all()
     seen: dict[str, Optional[str]] = {}
     clashing: set[str] = set()
-    for customer_name, group_name in rows:
+    ids: dict[str, str] = {}
+    for customer_id, customer_name, group_id in rows:
+        gid = str(group_id) if group_id is not None else None
+        if gid is not None and gid in labels:
+            ids[str(customer_id)] = labels[gid]
         key = normalise_customer_name(customer_name)
-        if seen.setdefault(key, group_name) != group_name:
+        if seen.setdefault(key, gid) != gid:
             clashing.add(key)
-    return {k: v for k, v in seen.items() if v is not None and k not in clashing}
+    names = {k: labels[g] for k, g in seen.items() if g is not None and k not in clashing and g in labels}
+    return names, ids
+
+
+def family_ids(db: Session) -> dict[str, str]:
+    """`family_maps`' id map alone."""
+    return family_maps(db)[1]
+
+
+def family_overrides(db: Session) -> dict[str, str]:
+    """`family_maps`' name map alone."""
+    return family_maps(db)[0]

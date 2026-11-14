@@ -1052,13 +1052,17 @@ def test_the_envelope_names_its_supplier_subjects_with_their_codes():
 
 def test_the_header_keeps_two_suppliers_of_one_trading_name_apart_with_their_codes():
     """Owner turn 3 (87fc44fc): the header read 'SRTW2600, XIAMEN TAIYANG TECHNOLOGY CO.,LTD' for three suppliers: the
-    customer-account rule folded two records of one name and dropped every code. A customer still folds."""
+    customer-account rule folded two records of one name and dropped every code. A customer still folds (owner 9 Nov
+    2026: same-name ledgers are one customer), and a customer group names the fold."""
+    from app.services.ledger_family import customer_groups
     from app.services.chatbot.turn.compose import _header_subjects
 
     a, b, c = f"{SUPPLIER} (400-X006)", f"{SUPPLIER} (400-X008)", "ZZT TAIYANG TECHNOLOGY CO., LTD. (400-X001)"
     assert _header_subjects(["SRTW2600", a, b, c], whole=[a, b, c]) == ["SRTW2600", a, b, c]
     ledgers = ["ZZT HARDWARE SDN BHD - [A/C I]", "ZZT HARDWARE SDN BHD - [A/C II]"]
     assert len(_header_subjects(ledgers, whole=[a])) == 1
+    with customer_groups({n: "ZZT HARDWARE SDN BHD" for n in ledgers}):
+        assert _header_subjects(ledgers, whole=[a]) == ["ZZT HARDWARE SDN BHD"]
 
 
 def test_the_owner_supplier_ask_with_a_product_and_a_year_stays_on_purchase_orders(session_factory, monkeypatch):
@@ -2593,6 +2597,36 @@ def test_a_customer_group_never_merges_two_suppliers_of_different_names():
         )
     assert outcome.ask_kind == "supplier_pick", outcome
     assert sorted(o["label"] for o in outcome.ask_options) == ["ZZT ALPHA SDN BHD", "ZZT BETA SDN BHD"], outcome
+
+
+@pytest.mark.parametrize(
+    "names",
+    [
+        ("ZZT HANLIM TRADING SDN BHD (400-H018)", "ZZT HANLIM TRADING SDN BHD (403-H007)"),
+        ("ZZT TAIYANG CO.,LTD", "ZZT TAIYANG CO., LTD."),
+    ],
+)
+def test_narrow_reads_supplier_records_of_one_name_as_one_choice(names):
+    """GATE-SUPPLIER-FAMILY (owner ruling "2120a", 7 Nov 2026): #2144 keyed every ungrouped row by its exact name, so
+    the narrower read two records of one supplier as two choices and asked which one. The supplier family is its trading
+    name (`ledger_family.supplier_family_key`): one choice, nothing asked, both records kept."""
+    from app.services.chatbot.turn import narrow
+    from app.services.chatbot.turn.state import Focus, Profile
+
+    rows = [
+        {"uuid": str(uuid.uuid4()), "name": name, "canonical_code": name, "raw": name, "entity_type": "supplier"}
+        for name in names
+    ]
+    assert narrow._choices(rows, "ledger_family", "supplier") == 1
+    focus = Focus(extra={"supplier": [{"raw": "zzt", "hint": "supplier", "current_message": True}]})
+    outcome = narrow.decide(
+        kind="supplier", policy_value="optional_filter", focus=focus, profile=Profile(),
+        resolved_candidates=rows, family_grouping="ledger_family",
+    )
+    assert outcome.ask_kind is None, outcome
+    options = narrow._options(rows, "supplier", "ledger_family")
+    assert len(options) == 1 and sorted(options[0]["uuids"]) == sorted(r["uuid"] for r in rows), options
+    assert "(4" not in options[0]["label"], options
 
 
 # --------------------------------------------------------------------------- #

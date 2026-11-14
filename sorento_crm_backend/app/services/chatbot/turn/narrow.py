@@ -15,7 +15,14 @@ from app.services.chatbot.turn.state import (
 # Core owns the ledger-family rule (`app/services/ledger_family.py`): the stock-ask record
 # names a customer-less ask by it too, and core may not import this package. `compose.py`
 # and `session_state.py` keep reading the two names from here.
-from app.services.ledger_family import customer_group_of, customer_groups, ledger_family_key, ledger_family_label
+from app.services.ledger_family import (
+    entry_group,
+    customer_groups,
+    ledger_family_key,
+    ledger_family_label,
+    supplier_family_key,
+    supplier_family_label,
+)
 
 # Which suffix an ask carries, by policy value.
 _ROSTER_POLICIES = {"narrow_to_code", "must_narrow_one", "narrow_by_tier"}
@@ -42,12 +49,12 @@ def _candidates(focus: Focus, kind: str) -> list[dict[str, Any]]:
     return list(focus.extra.get(EXTRA_KIND_ALIASES.get(kind, kind), []))
 
 
-def _choices(candidates: list[dict[str, Any]], grouping: str | None) -> int:
+def _choices(candidates: list[dict[str, Any]], grouping: str | None, kind: str | None = None) -> int:
     """How many CHOICES these rows really are: one per family where the kind has a
     family rule, one per row otherwise."""
     if grouping != "ledger_family":
         return len(candidates)
-    keys = {_family_of(c, grouping) or str(c.get("uuid") or id(c)) for c in candidates}
+    keys = {_family_of(c, grouping, kind) or str(c.get("uuid") or id(c)) for c in candidates}
     return len(keys)
 
 
@@ -70,7 +77,7 @@ def _code_of(candidate: dict[str, Any]) -> str:
     return str(candidate.get("canonical_code") or candidate.get("raw") or "").strip()
 
 
-def _family_of(candidate: dict[str, Any], grouping: str | None) -> str | None:
+def _family_of(candidate: dict[str, Any], grouping: str | None, kind: str | None = None) -> str | None:
     """The key rows of one family share, or None when this kind has no family rule.
 
     `chatbot_entity_kinds.family_grouping` is the rule and it had no reader at all until
@@ -83,8 +90,20 @@ def _family_of(candidate: dict[str, Any], grouping: str | None) -> str | None:
     name = candidate.get("name") or candidate.get("label") or candidate.get("raw")
     if not name:
         return None
-    key = ledger_family_key(str(name))
+    if kind == "supplier":
+        # GATE-SUPPLIER-FAMILY (owner ruling "2120a", 7 Nov 2026): supplier records of one name
+        # are ONE supplier; customer groups never join or name a supplier.
+        return supplier_family_key(str(name)) or None
+    # By id as well, so the office's group is found for a suffixed ledger (#2144's fix); an
+    # ungrouped ledger joins by trading name (owner ruling 9 Nov 2026).
+    key = ledger_family_key(str(name), _uuid_of(candidate))
     return key or None
+
+
+def _uuid_of(candidate: dict[str, Any]) -> str | None:
+    """The row's own id, when the candidate carries one."""
+    value = candidate.get("uuid")
+    return str(value) if value else None
 
 
 def _options(
@@ -135,6 +154,7 @@ def _options(
     by_label: dict[Any, dict[str, Any]] = {}
     companies_of: dict[int, list[str]] = {}
     exact_of: dict[int, str] = {}
+    grouped_of: dict[int, bool] = {}
     for c in candidates:
         code = c.get("canonical_code") or c.get("raw")
         identity = c.get("uuid") or code
@@ -153,14 +173,16 @@ def _options(
         # pass 3 turn 10 printed one trading name once per account and asked the customer
         # to choose between rows they cannot tell apart. The pick still yields every
         # member, because `uuids` is the union.
-        family = _family_of(c, grouping)
+        family = _family_of(c, grouping, kind)
         if family:
-            # Item 1: one line per TRADING NAME. The ledgers of one customer are one
-            # choice to the person reading the list ("CHIN CHUN HARDWARE SDN BHD -
-            # [A/C I]" and "- [A/C II]" are the same shop), and the pick still reaches
-            # every ledger because `uuids` is the union.
+            # Item 1: one line per customer entry (its group, else its trading name; owner
+            # ruling 9 Nov 2026); the pick still reaches every ledger of the line because
+            # `uuids` is the union.
             key = family
-            label = ledger_family_label(str(name or label or ""))
+            if kind == "supplier":
+                label = supplier_family_label(str(name or label or ""))
+            else:
+                label = ledger_family_label(str(name or label or ""), _uuid_of(c))
         else:
             label_key = str(label).strip().casefold() if label else str(identity)
             multi_company = bool(company) and len(company_counts.get(label_key, ())) > 1
@@ -197,6 +219,7 @@ def _options(
             option["stamp"] = stamp
         if family:
             exact_of[id(option)] = str(name or c.get("raw") or code or "").strip()
+            grouped_of[id(option)] = kind != "supplier" and entry_group(exact_of[id(option)], _uuid_of(c)) is not None
         by_label[key] = option
         companies_of[id(option)] = list(codes)
         built.append(option)
@@ -214,7 +237,7 @@ def _options(
     # Several ledgers, or a customer group, print the family label.
     for option in built:
         exact = exact_of.get(id(option))
-        if exact and len(set(option["uuids"])) <= 1 and customer_group_of(exact) is None:
+        if exact and len(set(option["uuids"])) <= 1 and not grouped_of.get(id(option)):
             option["label"] = exact
     # PICKER-ONE (owner, 13 Oct 2026): a customer line names the companies it sits in
     # ("HANLIM (MCH, SRT)") ONLY when the options' companies differ - the tag is there to
@@ -227,8 +250,10 @@ def _options(
     if len(company_sets) > 1:
         for option in built:
             codes = companies_of[id(option)]
-            if codes:
-                option["label"] = f"{option['label']} ({', '.join(codes)})"
+            tag = f" ({', '.join(codes)})"
+            # A label that already ends with its company tag is not tagged twice.
+            if codes and not option["label"].endswith(tag):
+                option["label"] = f"{option['label']}{tag}"
     return built
 
 
@@ -369,7 +394,7 @@ def _decide(
             and typed_now
             and not typed_exactly
             and not covers_the_family
-            and _choices(resolved_candidates, family_grouping) > 1
+            and _choices(resolved_candidates, family_grouping, kind) > 1
         ):
             return NarrowOutcome(
                 f"{kind}_pick",
@@ -415,7 +440,7 @@ def _decide(
                     if fold_token(_code_of(row).casefold()) in typed_now
                 ]
                 return NarrowOutcome(None, [], exact_rows, None, note="typed_exact_settles")
-            if _choices(resolved_candidates, family_grouping) <= 1:
+            if _choices(resolved_candidates, family_grouping, kind) <= 1:
                 # A code that resolves to exactly one thing IS narrowed to a code -
                 # there is nothing left to ask. One FAMILY is one thing too (item 1):
                 # six ledgers of one trading name are six rows and one customer, and a
@@ -504,7 +529,7 @@ def _decide(
             # through, deferred, rather than an ask manufactured from a name alone.
             if candidates and all(c.get("uuid") for c in candidates):
                 return NarrowOutcome(None, [], candidates, None, note="settled_carry")
-            if kind != "product" and _choices(candidates, family_grouping) > 1:
+            if kind != "product" and _choices(candidates, family_grouping, kind) > 1:
                 return NarrowOutcome(
                     f"{kind}_pick",
                     _options(candidates, kind, family_grouping, roster_cap),
@@ -534,7 +559,7 @@ def _decide(
             # AC-1690: never for kind "product" either way (the identical guard
             # above) - `incoming`/`purchase_order`/`spo_allocation` all configure it
             # as `narrow_to_code`.
-            if kind != "product" and _choices(candidates, family_grouping) > 1:
+            if kind != "product" and _choices(candidates, family_grouping, kind) > 1:
                 return NarrowOutcome(
                     f"{kind}_pick",
                     _options(candidates, kind, family_grouping, roster_cap),
