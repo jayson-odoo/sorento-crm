@@ -58,6 +58,8 @@ import {
   type ContactChatbotMemory,
   type ContactChatbotVocabularyEntry,
 } from '../services/contactChatbotService';
+import { useContactTagSettings } from '../hooks/useContactTagSettings';
+import type { TagSettingsItem } from '../services/contactTagSettingsService';
 import type { ChatbotLlm } from '../../types/contact.types';
 
 /**
@@ -218,6 +220,16 @@ function llmSourceLine(llm: ChatbotLlm | null | undefined): string {
   return LLM_SOURCE_LINE[llm?.source ?? 'none']?.(llm?.tags ?? [], llm) ?? 'Default';
 }
 
+/** Where a chatbot switch's value comes from, in the AI model line's words; undefined when no tag sets it. */
+function tagSourceLine(items: TagSettingsItem[] | undefined, key: string): string | undefined {
+  const item = items?.find((i) => i.section === 'chatbot' && i.key === key);
+  if (!item) return undefined;
+  // A section the viewer may not read comes back without names: say nothing then.
+  const names = item.conflict ? (item.conflict_tags ?? []).map((t) => t.name) : (item.decided_by ?? []);
+  if (!names.length) return undefined;
+  return item.conflict ? `Tags disagree: ${names.join(', ')}` : `From tag ${names.join(', ')}`;
+}
+
 function ChatbotSettingsCard({
   contactId,
   systemDefault,
@@ -230,6 +242,7 @@ function ChatbotSettingsCard({
   const saveEscalation = useSaveContactEscalation(contactId);
   const saveAiAllowed = useSaveContactChatbotAllowed(contactId);
   const canEditAiModel = useHasPermission('system.ai_assistant_settings.edit');
+  const tagSettings = useContactTagSettings(contactId);
 
   if (isLoading) {
     return (
@@ -389,6 +402,7 @@ function ChatbotSettingsCard({
           <SwitchRow
             id="contact-chatbot-agent-mode"
             label="Agent mode (auto)"
+            hint={tagSourceLine(tagSettings.data?.items, 'chatbot_agent_enabled')}
             checked={profile.agent_enabled}
             disabled={save.isPending || saveEscalation.isPending || saveAiAllowed.isPending}
             onCheckedChange={(checked) => save.mutate({ ...profile, agent_enabled: checked })}
