@@ -753,15 +753,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Authenticate before any build: build-push-action pulls base images from
-      # Docker Hub, and anonymous pulls share the runner's IP rate-limit, which
-      # surfaces as "registry-1.docker.io ... context deadline exceeded".
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-
+      # No Docker Hub login (CI-SECRETS-ENV, 14 Nov 2026): this leg runs on a
+      # merge-queue entry or a non-lean dispatch from any ref, so it cannot sit
+      # behind the main-only `release-build` environment that now holds
+      # DOCKER_*. Base-image pulls are anonymous here; the type=gha layer cache
+      # below keeps them few. Only build-images and build-and-deploy log in.
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -845,14 +841,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # See validate-backend: authenticate so base-image pulls aren't anonymous
-      # (avoids Docker Hub rate-limit timeouts on shared runner IPs).
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-
+      # No Docker Hub login: see validate-backend (CI-SECRETS-ENV).
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -2018,6 +2007,12 @@ jobs:
     # validate-backend/validate-mcp legs, which build separately (load:
     # true, no push) and are unaffected by this job's `if`.
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    # CI-SECRETS-ENV (14 Nov 2026): DOCKER_* live in this environment, not at
+    # repo level, so a PR run or a push to another branch (which runs that
+    # branch's own copy of this file) cannot read them. Deployment branch
+    # policy: main only, no reviewer, so the build still runs in parallel
+    # with the gates and before the owner approves `production`.
+    environment: release-build
     runs-on: ubuntu-latest
     # The frontend build measured 7.6 min (run 38017372957); twice the worst
     # of all three in sequence plus setup.
@@ -2026,8 +2021,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # See validate-backend: authenticate so base-image pulls aren't
-      # anonymous (avoids Docker Hub rate-limit timeouts on shared runner IPs).
+      # Authenticate before any build: build-push-action pulls base images from
+      # Docker Hub, and anonymous pulls share the runner's IP rate-limit, which
+      # surfaces as "registry-1.docker.io ... context deadline exceeded".
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
@@ -2070,8 +2066,10 @@ jobs:
       # commit that goes on to fail one. build-and-deploy's "Promote gated
       # images to the release tag" step moves the release tag, once all gates
       # are green, with a registry-side manifest copy (no rebuild, no pull).
-      # The frontend gets the NEXT_PUBLIC_VAPID_PUBLIC_KEY build-arg; the
-      # backend and mcp Dockerfiles do not declare it.
+      # The frontend gets the NEXT_PUBLIC_VAPID_PUBLIC_KEY build-arg (a repo
+      # VARIABLE since CI-SECRETS-ENV: a public key inlined into the browser
+      # bundle is config, not a secret); the backend and mcp Dockerfiles do
+      # not declare it.
       - name: Build and push frontend image
         if: steps.decide.outputs.build_frontend == 'true'
         uses: docker/build-push-action@v5
@@ -2080,7 +2078,7 @@ jobs:
           platforms: linux/amd64
           push: true
           build-args: |
-            NEXT_PUBLIC_VAPID_PUBLIC_KEY=${{ secrets.NEXT_PUBLIC_VAPID_PUBLIC_KEY }}
+            NEXT_PUBLIC_VAPID_PUBLIC_KEY=${{ vars.NEXT_PUBLIC_VAPID_PUBLIC_KEY }}
             NEXT_PUBLIC_BUILD_SHA=${{ github.sha }}
           tags: |
             ${{ env.IMAGE_REPO }}:frontend-${{ github.sha }}
