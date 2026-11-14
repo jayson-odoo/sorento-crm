@@ -123,6 +123,22 @@ function dialogContentText(): string {
   return box instanceof HTMLTextAreaElement ? box.value : box!.textContent ?? '';
 }
 
+/** The dialog Content text before and after its `[data-testid="insert-point"]` marker. */
+function dialogAroundInsertPoint(): { before: string; after: string } {
+  const box = screen.getByRole('dialog').querySelector('#merge-field-content') as HTMLElement;
+  const marker = box.querySelector('[data-testid="insert-point"]');
+  expect(marker, 'an insert point inside the dialog Content box').not.toBeNull();
+  let before = '';
+  let after = '';
+  const walker = document.createTreeWalker(box, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    if (marker!.contains(node)) continue;
+    if (marker!.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_PRECEDING) before += node.textContent ?? '';
+    else after += node.textContent ?? '';
+  }
+  return { before, after };
+}
+
 function storedText(latest: TagLayer[]): string {
   const layer = latest.find((l) => l.id === 't')!;
   return layer.props.kind === 'text' ? layer.props.text : '';
@@ -141,8 +157,10 @@ describe('Insert field from the rich Content box (AC-4)', () => {
     expect(text).toContain('{{combo.description}}');
     expect(text).toContain('LP: RM ');
     expect(text).toContain('{{product.list_price}}');
-    // The existing text sits around the caret: "RM " right before the insert point's side.
-    expect(text.indexOf('LP: RM ')).toBeLessThan(text.indexOf('{{product.list_price}}'));
+    // The insert point is at the caret: right after "RM ", right before the price token.
+    const around = dialogAroundInsertPoint();
+    expect(around.before.endsWith('LP: RM ')).toBe(true);
+    expect(around.after.startsWith('{{product.list_price}}')).toBe(true);
   });
 
   it('AC-4.4: Done inserts only the picked field at the caret, inside the bold run', async () => {
