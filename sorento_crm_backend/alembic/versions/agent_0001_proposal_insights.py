@@ -9,7 +9,7 @@ production already carries that text.
 See ``documentation/plans/chatbot/PLAN-agent-proposal-insights-14nov.md``.
 
 Revision ID: agent_0001_proposal_insights
-Revises: spr_0001_spare_part_request
+Revises: fmd_0001_drop_dir_name_unique
 Create Date: 2026-11-14
 """
 from alembic import op
@@ -18,7 +18,7 @@ from app.services.ai_prompt_seed import bump_prompt_to_fallback
 
 
 revision = "agent_0001_proposal_insights"
-down_revision = "spr_0001_spare_part_request"
+down_revision = "fmd_0001_drop_dir_name_unique"
 branch_labels = None
 depends_on = None
 
