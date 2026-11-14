@@ -1508,10 +1508,11 @@ DEALER_NUDGE = (
 )
 #: Owner hand test 13 Nov (#2256 F1): the person was found and the model answered without proposing the change.
 FOUND_NUDGE = (
-    "You found the person. Call crm_contact_access_update now, once per found contact, with the change the user "
-    "asked for. To remove a person's access, unlink every account crm_contacts_find listed for them (their AI "
-    "replies go off with the last link); a removal needs no role, company or dealer. Your own text is not shown "
-    "to the user."
+    "You found the people; propose the change the user asked for now. To give access, call crm_batch_propose with "
+    "write crm_contact_grant, one row per person (company and role as the user said them, or left out: the tool "
+    "asks). To change someone who already has access, call crm_contact_access_update once per found contact. To "
+    "remove a person's access, unlink every account crm_contacts_find listed for them (their AI replies go off with "
+    "the last link); a removal needs no role, company or dealer. Your own text is not shown to the user."
 )
 _FIND_WORDS = {
     "not_found": "not in the CRM", "ambiguous": "more than one contact has this number",

@@ -567,3 +567,33 @@ def test_the_found_nudge_names_the_grant_as_the_way_to_give_access(db):
     from app.services.chatbot.agent.loop import FOUND_NUDGE
 
     assert "crm_contact_grant" in FOUND_NUDGE and "crm_contact_access_update" in FOUND_NUDGE
+
+
+def test_the_answer_to_the_role_question_applies_only_to_the_people_it_named(db):
+    """Crew pass 4 addendum: the one-word answer 'employee' was applied to every row; held rows lost their current
+    role and a Mocha Business owner was offered as Employee. Held rows keep the role read from their record."""
+    w = make_world(db)
+    kept = dealer(db, w, name="ZZT Held Employee", customers=[w.cust_b])
+    owner = dealer(db, w, name="ZZT Held Owner", customers=[w.cust_b])
+    _tag_owner(db, owner, "MCH")
+    fresh = dealer(db, w, name="ZZT Asked Fresh")
+    rows = [_unsaid(c, n) for n, c in enumerate((kept, owner, fresh), 1)]
+    first, _ = screenshot_turn(db, w, [_batch(rows), answer_("Done.")])
+    assert first.reply_text.strip() == f"Owner or employee for {fresh.name}?", first.reply_text
+
+    everyone_employee = [{**r, "role": "employee"} for r in rows]
+    second, _ = screenshot_turn(db, w, [_batch(everyone_employee, "b2"), answer_("Done.")], text_="employee", images=False)
+    assert second.pending_action is not None, second.reply_text
+    text = " | ".join(second.pending_action["lines"])
+    assert f"{kept.name} (existing): Employee (Mocha), their current role" in text, text
+    assert f"{owner.name} (existing): Business owner (Mocha), their current role" in text, text
+    assert any(fresh.name in line for line in second.pending_action["lines"]), text
+
+
+def test_an_existing_contact_shows_its_record_name_not_a_misread_from_the_picture(db):
+    w = make_world(db)
+    c = dealer(db, w, name="ZZT Real Record Name", customers=[w.cust_b])
+    row = {**_unsaid(c, 1), "name": "ZZT Misread Name"}
+    result, _ = screenshot_turn(db, w, [_batch([row]), answer_("Done.")])
+    assert result.pending_action is not None, result.reply_text
+    assert c.name in result.reply_text and "ZZT Misread Name" not in result.reply_text, result.reply_text
