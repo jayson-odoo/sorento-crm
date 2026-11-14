@@ -159,17 +159,56 @@ def test_C2_2_each_line_prints_the_or_number(plain, monkeypatch):
 # =============================================================================
 
 
-def test_C2_3_two_ors_approved_in_one_write_are_two_header_rows(plain, monkeypatch):
+def _or_items(w):
+    """One real handover item per OR (a raised row of each), as `_record_handover` queues
+    them. Built here and aggregated directly: an approval commits inside
+    `FormSLAOrchestrator.resolve_stage` (`sla_service.update_tracking`), so two approvals
+    can never share one write's email; the rule under test is the aggregation (C2.3)."""
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+    service = ProjectOrderInquiryService(w.db)
+    ors, items = [], []
+    for _ in range(2):
+        inquiry = approve_as(
+            w, submit_as(w, create_as(w, w.requester), w.requester), w.stage1.tier1
+        )
+        ors.append(inquiry)
+        items.append(service.handover_item(row_for(w.db, inquiry, w.product_a), kind="raised"))
+    return ors, items
+
+
+def test_C2_3_two_ors_in_one_email_are_two_header_rows(plain):
+    from app.services.project_order_inquiry_service import _build_handover_context
+
     w = plain
-    first = submit_as(w, create_as(w, w.requester), w.requester)
-    second = submit_as(w, create_as(w, w.requester), w.requester)
-    wire = Tripwire.arm(w.db, monkeypatch)
-    svc().approve(w.db, reload(w.db, first), w.stage1.tier1)
-    svc().approve(w.db, reload(w.db, second), w.stage1.tier1)
-    w.db.commit()
-    orders = _handover_context(wire)["handover"]["orders"]
-    numbers = sorted(o["so_number"] for o in orders)
-    assert numbers == sorted([reload(w.db, first).inquiry_no, reload(w.db, second).inquiry_no]), orders
+    ors, items = _or_items(w)
+    context, _source = _build_handover_context(items)
+    orders = context["handover"]["orders"]
+    assert len(orders) == 2, orders
+    by_number = {o["so_number"]: o for o in orders}
+    for inquiry in ors:
+        order = by_number.get(inquiry.inquiry_no)
+        assert order is not None, orders
+        assert order["so_date"] == fmt_date(inquiry.submitted_at), order
+        assert order["customer"] == _requester_name(w), order
+        assert order["project"] == "Spare parts for the service van", order
+
+
+def test_C2_3_two_lines_of_one_so_stay_one_header_row(plain):
+    """Unchanged rule for sales orders: the header row is per SO (`pso_id`), whatever OI
+    each line came from."""
+    from app.services.project_order_inquiry_service import _build_handover_context
+
+    w = plain
+    _ors, items = _or_items(w)
+    so_items = [
+        dict(item, pso_id="zzt-pso-1", so_number="SO400001", customer="Example Customer",
+             project="Example Project")
+        for item in items
+    ]
+    context, _source = _build_handover_context(so_items)
+    orders = context["handover"]["orders"]
+    assert [o["so_number"] for o in orders] == ["SO400001"], orders
 
 
 # =============================================================================
