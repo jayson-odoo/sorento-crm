@@ -17,7 +17,23 @@ import AttachmentPreviewModal, {
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import { toast } from '@/lib/toast';
 import { SO_LINE_ATTACHMENTS_KEY, useUploadSoLineAttachments } from '../hooks/useSoLineAttachments';
-import { type SoLineAttachment } from '../services/soLineAttachmentService';
+import {
+  type AttachmentTarget,
+  type AttachmentTargetKind,
+  type SoLineAttachment,
+} from '../services/soLineAttachmentService';
+
+/** The deferred delete (D7) each target parks: one record action per kind of owner. */
+const DELETE_ACTION: Record<AttachmentTargetKind, { actionKey: string; entityType: string }> = {
+  sales_order_line: {
+    actionKey: 'sales_order_line_attachment.delete',
+    entityType: 'sales_order_line_attachment',
+  },
+  order_inquiry_row: {
+    actionKey: 'order_inquiry_row_attachment.delete',
+    entityType: 'order_inquiry_row_attachment',
+  },
+};
 
 /** Q3 (grill, recommended answer): images, PDF, Excel - what #1311's manual mails
  *  already carry. Same list the backend's own hardcoded gate enforces
@@ -40,6 +56,13 @@ export interface SoLineAttachmentsButtonProps {
   attachments: SoLineAttachment[];
   /** `projects.projects.edit` (Q6) - a viewer sees the list with no drop zone and no x. */
   canEdit: boolean;
+  /** What the files hang off. Defaults to the sales-order line `lineId` names; a spare part
+   *  request's line passes `{ kind: 'order_inquiry_row', id }` (SPARE-PART-ORDER-REQUEST). */
+  target?: AttachmentTarget;
+  /** Files picked for a line that is not saved yet (a spare part request's Create page, G4):
+   *  the dialog only holds them, and the form uploads them once its first save has made the
+   *  line. `lineId` is then just the form's own line key. */
+  held?: { files: File[]; onChange: (files: File[]) => void };
 }
 
 /**
@@ -74,6 +97,8 @@ export function SoLineAttachmentsButton({
   label,
   attachments,
   canEdit,
+  target,
+  held,
 }: SoLineAttachmentsButtonProps) {
   const [open, setOpen] = useState(false);
   const [everOpened, setEverOpened] = useState(false);
@@ -83,6 +108,7 @@ export function SoLineAttachmentsButton({
   // computation over content, so this could not reach it that way regardless) - the
   // pinned aria-label test asserts the exact string `Attachments for ${label}`.
   const countId = useId();
+  const count = held ? held.files.length : attachments.length;
 
   return (
     <>
@@ -94,7 +120,7 @@ export function SoLineAttachmentsButton({
           size="sm"
           className="shrink-0"
           aria-label={`Attachments for ${label}`}
-          aria-describedby={attachments.length > 0 ? countId : undefined}
+          aria-describedby={count > 0 ? countId : undefined}
           title="Attachments"
           onClick={(event) => {
             // The row itself is often a clickable surface (the board list, AC-U1) -
@@ -106,24 +132,27 @@ export function SoLineAttachmentsButton({
         >
           <Paperclip className="size-3.5" aria-hidden />
         </Button>
-        {attachments.length > 0 ? (
+        {count > 0 ? (
           <>
             <span
               className="pointer-events-none absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-2xs font-medium text-primary-foreground"
               aria-hidden
             >
-              {attachments.length > 99 ? '99+' : attachments.length}
+              {count > 99 ? '99+' : count}
             </span>
             <span id={countId} className="sr-only">
-              {attachments.length} {attachments.length === 1 ? 'file' : 'files'}
+              {count} {count === 1 ? 'file' : 'files'}
             </span>
           </>
         ) : null}
       </span>
 
-      {everOpened ? (
+      {held ? (
+        <HeldAttachmentsDialog label={label} held={held} open={open} onOpenChange={setOpen} />
+      ) : everOpened ? (
         <SoLineAttachmentsDialog
           lineId={lineId}
+          target={target}
           label={label}
           attachments={attachments}
           canEdit={canEdit}
@@ -136,6 +165,58 @@ export function SoLineAttachmentsButton({
 }
 
 /**
+ * G4 (spare part request hand-test round): the drop zone alone, for a line not saved yet.
+ * The picked files stay with the form (`held`); nothing is sent from here.
+ */
+function HeldAttachmentsDialog({
+  label,
+  held,
+  open,
+  onOpenChange,
+}: {
+  label: string;
+  held: { files: File[]; onChange: (files: File[]) => void };
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent onClick={(event) => event.stopPropagation()}>
+        <DialogHeader>
+          <DialogTitle>{label}</DialogTitle>
+        </DialogHeader>
+        <div className="max-h-[60dvh] space-y-3 overflow-y-auto">
+          <FileDropzone
+            accept={ACCEPT}
+            multiple
+            maxSizeMb={10}
+            files={held.files}
+            onFilesChange={held.onChange}
+            onReject={(file, reason) =>
+              toast.error(
+                reason === 'type'
+                  ? `${file.name} is not a supported file type.`
+                  : reason === 'size'
+                    ? `${file.name} is too large.`
+                    : 'Too many files at once.',
+              )
+            }
+            title="Drop files here"
+            hint="Images, PDF or Excel"
+            aria-label={`Files to add for ${label}`}
+          />
+        </div>
+        <DialogFooter>
+          <Button type="button" onClick={() => onOpenChange(false)}>
+            Done
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
  * The lightbox itself - the list, the drop zone, the upload/delete mutations. Split
  * out of `SoLineAttachmentsButton` above (see its own docstring) so those mutation
  * hooks (both call `useQueryClient()` unconditionally) never run for a row whose
@@ -143,6 +224,7 @@ export function SoLineAttachmentsButton({
  */
 function SoLineAttachmentsDialog({
   lineId,
+  target,
   label,
   attachments,
   canEdit,
@@ -157,12 +239,13 @@ function SoLineAttachmentsDialog({
   const [previewIndex, setPreviewIndex] = useState(0);
 
   const upload = useUploadSoLineAttachments();
+  const kind = target?.kind ?? 'sales_order_line';
+  const ownerId = target?.id ?? lineId;
 
   // Hard delete, no confirmation dialog (D7, Q8): the x parks the delete on the
   // server for the grace window and a toast carries the countdown.
   const removal = useDeferredRowAction({
-    actionKey: 'sales_order_line_attachment.delete',
-    entityType: 'sales_order_line_attachment',
+    ...DELETE_ACTION[kind],
     verb: 'Deleting',
     successMessage: 'Attachment deleted',
     invalidateKeys: [SO_LINE_ATTACHMENTS_KEY],
@@ -172,7 +255,7 @@ function SoLineAttachmentsDialog({
     removal.run({
       id: target.id,
       subject: target.filename ?? 'this file',
-      payload: { line_id: lineId },
+      payload: { line_id: ownerId },
     });
 
   const previewItems = useMemo<AttachmentPreviewItem[]>(
@@ -197,7 +280,7 @@ function SoLineAttachmentsDialog({
   const handleUpload = async () => {
     if (pendingFiles.length === 0) return;
     try {
-      await upload.mutateAsync({ lineId, files: pendingFiles });
+      await upload.mutateAsync({ lineId: ownerId, files: pendingFiles, kind });
       setPendingFiles([]);
     } catch {
       // The hook's own onError already toasted - the dialog stays open so the
