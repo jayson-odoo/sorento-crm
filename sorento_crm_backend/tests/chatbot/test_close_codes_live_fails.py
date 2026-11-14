@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from tests.chatbot._r9_engine_console import answer, product, reply, stock
+from tests.chatbot._r9_engine_console import product, reply, stock
 from tests.chatbot._turn_helpers import entity
 from tests.chatbot.test_close_codes_dealer_round3 import (
     CLOSE3,
@@ -56,12 +56,12 @@ def _code_at(c: Console, position: int) -> str:
 def _three(variant: str, picked: str) -> dict[str, Any]:
     if variant == "demand_qty":
         return reply(demand_qty=3)
-    if variant == "demand_qty_and_carried_entity":
-        return reply(demand_qty=3, entities=[{**product(picked), "current_message": False, "quantity": 3}])
-    return reply(open_question_answer=answer("fill", items=[(1, None, 3)]))
+    return reply(demand_qty=3, entities=[{**product(picked), "current_message": False, "quantity": 3}])
 
 
-@pytest.mark.parametrize("variant", ["demand_qty", "demand_qty_and_carried_entity", "fill_answer"])
+# The one-item fill variant (position 1, qty 3) was removed (lead sign-off, round 12): it is structurally the
+# partial fill `test_stock_qty_partial_fill` pins to one line; which line "3" is for is the parser's call (lane B).
+@pytest.mark.parametrize("variant", ["demand_qty", "demand_qty_and_carried_entity"])
 def test_f1_a_pick_then_a_number_answers_the_picked_code_and_the_found_code(session_factory, monkeypatch, stub_access, variant):  # noqa: F811
     c, _ = _how_many_and_three_close(session_factory, monkeypatch, stub_access)
     picked = _code_at(c, 1)
@@ -164,11 +164,12 @@ def test_f4_a_letter_added_to_a_spaced_code_with_a_quantity_names_the_typed_code
     assert "Couldn't find" in text and raw in text.upper(), f"the miss line does not name {raw!r}: {text!r}"
     assert "ZZUB668BACK" not in text.upper(), f"the miss line names the folded token: {text!r}"
     if pick is None:
-        # Lead ruling, round 12: the offer of the close code (AC-6), never a bare miss with the refer line; "yes"
-        # then answers INLET at the typed 2.
+        # Lead ruling, round 12 (re-pinned): the offer of the close codes (AC-6) with INLET first, never a bare miss
+        # with the refer line; "1" then answers INLET at the typed 2 ("yes" over more than one option asks again, F2).
         assert f"Couldn't find {raw}" in text, f"the miss line does not name {raw!r} as typed: {text!r}"
         assert "Did you mean" in text and INLET in text.split("Did you mean", 1)[1], f"no offer of {INLET}: {text!r}"
         assert R not in text, f"referred while a close code exists: {text!r}"
-        after = c.say("yes", _yes())
-        assert f"{INLET} x 2" in after, f"'yes' did not answer {INLET} at 2: {after!r}"
+        assert _position_of(c, INLET) == 1, c.stored_question
+        after = c.say("1", _pick_positions(1))
+        assert f"{INLET} x 2" in after, f"'1' did not answer {INLET} at 2: {after!r}"
         assert R not in after, after
