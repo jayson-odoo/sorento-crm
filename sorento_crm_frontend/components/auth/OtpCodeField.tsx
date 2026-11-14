@@ -2,10 +2,9 @@
 
 /**
  * Shared verification-code field: "Verification code" label, the 6-digit
- * input, and the send / resend button (filled until a code has gone, then
- * outline) - lifted out of `PortalVerifyCard` (PLAN-unified-identity-26sep.md
- * S1, AC-25) so `/signin`'s phone step reuses the exact same look instead of a
- * second copy. Both `PortalVerifyCard` and
+ * input, and the outline resend button - lifted out of `PortalVerifyCard`
+ * (PLAN-unified-identity-26sep.md S1, AC-25) so `/signin`'s phone step reuses
+ * the exact same look instead of a second copy. Both `PortalVerifyCard` and
  * `/signin` import this one component.
  *
  * `onComplete` fires once per distinct 6-digit value, the same guard
@@ -41,6 +40,8 @@ export interface OtpCodeFieldProps {
    * caller wants.
    */
   status?: ReactNode;
+  /** Send code is the filled main button until a code has gone (the portal verify card). */
+  primarySend?: boolean;
 }
 
 export function OtpCodeField({
@@ -55,6 +56,7 @@ export function OtpCodeField({
   id = 'code',
   autoFocus,
   status,
+  primarySend = false,
 }: OtpCodeFieldProps) {
   const lastAutoVerifiedRef = useRef<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -105,8 +107,7 @@ export function OtpCodeField({
       {status ?? (
         <Button
           type="button"
-          // Before any code goes, Send code is the one filled main button; Resend stays outline.
-          variant={sent || cooldown > 0 ? 'outline' : 'primary'}
+          variant={primarySend && !sent && cooldown <= 0 ? 'primary' : 'outline'}
           onClick={onResend}
           disabled={pending || disabled || cooldown > 0}
           className="h-11 w-full"

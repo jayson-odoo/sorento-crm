@@ -428,6 +428,7 @@ export function PortalVerifyCard({ slug }: Props) {
         pending={pending}
         disabled={!contactId || !spaceId}
         onResend={handleResend}
+        primarySend
       />
 
       {error && (

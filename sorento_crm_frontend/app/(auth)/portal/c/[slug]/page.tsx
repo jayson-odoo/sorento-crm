@@ -58,14 +58,14 @@ function SlugEntry({ slug }: { slug: string }) {
     void openPortalFromCrm(slug)
       .catch(() => null)
       .then((bridged) => {
-      if (bridged) {
-        writePortalToken(bridged.token);
-        writePortalSlug(slug);
-        setReady(true);
-        return;
-      }
-      router.replace(portalVerifyPath({ slug, type }));
-    });
+        if (bridged) {
+          writePortalToken(bridged.token);
+          writePortalSlug(slug);
+          setReady(true);
+          return;
+        }
+        router.replace(portalVerifyPath({ slug, type }));
+      });
     // Intentional: only on first mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
