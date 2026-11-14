@@ -3,7 +3,7 @@
 
 A user reporting a problem with the CRM system or the assistant itself is ideate (an issue to log), not
 request_for_help or the domain of the screen it is about. Production runs the stored
-`chatbot_semantic_parser` version, so the rule ships as the three anchored edits of
+`chatbot_semantic_parser` version, so the rule ships as the five anchored edits of
 `app/services/chatbot/head/issue_rule.apply_issue_rule`, applied to the template of the version holding the
 `production` label (its rendered policy blocks stay as they are), landing as the next version with NO label
 move. Promoting is one label move on the Prompts page; rolling back is the reverse move.
