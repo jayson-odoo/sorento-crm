@@ -36,6 +36,9 @@ _HEX = re.compile(r"^#?([0-9a-fA-F]{6}|[0-9a-fA-F]{3})$")
 _DATA_URL = re.compile(r"^data:image/(png|jpeg|jpg|gif|bmp);base64,([A-Za-z0-9+/=\s]+)$")
 _ALIGN = {"left": PP_ALIGN.LEFT, "center": PP_ALIGN.CENTER, "right": PP_ALIGN.RIGHT}
 _ANCHOR = {"top": MSO_ANCHOR.TOP, "middle": MSO_ANCHOR.MIDDLE, "bottom": MSO_ANCHOR.BOTTOM}
+#: SPEC-SHEET-PARITY-B2 v3 (AC-C4.1): a header row's shade when its cell has no fill of its own;
+#: the same value as `HEADER_ROW_FILL` in `lib/dealer-kit/table-layout.ts`.
+HEADER_ROW_FILL = "#f1f5ee"
 #: Order of the border children inside a table cell's properties.
 _LN_ORDER = ("lnL", "lnR", "lnT", "lnB")
 
@@ -95,7 +98,10 @@ def _add_text(slide, layer: dict) -> None:
     frame = shape.text_frame
     frame.word_wrap = True
     frame.margin_left = frame.margin_right = frame.margin_top = frame.margin_bottom = 0
-    for index, line in enumerate(str(layer.get("text") or "").split("\n")):
+    text = str(layer.get("text") or "")
+    if layer.get("uppercase"):
+        text = text.upper()
+    for index, line in enumerate(text.split("\n")):
         paragraph = frame.paragraphs[0] if index == 0 else frame.add_paragraph()
         paragraph.alignment = _ALIGN.get(str(layer.get("align")), PP_ALIGN.LEFT)
         run = paragraph.add_run()
@@ -246,16 +252,23 @@ def _add_table(slide, layer: dict) -> None:
             target.merge(table.cell(r + cell["_rs"] - 1, c + cell["_cs"] - 1))
         frame_text = target.text_frame
         frame_text.word_wrap = True
-        for index, line in enumerate(str(cell.get("text") or "").split("\n")):
+        header = bool(layer.get("headerRow")) and r == 0
+        text = str(cell.get("text") or "")
+        if layer.get("uppercase"):
+            text = text.upper()
+        for index, line in enumerate(text.split("\n")):
             paragraph = frame_text.paragraphs[0] if index == 0 else frame_text.add_paragraph()
             paragraph.alignment = _ALIGN.get(str(layer.get("align")), PP_ALIGN.LEFT)
             run = paragraph.add_run()
             run.text = line
-            _style_run(run, {"fontFamily": layer.get("fontFamily"), "fontSize": layer.get("fontSize"), "color": layer.get("color")})
+            _style_run(
+                run,
+                {"fontFamily": layer.get("fontFamily"), "fontSize": layer.get("fontSize"), "color": layer.get("color"), "bold": header},
+            )
         target.vertical_anchor = _ANCHOR.get(str(layer.get("verticalAlign")), MSO_ANCHOR.MIDDLE)
         pad = _mm(cell.get("padding_mm") if cell.get("padding_mm") is not None else 1)
         target.margin_left = target.margin_right = target.margin_top = target.margin_bottom = pad
-        fill = _rgb(cell.get("fill"))
+        fill = _rgb(cell.get("fill")) or (_rgb(HEADER_ROW_FILL) if header else None)
         if fill is None:
             target.fill.background()
         else:

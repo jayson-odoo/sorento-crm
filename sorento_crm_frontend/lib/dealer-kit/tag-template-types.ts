@@ -205,6 +205,9 @@ export interface TextLayerProps {
   /** PRICETAG-UPGRADE-VARIANTS S2: printed before an `upgrade_topup` / `sell_price_with_upgrade`
    *  figure ("TOPUP "), never when the figure is empty. Unused by every other slot. */
   prefix?: string;
+  /** SPEC-SHEET-PARITY-B2 v3 (AC-C5.2): print the text in capitals; the stored text is unchanged.
+   *  Absent = off. */
+  uppercase?: boolean;
 }
 
 export interface ShapeLayerProps {
@@ -575,6 +578,11 @@ export interface TableLayerProps {
   color?: string;
   align?: 'left' | 'center' | 'right';
   verticalAlign?: 'top' | 'middle' | 'bottom';
+  /** SPEC-SHEET-PARITY-B2 v3 (AC-C4.1): row 1 prints bold on a light shade (the cell's own fill
+   *  wins). Absent = off. */
+  headerRow?: boolean;
+  /** SPEC-SHEET-PARITY-B2 v3 (AC-C5.2): cells print in capitals; stored text unchanged. Absent = off. */
+  uppercase?: boolean;
 }
 
 export type TagLayerProps =

@@ -89,10 +89,12 @@ import {
   footerElementsFor,
   type ResolvedCardElement,
 } from '@/lib/dealer-kit/accessory-card';
-import { isRich, parseRichText, richPlainText, safeColour } from '@/lib/dealer-kit/rich-text';
+import { isRich, parseRichText, richPlainText, safeColour, uppercaseBlocks } from '@/lib/dealer-kit/rich-text';
 import { renderMergeFields } from '@/lib/dealer-kit/merge-fields';
 import {
+  isHeaderCell,
   resolveTableText,
+  tableCellFill,
   tableFontMm,
   tableLayout,
   tableMeasure,
@@ -250,11 +252,14 @@ function TextLayer({ layer, resolved }: { layer: TagLayer; resolved: ResolvedLin
   const epoch = useFontsEpoch();
   const binding = bindingOf(resolved);
   // A rich description keeps its merge fields out of the markup: they resolve on the parsed runs.
-  const blocks = useMemo(
-    () => (props.kind === 'text' ? layerRichBlocks(layer, binding, 'print') : null),
-    [layer, props.kind, binding],
-  );
-  const text = props.kind === 'text' && !blocks ? layerText(layer, binding, 'print') : '';
+  const blocks = useMemo(() => {
+    if (props.kind !== 'text') return null;
+    const parsed = layerRichBlocks(layer, binding, 'print');
+    // ALL CAPS (AC-C5.2) changes what prints, never the stored text.
+    return parsed && props.uppercase ? uppercaseBlocks(parsed) : parsed;
+  }, [layer, props, binding]);
+  const plain = props.kind === 'text' && !blocks ? layerText(layer, binding, 'print') : '';
+  const text = props.kind === 'text' && props.uppercase ? plain.toUpperCase() : plain;
   const lines = useMemo(() => {
     void epoch; // re-measure once a face has loaded
     return props.kind === 'text' && !blocks
@@ -1462,7 +1467,10 @@ function buildLayoutExport(
           layers.push({
             kind: 'text',
             ...box,
-            text: layerText(layer, binding, 'print'),
+            text: props.uppercase
+              ? layerText(layer, binding, 'print').toUpperCase()
+              : layerText(layer, binding, 'print'),
+            uppercase: Boolean(props.uppercase),
             fontFamily: props.fontFamily,
             fontSize: props.fontSize,
             bold: (props.fontWeight ?? 400) >= 600,
@@ -1502,6 +1510,8 @@ function buildLayoutExport(
             color: laid.color,
             align: laid.align,
             verticalAlign: laid.verticalAlign,
+            headerRow: Boolean(laid.headerRow),
+            uppercase: Boolean(laid.uppercase),
             cells: layout.cells.map((c) => ({
               row: c.row,
               col: c.col,
@@ -1642,6 +1652,7 @@ function TableLayerView({ layer, binding }: { layer: TagLayer; binding: TagBindi
       }}
     >
       {layout.cells.map((c) => {
+        const fill = tableCellFill(resolved, c.row, c.cell);
         return (
           <div
             key={`${c.row}-${c.col}`}
@@ -1654,7 +1665,8 @@ function TableLayerView({ layer, binding }: { layer: TagLayer; binding: TagBindi
               height: `${c.height_mm}mm`,
               boxSizing: 'border-box',
               padding: `${c.cell.padding_mm ?? 1}mm`,
-              backgroundColor: c.cell.fill ? safeColour(c.cell.fill) : undefined,
+              backgroundColor: fill ? safeColour(fill) : undefined,
+              fontWeight: isHeaderCell(resolved, c.row) ? 'bold' : undefined,
               display: 'flex',
               flexDirection: 'column',
               justifyContent: align === 'top' ? 'flex-start' : align === 'bottom' ? 'flex-end' : 'center',

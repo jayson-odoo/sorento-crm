@@ -19,6 +19,22 @@ export type TableSide = (typeof SIDES)[number];
 
 export const DEFAULT_TABLE_BORDER: TableBorderSide = { color: '#000000', width_mm: 0.2 };
 
+/**
+ * SPEC-SHEET-PARITY-B2 v3 (AC-C4.1): the light shade behind a header row cell that has no fill of
+ * its own. `spec_sheet_pptx.HEADER_ROW_FILL` is the same value.
+ */
+export const HEADER_ROW_FILL = '#f1f5ee';
+
+/** True for a cell on row 1 of a table whose Header row is on. */
+export function isHeaderCell(props: Pick<TableLayerProps, 'headerRow'>, row: number): boolean {
+  return !!props.headerRow && row === 0;
+}
+
+/** The fill a laid-out cell prints with: its own, else the header shade on a header row, else none. */
+export function tableCellFill(props: Pick<TableLayerProps, 'headerRow'>, row: number, cell: TableCell): string | undefined {
+  return cell.fill || (isHeaderCell(props, row) ? HEADER_ROW_FILL : undefined);
+}
+
 function blankCell(like?: TableCell): TableCell {
   return {
     text: '',
@@ -68,6 +84,7 @@ export interface LaidOutCell {
   y_mm: number;
   width_mm: number;
   height_mm: number;
+  /** The text as printed: in capitals when the table's ALL CAPS is on (`cell.text` keeps the stored text). */
   text: string;
   cell: TableCell;
 }
@@ -132,7 +149,16 @@ export function tableLayout(source: TableLayerProps, layerWidth_mm: number, meas
   const covered = coveredSet(props);
   const rowHeights = props.rows.map((row) => row.height_mm);
 
-  const anchors: { r: number; c: number; cell: TableCell; rs: number; cs: number; width: number; need: number }[] = [];
+  const anchors: {
+    r: number;
+    c: number;
+    cell: TableCell;
+    text: string;
+    rs: number;
+    cs: number;
+    width: number;
+    need: number;
+  }[] = [];
   props.cells.forEach((row, r) =>
     row.forEach((cell, c) => {
       if (covered.has(`${r}:${c}`)) return;
@@ -140,8 +166,10 @@ export function tableLayout(source: TableLayerProps, layerWidth_mm: number, meas
       const cs = Math.min(span(cell.colSpan), props.columns.length - c);
       const width = columnWidths.slice(c, c + cs).reduce((a, b) => a + b, 0);
       const pad = cell.padding_mm ?? DEFAULT_TABLE_PADDING_MM;
-      const need = cell.text ? measure(cell.text, Math.max(0, width - 2 * pad)) + 2 * pad : 0;
-      anchors.push({ r, c, cell, rs, cs, width, need });
+      // ALL CAPS (AC-C5.2) changes only what prints, so it is measured as printed.
+      const text = props.uppercase ? cell.text.toUpperCase() : cell.text;
+      const need = text ? measure(text, Math.max(0, width - 2 * pad)) + 2 * pad : 0;
+      anchors.push({ r, c, cell, text, rs, cs, width, need });
     }),
   );
   // A single-row cell sets its row's height; a spanning one only tops up its LAST row.
@@ -165,7 +193,7 @@ export function tableLayout(source: TableLayerProps, layerWidth_mm: number, meas
       y_mm: ys[a.r],
       width_mm: a.width,
       height_mm: rowHeights.slice(a.r, a.r + a.rs).reduce((x, y) => x + y, 0),
-      text: a.cell.text,
+      text: a.text,
       cell: a.cell,
     })),
     rowHeights_mm: rowHeights,

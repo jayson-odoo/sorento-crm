@@ -822,6 +822,8 @@ class TextLayerPropsDoc(_StrictProps):
     showCurrency: Optional[bool] = None
     #: PRICETAG-UPGRADE-VARIANTS S2: printed before the upgrade_topup / sell_price_with_upgrade figure.
     prefix: Optional[str] = Field(default=None, max_length=60)
+    #: SPEC-SHEET-PARITY-B2 v3 (AC-C5.2): print the text in capitals; the stored text is unchanged.
+    uppercase: Optional[bool] = None
 
 
 class PolygonPointDoc(_StrictProps):
@@ -964,6 +966,10 @@ class TableLayerPropsDoc(_StrictProps):
     color: Optional[str] = Field(default=None, max_length=40)
     align: Optional[Literal["left", "center", "right"]] = None
     verticalAlign: Optional[Literal["top", "middle", "bottom"]] = None
+    #: SPEC-SHEET-PARITY-B2 v3 (AC-C4.1): row 1 prints bold on a light shade; absent = off.
+    headerRow: Optional[bool] = None
+    #: SPEC-SHEET-PARITY-B2 v3 (AC-C5.2): cells print in capitals; absent = off.
+    uppercase: Optional[bool] = None
 
     @model_validator(mode="after")
     def _grid_matches(self) -> "TableLayerPropsDoc":

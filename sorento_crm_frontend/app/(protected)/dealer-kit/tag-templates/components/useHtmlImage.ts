@@ -31,27 +31,39 @@
 
 import { useEffect, useState } from 'react';
 
-export function useHtmlImage(url: string | null | undefined): HTMLImageElement | null {
-  const [image, setImage] = useState<HTMLImageElement | null>(null);
+export interface HtmlImageState {
+  image: HTMLImageElement | null;
+  /** SPEC-SHEET-PARITY-B2 v3 (AC-C8.1): the download failed, so `image` will never arrive. */
+  failed: boolean;
+}
+
+/** The loaded image AND whether its download failed, so a caller can tell loading from broken. */
+export function useHtmlImageState(url: string | null | undefined): HtmlImageState {
+  const [state, setState] = useState<HtmlImageState>({ image: null, failed: false });
 
   useEffect(() => {
     if (!url) {
-      setImage(null);
+      setState({ image: null, failed: false });
       return;
     }
     let live = true;
+    setState({ image: null, failed: false });
     const element = new window.Image();
     element.src = url;
     element.onload = () => {
-      if (live) setImage(element);
+      if (live) setState({ image: element, failed: false });
     };
     element.onerror = () => {
-      if (live) setImage(null);
+      if (live) setState({ image: null, failed: true });
     };
     return () => {
       live = false;
     };
   }, [url]);
 
-  return image;
+  return state;
+}
+
+export function useHtmlImage(url: string | null | undefined): HTMLImageElement | null {
+  return useHtmlImageState(url).image;
 }
