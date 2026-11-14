@@ -647,14 +647,18 @@ class PortalService:
         The portal's own ``request_otp`` runs inside an HTTP request, not a
         job, so it keeps the default (queue it).
         """
+        # A row stamped in the future was written before created_at came from this clock (the DB
+        # session's zone, e.g. +9h): it must not hold the cooldown, count toward the cap or
+        # shadow a newer code. Every read of the window below ignores it.
+        now = _utcnow()
         # Rate-limit: at most one outstanding OTP per contact within cooldown.
         recent = (
             self.db.query(PortalOtpCode)
-            .filter(PortalOtpCode.contact_id == contact.id)
+            .filter(PortalOtpCode.contact_id == contact.id, PortalOtpCode.created_at <= now)
             .order_by(PortalOtpCode.created_at.desc())
             .first()
         )
-        if recent is not None and (_utcnow() - recent.created_at) < OTP_REQUEST_COOLDOWN:
+        if recent is not None and (now - recent.created_at) < OTP_REQUEST_COOLDOWN:
             raise handle_validation_error("Please wait before requesting another verification code.")
 
         # Daily cap: the slug URL is shareable, so cap sends per contact per
@@ -663,7 +667,8 @@ class PortalService:
             self.db.query(PortalOtpCode)
             .filter(
                 PortalOtpCode.contact_id == contact.id,
-                PortalOtpCode.created_at >= _utcnow() - timedelta(hours=24),
+                PortalOtpCode.created_at >= now - timedelta(hours=24),
+                PortalOtpCode.created_at <= now,
             )
             .count()
         )
@@ -677,7 +682,10 @@ class PortalService:
             contact_id=contact.id,
             space_id=space_id,
             code_hash=_hash_otp(code),
-            expires_at=_utcnow() + OTP_TTL,
+            # Written from the same naive-UTC clock the cooldown and daily cap above read;
+            # the column's server_default is the DB session's time zone, not UTC.
+            created_at=now,
+            expires_at=now + OTP_TTL,
             purpose=purpose,
         )
         self.db.add(otp)
@@ -820,6 +828,8 @@ class PortalService:
                 PortalOtpCode.consumed_at.is_(None),
                 # A passkey re-check code never opens the portal (PASSKEY-LOGIN AC-27).
                 PortalOtpCode.purpose == "sign_in",
+                # A future-stamped pre-fix row never shadows the newest real code.
+                PortalOtpCode.created_at <= _utcnow(),
             )
             .order_by(PortalOtpCode.created_at.desc())
             .first()
@@ -854,9 +864,16 @@ class PortalService:
             PortalToken.verified_at.is_(None),
         ).update({"verified_at": now}, synchronize_session=False)
         self.db.commit()
-        new_token = self.mint_token(contact.id, space_id)
-        # Newly minted token also bypasses the gate (verifier just succeeded)
-        # and gets the full sliding device-trust window straight away.
+        return self.mint_verified_token(contact.id, space_id)
+
+    def mint_verified_token(self, contact_id: str, space_id: str) -> PortalToken:
+        """Mint a token that is already verified and carries the full 30-day device trust.
+
+        The one rule shared by a successful OTP (``verify_otp``) and a CRM sign-in on the
+        user's own linked contact (``POST /public/portal/session-from-crm``).
+        """
+        new_token = self.mint_token(contact_id, space_id)
+        now = _utcnow()
         new_token.verified_at = now
         new_token.expires_at = now + PORTAL_VERIFIED_TOKEN_TTL
         self.db.commit()

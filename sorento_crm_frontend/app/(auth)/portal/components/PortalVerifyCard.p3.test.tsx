@@ -71,6 +71,9 @@ function verifiedWith(secret?: string) {
 }
 
 async function enterCode() {
+  // SIGNIN-2FA-NOT-ROLE AC-10: nothing sends on mount; the user presses Send code first.
+  fireEvent.click(await screen.findByRole('button', { name: /^send code$/i }));
+  await waitFor(() => expect(mockRequestOtp).toHaveBeenCalledTimes(1));
   const input = await screen.findByLabelText(/verification code/i);
   fireEvent.change(input, { target: { value: '123456' } });
 }
@@ -204,13 +207,13 @@ describe('PortalVerifyCard "Not your number?" (round 8, S2)', () => {
       targetUser: { id: 'u-sales-a', name: 'Test Salesperson A', email: 'e@x.test', avatar: null, role_name: 'salesperson' },
     });
     render(<PortalVerifyCard slug="SLUG123456" />);
-    await screen.findByLabelText(/verification code/i);
+    await screen.findByRole('button', { name: /^send code$/i });
     expect(screen.queryByTestId('not-your-number')).toBeNull();
   });
 
   it('outside impersonation: the control is there', async () => {
     render(<PortalVerifyCard slug="SLUG123456" />);
-    await screen.findByLabelText(/verification code/i);
+    await screen.findByRole('button', { name: /^send code$/i });
     expect(screen.getByTestId('not-your-number')).toBeInTheDocument();
   });
 });
