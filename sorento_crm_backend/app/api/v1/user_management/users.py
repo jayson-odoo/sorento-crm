@@ -8,7 +8,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, Query, HTTPException, status, Body, Request
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import Literal, Optional
 from pydantic import BaseModel
 
 from app.config import settings as app_settings
@@ -30,6 +30,7 @@ from app.services.error_handler import AppException, handle_internal_error
 from app.services.notification_service import NotificationService
 from app.services.product_discontinued_scope_service import serialize_scopes
 from app.services.user_service import UserService, UserPermissionService
+from app.services.ui_version_service import PREVIEW_SLUG, kill_switch_on, ui_version_fields
 from app.services.user_avatar_url import resolve_avatar_url_for_client
 from app.utils.multi_value import multi_uuids, multi_values
 
@@ -535,6 +536,8 @@ def get_current_user_profile(
             "roles": [{"id": r.id, "name": r.name} for r in roles],
             "superior_name": user.superior.name if user.superior else None,
             "product_discontinued_scopes": serialize_scopes(db, str(user.id)),
+            # UI v2 (phase 0): ONE helper feeds all three builders so they cannot drift.
+            **ui_version_fields(db, user),
         }
         user_dict["salesperson"] = _salesperson_me(db, user)
         return UserResponse(**user_dict)
@@ -716,6 +719,8 @@ def get_user(
             "roles": [{"id": r.id, "name": r.name} for r in roles],
             "superior_name": user.superior.name if user.superior else None,
             "product_discontinued_scopes": serialize_scopes(db, str(user.id)),
+            # UI v2 (phase 0): ONE helper feeds all three builders so they cannot drift.
+            **ui_version_fields(db, user),
         }
         return UserResponse(**user_dict)
     except HTTPException:
@@ -1015,9 +1020,69 @@ async def update_current_user_profile(
             "roles": [{"id": r.id, "name": r.name} for r in roles],
             "superior_name": user.superior.name if user.superior else None,
             "product_discontinued_scopes": serialize_scopes(db, str(user.id)),
+            # UI v2 (phase 0): ONE helper feeds all three builders so they cannot drift.
+            **ui_version_fields(db, user),
         }
         return UserResponse(**user_dict)
     except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+class UiVersionUpdate(BaseModel):
+    ui_version: Literal["v1", "v2"]
+
+
+class ThemeModeUpdate(BaseModel):
+    theme_mode: Literal["light", "dark", "system"]
+
+
+@router.put("/me/ui-version")
+def update_my_ui_version(
+    body: UiVersionUpdate,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Switch the caller's UI version. v1 is always allowed (a way back needs no permission);
+    v2 needs `ui.v2.preview` and the company kill switch on."""
+    try:
+        service = UserService(db)
+        user_id = current_user["id"]
+        if body.ui_version == "v2":
+            if not kill_switch_on(db) or not UserPermissionService(db).check_user_has_permission(
+                user_id, PREVIEW_SLUG
+            ):
+                raise AppException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    message="The new version is not available to you",
+                    code="ui_v2_unavailable",
+                )
+        user = service.get_user(user_id)
+        user.ui_version = body.ui_version
+        db.commit()
+        db.refresh(user)
+        return ui_version_fields(db, user)
+    except (HTTPException, AppException):
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.put("/me/theme-mode")
+def update_my_theme_mode(
+    body: ThemeModeUpdate,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Any signed-in user sets their own light / dark / system mode."""
+    try:
+        user = UserService(db).get_user(current_user["id"])
+        user.theme_mode = body.theme_mode
+        db.commit()
+        db.refresh(user)
+        return ui_version_fields(db, user)
+    except (HTTPException, AppException):
         raise
     except Exception as e:
         raise handle_internal_error(str(e))

@@ -208,6 +208,8 @@ from app.models.sample_request import SampleRequest, SampleRequestLine  # noqa: 
 from app.models.new_product_application import NewProductApplication, NewProductApplicationLine  # noqa: F401
 from app.models.planning_change import PlanningChangeBatch, PlanningChangeRow  # noqa: F401
 from app.models.client_error_report import ClientErrorReport  # noqa: F401
+from app.models.ui_page_view import UiPageView  # noqa: F401
+from app.models.api_call_log import ApiCallLog  # noqa: F401  (the daily prune handler touches it)
 
 __all__ = [
     "IdeationStatusEventCursor",

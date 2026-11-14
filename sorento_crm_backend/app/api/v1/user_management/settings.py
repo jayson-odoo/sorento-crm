@@ -18,6 +18,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+class ThemeInput(BaseModel):
+    """UI v2 company brand input. The backend stores it; the frontend generates the colours."""
+
+    preset: Literal["sorento-blue", "sorento-red", "teal", "graphite", "indigo"]
+    custom_hex: Optional[str] = Field(None, pattern=r"^#[0-9a-fA-F]{6}$")
+
+
 class SystemSettingUpdate(BaseModel):
     name: Optional[str] = None
     logo: Optional[str] = None
@@ -145,6 +152,9 @@ class SystemSettingUpdate(BaseModel):
     # AC-LINK-CRM-UI: "AutoCount links from Stock Debt", OFF on deploy. Here, in the GET
     # dict, and in AppConfigResponse below.
     stock_debt_po_link_enabled: Optional[bool] = None
+    # UI v2 (phase 0): company kill switch + brand. Here, in the GET dict, and in AppConfigResponse.
+    ui_v2_enabled: Optional[bool] = None
+    theme: Optional[ThemeInput] = None
     # Chatbot media endpoint (PLAN-chatbot-media-endpoint section 2.4). Same rule
     # again - every one of these must ALSO appear in the GET dict below.
     #
@@ -312,6 +322,17 @@ class AppConfigResponse(BaseModel):
     #: Seconds a destructive action waits before it commits; the quotation column-removal
     #: countdown reads it. Not sensitive.
     deferred_delete_seconds: Optional[int] = None
+    #: UI v2 (phase 0): every signed-in user's shell reads the kill switch and the brand input.
+    ui_v2_enabled: bool = True
+    theme: Optional[ThemeInput] = None
+
+
+_DEFAULT_THEME = {"preset": "sorento-blue", "custom_hex": None}
+
+
+def _theme_or_default(settings) -> dict:
+    stored = getattr(settings, "theme", None) if settings else None
+    return dict(stored) if isinstance(stored, dict) and stored else dict(_DEFAULT_THEME)
 
 
 def _quotation_approver_fields(db: Session, settings) -> dict:
@@ -513,6 +534,8 @@ def get_settings(
                 "stock_debt_po_link_enabled": (
                     bool(getattr(settings, "stock_debt_po_link_enabled", False)) if settings else False
                 ),
+                "ui_v2_enabled": bool(getattr(settings, "ui_v2_enabled", True)) if settings else True,
+                "theme": _theme_or_default(settings),
                 # Chatbot media. NULL is meaningful for the three model columns:
                 # provider/model inherit the AIAssistantConfig row, and a NULL
                 # degraded model means the monthly quota is a hard stop rather
@@ -663,6 +686,8 @@ def get_app_config(
             stock_debt_po_link_enabled=bool(getattr(settings, "stock_debt_po_link_enabled", False)),
             # Same value and fallback as the admin GET above.
             deferred_delete_seconds=getattr(settings, "deferred_delete_seconds", 10) or 10,
+            ui_v2_enabled=bool(getattr(settings, "ui_v2_enabled", True)) if settings else True,
+            theme=_theme_or_default(settings),
         )
     except Exception as e:
         raise handle_internal_error(str(e))
@@ -1283,6 +1308,13 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
     ):
         if column in update_data and update_data[column] is None:
             update_data[column] = False
+
+    # UI v2: a NOT NULL switch and a NOT NULL JSON input; an explicit null means "keep the default".
+    if "ui_v2_enabled" in update_data and update_data["ui_v2_enabled"] is None:
+        update_data["ui_v2_enabled"] = True
+    if "theme" in update_data:
+        t = update_data["theme"] or _DEFAULT_THEME
+        update_data["theme"] = {"preset": t["preset"], "custom_hex": t.get("custom_hex")}
 
     embedder_before = (settings.embedding_provider, settings.embedding_model)
     for key, value in update_data.items():
