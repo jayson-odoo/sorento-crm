@@ -1,6 +1,6 @@
 # Ideas board: feature requests and issues
 
-Use the **Ideas** page to see every feature request and issue that staff and dealers have sent in, on the CRM or over WhatsApp.
+Use the **Ideas** page to see every feature request and problem report that staff and dealers have sent in, on the CRM or over WhatsApp.
 
 ## Steps
 
