@@ -192,6 +192,40 @@ def _no_line_matcher_model(monkeypatch):
     )
 
 
+def _lead_buyer(db, project) -> str:
+    """Give the project a lead whose buyer is a customer, and return that customer's id.
+
+    PO-UPLOAD-MATCHING crew pass 2: Confirm needs to know whose codes it is learning, and
+    refuses (`po_version_issuer_required`) when neither the PO's issuer nor the project
+    names a customer. The tests in this file are about reading and confirming, not about
+    that gate, so their project names a buyer.
+    """
+    from app.models.order import Customer
+    from app.models.projects import ProjectLead
+
+    customer = Customer(
+        id=_uid(),
+        company_id=project.company_id,
+        customer_code=f"ZZT-{_uid()[:8]}",
+        customer_name=f"{MARKER} buyer",
+    )
+    db.add(customer)
+    db.flush()
+    lead = ProjectLead(
+        id=_uid(),
+        company_id=project.company_id,
+        lead_code=f"ZZT-L-{_uid()[:6]}",
+        customer_id=customer.id,
+        title=f"{MARKER} lead",
+        normalised_title=f"{MARKER} lead",
+    )
+    db.add(lead)
+    db.flush()
+    project.lead_id = lead.id
+    db.flush()
+    return customer.id
+
+
 @pytest.fixture()
 def seeded():
     with blank_session() as db:
@@ -199,6 +233,7 @@ def seeded():
         project_seed_service.run(db, company_id=company_id)
         owner = _user(db, f"{MARKER} CONTACT AH")
         project = _project(db, company_id, owner)
+        _lead_buyer(db, project)
         yield db, project, owner
 
 

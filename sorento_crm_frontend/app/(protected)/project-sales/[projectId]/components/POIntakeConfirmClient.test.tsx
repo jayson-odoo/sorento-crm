@@ -868,6 +868,28 @@ describe('POIntakeConfirmClient issuer', () => {
     );
   });
 
+  it('shows the "Issued by" refusal next to the picker, not only in a toast (crew pass 2)', async () => {
+    getPOVersion.mockResolvedValue(version());
+    confirmPOVersion.mockRejectedValue(
+      Object.assign(
+        new Error('Choose who issued this PO under Issued by, so its codes are remembered.'),
+        { code: 'po_version_issuer_required', status: 422 },
+      ),
+    );
+
+    renderConfirm();
+
+    fireEvent.click(await screen.findByRole('button', { name: /Confirm this PO/i }));
+
+    const sentence = await screen.findByText(/under Issued by, so its codes are remembered/);
+    const picker = screen.getByRole('combobox', { name: /Issued by/i });
+    // Next to the picker: the sentence and the picker share the issuer block, which is a
+    // closer ancestor than the page itself.
+    let block: HTMLElement | null = picker.parentElement;
+    for (let i = 0; i < 4 && block && !block.contains(sentence); i += 1) block = block.parentElement;
+    expect(block?.contains(sentence)).toBe(true);
+  });
+
   it('does not offer "Issued by" once the version is confirmed', async () => {
     getPOVersion.mockResolvedValue(version({ confirmed_at: '2026-11-14T08:00:00Z' }));
 

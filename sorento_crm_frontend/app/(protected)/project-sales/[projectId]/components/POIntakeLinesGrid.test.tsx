@@ -1181,3 +1181,41 @@ describe('POIntakeLinesGrid qty-edit review items', () => {
   });
 });
 
+
+
+/**
+ * PO-UPLOAD-MATCHING crew pass 2, item 3: at 375px the view switch (Need attention /
+ * Suggested / All lines) and "Accept all suggestions (N)" never widen the page. jsdom does no
+ * layout, so this pins the structure: the switch itself wraps or scrolls inside its own box.
+ */
+describe('POIntakeLinesGrid view switch at 375px', () => {
+  it('lets the view switch wrap or scroll on its own instead of widening the page', async () => {
+    renderGrid(
+      [
+        line({ id: 'l1', line_no: 1, arithmetic_ok: false }),
+        line({
+          id: 'l2',
+          line_no: 2,
+          resolution_source: 'suggested',
+          match_confidence: 'high',
+          match_options: [],
+          qty_suggested: false,
+        } as Partial<POVersionLine>),
+        line({ id: 'l3', line_no: 3 }),
+      ],
+      { suggestionCount: 1 },
+    );
+
+    const all = await screen.findByRole('radio', { name: /All lines/ });
+    const group = all.parentElement as HTMLElement;
+    expect(screen.getByRole('radio', { name: /Suggested/ })).toBeInTheDocument();
+    const own = group.className.split(/\s+/);
+    const scroller = group.parentElement?.closest('.overflow-x-auto');
+    const wrapsOrScrolls = own.includes('flex-wrap') || own.includes('overflow-x-auto') || Boolean(scroller);
+    expect(wrapsOrScrolls).toBe(true);
+    // And it may shrink below its content width rather than push its row wider.
+    const shrinkable = ['min-w-0', 'max-w-full', 'w-full'].some((c) => own.includes(c)) || Boolean(scroller);
+    expect(shrinkable).toBe(true);
+  });
+});
+

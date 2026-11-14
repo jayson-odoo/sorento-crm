@@ -2368,3 +2368,179 @@ def test_r4_a_version_read_before_amount_computed_still_computes_an_empty_amount
 
     assert _amt(lines[1].amount) == Decimal("30.00")
     assert lines[1].arithmetic_ok is True
+
+
+# ======================================================== crew pass 2: learning on Confirm
+
+
+def _issuer(db, project, *, linked: bool = True):
+    customer = _customer(db, project.company_id) if linked else None
+    party = ProjectParty(
+        id=_uid(),
+        company_id=project.company_id,
+        party_type="main_contractor",
+        name=f"{MARKER} issuer {_uid()[:6]}",
+        customer_id=customer.id if customer else None,
+    )
+    db.add(party)
+    db.flush()
+    return party, customer
+
+
+def _lead_customer(db, project) -> Customer:
+    from app.models.projects import ProjectLead
+
+    buyer = _customer(db, project.company_id)
+    lead = ProjectLead(
+        id=_uid(),
+        company_id=project.company_id,
+        lead_code=f"ZZT-L-{_uid()[:6]}",
+        customer_id=buyer.id,
+        title=f"{MARKER} lead",
+        normalised_title=f"{MARKER} lead",
+    )
+    db.add(lead)
+    db.flush()
+    project.lead_id = lead.id
+    db.flush()
+    return buyer
+
+
+def _accepted_and_hand_picked(db, project, owner, matcher, number: str):
+    """A PO with no issuer: line 1 suggested then accepted, line 2 picked by hand."""
+    from .test_project_po_intake import _po
+
+    ids = _products(db, project.company_id, "CKS903", "SRT73-CR")
+    po = _po(db, project, owner, number)
+    matcher.answers[1] = {"product_code": "CKS903", "confidence": "high", "options": []}
+    version = _version(db, po)
+    service = ProjectPOExtractionService(db)
+    service.persist_pages(
+        version,
+        [
+            _page(
+                1,
+                lines=[
+                    _row(1, code="BBTCKS903", description="CABANA BBTCKS903"),
+                    _row(2, code="BBT-HAND-2", description="ZZT HAND PICKED"),
+                ],
+            )
+        ],
+    )
+    lines = _lines(service, version)
+    assert lines[1].resolution_source == "suggested"
+    service.accept_suggestion(version, lines[1], actor_user_id=owner)
+    service.update_line(
+        version=version,
+        line=lines[2],
+        payload={"resolved_product_id": ids["SRT73-CR"]},
+        actor_user_id=owner,
+    )
+    return service, version, po, ids
+
+
+def _all_map_rows(db, code: str):
+    return (
+        db.query(CustomerItemCodeMap)
+        .filter(func.upper(CustomerItemCodeMap.customer_code) == code.upper())
+        .all()
+    )
+
+
+def test_cp2_a_confirm_remembers_accepted_and_hand_picked_codes_once_the_issuer_is_known(
+    seeded, matcher
+):
+    from app.services import project_po_service as po_svc
+
+    db, project, owner = seeded
+    service, version, po, ids = _accepted_and_hand_picked(db, project, owner, matcher, "ZZT-CP2A")
+    assert _all_map_rows(db, "BBTCKS903") == []
+    assert _all_map_rows(db, "BBT-HAND-2") == []
+
+    party, customer = _issuer(db, project)
+    po_svc.update_po(db, po=po, payload={"issuing_party_id": party.id})
+    service.confirm_version(version=version, actor_user_id=owner)
+
+    accepted = _map_rows(db, customer.id, "BBTCKS903")
+    picked = _map_rows(db, customer.id, "BBT-HAND-2")
+    assert [row.product_id for row in accepted] == [ids["CKS903"]]
+    assert [row.product_id for row in picked] == [ids["SRT73-CR"]]
+    assert accepted[0].customer_code == "BBTCKS903", "keyed by the printed code"
+
+
+def test_cp2_b_confirm_with_no_known_customer_is_refused_naming_issued_by(seeded, matcher):
+    db, project, owner = seeded
+    service, version, _po_row, _ids = _accepted_and_hand_picked(
+        db, project, owner, matcher, "ZZT-CP2B"
+    )
+
+    with pytest.raises(AppException) as caught:
+        service.confirm_version(version=version, actor_user_id=owner)
+
+    assert caught.value.status_code == 422
+    assert _code(caught.value) == "po_version_issuer_required"
+    assert "Issued by" in _message(caught.value)
+    assert version.confirmed_at is None
+
+
+def test_cp2_c_an_issuer_not_linked_to_a_customer_counts_as_unknown(seeded, matcher):
+    from app.services import project_po_service as po_svc
+
+    db, project, owner = seeded
+    service, version, po, _ids = _accepted_and_hand_picked(
+        db, project, owner, matcher, "ZZT-CP2C"
+    )
+    party, _none = _issuer(db, project, linked=False)
+    po_svc.update_po(db, po=po, payload={"issuing_party_id": party.id})
+
+    with pytest.raises(AppException) as caught:
+        service.confirm_version(version=version, actor_user_id=owner)
+
+    assert caught.value.status_code == 422
+    assert _code(caught.value) == "po_version_issuer_required"
+    assert "Issued by" in _message(caught.value)
+
+
+def test_cp2_d_a_project_customer_lets_confirm_through_and_learns_for_it(seeded, matcher):
+    db, project, owner = seeded
+    buyer = _lead_customer(db, project)
+    service, version, po, ids = _accepted_and_hand_picked(db, project, owner, matcher, "ZZT-CP2D")
+    assert po.issuing_party_id is None
+
+    service.confirm_version(version=version, actor_user_id=owner)
+
+    assert version.confirmed_at is not None
+    assert [r.product_id for r in _map_rows(db, buyer.id, "BBTCKS903")] == [ids["CKS903"]]
+    assert [r.product_id for r in _map_rows(db, buyer.id, "BBT-HAND-2")] == [ids["SRT73-CR"]]
+
+
+def test_cp2_e_confirm_does_not_rewrite_code_or_map_matched_lines(seeded, matcher):
+    db, project, owner = seeded
+    ids = _products(db, project.company_id, "CKS903", "SRT73-CR")
+    po, customer = _customer_po(db, project, owner, "ZZT-CP2E")
+    teacher = _user(db, f"{MARKER} earlier teacher")
+    _map_row(
+        db,
+        company_id=project.company_id,
+        customer_id=customer.id,
+        code="BBT-M-1",
+        product_id=ids["SRT73-CR"],
+        by=teacher,
+    )
+    version = _version(db, po)
+    service = ProjectPOExtractionService(db)
+    service.persist_pages(
+        version,
+        [_page(1, lines=[_row(1, code="BBT-M-1"), _row(2, code="CKS903")])],
+    )
+    lines = _lines(service, version)
+    assert (lines[1].resolution_source, lines[2].resolution_source) == ("map", "code")
+
+    service.confirm_version(version=version, actor_user_id=owner)
+
+    rows = (
+        db.query(CustomerItemCodeMap)
+        .filter(CustomerItemCodeMap.customer_id == customer.id)
+        .all()
+    )
+    assert [(row.customer_code, row.confirmed_by) for row in rows] == [("BBT-M-1", teacher)]
