@@ -1,6 +1,6 @@
 # PLAN: Invoiced target achievement, period join the planner can hash (lane TARGET-ACHIEVED-PERF)
 
-Status: Build. Track: small fix (speed fix, no new behaviour, no migration, no auth change). UAC:
+Status: Review - built, red + kill proof done, PR open. Track: small fix (speed fix, no new behaviour, no migration, no auth change). UAC:
 `target-achieved-perf-14nov-acceptance-criteria.md`.
 
 ## Why
@@ -56,6 +56,26 @@ with their targets?" times out, and the Targets screen dealer tab takes about 8.
 sorento_prod_1112, read-only sessions, before vs after, warm and cold: agent_target_summary
 this_year, target_list this_year, `GET /api/v1/sales/targets?all=true&subject=dealer`. Figures:
 2026 totals per dealer target and account, before vs after, must be identical.
+
+## Measured (sorento_prod_1112, read-only sessions, 14 Nov, Mac load 9-15)
+
+ms per call through the real code path; "first" = first call on a new connection, "warm" = repeat.
+
+| Call | Before first | Before warm | After first | After warm |
+|---|---|---|---|---|
+| agent_target_summary this_year | 5,535 timeout | 5,549 timeout | 748 | 404 |
+| target_list this_year | 315 | 301 | 406 | 301 |
+| Targets dealer tab (`list_all_targets(subject="dealer")`) | 583 | 320 | 939 | 361 |
+
+The timed-out statement itself, timeout lifted: 9,035 ms before (nested loop, 10,998,391 rows
+removed). Before, target_list and the dealer tab got the hashed plan on these runs: the nested and
+the hashed plan cost within the planner's 1% fuzz (395.86 vs 394.58), so a lower start-up cost
+picks the nested one on some inputs (the root-cause runs: dealer tab 8.7 s, target_list 7.3-15.4 s).
+After, the statement has one VALUES join and no such tie.
+
+Figures, old vs new statement in one read-only session (timeout lifted): IDENTICAL for every 2026
+dealer period per account (444 periods, 387 non-zero cells), per document (39,110 cells), per
+period, the dealer tab body, and the agent_target_summary / target_list answers.
 
 ## Standing rules that apply
 
