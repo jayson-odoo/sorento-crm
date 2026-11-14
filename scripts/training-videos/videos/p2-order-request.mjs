@@ -153,13 +153,25 @@ export default {
       },
     },
     {
-      en: 'The request is Approved and raised to purchasing as an order inquiry.',
-      ms: 'Permintaan itu diluluskan dan dihantar kepada bahagian pembelian sebagai pertanyaan pesanan.',
+      en: 'The request is Approved, and its lines go to purchasing to order.',
+      ms: 'Permintaan itu diluluskan, dan baris-barisnya dihantar kepada bahagian pembelian untuk dipesan.',
       run: async ({ page, point, sleep }) => {
-        await page.getByText('Raised to purchasing').first().waitFor({ timeout: 60000 });
+        await page.getByRole('link', { name: 'Raised to purchasing' }).waitFor({ timeout: 60000 });
         await sleep(500);
         await point(page.getByRole('heading', { name: /^OR-\d{4}-\d{4}/ }), 1500);
-        await point(page.getByRole('link', { name: /^OI-\d{4}-\d{4}/ }).first(), 2200);
+        await point(page.getByRole('cell', { name: /^To order/ }).first(), 1500);
+      },
+    },
+    {
+      en: 'Click Raised to purchasing to open the order inquiry purchasing works from.',
+      ms: 'Klik Raised to purchasing untuk membuka pertanyaan pesanan yang digunakan oleh bahagian pembelian.',
+      run: async ({ page, click, point, sleep }) => {
+        await click(page.getByRole('link', { name: 'Raised to purchasing' }));
+        const oi = page.getByRole('heading', { name: /^OI-\d{4}-\d{4}$/ });
+        await oi.waitFor({ timeout: 60000 });
+        await sleep(600);
+        await point(oi, 1500);
+        await point(page.getByRole('link', { name: /^Order request OR-/ }), 2000);
       },
     },
   ],
