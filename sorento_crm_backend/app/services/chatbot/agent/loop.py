@@ -1733,7 +1733,14 @@ def _previous_waiting(db, conv, turn_id: str, *, immediate: bool = True) -> dict
         **(current or empty), "typed": typed, "expired": older, "card": card, "ready": ready, "last_table": last_table,
         # The rows the preceding turn held while it asked for a company or role: their role came from the record,
         # so the answer never overrides it (crew pass 4 addendum).
-        "held": [a["key"] for a in got.get("batch_asked") or [] if isinstance(a, dict) and a.get("held") and a.get("key")],
+        "held": {
+            a["key"]: a.get("role") for a in got.get("batch_asked") or []
+            if isinstance(a, dict) and a.get("held") and a.get("key")
+        },
+        # The rows of that question's turn read from a picture: the answer's card names them by the record (B2).
+        "picture": [
+            a["key"] for a in got.get("batch_asked") or [] if isinstance(a, dict) and a.get("key")
+        ] if got.get("batch_picture") else [],
     }
 
 
@@ -2520,8 +2527,11 @@ def _run(
         turn.response["batch_write"] = batch_write
         # The rows of a table that asked for the company or role, ready rows held alike: the answer's card (F4).
         turn.response["batch_asked"] = [
-            {"row": a.get("row"), "key": a.get("key"), **({"held": True} if a.get("held") else {})} for a in batch_asked
+            {"row": a.get("row"), "key": a.get("key"), **({"held": True, "role": a.get("role")} if a.get("held") else {})}
+            for a in batch_asked
         ]
+        if batch_asked and (images or file_text):
+            turn.response["batch_picture"] = True
         # What each row of this table verified as typed, ready, not changed or waiting alike (UAC A17, A18).
         turn.response["batch_typed"] = [
             {"row": e.get("row"), "key": e.get("key"), **e["typed"]}

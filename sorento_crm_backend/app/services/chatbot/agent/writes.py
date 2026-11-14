@@ -252,9 +252,9 @@ def _route_failure(exc: Exception) -> ToolResult:
         if 400 <= exc.status_code < 500:
             # A refusal that is a pick (`contact_grant.NeedsChoice`) carries its choices for the batch tool.
             choices = getattr(exc, "choices", None)
-            if getattr(exc, "guidance", False):
+            if getattr(exc, "guidance", None):
                 # A redirect for the model (e.g. use the grant), never the user's reply (`loop.dealer_reply`).
-                return ToolResult("invalid", data={"loop": True}, message=error_text(exc))
+                return ToolResult("invalid", data={"loop": True}, message=str(exc.guidance))
             if getattr(exc, "needs", None):
                 # `contact_grant.NeedsFacts`: the company or role the user did not say, asked by the batch tool.
                 return ToolResult("invalid", data={"needs": exc.needs, "label": exc.label}, message=error_text(exc))
@@ -1292,15 +1292,17 @@ def _contact_plan(db, user: dict, args: dict) -> dict:
     if ai is True and role is None and not link and facts["role"] == "none" and not _all_links(db, contact.id):
         # A person with no dealer access at all (no level, no account): AI replies on is giving access, which is the
         # grant's job (company, role, template). Answered to the model, never the user (crew pass 4, 14 Nov).
+        # The message is the user's (a confirm that re-plans after the last link went shows it); `guidance` is the
+        # model's (review S2).
         exc = AppException(
             status_code=422, code="NO_DEALER_ACCESS",
-            message=(
-                f"{phone} has no dealer access yet, so AI replies alone give nothing. Give access with "
-                "crm_batch_propose, write crm_contact_grant, one row per such person (company and role as the user "
-                "said them, or left out: the tool asks the user)."
-            ),
+            message=f"{phone} has no dealer access; give access with the company and Owner or Employee.",
         )
-        exc.guidance = True
+        exc.guidance = (
+            f"{phone} has no dealer access yet, so AI replies alone give nothing. Give access with "
+            "crm_batch_propose, write crm_contact_grant, one row per such person (company and role as the user "
+            "said them, or left out: the tool asks the user)."
+        )
         raise exc
     if ai is not None and ai != bool(contact.chatbot_allowed) and facts.get("other_links"):
         # Own scope: a person another account also reaches keeps its settings (A13); only the office changes them

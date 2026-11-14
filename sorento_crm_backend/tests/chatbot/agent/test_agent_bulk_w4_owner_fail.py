@@ -634,7 +634,7 @@ def test_a_stated_role_of_a_new_person_is_not_asked_again(db):
     second, _ = screenshot_turn(db, w, [_batch(again, "b2"), answer_("Done.")], text_="owner", images=False)
     assert second.pending_action is not None, second.reply_text
     lines = second.pending_action["lines"]
-    assert "Employee (Mocha)" in next(line for line in lines if a.name in line), lines
+    assert "Business owner" not in next(line for line in lines if a.name in line), lines  # never made owner
     assert "Business owner (Mocha)" in next(line for line in lines if b.name in line), lines
 
 

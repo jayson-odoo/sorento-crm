@@ -442,12 +442,13 @@ def plan(db, user: dict, args: dict) -> dict:
         raise NeedsChoice(choices)
     contact = _find_contact(db, phone)
     # A question about the company or role comes only once every check that could refuse the row has passed, and
-    # names the person only by what the user gave (their typed name, else the phone), never the stored name: an
-    # own-scope user learns nothing of a person they may not change (security review B1, S2).
+    # names the person by what the user gave (their typed name, else the phone), never the stored name of a person
+    # the user may not change: an own-scope user learns nothing of them (security review B1, S2).
     staff = _is_staff(db, phone, str(contact.id) if contact is not None else None)
     in_scope = own_agents is None or (contact is not None and writes.contact_in_scope(db, uid, str(contact.id)))
-    # A name read from an attached picture can be misread (crew pass 4): on such a turn (`_from_attachment`, set by the
-    # batch tool, never the model) a person the user may change shows by their record's name. A typed name stays.
+    # A name read from an attached picture can be misread (crew pass 4): for such a row (`_from_attachment`, set by the
+    # batch tool, never the model, also on the answer to that picture's question) a person the user may change shows
+    # by their record's name. Rows of a typed table keep the name the user typed.
     record_name = (
         contact.name if args.get("_from_attachment") and contact is not None and contact.name and in_scope else ""
     )
