@@ -48,8 +48,10 @@ const PRESENTATION: Record<string, { th: string; td: string }> = {
   product_code: { th: 'min-w-[120px] text-left', td: '' },
   qty: { th: 'min-w-[70px] text-right', td: 'text-right tabular-nums' },
   unit_rate: { th: 'min-w-[120px] text-right', td: 'text-right tabular-nums' },
-  complete_set: { th: 'min-w-[140px] text-left', td: 'text-muted-foreground' },
-  remark: { th: 'min-w-[110px] text-left', td: '' },
+  complete_set: { th: 'min-w-[90px] text-left', td: 'text-muted-foreground' },
+  // The flag and the line note arrive on separate lines (QUOTE-LINE-NOTE-REMARK); a long note wraps
+  // inside the header's width, so the table still fits the sign card at 1280.
+  remark: { th: 'min-w-[140px] text-left', td: 'whitespace-pre-line break-words' },
   amount: { th: 'min-w-[120px] text-right', td: 'text-right' },
 };
 
@@ -394,7 +396,9 @@ function MatrixScopeTable({
 }) {
   const allLeaves = leaves(headers);
   const photo = columns.find((column) => column.key === 'image');
-  const span = 1 + (photo ? 1 : 0) + allLeaves.length + 3 + (onFeedback ? 1 : 0);
+  // After the unit rate and before the money, as the PDF's matrix prints it (QUOTE-LINE-NOTE-REMARK).
+  const remark = columns.find((column) => column.key === 'remark');
+  const span = 1 + (photo ? 1 : 0) + allLeaves.length + 3 + (remark ? 1 : 0) + (onFeedback ? 1 : 0);
   const bands = bandsOf(lines);
   const positions = linePositions(lines);
   const pinned = 'sticky left-0 z-10 bg-background';
@@ -434,6 +438,11 @@ function MatrixScopeTable({
             <th rowSpan={2} className="min-w-[110px] bg-muted/40 px-2 py-2 text-right font-semibold">
               Unit rate
             </th>
+            {remark && (
+              <th rowSpan={2} className={cn('bg-muted/40 px-2 py-2 font-semibold', presentation('remark').th)}>
+                {remark.label}
+              </th>
+            )}
             <th rowSpan={2} className="min-w-[120px] bg-muted/40 px-2 py-2 text-right font-semibold">
               Amount
             </th>
@@ -526,6 +535,11 @@ function MatrixScopeTable({
                   <td className="border-t border-border px-2 py-2 text-right tabular-nums">
                     {lineMoney(line.unit_price)}
                   </td>
+                  {remark && (
+                    <td className={cn('border-t border-border px-2 py-2', presentation('remark').td)}>
+                      {cell(line.remark)}
+                    </td>
+                  )}
                   <td className="border-t border-border px-2 py-2 text-right">
                     <LineAmount line={line} />
                   </td>

@@ -40,6 +40,8 @@ export interface OtpCodeFieldProps {
    * caller wants.
    */
   status?: ReactNode;
+  /** Send code is the filled main button until a code has gone (the portal verify card). */
+  primarySend?: boolean;
 }
 
 export function OtpCodeField({
@@ -54,6 +56,7 @@ export function OtpCodeField({
   id = 'code',
   autoFocus,
   status,
+  primarySend = false,
 }: OtpCodeFieldProps) {
   const lastAutoVerifiedRef = useRef<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -104,7 +107,7 @@ export function OtpCodeField({
       {status ?? (
         <Button
           type="button"
-          variant="outline"
+          variant={primarySend && !sent && cooldown <= 0 ? 'primary' : 'outline'}
           onClick={onResend}
           disabled={pending || disabled || cooldown > 0}
           className="h-11 w-full"
