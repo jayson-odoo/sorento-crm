@@ -55,6 +55,7 @@ export type FormSLASourceType =
   | 'price_tag_request'
   | 'sample_request'
   | 'new_product_application'
+  | 'spare_part_request'
   | 'order_change_notice';
 
 export async function getFormSLATrackers(
@@ -385,6 +386,9 @@ export const FORM_SLA_EVENT_OPTIONS: Record<FormSLASourceType, readonly string[]
     'purchasing_respond',
     'completed',
   ],
+  // SPARE-PART-ORDER-REQUEST: spare_part_request_service emits these three; every approval
+  // level resolves on approved / rejected, and a level is chained to the next on approved.
+  spare_part_request: ['submitted', 'approved', 'rejected'],
   // OCN-ORDER-CHANGE-NOTICE: the purchase request chain's events (a void stops the stages itself).
   order_change_notice: [
     'submit',
@@ -423,5 +427,6 @@ export const FORM_SLA_TYPE_LABELS: Record<FormSLASourceType, string> = {
   price_tag_request: 'Price Tag Request',
   sample_request: 'Sample Request',
   new_product_application: 'New Product Application',
+  spare_part_request: 'Order Request',
   order_change_notice: 'Order Change Notice',
 };
