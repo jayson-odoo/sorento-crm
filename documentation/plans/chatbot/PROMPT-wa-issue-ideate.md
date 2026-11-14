@@ -98,7 +98,7 @@ pass. Two misses and one possible regression:
   `dbr_0001_retention_settings`), do NOT run `alembic downgrade -1 && alembic upgrade head`: that leaves
   `plr_0001` and `dbr_0001` unapplied. Either `alembic stamp agent_0001_proposal_insights && alembic upgrade head`
   (`wa_0001` is idempotent; `wa_0002` publishes the round 12 text unlabelled), or publish only the prompt with
-  `documentation/plans/chatbot/sql/wa-issue-r12-publish.sql` (psql from the repo root; it checks both md5s and
+  `documentation/plans/chatbot/sql/wa-issue-publish.sql` (psql from the repo root; it checks both md5s and
   publishes once). Name the new version by its md5 `46e16236`, not by a number: version numbers are reused after a
   downgrade.
 
