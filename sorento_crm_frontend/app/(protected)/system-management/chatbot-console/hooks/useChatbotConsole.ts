@@ -323,6 +323,12 @@ export function useChatbotConsole() {
     setPromptVersionIdState(defaultPromptVersionId(promptVersions));
   }, [promptVersions]);
 
+  // What a turn sends: no pin when the chosen row is the one production serves. A pinned
+  // parser id also pins the span prompt published with it (`engine._span_override`), which a
+  // live turn never does, so only "no pin" runs exactly what production runs.
+  const servingPromptVersionId = promptVersions?.find((v) => v.serving)?.id ?? null;
+  const turnPromptVersionId = promptVersionId === servingPromptVersionId ? null : promptVersionId;
+
   const setPromptVersionId = useCallback((id: string | null) => {
     promptChoiceApplied.current = true;
     setPromptVersionIdState(id);
@@ -506,7 +512,7 @@ export function useChatbotConsole() {
           contact_respond_id: contactId,
           text: trimmed,
           session_vars: sessionVars,
-          prompt_version_id: promptVersionId,
+          prompt_version_id: turnPromptVersionId,
           run_id: runId,
           ...(quote ? { reply_to: { id: quote.id, text: quote.text, source: quote.source } } : {}),
           ...(options?.forceAgent ? { force_agent: true } : {}),
@@ -542,7 +548,7 @@ export function useChatbotConsole() {
         if (generationRef.current === generation) setSending(false);
       }
     },
-    [contactId, contactLabelState, promptVersionId, refreshThread, runId, sending, sessionVars],
+    [contactId, contactLabelState, refreshThread, runId, sending, sessionVars, turnPromptVersionId],
   );
 
   // -------------------------------------------------------------------------------- //
@@ -562,7 +568,7 @@ export function useChatbotConsole() {
           contact_respond_id: contactId,
           text,
           session_vars: sessionVars,
-          prompt_version_id: promptVersionId,
+          prompt_version_id: turnPromptVersionId,
           run_id: runId,
           ...(quote ? { reply_to: quote } : {}),
         });
@@ -580,7 +586,7 @@ export function useChatbotConsole() {
         toast.error(err instanceof Error ? err.message : 'Failed to run the turn');
       }
     },
-    [contactId, promptVersionId, refreshThread, runId, sessionVars],
+    [contactId, refreshThread, runId, sessionVars, turnPromptVersionId],
   );
 
   const pollMediaStatus = useCallback(
@@ -649,7 +655,7 @@ export function useChatbotConsole() {
           contact_respond_id: contactId,
           text: caption,
           session_vars: sessionVars,
-          prompt_version_id: promptVersionId,
+          prompt_version_id: turnPromptVersionId,
           run_id: runId,
           media,
           // A quoted voice note or image carries the quote like a text does.
@@ -709,7 +715,7 @@ export function useChatbotConsole() {
         if (generationRef.current === generation) setSending(false);
       }
     },
-    [contactId, contactLabelState, pollMediaStatus, promptVersionId, runId, sessionVars],
+    [contactId, contactLabelState, pollMediaStatus, runId, sessionVars, turnPromptVersionId],
   );
 
   const readFileAsBase64 = (file: File): Promise<string> =>
