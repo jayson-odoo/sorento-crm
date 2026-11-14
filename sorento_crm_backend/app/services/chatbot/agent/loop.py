@@ -2235,6 +2235,9 @@ def _run(
                 # UAC 12a: too little time for another round; answer from the results in hand (crew pass, 14 Nov:
                 # a round started with seconds left timed out and the turn ended in an error).
                 reply, _named = forced_final("the time for this question is nearly up")
+                if forced_args is None:
+                    # The final answer failed too (a staff turn gets what it read): UAC 12c, still an error.
+                    status, limit_hit = "limited", "error"
                 break
             try:
                 result = chat(messages, schemas, kind="round", tool_choice="required" if dealer_flow else None)
@@ -2244,6 +2247,9 @@ def _run(
                 if isinstance(exc, TimeoutError) or getattr(exc, "timed_out", False):
                     # UAC 12b: a round that times out with results in hand still answers from them, as answered.
                     reply, _named = forced_final("the model did not respond in time")
+                    if forced_args is None:
+                        # The final answer failed too (a staff turn gets what it read): UAC 12c, still an error.
+                        status, limit_hit = "limited", "error"
                     break
                 status, limit_hit = "limited", "error"
                 reply, named = forced_final("the model call failed")
