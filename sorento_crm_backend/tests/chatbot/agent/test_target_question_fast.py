@@ -99,7 +99,11 @@ def credit(team, api):
         "e": set(),
     }
     assert ids["ta"] in allowed["a"] and ids["tb"] not in allowed["a"] and not own(e)
-    return db, {**t, "d": d, "e": e, "ids": ids, "allowed": allowed, "kinds": kinds}
+    return db, {**t, "d": d, "e": e, "ids": ids, "allowed": allowed, "kinds": kinds, "client": client}
+
+
+def client_post(t, body):
+    return t["client"].post(BASE, json=body)
 
 
 @pytest.fixture
@@ -335,6 +339,55 @@ def test_N11_a_value_naming_an_agent_and_another_dealer_keeps_the_dealer(credit,
     assert t["ids"]["ta"] not in seen, "narrowed: agent A's target is not computed"
 
 
+def test_N12_a_kind_filter_beside_an_agent_filter_never_drops_the_agents_exact_row(credit, computed, api):
+    """Review round (computed.py `_narrowing`: no kind narrowing with an agent filter). agent contains "Agent B"
+    with owner_kind dealer: over everything, B's own agent row makes "Agent B" an exact hit, so the dealer of
+    "Agent B IV" (a similarly named agent) stays out and, B owning no dealer alone (only a share of the split
+    one), nothing is listed. Narrowed to dealer targets only, that exact hit would be gone and the loose contains
+    would take B IV's dealer (checked by hand with the kinds guard bypassed)."""
+    db, t = credit
+    _c, _db, company_id = api
+    pid = _product_id(db, company_id)
+    b4 = _agent(db, "BIV", "Agent B IV")
+    account = _customer(db, company_id, "ZZT SOLO B IV", level=1)
+    account.sales_agent_id = b4.id
+    db.flush()
+    _sale(db, company_id, account, "12000", date(2026, 8, 5), product_id=pid)
+    assert client_post(t, _dealer_body([account], name="ZZT solo B IV dealer")).status_code == 201
+    spec = {"entity": SUMMARY, "period": YEAR, "fields": SUMMARY_FIELDS, "limit": 50,
+            "filters": [{"field": "agent", "op": "contains", "value": "Agent B"},
+                        {"field": "owner_kind", "op": "eq", "value": "dealer"}]}
+    computed.reset()
+    out = run(db, spec)
+    baseline = _everything_then_filtered(db, SUMMARY, spec)
+    _same_answer(out, baseline)
+    assert out["rows"] == [], out["rows"]
+    assert any("ZZT SOLO B IV" in r["label"] for r in run(db, {**spec, "filters": [
+        {"field": "agent", "op": "contains", "value": "Agent B IV"}]})["rows"]), "B IV's dealer is in the window"
+
+
+@pytest.mark.parametrize("op,value,agent_name", [
+    ("contains", "zzt north", "ZZT North Rep"),
+    ("eq", "ZZT North", "ZZT North"),
+    ("eq", "Team ZZT North", "Team ZZT North"),
+])
+def test_N13_a_value_naming_an_agent_and_a_team_keeps_the_team_row(credit, computed, op, value, agent_name):
+    """Review round (sales.py `_named_targets`, the team branch): a value that names an agent AND a team that agent
+    is not in keeps the team's row, "Team X" and X alike, as computing everything and filtering after does; the
+    narrowing still leaves out a team neither names."""
+    db, t = credit
+    _agent(db, "NR", agent_name)
+    spec = {"entity": SUMMARY, "period": YEAR, "fields": SUMMARY_FIELDS, "limit": 50,
+            "filters": [{"field": "owner", "op": op, "value": value}]}
+    computed.reset()
+    out = run(db, spec)
+    seen = set(computed.figures)
+    _same_answer(out, _everything_then_filtered(db, SUMMARY, spec))
+    assert "Team ZZT North" in [r["label"] for r in out["rows"]], out["rows"]
+    assert t["ids"]["north"] in seen
+    assert t["ids"]["south"] not in seen, "narrowed: a team nothing names is not computed"
+
+
 # ------------------------------------------------------------------ UAC 6: remaining_value
 
 
@@ -471,6 +524,16 @@ def _scripted_turn(script, *slugs):
     return replies, result.reply_text or ""
 
 
+def _refusal_reads_right(reply):
+    """The 7th query's refusal as the model reads it: no "limit" for it to repeat to the user, and no request to
+    list what is missing (UAC 7: the answer gives its best full result)."""
+    assert reply["status"] == "denied", reply
+    message = (reply.get("message") or "").lower()
+    assert message, reply
+    assert "limit" not in message, message
+    assert "missing" not in message, message
+
+
 def _answer():
     return _round(("ans-1", "answer", {"text": "Done.", "figures": [], "not_found": [], "not_checked": []}))
 
@@ -495,9 +558,8 @@ def test_Q2_describe_is_free_and_the_seventh_query_is_a_tool_reply_not_the_end()
         assert replies[cid]["status"] != "denied", (cid, replies[cid])
     for cid in ("q1", "q2", "q3", "q4", "q5", "q6"):
         assert replies[cid]["status"] in ("ok", "empty"), (cid, replies[cid])
-    assert replies["q7"]["status"] == "denied", replies["q7"]
-    assert "Done" in reply
-    assert "limit" not in reply.lower()
+    _refusal_reads_right(replies["q7"])
+    assert "Done" in reply  # the turn went on to its answer
 
 
 def test_Q3_refused_queries_are_free():
@@ -515,8 +577,8 @@ def test_Q3_refused_queries_are_free():
         assert replies[cid]["status"] == "invalid", (cid, replies[cid])
     for cid in ("q1", "q2", "q3", "q4", "q5", "q6"):
         assert replies[cid]["status"] in ("ok", "empty"), (cid, replies[cid])
-    assert replies["q7"]["status"] == "denied", replies["q7"]
-    assert "limit" not in reply.lower()
+    _refusal_reads_right(replies["q7"])
+    assert "Done" in reply  # the turn went on to its answer
 
 
 def test_Q4_a_timed_out_query_counts(monkeypatch):
@@ -536,8 +598,8 @@ def test_Q4_a_timed_out_query_counts(monkeypatch):
     replies, reply = _scripted_turn(script, PRODUCTS_VIEW)
     for i in range(1, 7):
         assert replies[f"q{i}"]["status"] == "timeout", (i, replies[f"q{i}"])
-    assert replies["q7"]["status"] == "denied", replies["q7"]
-    assert "limit" not in reply.lower()
+    _refusal_reads_right(replies["q7"])
+    assert "Done" in reply  # the turn went on to its answer
 
 
 # ------------------------------------------------------------------ UAC 8: the prompt agrees with the tools
