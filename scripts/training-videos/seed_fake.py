@@ -105,8 +105,20 @@ PRODUCTS = [
 ]
 ROOT_CAUSES = ["Damaged in transit", "Manufacturing defect", "Wrong item delivered", "Installation error"]
 RESOLUTIONS = ["Replace item", "Repair on site", "Credit note issued", "No fault found"]
-COMPLAINT_TYPES = [("product_defect", "Product defect"), ("delivery_issue", "Delivery issue"),
-                   ("wrong_item", "Wrong item"), ("missing_parts", "Missing parts")]
+# The complaint form's four dropdowns: set key -> (complaints column, set name, [(value, label)]).
+# The portal form reads them by set key (SubmissionForm.tsx), the staff form by the binding.
+COMPLAINT_LOOKUPS = {
+    "complaints_customer_type": ("customer_type", "Complaint customer types", [
+        ("dealer", "Dealer"), ("contractor", "Contractor"), ("end_user", "End user")]),
+    "complaints_within_warranty": ("within_warranty", "Complaint warranty status", [
+        ("yes", "Yes"), ("no", "No"), ("not_sure", "Not sure")]),
+    "complaints_defects_discovered": ("defects_discovered", "Complaint defects discovered", [
+        ("on_delivery", "On delivery"), ("during_installation", "During installation"),
+        ("after_installation", "After installation")]),
+    "complaints_complaint_type": ("complaint_type", "Complaint types", [
+        ("product_defect", "Product defect"), ("delivery_issue", "Delivery issue"),
+        ("wrong_item", "Wrong item"), ("missing_parts", "Missing parts")]),
+}
 
 
 def say(msg: str) -> None:
@@ -508,19 +520,24 @@ def seed_complaint_master(db):
         for name in names:
             if not db.query(model).filter(model.name == name).first():
                 db.add(model(name=name, is_active=True))
-    lset = db.query(LookupSet).filter(LookupSet.set_key == "complaint_type").first()
-    if lset is None:
-        lset = LookupSet(set_key="complaint_type", name="Complaint types", is_active=True,
-                         description="What kind of complaint it is.")
-        db.add(lset)
+    # An earlier seed used the bare key "complaint_type", which the portal form never reads.
+    legacy = db.query(LookupSet).filter(LookupSet.set_key == "complaint_type").first()
+    if legacy is not None and not db.query(LookupSet).filter(LookupSet.set_key == "complaints_complaint_type").first():
+        legacy.set_key = "complaints_complaint_type"
         db.flush()
-    for i, (value, label) in enumerate(COMPLAINT_TYPES):
-        if not db.query(LookupOption).filter_by(set_id=lset.id, value=value).first():
-            db.add(LookupOption(set_id=lset.id, value=value, label=label, sort_order=i, is_active=True))
-    if not db.query(LookupBinding).filter_by(table_name="complaints", column_name="complaint_type").first():
-        db.add(LookupBinding(set_id=lset.id, table_name="complaints", column_name="complaint_type"))
+    for set_key, (column, name, options) in COMPLAINT_LOOKUPS.items():
+        lset = db.query(LookupSet).filter(LookupSet.set_key == set_key).first()
+        if lset is None:
+            lset = LookupSet(set_key=set_key, name=name, is_active=True)
+            db.add(lset)
+            db.flush()
+        for i, (value, label) in enumerate(options):
+            if not db.query(LookupOption).filter_by(set_id=lset.id, value=value).first():
+                db.add(LookupOption(set_id=lset.id, value=value, label=label, sort_order=i, is_active=True))
+        if not db.query(LookupBinding).filter_by(table_name="complaints", column_name=column).first():
+            db.add(LookupBinding(set_id=lset.id, table_name="complaints", column_name=column))
     db.flush()
-    say("complaint root causes, resolutions, complaint types")
+    say("complaint root causes, resolutions, complaint form dropdowns")
 
 
 def seed_modules(db):
