@@ -142,6 +142,17 @@ def blocking_notes_message(
     )
 
 
+def lines_need_attention_message(line_nos: List[int]) -> str:
+    """AC-Q3: every line still holding Confirm, by number, and what to do about it."""
+    named = [str(n) for n in line_nos]
+    listed = named[0] if len(named) == 1 else f"{', '.join(named[:-1])} and {named[-1]}"
+    noun = "Line" if len(named) == 1 else "Lines"
+    return (
+        f"{noun} {listed} still need a quantity or a suggestion accepted. Enter the "
+        "missing quantities, and accept or change each suggested product or quantity."
+    )
+
+
 class POConfirmationMixin:
     """Requires ``self.db`` and the lifecycle lookups."""
 
@@ -189,6 +200,18 @@ class POConfirmationMixin:
                 status_code=409,
                 message="Every line on this document is cancelled, so there is nothing to confirm.",
                 code="po_version_no_live_lines",
+            )
+
+        attention = [
+            line.line_no
+            for line in live
+            if line.qty is None or self.has_suggestion(version, line)
+        ]
+        if attention:
+            raise AppException(
+                status_code=422,
+                message=lines_need_attention_message(sorted(attention)),
+                code="po_version_lines_need_attention",
             )
 
         po = self.get_po(version.purchase_order_id)
@@ -261,7 +284,8 @@ class POConfirmationMixin:
                         "product_code": code or None,
                         "description": line.description_raw,
                         "unit_price": _money(_to_decimal(line.unit_price)),
-                        "quantity": _to_decimal(line.qty) or Decimal("1"),
+                        # Never a silent 1 (AC-Q1): the gate above refuses an empty qty.
+                        "quantity": _to_decimal(line.qty),
                         "uom": line.uom_raw,
                         "sort_order": line.line_no,
                     },
@@ -311,6 +335,24 @@ class POConfirmationMixin:
         """
         if po.quotation_version_id:
             return None
+        version = self._quotation_version_for(po)
+        if version is None:
+            return None
+        po.quotation_version_id = version.id
+        self.db.flush()
+        return version
+
+    def _quotation_version_for(
+        self, po: ProjectPurchaseOrder
+    ) -> Optional[ProjectQuotationVersion]:
+        """The quotation version ``po`` is (or would be) checked against, without binding.
+
+        The PO's own binding when it has one; otherwise the one ``_bind_quotation_version``
+        would bind, by its rules. The PO reader's matcher offers that version's products
+        as candidates (PO-UPLOAD-MATCHING), so read time and confirm agree on the scope.
+        """
+        if po.quotation_version_id:
+            return self.db.get(ProjectQuotationVersion, po.quotation_version_id)
 
         query = self.db.query(ProjectQuotation).filter(
             ProjectQuotation.project_id == po.project_id
@@ -344,11 +386,6 @@ class POConfirmationMixin:
             .order_by(ProjectQuotationVersion.version_no.desc())
             .first()
         )
-        if version is None:
-            return None
-
-        po.quotation_version_id = version.id
-        self.db.flush()
         return version
 
 

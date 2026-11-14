@@ -33,6 +33,7 @@ from app.models.projects import (
     ProjectQuotation,
     ProjectQuotationVersion,
 )
+from app.services import customer_code_map
 from app.services.error_handler import AppException
 from app.services.document_extraction import page_failure_reason
 from app.services.project_po_reading import (  # noqa: F401 - shared vocabulary
@@ -99,6 +100,21 @@ _READ_STOPPED = (
 _STORED_DOCUMENT_UNREADABLE = (
     "The stored file could not be opened for reading. Upload the document again."
 )
+
+
+def _suggested_qty(line: ProjectPOLine) -> Optional[Decimal]:
+    """AC-Q2: an empty qty worked out from amount / unit price, only when that is a whole
+    number above zero. Anything else stays empty for a person to fill in."""
+    if line.qty is not None:
+        return None
+    unit_price = _to_decimal(line.unit_price)
+    amount = _to_decimal(line.amount)
+    if unit_price is None or amount is None or unit_price <= 0:
+        return None
+    qty = amount / unit_price
+    if qty <= 0 or qty != qty.to_integral_value():
+        return None
+    return qty.to_integral_value()
 
 
 class POIntakeLifecycleMixin:
@@ -639,6 +655,7 @@ class POIntakeLifecycleMixin:
 
         header: Dict[str, Any] = {}
         printed_total: Optional[Decimal] = None
+        printed_total_from_page = False
         page_blobs: List[Dict[str, Any]] = []
         failed_pages: List[int] = []
         used_line_nos: set[int] = set()
@@ -663,6 +680,13 @@ class POIntakeLifecycleMixin:
                     failed_pages.append(page_no)
                 continue
 
+            # AC-T1: the grand total printed on the page, asked for at the top level. The
+            # LAST page that prints one wins: a running subtotal on page 1 is not the total.
+            page_total = _to_decimal(data.get("printed_total"))
+            if page_total is not None:
+                printed_total = page_total
+                printed_total_from_page = True
+
             raw_header = data.get("header") or {}
             if isinstance(raw_header, dict):
                 # First non-empty value wins. A header the model re-invented on page 7
@@ -675,7 +699,7 @@ class POIntakeLifecycleMixin:
                         if value not in (None, ""):
                             header[target] = value
                             break
-                if printed_total is None:
+                if printed_total is None and not printed_total_from_page:
                     for key in _HEADER_TOTAL_KEYS:
                         printed_total = _to_decimal(raw_header.get(key))
                         if printed_total is not None:
@@ -822,6 +846,9 @@ class POIntakeLifecycleMixin:
             version.page_count = page_count
 
         purchase_order = self._reconcile_po_number(version, purchase_order, header)
+        # Once, after every page, against the PO the version finally sits on: a re-parent
+        # above can move it to a PO with a different issuer and quotation.
+        self._match_lines(version, purchase_order)
         totals = self.recompute_totals(version)
 
         read_pages = [blob for blob in page_blobs if blob["data"]]
@@ -883,9 +910,6 @@ class POIntakeLifecycleMixin:
             line_no = (max(used_line_nos) if used_line_nos else 0) + 1
         used_line_nos.add(line_no)
 
-        product_id, source = self._resolve_product(
-            stock_code, description, company_id=version.company_id
-        )
         line = ProjectPOLine(
             company_id=version.company_id,
             po_version_id=version.id,
@@ -897,8 +921,9 @@ class POIntakeLifecycleMixin:
             unit_price=unit_price,
             amount=amount,
             arithmetic_ok=arithmetic_ok(qty, unit_price, amount),
-            resolved_product_id=product_id,
-            resolution_source=source,
+            # Placed after the last page (`_match_lines`), once for the whole document.
+            resolved_product_id=None,
+            resolution_source=None,
             # Never set here. A strike-through is a proposal until a person accepts the
             # card (D11); this is the one place that rule could be broken silently.
             is_cancelled=False,
@@ -917,11 +942,11 @@ class POIntakeLifecycleMixin:
     def _resolve_product(
         self,
         stock_code: Optional[str],
-        description: Optional[str],
         *,
         company_id: Optional[str] = None,
+        remembered: Optional[Dict[str, str]] = None,
     ) -> Tuple[Optional[str], Optional[str]]:
-        """Recover our product from what the paper printed.
+        """The two exact tiers: the catalogue code, then the customer's remembered code.
 
         ``company_id`` is not optional in spirit. One product code exists once per
         company, so a lookup that spans companies can attach a Mocha row to a Sorento
@@ -930,169 +955,151 @@ class POIntakeLifecycleMixin:
         failing to reconcile against its own PO because the two had resolved the same
         code to different rows. Callers pass the PO's company.
 
-        The customer's stock-code COLUMN is truncated by their own printing, so the
-        column is tried first and the DESCRIPTION second, where the full code survives
-        (AC-M1b). Nothing is guessed: only an exact match on a catalogue code counts,
-        and an unresolved line is left for a person rather than resolved approximately.
+        ``remembered`` is the customer's own codes (``customer_code_map.remembered_codes``).
+        Nothing here is approximate any more (PO-UPLOAD-MATCHING): the description-token
+        rule matched a size ("40MM") as a product, and the loose string tiers are replaced
+        by a model SUGGESTION among real candidates (``project_po_matching``), which a
+        person accepts.
         """
         from app.models.product import Product
-
-        def _scoped(query):
-            return query.filter(Product.company_id == company_id) if company_id else query
 
         code = (stock_code or "").strip().upper()
-        if code:
-            product = (
-                _scoped(self.db.query(Product))
-                .filter(func.upper(Product.product_code) == code)
-                .first()
-            )
-            if product is not None:
-                return product.id, "code"
-
-        candidates = [
-            token
-            for token in _CODE_TOKEN.findall((description or "").upper())
-            if _looks_like_code(token)
-        ]
-        if candidates:
-            # Longest first: `SRTWC8613-RL` is the code and `SRTWC8613` is a prefix of
-            # it that may also exist as a different product.
-            candidates.sort(key=len, reverse=True)
-            matches = {
-                str(product.product_code or "").upper(): product.id
-                for product in _scoped(self.db.query(Product))
-                .filter(func.upper(Product.product_code).in_(candidates))
-                .all()
-            }
-            for candidate in candidates:
-                if candidate in matches:
-                    return matches[candidate], "description"
-
-        # Nothing matched CHARACTER FOR CHARACTER, which on real paper is the common
-        # case rather than the exception. Measured on the client's own PO: of 14 lines
-        # that got this far, half name a product we genuinely stock and half name one
-        # that is not in the item master at all. Telling those two apart is the whole
-        # job, so the tiers below relax the comparison in ways that cannot change WHICH
-        # product is meant, and stop rather than guess when more than one could be.
-        return self._resolve_product_loosely(code, candidates, company_id=company_id)
-
-    def _catalogue_index(
-        self, company_id: Optional[str] = None
-    ) -> Tuple[Dict[str, Dict[str, str]], Dict[frozenset, Dict[str, str]]]:
-        """The catalogue's squashed/token shapes, memoised per company for the life of
-        this service instance.
-
-        This used to run inside ``_resolve_product_loosely`` itself: a fresh SELECT of
-        every product plus rebuilding both dicts, on EVERY unmatched line. A PO with
-        several dozen lines the exact-match tiers could not place re-scanned the whole
-        catalogue that many times over. One instance of this service reads exactly one
-        document, so the catalogue cannot change under it mid-run - memoising per
-        ``company_id`` (a version's lines are all one company; the annotation-review
-        path can touch a second company via a successor PO) is free.
-        """
-        from app.models.product import Product
-
-        cache: Dict[str, Tuple[Dict[str, Dict[str, str]], Dict[frozenset, Dict[str, str]]]] = (
-            getattr(self, "_po_catalogue_cache", None) or {}
-        )
-        key = company_id or ""
-        cached = cache.get(key)
-        if cached is not None:
-            return cached
-
-        # One pass over the catalogue's shapes. `product_code` is indexed but none of
-        # these comparisons can use that index, so the work is done in Python against a
-        # projection rather than as several LIKE scans per line.
-        catalogue = self.db.query(Product.id, Product.product_code)
-        if company_id:
-            catalogue = catalogue.filter(Product.company_id == company_id)
-        rows = catalogue.all()
-        # Keyed by CODE, not by row. This catalogue holds several rows under one code
-        # (`C-FH12` appears twice), and counting rows made every such product look
-        # ambiguous and refuse itself. The real question is whether more than one
-        # DISTINCT code fits, so the first row of each code is what a code resolves to.
-        by_squashed: Dict[str, Dict[str, str]] = {}
-        by_tokens: Dict[frozenset, Dict[str, str]] = {}
-        for product_id, product_code in rows:
-            raw = str(product_code or "").upper()
-            if not raw:
-                continue
-            by_squashed.setdefault(_squash(raw), {}).setdefault(raw, product_id)
-            by_tokens.setdefault(frozenset(_code_tokens(raw)), {}).setdefault(raw, product_id)
-
-        cache[key] = (by_squashed, by_tokens)
-        self._po_catalogue_cache = cache
-        return by_squashed, by_tokens
-
-    def _resolve_product_loosely(
-        self, code: str, description_codes: List[str], *, company_id: Optional[str] = None
-    ) -> Tuple[Optional[str], Optional[str]]:
-        """Match the way a person reads a code, not the way a string comparison does.
-
-        Three things the customer's paper does that an equality test cannot survive,
-        all taken from their real purchase order:
-
-        * punctuation drifts. They write `SRTFH15CR`, the catalogue says `SRTFH15-CR`.
-        * the tokens get reordered. They write `B2155-BLUE-NL`, we stock `B2155-NL-BLUE`.
-        * their stock-code column is narrow and TRUNCATES, so `SRTWC8613-RL` prints as
-          `SRTWC86` and the rest of the code survives only in the description.
-
-        None of these is ambiguity, they are the same product spelled differently, and a
-        person resolves them in a second. What IS ambiguity is a relaxed form matching
-        more than one catalogue code, and every tier below refuses in that case rather
-        than picking a winner. On a 1.8 million ringgit order the cost of quietly
-        attaching the wrong product is far higher than the cost of asking.
-        """
-        wanted = [c for c in ([code] if code else []) + list(description_codes) if c]
-        if not wanted:
+        if not code:
             return None, None
-
-        by_squashed, by_tokens = self._catalogue_index(company_id)
-
-        def _only(bucket: Optional[Dict[str, str]]) -> Optional[str]:
-            """One code is an answer. Two different codes is a question for a person."""
-            if not bucket or len(bucket) != 1:
-                return None
-            return next(iter(bucket.values()))
-
-        # Tier 1: same characters once punctuation is dropped.
-        for candidate in sorted(wanted, key=len, reverse=True):
-            hit = _only(by_squashed.get(_squash(candidate)))
-            if hit:
-                return hit, "code_normalised"
-
-        # Tier 2: same tokens in a different order.
-        for candidate in sorted(wanted, key=len, reverse=True):
-            hit = _only(by_tokens.get(frozenset(_code_tokens(candidate))))
-            if hit:
-                return hit, "code_reordered"
-
-        # Tier 3: the truncated column names the start of a code, and something in the
-        # description confirms which one. Neither half is enough alone: a short prefix
-        # matches dozens of products, and the description often carries the customer's
-        # own spelling rather than ours. Together they identify one product.
-        prefix = _squash(code)
-        if len(prefix) >= 4 and description_codes:
-            confirmed: Dict[str, str] = {}
-            for squashed, codes in by_squashed.items():
-                if not squashed.startswith(prefix):
-                    continue
-                # The description's spelling need not equal ours; it needs to agree
-                # about the distinctive tail. `SRTW8613RL` confirms `SRTWC8613RL`
-                # because both end the same way, and the column already agreed about
-                # the start.
-                if any(
-                    squashed.endswith(_squash(d)[-6:])
-                    for d in description_codes
-                    if len(_squash(d)) >= 6
-                ):
-                    confirmed.update(codes)
-            hit = _only(confirmed)
-            if hit:
-                return hit, "code_truncated"
-
+        query = self.db.query(Product).filter(func.upper(Product.product_code) == code)
+        if company_id:
+            query = query.filter(Product.company_id == company_id)
+        product = query.first()
+        if product is not None:
+            return product.id, "code"
+        product_id = (remembered or {}).get(code)
+        if product_id:
+            return product_id, "map"
         return None, None
+
+    def _customer_for_version(self, version: ProjectPOVersion) -> Optional[str]:
+        return customer_code_map.customer_id_for_po(
+            self.db, self.get_po(version.purchase_order_id)
+        )
+
+    def _remembered_for_version(self, version: ProjectPOVersion) -> Dict[str, str]:
+        return customer_code_map.remembered_codes(
+            self.db, self._customer_for_version(version)
+        )
+
+    def _match_lines(
+        self, version: ProjectPOVersion, purchase_order: ProjectPurchaseOrder
+    ) -> None:
+        """Place every line read off the document, once, after the last page.
+
+        The suggested qty first (AC-Q2), then the exact tiers per line, then one model
+        suggestion pass over whatever is still unmatched (``project_po_matching``).
+        """
+        from app.services import project_po_matching
+
+        lines = self._lines(version.id)
+        matches: Dict[str, Dict[str, Any]] = dict(
+            (version.extracted_json or {}).get("line_matches") or {}
+        )
+        for line in lines:
+            suggested = _suggested_qty(line)
+            if suggested is not None:
+                line.qty = suggested
+                line.arithmetic_ok = arithmetic_ok(
+                    suggested, _to_decimal(line.unit_price), _to_decimal(line.amount)
+                )
+                matches.setdefault(str(line.line_no), {})["qty_suggested"] = True
+        data = dict(version.extracted_json or {})
+        data["line_matches"] = matches
+        version.extracted_json = data
+
+        customer_id = customer_code_map.customer_id_for_po(self.db, purchase_order)
+        remembered = customer_code_map.remembered_codes(self.db, customer_id)
+        for line in lines:
+            if line.resolved_product_id is not None:
+                continue
+            line.resolved_product_id, line.resolution_source = self._resolve_product(
+                line.stock_code_raw, company_id=version.company_id, remembered=remembered
+            )
+        self.db.flush()
+
+        quotation = self._quotation_version_for(purchase_order)
+        project_po_matching.suggest_matches(
+            self.db,
+            version,
+            lines,
+            customer_id=customer_id,
+            quotation_version_id=str(quotation.id) if quotation is not None else None,
+        )
+
+    # ------------------------------------------------------------- suggestions
+
+    def _line_match(self, version: ProjectPOVersion, line: ProjectPOLine) -> Dict[str, Any]:
+        matches = (version.extracted_json or {}).get("line_matches") or {}
+        entry = matches.get(str(line.line_no)) if isinstance(matches, dict) else None
+        return entry if isinstance(entry, dict) else {}
+
+    def _set_line_match(
+        self, version: ProjectPOVersion, line: ProjectPOLine, **changes: Any
+    ) -> None:
+        data = dict(version.extracted_json or {})
+        matches = dict(data.get("line_matches") or {})
+        entry = dict(matches.get(str(line.line_no)) or {})
+        entry.update(changes)
+        matches[str(line.line_no)] = entry
+        data["line_matches"] = matches
+        version.extracted_json = data
+
+    def has_suggestion(self, version: ProjectPOVersion, line: ProjectPOLine) -> bool:
+        """A suggested product or a suggested qty a person has not yet accepted."""
+        return line.resolution_source == "suggested" or bool(
+            self._line_match(version, line).get("qty_suggested")
+        )
+
+    def accept_suggestion(
+        self,
+        version: ProjectPOVersion,
+        line: ProjectPOLine,
+        *,
+        actor_user_id: Optional[str],
+    ) -> ProjectPOLine:
+        """Accept a line's suggested product and/or qty (AC-A1). An accepted product is
+        remembered for this customer, so the next document resolves it exactly (AC-A5)."""
+        self._assert_unconfirmed(version)
+        if not self.has_suggestion(version, line):
+            raise AppException(
+                status_code=409,
+                message=f"Line {line.line_no} has no suggestion to accept.",
+                code="po_line_no_suggestion",
+            )
+        if line.resolution_source == "suggested" and line.resolved_product_id:
+            line.resolution_source = "accepted"
+            customer_code_map.remember_code(
+                self.db,
+                company_id=line.company_id,
+                customer_id=self._customer_for_version(version),
+                customer_code=line.stock_code_raw,
+                product_id=line.resolved_product_id,
+                actor_user_id=actor_user_id,
+            )
+        if self._line_match(version, line).get("qty_suggested"):
+            self._set_line_match(version, line, qty_suggested=False)
+        self.db.flush()
+        return line
+
+    def accept_all_suggestions(
+        self, version: ProjectPOVersion, *, actor_user_id: Optional[str]
+    ) -> int:
+        """Every suggested product and qty on the version, each through
+        ``accept_suggestion`` (AC-A2). Returns how many lines were accepted."""
+        self._assert_unconfirmed(version)
+        accepted = 0
+        for line in self._lines(version.id):
+            if line.is_cancelled or not self.has_suggestion(version, line):
+                continue
+            self.accept_suggestion(version, line, actor_user_id=actor_user_id)
+            accepted += 1
+        return accepted
 
     def _carried_annotation_states(
         self, version: ProjectPOVersion
@@ -1238,6 +1245,9 @@ class POIntakeLifecycleMixin:
             "arithmetic_passed": passed,
             "arithmetic_total": len(lines),
             "reconciles": reconciles,
+            # AC-T2: whether `extracted_total` is a total PRINTED on the document, or only
+            # the sum of the amounts read off it. The banner words them differently.
+            "printed_total_read": printed is not None,
         }
 
     # --------------------------------------------------------------- line edits
@@ -1248,8 +1258,13 @@ class POIntakeLifecycleMixin:
         version: ProjectPOVersion,
         line: ProjectPOLine,
         payload: Dict[str, Any],
+        actor_user_id: Optional[str] = None,
     ) -> ProjectPOLine:
-        """Correct a transcribed line. Recomputes its arithmetic and the version totals."""
+        """Correct a transcribed line. Recomputes its arithmetic and the version totals.
+
+        A product picked by hand is remembered for this customer (AC-A3); clearing it
+        forgets nothing. A qty typed by hand is no longer a suggestion (AC-Q3).
+        """
         self._assert_unconfirmed(version)
 
         for field in (
@@ -1280,19 +1295,32 @@ class POIntakeLifecycleMixin:
                     )
                 line.resolved_product_id = product.id
                 line.resolution_source = "manual"
+                customer_code_map.remember_code(
+                    self.db,
+                    company_id=line.company_id,
+                    customer_id=self._customer_for_version(version),
+                    customer_code=line.stock_code_raw,
+                    product_id=product.id,
+                    actor_user_id=actor_user_id,
+                )
             else:
                 line.resolved_product_id = None
                 line.resolution_source = None
         elif ("stock_code_raw" in payload or "description_raw" in payload) and (
-            line.resolution_source != "manual"
+            line.resolution_source not in ("manual", "accepted")
         ):
             # Re-resolve off the corrected text, but never over a person's own pick:
             # they chose it BECAUSE the automatic reading was wrong.
             product_id, source = self._resolve_product(
-                line.stock_code_raw, line.description_raw, company_id=line.company_id
+                line.stock_code_raw,
+                company_id=line.company_id,
+                remembered=self._remembered_for_version(version),
             )
             line.resolved_product_id = product_id
             line.resolution_source = source
+
+        if "qty" in payload and self._line_match(version, line).get("qty_suggested"):
+            self._set_line_match(version, line, qty_suggested=False)
 
         line.arithmetic_ok = arithmetic_ok(
             _to_decimal(line.qty), _to_decimal(line.unit_price), _to_decimal(line.amount)

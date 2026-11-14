@@ -58,7 +58,6 @@ from app.models.order import Customer
 from app.models.product import Product
 from app.models.project_so import (
     AUTHORED_LIVE_STATUSES,
-    CustomerItemCodeMap,
     DeliverySchedule,
     DeliveryScheduleCell,
     DeliveryScheduleVersion,
@@ -74,6 +73,7 @@ from app.models.projects import (
     ProjectPurchaseOrder,
     ProjectPurchaseOrderLine,
 )
+from app.services import customer_code_map
 from app.services.error_handler import AppException
 from app.services.document_extraction import page_failure_reason
 
@@ -1235,14 +1235,7 @@ class ProjectScheduleService:
             column.resolution_source = _RESOLUTION_TRIGRAM if product_id else None
 
     def _remembered_codes(self, customer_id: Optional[str]) -> Dict[str, str]:
-        if not customer_id:
-            return {}
-        rows = (
-            self.db.query(CustomerItemCodeMap)
-            .filter(CustomerItemCodeMap.customer_id == customer_id)
-            .all()
-        )
-        return {(row.customer_code or "").upper(): row.product_id for row in rows}
+        return customer_code_map.remembered_codes(self.db, customer_id)
 
     def _resolve_by_map_or_code(
         self,
@@ -2064,52 +2057,22 @@ class ProjectScheduleService:
         product_id: str,
         actor_user_id: Optional[str],
     ) -> None:
-        customer_id = self.customer_id_for(self.schedule_for(version))
-        if not customer_id or not customer_code:
-            return
-        existing = (
-            self.db.query(CustomerItemCodeMap)
-            .filter(
-                CustomerItemCodeMap.customer_id == customer_id,
-                func.upper(CustomerItemCodeMap.customer_code) == customer_code.upper(),
-            )
-            .first()
+        customer_code_map.remember_code(
+            self.db,
+            company_id=version.company_id,
+            customer_id=self.customer_id_for(self.schedule_for(version)),
+            customer_code=customer_code,
+            product_id=product_id,
+            actor_user_id=actor_user_id,
         )
-        if existing is not None:
-            existing.product_id = product_id
-            existing.confirmed_by = actor_user_id
-            return
-        self.db.add(
-            CustomerItemCodeMap(
-                company_id=version.company_id,
-                customer_id=customer_id,
-                customer_code=customer_code,
-                product_id=product_id,
-                confirmed_by=actor_user_id,
-            )
-        )
-        self.db.flush()
 
     def customer_id_for(self, schedule: DeliverySchedule) -> Optional[str]:
-        """The debtor this schedule's codes belong to.
-
-        The PO's issuer first, through the party-to-customer bridge, then the lead's
-        buyer. A schedule may be issued by somebody else entirely (AC-E6, and R2 was),
-        but the item codes are the BUYER's, so the map is keyed on them.
-        """
+        """The debtor this schedule's codes belong to: its PO's issuer, then the lead's
+        buyer (``customer_code_map.customer_id_for_po``, shared with the PO reader)."""
         po = self.db.get(ProjectPurchaseOrder, schedule.purchase_order_id)
-        if po is not None and po.issuing_party_id:
-            party = self.db.get(ProjectParty, po.issuing_party_id)
-            if party is not None and party.customer_id:
-                return party.customer_id
-        project = self.db.get(Project, schedule.project_id)
-        if project is not None and project.lead_id:
-            from app.models.projects import ProjectLead
-
-            lead = self.db.get(ProjectLead, project.lead_id)
-            if lead is not None and lead.customer_id:
-                return lead.customer_id
-        return None
+        if po is not None:
+            return customer_code_map.customer_id_for_po(self.db, po)
+        return customer_code_map.lead_customer_id(self.db, schedule.project_id)
 
     # ------------------------------------------------------------------ confirm
 

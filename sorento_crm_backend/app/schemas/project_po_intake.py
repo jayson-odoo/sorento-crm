@@ -91,6 +91,19 @@ class POVersionTotals(BaseModel):
             "is exactly the cancelled amount is a fact and leaves this true."
         ),
     )
+    printed_total_read: bool = Field(
+        False,
+        description=(
+            "True when extracted_total is a grand total printed on the document; false "
+            "when it is only the sum of the line amounts read."
+        ),
+    )
+
+
+class POLineMatchOption(BaseModel):
+    product_id: str
+    product_code: Optional[str] = None
+    product_name: Optional[str] = None
 
 
 class POLineResponse(BaseModel):
@@ -124,8 +137,20 @@ class POLineResponse(BaseModel):
     resolved_product_code: Optional[str] = None
     resolved_product_name: Optional[str] = None
     resolution_source: Optional[str] = Field(
-        None, description="code | description | map | manual"
+        None, description="code | map | suggested | accepted | manual"
     )
+    match_confidence: Optional[str] = Field(
+        None, description="high | medium | low, on a suggested product only"
+    )
+    match_options: List[POLineMatchOption] = Field(
+        default_factory=list,
+        description="Products the matcher offered for this line; the picker lists them first.",
+    )
+    qty_suggested: bool = Field(
+        False,
+        description="The qty was worked out from amount / unit price and is not yet accepted.",
+    )
+
 
 
 class POAnnotationResponse(BaseModel):
@@ -225,6 +250,9 @@ class POVersionDetailResponse(BaseModel):
     header: POVersionHeader
     totals: POVersionTotals
     lines: List[POLineResponse] = Field(default_factory=list)
+    suggestion_count: int = Field(
+        0, description="Live lines with a suggested product or qty not yet accepted."
+    )
     annotations: List[POAnnotationResponse] = Field(default_factory=list)
     purchase_order: POApprovalStamps = Field(default_factory=POApprovalStamps)
     confirmed_at: Optional[datetime] = None

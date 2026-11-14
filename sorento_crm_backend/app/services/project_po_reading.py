@@ -150,7 +150,8 @@ def _nullable(kind: str) -> Dict[str, Any]:
 # "'list' object has no attribute 'get'". The keys are exactly the prompt's own. Keys
 # the prompt never asks for (a header total, an annotation's struck_parts) cannot come
 # back under the schema; ``persist_pages`` still reads them when an older answer has
-# them, and the total falls back to the sum of the lines, as it did in practice.
+# them. ``printed_total`` is asked for at the top level; with none printed anywhere the
+# total falls back to the sum of the lines.
 PO_PAGE_SCHEMA: Dict[str, Any] = _strict_object(
     {
         "header": _strict_object(
@@ -194,6 +195,10 @@ PO_PAGE_SCHEMA: Dict[str, Any] = _strict_object(
                 }
             ),
         },
+        # PO-UPLOAD-MATCHING AC-T1: the grand total PRINTED on this page, null when the
+        # page prints none. Without it the "document total" was only the sum of the
+        # amounts read, which cannot catch a line the reader missed.
+        "printed_total": _nullable("number"),
     }
 )
 

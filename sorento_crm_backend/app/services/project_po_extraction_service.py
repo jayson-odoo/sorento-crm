@@ -181,6 +181,22 @@ class ProjectPOExtractionService(
             if isinstance(blob, dict) and not blob.get("data") and blob.get("page_no")
         ]
         line_pages = self._line_pages(version)
+        lines = self._lines(version.id)
+        # The products the matcher offered as options, looked up once for the version.
+        option_ids = {
+            str(product_id)
+            for line in lines
+            for product_id in self._line_match(version, line).get("options") or []
+            if product_id
+        }
+        option_products: Dict[str, Any] = {}
+        if option_ids:
+            from app.models.product import Product
+
+            option_products = {
+                str(product.id): product
+                for product in self.db.query(Product).filter(Product.id.in_(option_ids)).all()
+            }
 
         return {
             "id": str(version.id),
@@ -218,9 +234,20 @@ class ProjectPOExtractionService(
             },
             "totals": totals,
             "lines": [
-                self.serialize_line(line, page_no=line_pages.get(str(line.line_no)))
-                for line in self._lines(version.id)
+                self.serialize_line(
+                    line,
+                    page_no=line_pages.get(str(line.line_no)),
+                    match=self._line_match(version, line),
+                    option_products=option_products,
+                )
+                for line in lines
             ],
+            # AC-U2: what "Accept all suggestions (N)" counts.
+            "suggestion_count": sum(
+                1
+                for line in lines
+                if not line.is_cancelled and self.has_suggestion(version, line)
+            ),
             "annotations": [
                 self.serialize_annotation(annotation)
                 for annotation in self._annotations(version.id)
@@ -241,7 +268,12 @@ class ProjectPOExtractionService(
         }
 
     def serialize_line(
-        self, line: ProjectPOLine, *, page_no: Optional[int] = None
+        self,
+        line: ProjectPOLine,
+        *,
+        page_no: Optional[int] = None,
+        match: Optional[Dict[str, Any]] = None,
+        option_products: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         product_code = None
         product_name = None
@@ -271,6 +303,25 @@ class ProjectPOExtractionService(
             "resolved_product_code": product_code,
             "resolved_product_name": product_name,
             "resolution_source": line.resolution_source,
+            # PO-UPLOAD-MATCHING: the matcher's confidence in a suggested product, the
+            # products it offered (the picker lists these first), and whether the qty
+            # was worked out from amount / unit price rather than read.
+            "match_confidence": (match or {}).get("confidence")
+            if line.resolution_source == "suggested"
+            else None,
+            "match_options": [
+                {
+                    "product_id": str(product.id),
+                    "product_code": product.product_code,
+                    "product_name": product.product_name,
+                }
+                for product in (
+                    (option_products or {}).get(str(product_id))
+                    for product_id in (match or {}).get("options") or []
+                )
+                if product is not None
+            ],
+            "qty_suggested": bool((match or {}).get("qty_suggested")),
         }
 
     def serialize_annotation(self, annotation: ProjectPOAnnotation) -> Dict[str, Any]:
