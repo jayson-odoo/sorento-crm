@@ -3040,6 +3040,13 @@ def _bare_number_over_a_finished_answer(
         # A number beside anything of its own, or about another domain ("any promo for
         # 10 units?"), is not this question (review S2).
         return None
+    if _one_set_for_every_line(state.focus, list(task.slots)):
+        # The parts of one set: one number revises every part (owner, 14 Nov 2026).
+        verdict[task_mod.SLOT_QUANTITIES] = {slot.key: quantity for slot in task.slots}
+        verdict["demand_qty"] = None
+        verdict["reference_positions"] = []
+        trace.rules_fired.append("bare_number_over_a_finished_set_revises_every_part")
+        return None
     labels = [str(slot.label) for slot in task.slots]
     trace.rules_fired.append("bare_number_over_a_finished_answer_asks_which")
     trace.task_question = "\n".join(
