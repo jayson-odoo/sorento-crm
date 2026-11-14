@@ -31,7 +31,7 @@ import {
   shortcutLabel,
   useIsMac,
 } from '@/lib/dealer-kit/canvas-input';
-import { insertMergeFieldText } from '@/components/ui/rich-text-editor';
+import { insertMergeFieldText, textAroundMergeFieldCaret } from '@/components/ui/rich-text-editor';
 import type { Editor } from '@tiptap/react';
 import {
   useCallback,
@@ -302,8 +302,8 @@ import type { AccessoryTemplateRecord } from '../../services/accessoryTemplateSe
 import { QueryClientContext } from '@tanstack/react-query';
 import {
   CROP_HANDLE_ANCHORS,
-  cropOverlayLayout,
   cropRectFromDrag,
+  cropSessionLayout,
   panCropRect,
   resolvedCropRect,
   type CropRect,
@@ -812,6 +812,8 @@ export function TagCanvasEditor({
   );
   const [fontUploadOpen, setFontUploadOpen] = useState(false);
   const [insertFieldOpen, setInsertFieldOpen] = useState(false);
+  /** The rich Content box's text around its caret, read when Insert field opens (AC-4.2). */
+  const [insertFieldContext, setInsertFieldContext] = useState<{ before: string; after: string } | undefined>();
   /** True while the middle button is held: the hand tool, borrowed (D44). */
   const [wheelPanning, setWheelPanning] = useState(false);
   /**
@@ -2450,6 +2452,9 @@ export function TagCanvasEditor({
    * the layer's own `cropRect` on entry; nothing is written to the layer
    * until Enter/click-outside commits it. */
   const [cropDraft, setCropDraft] = useState<CropRect | null>(null);
+  /** The crop the session started from (PRICETAG-DESIGNER-FEEDBACK AC-9.1): the overlay lays the
+   * source picture out from this, once, so the picture never moves or rescales mid-session. */
+  const [cropSession, setCropSession] = useState<CropRect | null>(null);
   const cropDragRef = useRef<{
     anchor: { fx: number; fy: number } | null;
     base: CropRect;
@@ -2472,9 +2477,8 @@ export function TagCanvasEditor({
     return layer as TagLayer & { props: Extract<TagLayerProps, { kind: 'image' }> };
   }, [cropEditingLayerId, layers]);
 
-  const cropImageUrl = cropEditingLayer
-    ? layerDisplay(cropEditingLayer, dataOf(cropEditingLayer), assetUrls)?.imageUrl
-    : null;
+  // The same URL the layer itself draws (AC-9.3), so the two cannot drift.
+  const cropImageUrl = cropEditingLayer ? displayFor(cropEditingLayer)?.imageUrl : null;
   const cropImage = useHtmlImage(cropImageUrl ?? null);
 
   /**
@@ -2498,9 +2502,9 @@ export function TagCanvasEditor({
       const w = cropEditingLayer.width_mm * scale;
       const h = cropEditingLayer.height_mm * scale;
       if (w <= 0 || h <= 0) return null;
-      return cropOverlayLayout(rect, cropImage, cropEditingLayer.props.fit, w, h);
+      return cropSessionLayout(cropSession ?? rect, rect, cropImage, cropEditingLayer.props.fit, w, h);
     },
-    [cropEditingLayer, cropImage, scale],
+    [cropEditingLayer, cropImage, scale, cropSession],
   );
 
   const cropLayout = cropDraft ? layoutForCropRect(cropDraft) : null;
@@ -2511,6 +2515,7 @@ export function TagCanvasEditor({
     if (!layer || layer.props.kind !== 'image') return;
     setCropEditingLayerId(layer.id);
     setCropDraft(resolvedCropRect(layer.props.cropRect));
+    setCropSession(resolvedCropRect(layer.props.cropRect));
   }, [selectedIds, layers]);
 
   /** Writes the draft, one history entry, then leaves the mode. */
@@ -2519,6 +2524,7 @@ export function TagCanvasEditor({
     const draft = cropDraft;
     setCropEditingLayerId(null);
     setCropDraft(null);
+    setCropSession(null);
     cropDragRef.current = null;
     if (!layer || !draft) return;
     updateLayerProps(layer.id, { cropRect: draft });
@@ -2529,6 +2535,7 @@ export function TagCanvasEditor({
   const cancelCropMode = useCallback(() => {
     setCropEditingLayerId(null);
     setCropDraft(null);
+    setCropSession(null);
     cropDragRef.current = null;
   }, []);
 
@@ -2644,6 +2651,7 @@ export function TagCanvasEditor({
     if (cropEditingLayerId && !cropEditingLayer) {
       setCropEditingLayerId(null);
       setCropDraft(null);
+      setCropSession(null);
       cropDragRef.current = null;
     }
   }, [cropEditingLayerId, cropEditingLayer]);
@@ -4986,10 +4994,13 @@ export function TagCanvasEditor({
                           layer={{ ...drawnLayer(withPolygonPreview(layer)), id: `${layer.id}-ghost` }}
                           scale={scale}
                           display={displayFor(layer)}
-                          draggable={!handMode && accessoryEdit?.layerId !== layer.id}
+                          draggable={
+                            !handMode && accessoryEdit?.layerId !== layer.id && layer.id !== cropEditingLayerId
+                          }
                           listening={
                             !handMode &&
-                            !(layer.props.kind === 'group' && entered.has(layer.id))
+                            !(layer.props.kind === 'group' && entered.has(layer.id)) &&
+                            layer.id !== cropEditingLayerId
                           }
                           // Crop mode (S8, r6 S8 review, #723): same reason
                           // as the clipped copy below - its own overlay
@@ -5026,17 +5037,22 @@ export function TagCanvasEditor({
                           layer={drawnLayer(withPolygonPreview(layer))}
                           scale={scale}
                           display={displayFor(layer)}
-                          draggable={!handMode && accessoryEdit?.layerId !== layer.id}
+                          // Crop mode (AC-9.4): the hidden layer takes no click or drag, so a
+                          // click outside the crop window reaches the Stage and commits.
+                          draggable={
+                            !handMode && accessoryEdit?.layerId !== layer.id && layer.id !== cropEditingLayerId
+                          }
                           listening={
                             !handMode &&
-                            !(layer.props.kind === 'group' && entered.has(layer.id))
+                            !(layer.props.kind === 'group' && entered.has(layer.id)) &&
+                            layer.id !== cropEditingLayerId
                           }
                           // Crop mode (S8, r6 S8 review, #723) draws its own
                           // overlay for this SAME layer, at the correct
                           // transform - the layer's own render has to hide
                           // for as long as that is up, or the two show at
-                          // once and the picture looks doubled.
-                          opacity={layer.id === cropEditingLayerId ? 0 : undefined}
+                          // once and the picture looks doubled. 1, not undefined, after (AC-9.5).
+                          opacity={layer.id === cropEditingLayerId ? 0 : 1}
                           onSelect={handleCanvasSelect}
                           onDoubleClick={handleLayerDoubleClick}
                           onDragStart={handleDragStart}
@@ -6269,7 +6285,11 @@ export function TagCanvasEditor({
               bindingLabel={selectedBindingLabel}
               fontOptions={library.fontOptions}
               onUploadFont={() => setFontUploadOpen(true)}
-              onInsertField={() => setInsertFieldOpen(true)}
+              onInsertField={() => {
+                const editor = contentEditor();
+                setInsertFieldContext(editor ? textAroundMergeFieldCaret(editor) : undefined);
+                setInsertFieldOpen(true);
+              }}
               tableCell={tableCell && selectedLayer && tableCell.layerId === selectedLayer.id ? tableCell : null}
               onContentEditorReady={(editor) => {
                 contentEditorRef.current = editor;
@@ -6412,6 +6432,7 @@ export function TagCanvasEditor({
         // With the Content box open, the dialog hands back only the field and it goes in at that
         // box's caret, inside whatever formatting is there (DESIGNER-RICH-TEXT).
         value={insertFieldOpen && contentEditor() ? '' : selectedContent}
+        context={insertFieldOpen && contentEditor() ? insertFieldContext : undefined}
         data={selectedData ?? null}
         specKeys={library.specKeys}
         // PS-SPEC-SHEET: the spec sheet's own fields are offered on its templates only.

@@ -270,7 +270,9 @@ POST /projects/{project_id}/takeover-requests
 POST /projects/{project_id}/takeover-requests/{request_id}/decide
 POST /projects/{project_id}/tasks
 POST /projects/{project_id}/tasks/{task_id}/status
+POST /purchase-order-versions/{po_version_id}/accept-suggestions
 POST /purchase-order-versions/{po_version_id}/confirm
+POST /purchase-order-versions/{po_version_id}/lines/{line_id}/accept-suggestion
 POST /purchase-order-versions/{po_version_id}/retry-extraction
 POST /purchase-orders/{po_id}/build-sales-orders
 POST /purchase-orders/{po_id}/delivery-schedules/upload

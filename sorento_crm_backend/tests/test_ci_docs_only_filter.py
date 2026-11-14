@@ -1287,7 +1287,10 @@ def test_deploy_job_carries_the_production_environment():
     text = _workflow_text()
     block = re.search(r"\n  build-and-deploy:\n(.*?)\n  [a-z][\w-]*:\n", text, re.S).group(1)
     assert re.search(r"^    environment:\n      name: production$", block, re.M), block
-    for other in ("build-images", "test-backend", "changes"):
+    # build-images carries `release-build` (CI-SECRETS-ENV, test_workflow_secret_scoping.py):
+    # a branch-policy environment with no reviewer, so it is not an approval gate.
+    assert re.search(r"^    environment: release-build$", _job_block("build-images"), re.M)
+    for other in ("test-backend", "changes"):
         other_block = re.search(rf"\n  {other}:\n(.*?)\n  [a-z][\w-]*:\n", text, re.S).group(1)
         assert "environment:" not in other_block, other
 

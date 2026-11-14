@@ -423,8 +423,12 @@ def send_outcome(
         key = RespondWorkspaceService.decrypt_chatbot_sender_key(workspace)
         if key:
             headers[SENDER_KEY_HEADER] = key
+        from app.services import http_keepalive
+
         try:
-            response = httpx.post(
+            # CHATBOT-SPEED: one open connection per process to the sender (a new handshake per send before).
+            response = http_keepalive.post(
+                "chatbot_sender",
                 url,
                 json=body,
                 headers=headers,

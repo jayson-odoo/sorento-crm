@@ -57,6 +57,10 @@ interface InsertFieldDialogProps {
    *  fields are added by clicking them) so no reference a person should not read (a part id)
    *  ever shows; null keeps the token itself. */
   tokenLabel?: (path: string) => string | null;
+  /** The element's text before and after the rich editor's caret (blocks joined by "\n"). Given,
+   *  the Content box shows it read-only around the picked fields, and Done hands back only the
+   *  picked fields for the caller to insert at that caret. */
+  context?: { before: string; after: string };
   onCancel: () => void;
   onDone: (content: string) => void;
   /**
@@ -76,6 +80,7 @@ export function InsertFieldDialog({
   omitPaths,
   extraFields,
   tokenLabel,
+  context,
   onCancel,
   onDone,
   onPick,
@@ -134,6 +139,11 @@ export function InsertFieldDialog({
       onPick(field.token);
       return;
     }
+    // With a context the content is only the picked fields, and the insert point follows them.
+    if (context) {
+      setContent((current) => current + field.token);
+      return;
+    }
     const [start, end] = caret.current;
     const next = content.slice(0, start) + field.token + content.slice(end);
     const after = start + field.token.length;
@@ -149,7 +159,8 @@ export function InsertFieldDialog({
     });
   };
 
-  const preview = data ? renderMergeFields(content, data, 'print') : null;
+  const whole = context ? context.before + content + context.after : content;
+  const preview = data ? renderMergeFields(whole, data, 'print') : null;
 
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onCancel()}>
@@ -160,14 +171,41 @@ export function InsertFieldDialog({
         <DialogBody className="flex flex-col gap-3">
           {!onPick && (
             <div className="flex flex-col gap-1">
-              <Label htmlFor="merge-field-content" className="text-xs text-muted-foreground">
+              <Label
+                id="merge-field-content-label"
+                htmlFor="merge-field-content"
+                className="text-xs text-muted-foreground"
+              >
                 Content
               </Label>
-              {tokenLabel ? (
+              {context ? (
                 <div
                   id="merge-field-content"
                   role="textbox"
                   aria-readonly="true"
+                  aria-multiline="true"
+                  aria-labelledby="merge-field-content-label"
+                  tabIndex={0}
+                  className="min-h-[72px] w-full whitespace-pre-wrap rounded-md border bg-background px-2 py-1 text-xs"
+                >
+                  {context.before}
+                  {content}
+                  <span
+                    data-testid="insert-point"
+                    role="img"
+                    aria-label="Insert point"
+                    className="inline-block h-3 w-px translate-y-0.5 bg-primary align-baseline"
+                  />
+                  {context.after}
+                </div>
+              ) : tokenLabel ? (
+                <div
+                  id="merge-field-content"
+                  role="textbox"
+                  aria-readonly="true"
+                  aria-multiline="true"
+                  aria-labelledby="merge-field-content-label"
+                  tabIndex={0}
                   className="min-h-[72px] w-full whitespace-pre-wrap rounded-md border bg-background px-2 py-1 text-xs"
                 >
                   {content.split(/(\{\{\s*[A-Za-z0-9_.]+\s*\}\})/).map((piece, index) => {

@@ -214,7 +214,7 @@ def test_ac_s2_1_the_marker_line_switches_lookup_spans_on(session_factory, seede
 
 
 # ---------------------------------------------------------------------------------------------- AC-S2-2
-def test_ac_s2_2_one_span_call_before_the_parser_with_no_session_open(
+def test_ac_s2_2_one_span_call_before_the_parser(
     counting_session_factory, session_factory, seeded, stub_access, monkeypatch
 ):
     seed_world(session_factory)
@@ -222,7 +222,10 @@ def test_ac_s2_2_one_span_call_before_the_parser_with_no_session_open(
             factory=counting_session_factory)
     assert r.events == ["span", "parser"], r.events
     assert len(r.provider.calls) == 1
-    assert r.opened == [0], ("a DB session was open during the span call", r.opened)
+    # AC-S2-2 as restated (CHATBOT-SPEED, crew ruling 12 Nov): the call may START while the turn's session is still
+    # open (it overlaps the row loading), but never holds one while it waits; the slow-call proof is
+    # tests/chatbot/test_chatbot_speed_span_session.py::test_a_slow_span_call_holds_no_session_while_it_waits.
+    assert len(r.opened) == 1 and r.opened[0] <= 1, r.opened  # at most the turn's own session, never a second
     assert HDR["brand"] in r.lines and f"- {_brand_label(session_factory)}" in r.lines, r.lines
 
 
