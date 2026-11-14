@@ -1,6 +1,6 @@
 # PLAN: Contacts list Companies column matches the contact detail (CONTACT-COMPANIES-COL)
 
-Status: Waiting on owner ruling (crew-ask on the PR). Track: small fix (no migration, no auth change expected).
+Status: Review (fix 9673c44c on PR #2410). Track: small fix (no migration, no auth change: the superadmin read gate is kept).
 
 Owner 14 Nov (side bug from the #2256 hand test): "the company here does not tally with the company here".
 List column "Companies" showed one company; the same contact's detail page showed two.
@@ -23,7 +23,23 @@ screens are "correct" for their own definition; the label is the same, so they d
 `customer_companies_by_contact`; the grant moves to its own label ("Company access").
 (c) Keep both, rename one so they no longer share a label.
 
-## Fix (after the ruling)
+## Rulings
 
-One shared function in `contact_service`/`contact_customer_service`, used by list and detail;
-red-first pytest that fails on main; kill test; reviewer; browser pass on Contacts list + detail.
+- Owner 14 Nov ~13:40: "it should follow the detail page" = (a): Companies = company access everywhere.
+- Crew 14 Nov 13:45: company access stays superadmin-only to read (read-gates plan :138, tests
+  test_user_management_read_gates.py :845 / :860 unchanged). For superadmins the list column, sort and
+  Company filter show company access; for everyone else the column and filter are hidden (not "-").
+
+## Fix
+
+- ONE shared function `company_access_by_contact` (contact_service.py) backs the detail endpoint
+  (`ContactService.list_contact_companies`) and the list's column (`companies` field, was
+  `customer_companies`), sort and Company filter. `customer_companies_by_contact` is removed.
+- Gate `can_read_company_access(redact_sections)`: the list already carries the superadmin verdict as
+  the redacted `companies` tag-settings section. Not readable: values withheld, filter matches nothing,
+  sort falls back to the default order.
+- FE: `isSuperadminUser` hides the column, the filter (and drops a `company` URL value) and the detail
+  page's Companies field; the detail page reads through the shared `getContactCompanies` service.
+- Tests: tests/test_contacts_company_filter.py (rewritten to the new definition),
+  ContactsList.companies.test.tsx, contacts/[id]/page.companies.test.tsx.
+- Guide: documentation/user-guides/user-management/contact-companies.md.
