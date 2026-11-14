@@ -130,7 +130,7 @@ def get_contacts(
     stock: Optional[Literal["yes", "no"]] = Query(None),
     region: Optional[list[str]] = Query(None),
     customer_id: Optional[list[str]] = Query(None),
-    # FILTER-MULTISELECT: the companies of the contact's linked customers, any-of; the ids
+    # FILTER-MULTISELECT / CONTACT-COMPANIES-COL: the contact's company access, any-of; the ids
     # repeat or comma-join (app/utils/multi_value.py).
     company: Optional[list[str]] = Query(None),
     # CONTACT-TAGS: `tag` repeats (any-of); `tags=none` lists contacts holding no tag.
