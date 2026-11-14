@@ -1,6 +1,6 @@
 # PLAN: Invoiced target achievement, period join the planner can hash (lane TARGET-ACHIEVED-PERF)
 
-Status: Review - built, red + kill proof done, PR open. Track: small fix (speed fix, no new behaviour, no migration, no auth change). UAC:
+Status: Plan (scope add) - part 1 (join fix + timeout text) built, reviewed PASS, PR #2420; part 2 (#2419 slice 1) waits on the behaviour-card answers. Track: full (M after the scope add: agent loop + prompt). UAC:
 `target-achieved-perf-14nov-acceptance-criteria.md`.
 
 ## Why
@@ -78,6 +78,41 @@ After, the statement has one VALUES join and no such tie.
 Figures, old vs new statement in one read-only session (timeout lifted): IDENTICAL for every 2026
 dealer period per account (444 periods, 387 non-zero cells), per document (39,110 cells), per
 period, the dealer tab body, and the agent_target_summary / target_list answers.
+
+## Part 2: #2419 slice 1 "sales vs target, fast and right" (crew scope add, 14 Nov 19:27)
+
+Owner approved `documentation/plans/agent/PLAN-agent-context-budget-14nov.md` (PR #2419), section 7
+row 1. Target: the panel answers "how are my dealers' sales this year against their targets?", "and
+last year?" and a typo version in 2 model calls, under 35,000 tokens, under 15 s, no timeout, with
+the Targets screen's figures. Owner D4: no hard cut-off that ends an answer with a limit message.
+
+Measured today (discovery, file:line in `sorento_crm_backend/`):
+- `assistant_registry/computed.py:360-381`: `entity.compute(db, user_id, own_only, date_from,
+  date_to, limit)` computes every target in the window; agent / owner kind / dealer filters run in
+  Python after it (`_exact_agents` :378, row tests :381). `types.py:72-76` compute takes no filters.
+- `assistant_registry/sales.py:44-71`: the period-count cap and the targets query take no agent;
+  `_summary_rows` :156 learns a dealer row's agent only after `_accounts_by_target` :172-176.
+  `target_list` (`_target_list_rows` :303) calls `list_all_targets` for all three subjects.
+- No gap field (`agent_target_summary` :425 and `target_list` :500 carry `achieved_pct` only); the
+  figure check (`chatbot/agent/loop.py:709-724`) rejects a gap the model computes itself.
+- `loop.py:89` MAX_QUERY_CALLS = 3, check :2292 counts every crm_query AND crm_describe entry,
+  denied ones included; the refusal is a tool reply, not the end of the turn.
+- Prompt conflicts (`ai_prompt_registry.py` fallback; live text is the DB row `chatbot_agent`,
+  `loop.py:59`): :1103 "resolve every name with crm_resolve before any other tool" vs
+  `query_tools.py:278` "pass the agent ... no crm_resolve"; :1116 "show invoiced, delivered and
+  ordered" vs the loop refusing a second basis (`loop.py:2301-2304`).
+
+Design (pending crew answers Q1-Q5):
+- Narrowing: `run_computed` resolves the agent filter to candidate agent ids and passes them (and
+  owner kind) to `compute`; `sales.py` keeps a target when its agent, a team member, or ANY of its
+  dealer accounts' agents is a candidate (95 of 164 dealer targets have accounts of two agents).
+  The Python row filter still runs after: the answer can only lose work, never rows.
+- Server-side gap: one field beside `achieved_pct` on both entities (Q1 decides its sign).
+- Query cap: counts only crm_query calls that ran (Q3: timed-out ones count).
+- Prompt: draft a new `chatbot_agent` version through the repo's prompt-version path (Q2).
+
+Lead pattern: tester writes the red tests from the UAC (part 2 lines), coder implements, reviewer
+once over the whole lane; hand test filed with the three phrasings; live x1 per Q4.
 
 ## Standing rules that apply
 
