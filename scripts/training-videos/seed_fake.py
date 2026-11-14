@@ -885,6 +885,19 @@ def seed_supplier_po(db, products):
     return po
 
 
+def reset_p2_video_rows(db):
+    """The split delivery video saves splits on Tower A's lines; remove them so it starts unsplit."""
+    from app.models.project_so import ProjectSalesOrder, SOLineSplit
+
+    refs = [spec["ref"] for spec in ORDERS]
+    ids = [o.id for o in db.query(ProjectSalesOrder).filter(ProjectSalesOrder.provisional_ref.in_(refs))]
+    if ids:
+        n = db.query(SOLineSplit).filter(SOLineSplit.project_sales_order_id.in_(ids)).delete(synchronize_session=False)
+        if n:
+            say(f"removed {n} video line splits")
+    db.flush()
+
+
 def seed_p2(db) -> dict:
     from app.models.inventory import Warehouse
     from app.models.product import Product
@@ -907,6 +920,7 @@ def seed_p2(db) -> dict:
     chloe = user(db, CS, CS_ROLE[0])
 
     seed_party_roles(db)
+    reset_p2_video_rows(db)
     project, buyer, contractor = seed_project(db, sam, chloe, agent)
     po, versions = seed_client_po(db, project, contractor, products, chloe)
     orders = seed_orders(db, project, buyer, agent, products, po, versions, chloe)
