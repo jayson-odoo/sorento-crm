@@ -6,6 +6,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { apiFetch } from '@/lib/api';
+import { useEffectiveIsSuperadmin } from '@/hooks/useEffectiveIsSuperadmin';
+import { getContactCompanies } from './services/contactService';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -36,16 +38,15 @@ export default function ContactProfilePage() {
   const queryClient = useQueryClient();
   const [editDialogOpen, setEditDialogOpen] = useState(false);
 
-  // Superadmin-only endpoint; a 403 for anyone else resolves to an empty list
-  // rather than an error toast, so the section simply reads "None" for them.
+  // Company access is superadmin-only to read (PLAN-user-management-read-gates.md:138), so the
+  // Companies field is shown to a superadmin only; it is the same list the contacts list's
+  // Companies column shows (CONTACT-COMPANIES-COL).
+  // Impersonation-aware: viewing as a non-admin, the backend answers for that user.
+  const canReadCompanyAccess = useEffectiveIsSuperadmin() === true;
   const { data: companies = [], isLoading: companiesLoading } = useQuery({
     queryKey: ['contact-companies', contactId],
-    queryFn: async () => {
-      const response = await apiFetch(`/api/user-management/contacts/${contactId}/companies`);
-      if (!response.ok) return [] as { id: string; name: string }[];
-      return (await response.json()) as { id: string; name: string }[];
-    },
-    enabled: !!contactId,
+    queryFn: () => getContactCompanies(contactId as string),
+    enabled: !!contactId && canReadCompanyAccess,
   });
 
   const syncContactMutation = useMutation({
@@ -161,24 +162,26 @@ export default function ContactProfilePage() {
                 stock" for a container that plainly exists, this is the first
                 field to look at. Worth showing beside the access types rather
                 than only inside the edit dialog. */}
-            <div>
-              <p className="text-sm text-muted-foreground">Companies</p>
-              {companiesLoading ? (
-                <Skeleton className="h-5 w-24 mt-1" />
-              ) : companies.length > 0 ? (
-                <div className="flex flex-wrap gap-1 mt-1">
-                  {companies.map((c) => (
-                    <Badge key={c.id} variant="secondary" className="font-normal">
-                      {c.name}
-                    </Badge>
-                  ))}
-                </div>
-              ) : (
-                <p className="font-medium text-destructive">
-                  None - this contact receives no records
-                </p>
-              )}
-            </div>
+            {canReadCompanyAccess && (
+              <div>
+                <p className="text-sm text-muted-foreground">Companies</p>
+                {companiesLoading ? (
+                  <Skeleton className="h-5 w-24 mt-1" />
+                ) : companies.length > 0 ? (
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {companies.map((c) => (
+                      <Badge key={c.id} variant="secondary" className="font-normal">
+                        {c.name}
+                      </Badge>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="font-medium text-destructive">
+                    None - this contact receives no records
+                  </p>
+                )}
+              </div>
+            )}
             <ContactMarketSegmentSection contactId={contactId} />
             <ContactAttachmentTypesSection contactId={contactId} />
             <ContactPortalFormsSection contactId={contactId} />
