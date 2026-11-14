@@ -155,7 +155,9 @@ export function useApproveSparePartRequest(id: string, submittedAt?: string | nu
     mutationFn: (note?: string) => approveSparePartRequest(id, note, submittedAt),
     onSuccess: (saved) => {
       refresh(id);
-      toast.success(saved.state === 'raised' ? 'Approved and sent to purchasing' : 'Approved');
+      // Final only when raised with no revision still waiting (a revision's next level).
+      const final = saved.state === 'raised' && !saved.revision_state;
+      toast.success(final ? 'Approved and sent to purchasing' : 'Approved');
     },
     onError: (e: Error) => toast.error(e.message),
   });

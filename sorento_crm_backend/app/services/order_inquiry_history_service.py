@@ -168,6 +168,8 @@ _REQUEST_KINDS = {
     "SPR_LINE_CHANGED": "changed",
     "SPR_RAISED": "raised",
     "SPR_REVISED": "revised",
+    #: SPARE-PART-OR-B fix round 1: a revision closed because no line was left.
+    "SPR_REVISION_CLOSED": "revised",
 }
 #: `unit_cost`: a spare part line's price is the expected supplier cost, audited under the
 #: cost key so every History reader masks it (`cost_access.COST_AUDIT_KEYS`).

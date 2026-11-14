@@ -9,14 +9,12 @@
  * D5 The request total shows: the Lines footer's Total cell reads the sum of the live lines in the
  *    shared money format (cancelled lines excluded), and the General tab's Request card carries
  *    the header `total`.
- * D7 The "was" mark is never clipped at 1280: its full text is in the DOM with no truncate class
- *    on it or its cell wrappers, and either the Unit price column is wide enough for an approver
- *    input plus "was RM 35.00" (>= 240, estimate: input ~100 px + 12 chars ~90 px + gaps and
- *    padding) or the mark wraps under the value (block / flex-col).
+ * D7 Superseded by SPARE-PART-OR-B U1.1 (owner 14 Nov): no "was" mark on a spare part line, so
+ *    the Unit price cell reads its value alone.
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, renderHook, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { flexRender, getCoreRowModel, useReactTable } from '@tanstack/react-table';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -212,31 +210,16 @@ function Grid({ rows }: { rows: OrderInquiryWorklistRow[] }) {
   );
 }
 
-describe('D7: the unit price "was" mark is never clipped', () => {
-  it('its full text has no truncating wrapper, and it fits or wraps under the value', () => {
+// SPARE-PART-OR-B (U1.1, owner 14 Nov): the "was" mark is gone from spare part lines, so
+// there is nothing left to clip; the unit price cell reads the value alone.
+describe('D7: the unit price cell carries no "was" mark to clip', () => {
+  it('reads the value without a "was" mark', () => {
     const { container } = wrap(
       <Grid rows={[row({ unit_price: '32.0000', submitted_unit_price: '35.0000', line_total: '192.0000' })]} />,
     );
     const cell = container.querySelector('td[data-title="Unit price"]') as HTMLElement;
     expect(cell).not.toBeNull();
-    const expected = `was ${formatMoneyExact('35.0000', 'MYR')}`;
-    // The innermost element with that text is the mark itself (an approver's input adds no
-    // text, so its wrapper reads the same text too).
-    const mark = Array.from(cell.querySelectorAll('*'))
-      .filter((el) => (el.textContent ?? '').trim() === expected)
-      .pop() as HTMLElement | undefined;
-    expect(mark, `an element reading "${expected}"`).toBeDefined();
-    for (let el: HTMLElement | null = mark!; el && el !== cell; el = el.parentElement) {
-      expect(el.className, 'no truncate around the was mark').not.toMatch(/\btruncate\b/);
-    }
-
-    const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns(PENDING as never));
-    const unitPrice = result.current.find((c) => titleOf(c) === 'Unit price') as { size?: number };
-    const wrapsUnder =
-      /\bblock\b/.test(mark!.className) || /\bflex-col\b/.test(mark!.parentElement?.className ?? '');
-    expect(
-      (unitPrice?.size ?? 0) >= 240 || wrapsUnder,
-      `Unit price is ${unitPrice?.size}px wide and the mark sits beside the value`,
-    ).toBe(true);
+    expect(cell.textContent ?? '').not.toMatch(/was /i);
   });
 });
+

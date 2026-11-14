@@ -98,6 +98,7 @@ import { OrderInquiryGeneralTab } from './OrderInquiryGeneralTab';
 import { SparePartRequestActions } from './SparePartRequestActions';
 import { useEditSparePartLine } from '../../../_shared/hooks/useSparePartRequest';
 import {
+  SPARE_PART_REQUESTS_PATH,
   isPreApproval,
   canEditSparePartPhotos,
   isSparePartInquiry,
@@ -792,7 +793,8 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   return (
     <div className="space-y-4">
       <RecordHeaderCard
-        title={header.inquiry_no}
+        // SPARE-PART-OR-B (U3.4): an order request reads by its OI- number here.
+        title={header.oi_no ?? header.inquiry_no}
         badges={
           <>
             {isSparePartInquiry(header) && isPreApproval(header.state) ? (
@@ -813,6 +815,20 @@ export function OrderInquiryDetail({ id }: { id: string }) {
         }
         subtitle={
           <>
+            {/* SPARE-PART-OR-B (U3.3): one OI is one order request, so the way back to it is
+                one header link (the order request page's "Raised to purchasing" mirror). */}
+            {isSparePartInquiry(header) ? (
+              <>
+                <Link
+                  href={`${SPARE_PART_REQUESTS_PATH}/${header.id}`}
+                  className="font-medium tabular-nums text-primary hover:underline"
+                  data-testid="oi-header-order-request-link"
+                >
+                  Order request {header.inquiry_no}
+                </Link>
+                {' · '}
+              </>
+            ) : null}
             {/* Owner hand test (5 Nov 2026): the sales order, one click away, without going
                 to the General tab (same link the General tab's S/O no uses). */}
             {header.so_number ? (
@@ -988,7 +1004,10 @@ export function OrderInquiryDetail({ id }: { id: string }) {
                 </DetailActionsMenu>
               }
               primary={
+                // SPARE-PART-OR-B: a revision is submitted and decided on the order request
+                // page only; here purchasing keeps working the approved request.
                 isSparePartInquiry(header) &&
+                !header.revision_state &&
                 (header.can_decide || header.can_edit || header.can_revise) ? (
                   <SparePartRequestActions header={header} rows={lines} />
                 ) : canAcknowledge || (canReserve && (Boolean(openReserveRequest) || stagedCount > 0)) ? (

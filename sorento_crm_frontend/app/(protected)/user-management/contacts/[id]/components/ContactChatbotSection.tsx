@@ -58,6 +58,8 @@ import {
   type ContactChatbotMemory,
   type ContactChatbotVocabularyEntry,
 } from '../services/contactChatbotService';
+import { useContactTagSettings } from '../hooks/useContactTagSettings';
+import type { TagSettingsItem } from '../services/contactTagSettingsService';
 import type { ChatbotLlm } from '../../types/contact.types';
 
 /**
@@ -218,6 +220,16 @@ function llmSourceLine(llm: ChatbotLlm | null | undefined): string {
   return LLM_SOURCE_LINE[llm?.source ?? 'none']?.(llm?.tags ?? [], llm) ?? 'Default';
 }
 
+/**
+ * "From tag X" when the contact's tags set this chatbot switch and the contact still holds what they
+ * say; nothing otherwise (no tag, an own change on this contact, or a section the viewer may not read).
+ */
+function tagSourceLine(items: TagSettingsItem[] | undefined, key: string): string | undefined {
+  const item = items?.find((i) => i.section === 'chatbot' && i.key === key);
+  if (!item || item.differs || !item.decided_by?.length) return undefined;
+  return `From tag ${item.decided_by.join(', ')}`;
+}
+
 function ChatbotSettingsCard({
   contactId,
   systemDefault,
@@ -230,6 +242,7 @@ function ChatbotSettingsCard({
   const saveEscalation = useSaveContactEscalation(contactId);
   const saveAiAllowed = useSaveContactChatbotAllowed(contactId);
   const canEditAiModel = useHasPermission('system.ai_assistant_settings.edit');
+  const tagSettings = useContactTagSettings(contactId);
 
   if (isLoading) {
     return (
@@ -389,6 +402,7 @@ function ChatbotSettingsCard({
           <SwitchRow
             id="contact-chatbot-agent-mode"
             label="Agent mode (auto)"
+            hint={tagSourceLine(tagSettings.data?.items, 'chatbot_agent_enabled')}
             checked={profile.agent_enabled}
             disabled={save.isPending || saveEscalation.isPending || saveAiAllowed.isPending}
             onCheckedChange={(checked) => save.mutate({ ...profile, agent_enabled: checked })}

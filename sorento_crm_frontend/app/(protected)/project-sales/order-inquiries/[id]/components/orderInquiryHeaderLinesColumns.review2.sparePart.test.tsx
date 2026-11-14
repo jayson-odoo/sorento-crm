@@ -26,7 +26,10 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
 }));
 
-import { useOrderInquiryHeaderLinesColumns } from './orderInquiryHeaderLinesColumns';
+import {
+  SPARE_PART_REQUEST_HIDDEN_COLUMNS,
+  useOrderInquiryHeaderLinesColumns,
+} from './orderInquiryHeaderLinesColumns';
 import { DEFAULT_HIDDEN_COLUMNS } from '../../components/orderInquiryWorklistColumns';
 
 const CARD_WIDTH_AT_1280 = 1280 - 280 - 48 - 2;
@@ -38,8 +41,15 @@ function widthOf(options: Record<string, unknown>) {
       data: [],
       columns,
       getCoreRowModel: getCoreRowModel(),
+      // SPARE-PART-OR-B U3.3b: the Lines tab's default visibility for the view (the order
+      // request page also starts with PO hidden, `OrderInquiryLinesTab`).
       initialState: {
-        columnVisibility: Object.fromEntries(DEFAULT_HIDDEN_COLUMNS.map((id) => [id, false])),
+        columnVisibility: Object.fromEntries(
+          [
+            ...DEFAULT_HIDDEN_COLUMNS,
+            ...(options.sparePartView === 'request' ? SPARE_PART_REQUEST_HIDDEN_COLUMNS : []),
+          ].map((id) => [id, false]),
+        ),
       },
     });
     return {
@@ -51,11 +61,17 @@ function widthOf(options: Record<string, unknown>) {
   return result.current;
 }
 
+// SPARE-PART-OR-B (lead ruling 14 Nov): BOTH views fit, the order request page (`request`,
+// with its OI column) and the order inquiry (`inquiry`), each with its default columns.
+const R11_CASES: Array<[string, Record<string, unknown>]> = (['request', 'inquiry'] as const).flatMap(
+  (view) => [
+    [`${view} view, the approver, pending`, { inquiryType: 'spare_part_request', sparePartView: view, headerState: 'pending_approval', canDecide: true, onEditLine: vi.fn() }],
+    [`${view} view, a reader, raised`, { inquiryType: 'spare_part_request', sparePartView: view, headerState: 'raised', canDecide: false }],
+  ],
+);
+
 describe('R11: the spare part Lines grid fits its card at 1280', () => {
-  it.each([
-    ['the approver, pending', { inquiryType: 'spare_part_request', headerState: 'pending_approval', canDecide: true, onEditLine: vi.fn() }],
-    ['a reader, raised', { inquiryType: 'spare_part_request', headerState: 'raised', canDecide: false }],
-  ])('%s: the visible columns sum within the 1280 card width', (_who, options) => {
+  it.each(R11_CASES)('%s: the visible columns sum within the 1280 card width', (_who, options) => {
     const { total, sizes, ids } = widthOf(options);
     expect(ids, 'precondition: Total is one of the columns').toContain('line_total');
     expect(total, `column sizes ${sizes.join(', ')} (sum ${total})`).toBeLessThanOrEqual(CARD_WIDTH_AT_1280);
