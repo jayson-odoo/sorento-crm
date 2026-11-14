@@ -27,8 +27,8 @@ goes to the agent. Switching **Agent mode (auto)** off returns the contact to th
   chatbot switches. **Apply tag settings** brings ticked contacts back to what their tags say.
 
 When a tag sets agent mode, the contact's **Chatbot** card shows **From tag** and the tag's name
-under **Agent mode (auto)**. If two tags set it differently, it shows **Tags disagree** and their
-names.
+under **Agent mode (auto)**. If the switch was changed on the contact itself, the line is not shown;
+the contact's **Tags** card lists it as an own change.
 
 ## What the agent can do for a contact
 

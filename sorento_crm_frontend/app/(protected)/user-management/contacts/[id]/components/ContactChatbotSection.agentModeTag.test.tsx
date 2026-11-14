@@ -88,14 +88,15 @@ describe('ContactChatbotSection - agent mode from a tag (AGENT-MODE-TAG)', () =>
     expect(await screen.findByText('From tag Dealer tag')).toBeInTheDocument();
   });
 
-  it('names the tags that disagree', async () => {
+  it('says nothing when this contact was changed away from what the tag says', async () => {
     getContactTagSettings.mockResolvedValue({
       status: 'differs',
       tags: [],
-      items: [item({ conflict: true, decided_by: [], conflict_tags: [{ name: 'A', value: true }, { name: 'B', value: false }] })],
+      items: [item({ current: false, differs: true })],
     });
     mount();
-    expect(await screen.findByText('Tags disagree: A, B')).toBeInTheDocument();
+    await waitFor(() => expect(getContactTagSettings).toHaveBeenCalled());
+    expect(screen.queryByText(/From tag/)).not.toBeInTheDocument();
   });
 
   it('says nothing when no tag sets agent mode', async () => {

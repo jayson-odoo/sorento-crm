@@ -220,14 +220,14 @@ function llmSourceLine(llm: ChatbotLlm | null | undefined): string {
   return LLM_SOURCE_LINE[llm?.source ?? 'none']?.(llm?.tags ?? [], llm) ?? 'Default';
 }
 
-/** Where a chatbot switch's value comes from, in the AI model line's words; undefined when no tag sets it. */
+/**
+ * "From tag X" when the contact's tags set this chatbot switch and the contact still holds what they
+ * say; nothing otherwise (no tag, an own change on this contact, or a section the viewer may not read).
+ */
 function tagSourceLine(items: TagSettingsItem[] | undefined, key: string): string | undefined {
   const item = items?.find((i) => i.section === 'chatbot' && i.key === key);
-  if (!item) return undefined;
-  // A section the viewer may not read comes back without names: say nothing then.
-  const names = item.conflict ? (item.conflict_tags ?? []).map((t) => t.name) : (item.decided_by ?? []);
-  if (!names.length) return undefined;
-  return item.conflict ? `Tags disagree: ${names.join(', ')}` : `From tag ${names.join(', ')}`;
+  if (!item || item.differs || !item.decided_by?.length) return undefined;
+  return `From tag ${item.decided_by.join(', ')}`;
 }
 
 function ChatbotSettingsCard({

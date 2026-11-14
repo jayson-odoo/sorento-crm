@@ -27,12 +27,6 @@ vi.mock('../services/contactTagService', () => ({
 
 import ContactTagSettings from './ContactTagSettings';
 
-const GROUPS = [
-  'Access types', 'Brands', 'Companies', 'Market segments', 'Regions', 'Chatbot', 'Portal forms',
-  'Field reveals', 'Chatbot agents', 'Agent field access', 'Media access', 'Attachment types',
-  'Stock visibility', 'Spec visibility', 'Messaging (outbound)',
-];
-
 const tag = (settings: Record<string, unknown>) => ({
   id: 't1', name: 'Dealer', description: null, is_active: true, sort_order: 0, settings,
   contact_count: 0, created_at: '', updated_at: '',

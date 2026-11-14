@@ -30,6 +30,7 @@ def test_a_tag_saves_agent_mode_as_a_chatbot_setting(client, db, su):
 def test_agent_mode_must_be_true_or_false_on_a_tag(client, db, su):
     resp = client.post(TAGS, json={"name": "ZZT AMT bad", "settings": {"chatbot": {KEY: "yes"}}})
     assert resp.status_code == 422, resp.text
+    assert resp.json()["message"] == "Tag setting 'chatbot_agent_enabled': must be true or false"
 
 
 def test_a_tag_with_agent_mode_switches_it_on_for_its_contacts(client, db, su):
@@ -75,7 +76,9 @@ def test_copy_access_carries_agent_mode_like_ai_replies(client, db, su):
         json={"source_contact_id": source.id, "target_contact_ids": [target.id], "dry_run": True},
     )
     assert dry.status_code == 200, dry.text
-    assert KEY in dry.text
+    (row,) = dry.json()["results"]
+    change = next(c for c in row["changes"] if c["facet"] == KEY)
+    assert (change["label"], change["before"], change["after"]) == ("Agent mode", False, True)
 
     resp = client.post(
         f"{CONTACTS}/bulk-copy-access",
