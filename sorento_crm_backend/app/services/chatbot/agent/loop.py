@@ -44,7 +44,7 @@ from app.services.chatbot.agent.tools import (
     REGISTRY,
     RESOLVE,
     PORTED_READS,
-    QUOTATION_LINES,
+    GUIDES,
     TOOL_LABELS,
     ToolResult,
     panel_closed,
@@ -89,52 +89,95 @@ QUERY_TOOLS = ("crm_query", "crm_describe")
 MAX_QUERY_CALLS = 3
 
 
-#: What a round carries once the question is on the registry path (crew pass on 69b3b479, 5 Nov): every call
-#: resent all ~21k tokens of tool schemas (the MCP catalogue alone ~17k), which made 4 to 7 calls 107k to 173k.
-REGISTRY_ROUND_TOOLS = frozenset({*QUERY_TOOLS, "answer", "plan"})
+#: AGENT-CONTEXT-BUDGET slice 2 (owner D1 = (c), 14 Nov): a staff turn opens on a short tool menu. Every call
+#: resent ~99k characters of tool schemas; the other tools the user may use are one line each in this tool.
+TOOLS_LOAD = "crm_tools_load"
+#: A staff turn's step-1 tools, each only if the user may use it (UAC U1), besides confirm / cancel of a waiting
+#: change and the tools the previous agent turn of the conversation called (Q1).
+CORE_TOOLS = frozenset({PLAN, ANSWER, *QUERY_TOOLS, RESOLVE, KNOWLEDGE, GUIDES})
+DIRECTORY_LINE_CHARS = 100
+#: Appended at runtime to a staff turn's system prompt, so a saved prompt version cannot drop it.
+TOOLS_LOAD_LINE = (
+    f"Only some tools are offered at first. Every other tool you may use is listed in {TOOLS_LOAD}: load what the "
+    "question needs, or call a listed tool by its name."
+)
 
 
-#: Kept beside the registry tools after a round that only named a sales agent: the report takes agent ids.
-AFTER_AGENT_RESOLVE = frozenset({*REGISTRY_ROUND_TOOLS, "crm_report_ask"})
-
-#: What a round carries after the quotation lines answered (AGENT-PANEL-FIXES C): the tool is "alone enough to
-#: compare them" (its description), and the other ~50 schemas were 94k characters resent on every round.
-AFTER_QUOTATION_LINES = frozenset({QUOTATION_LINES, "answer", "plan"})
+def _schema_name(schema: dict) -> str:
+    return str(schema.get("function", {}).get("name") or "")
 
 
-def narrow_after_query(schemas: list[dict], calls: list[dict], done: list[dict], *, plan_parts: int = 0) -> list[dict]:
-    """After a round whose calls were all crm_query / crm_describe (plus plan) and in which one of them answered,
-    the next rounds offer only those tools and `answer`: the model chose the registry for this question, and the
-    other tools' schemas (~21k tokens) are dead weight resent on every call. A round with any other tool, or whose
-    registry calls were all refused, leaves the schemas as they are.
+def directory_line(schema: dict) -> str:
+    """`name: what it does` for the directory: the tool's label, else the first sentence of its description."""
+    name = _schema_name(schema)
+    text = TOOL_LABELS.get(name) or re.split(r"(?<=[.!?])\s", str(schema.get("function", {}).get("description") or ""), 1)[0]
+    text = " ".join(text.split())[:DIRECTORY_LINE_CHARS].rstrip() or name
+    return f"{name}: {text}"
 
-    Crew live x3 on 3c6924bf: the model resolved the agent's name with crm_resolve first, a round that resent every
-    schema (~20k). A round whose crm_resolve calls found only sales agents narrows the same way (plus the report,
-    which takes the agent's id): what follows is a figure for that agent."""
-    names = {str(c.get("name") or "") for c in calls}
-    if not names:
-        return schemas
-    # `plan` and `answer` are not in `done` (run.tool_calls): line up with this round's other calls only.
-    ran = sum(1 for c in calls if str(c.get("name") or "") not in ("plan", "answer"))
-    answered = done[-ran:] if ran else []
-    if QUOTATION_LINES in names and names <= {QUOTATION_LINES, "plan"}:
-        # Only a lookup that found every ref it was given: a ref in not_found may be another project's (find it).
-        if plan_parts > 1 or not any(c.get("name") == QUOTATION_LINES and c.get("complete") for c in answered):
-            return schemas
-        return [s for s in schemas if s.get("function", {}).get("name") in AFTER_QUOTATION_LINES]
-    if "crm_resolve" in names and names <= {*REGISTRY_ROUND_TOOLS, "crm_resolve"}:
-        if plan_parts > 1:
-            # A question in several parts may need another tool after the agent's figure (review round 9).
-            return schemas
-        resolved = [c for c in answered if c.get("name") == "crm_resolve"]
-        if resolved and all(c.get("status") == "ok" and c.get("agents_only") for c in resolved):
-            return [s for s in schemas if s.get("function", {}).get("name") in AFTER_AGENT_RESOLVE]
-        return schemas
-    if not names <= REGISTRY_ROUND_TOOLS:
-        return schemas
-    if not any(c.get("name") in QUERY_TOOLS and c.get("status") == "ok" for c in answered):
-        return schemas
-    return [s for s in schemas if s.get("function", {}).get("name") in REGISTRY_ROUND_TOOLS]
+
+def tools_load_schema(rest: list[dict]) -> dict:
+    """`crm_tools_load`, its description the directory of `rest` (the tools not offered at step 1)."""
+    lines = "\n".join(directory_line(s) for s in rest)
+    return {
+        "type": "function",
+        "function": {
+            "name": TOOLS_LOAD,
+            "description": (
+                "Load more tools for this question. Each line below is a tool you may use, then what it does. Pass "
+                "the names the question needs; they are available from your next step.\n" + lines
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "names": {
+                        "type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 10,
+                        "description": "Tool names from the list above.",
+                    },
+                },
+                "required": ["names"],
+            },
+        },
+    }
+
+
+def tool_menu(schemas: list[dict], previous: list[str]) -> tuple[list[dict], dict[str, dict]]:
+    """A staff turn's step-1 tools and the rest by name. The core set and confirm / cancel in today's order, then
+    `crm_tools_load`, then the tools of `previous` the user may still use (UAC U1, Q1)."""
+    keep = {*CORE_TOOLS, CONFIRM_ACTION, CANCEL_ACTION}
+    core = [s for s in schemas if _schema_name(s) in keep]
+    rest = {_schema_name(s): s for s in schemas if _schema_name(s) not in keep}
+    menu = [*core, tools_load_schema(list(rest.values()))]
+    menu += [rest[n] for n in dict.fromkeys(previous) if n in rest]
+    return menu, rest
+
+
+def load_tools(args: Any, rest: dict[str, dict], offered: set[str]) -> tuple[ToolResult, list[str]]:
+    """A `crm_tools_load` call: the reply, and the names to add from the next step (UAC U3). A name that is not one
+    of the user's tools is answered "not available" and adds nothing."""
+    names = args.get("names") if isinstance(args, dict) else None
+    if not isinstance(names, list) or not 1 <= len(names) <= 10 or not all(isinstance(n, str) for n in names):
+        return ToolResult("invalid", message="names must be a list of 1 to 10 tool names from this tool's list."), []
+    ready, added, missing = [], [], []
+    for name in dict.fromkeys(n.strip() for n in names):
+        if name in offered:
+            ready.append(name)
+        elif name in rest:
+            ready.append(name)
+            added.append(name)
+        else:
+            missing.append(name)
+    parts = [f"Now available: {', '.join(ready)}."] if ready else []
+    parts += [f"{name}: not available." for name in missing]
+    return ToolResult("ok" if ready else "invalid", data={"available": ready}, message=" ".join(parts)), added
+
+
+def _previous_turn_tools(db, conv, turn_id: str) -> list[str]:
+    """The tools the previous agent turn of this conversation called, from its stored digest (Q1)."""
+    turns = [t for t in memory.conversation_turns(db, conv) if str(t.id) != turn_id and isinstance(t.response, dict)]
+    if not turns:
+        return []
+    last = max(turns, key=lambda t: (t.created_at, t.started_at or t.created_at))
+    return [str(d.get("name")) for d in last.response.get("tool_digest") or [] if isinstance(d, dict) and d.get("name")]
 
 
 #: Said in crm_resolve's description when crm_query is offered too (crew live rerun on 53908030).
@@ -1405,6 +1448,7 @@ def _system_prompt(db, user_name: str, tool_names: Any = (), principal: str = "u
         )
     if "ANSWER ONLY WHAT WAS ASKED" not in text:
         text = f"{text.rstrip()}\n\n{ANSWER_SCOPE_RULE}"
+    text = f"{text.rstrip()}\n\n{TOOLS_LOAD_LINE}"
     return f"{text}\n\nToday's date is {today}. You are working for {user_name}."
 
 
@@ -1939,6 +1983,9 @@ def _run(
     error: str | None = None
     reply = ""
     dealer_flow = False  # UAC F2, decided before the first round
+    # A staff turn's tools not offered yet, by name (AGENT-CONTEXT-BUDGET slice 2); None offers today's full list.
+    menu_rest: dict[str, dict] | None = None
+    loaded: list[str] = []  # the names added after the step-1 tools this turn, in order
 
     def remaining() -> float:
         return budgets.max_seconds - (clock() - t0)
@@ -2002,6 +2049,7 @@ def _run(
                 "called": called,
                 "stop": "answer" if ANSWER in called else "tool_calls" if called else "text",
                 "tools_offered": len(tools or []),
+                "tools_loaded": list(loaded),
                 "tool_schema_chars": len(json.dumps(tools, default=str)) if tools else 0,
                 "message_chars": sum(len(str(m.get("content") or "")) for m in messages),
             },
@@ -2120,11 +2168,19 @@ def _run(
                 # What the files say is not the user's yes: only their own message or the card's button confirms.
                 schemas = [s for s in schemas if s.get("function", {}).get("name") != CONFIRM_ACTION]
         schemas += [PLAN_SCHEMA, ANSWER_SCHEMA]
-        trace.add("agent_context", _context_record(
-            db, system=system, context_before=context_before if waiting is None else "",
-            context_after=context_after if waiting is None else "", history=history, schemas=schemas,
-            file_text=file_text, images=images,
-        ))
+        every_schema = schemas
+        if ctx.principal != "contact":
+            # AGENT-CONTEXT-BUDGET slice 2: the core set first; the rest load by name or join on a direct call.
+            schemas, menu_rest = tool_menu(schemas, _previous_turn_tools(db, conv, turn_id))
+        trace.add("agent_context", {
+            **_context_record(
+                db, system=system, context_before=context_before if waiting is None else "",
+                context_after=context_after if waiting is None else "", history=history, schemas=schemas,
+                file_text=file_text, images=images,
+            ),
+            "core_tools": len(schemas),
+            "directory_tools": len(menu_rest or {}),
+        })
         action_id = str(uuid.uuid4())
         id_names: dict[str, str] = {}
         plan_parts: list[str] = []
@@ -2219,7 +2275,7 @@ def _run(
                 logger.warning("agent: the dealer-access check failed; the turn runs as usual", exc_info=True)
             trace.add("agent_dealer_access", {"dealer_access": dealer_flow})
             if dealer_flow:
-                schemas = dealer_schemas(schemas)
+                schemas, menu_rest = dealer_schemas(every_schema), None
         while True:
             if run.rounds >= 1:
                 # Confirming acts on the user's own message only: from the second round on, tool
@@ -2270,6 +2326,7 @@ def _run(
 
             replies: dict[int, str] = {}
             answer_idx: int | None = None
+            to_add: list[str] = []
             skipped = 0
             tool_index = 0
             for idx, call in enumerate(calls):
@@ -2287,6 +2344,11 @@ def _run(
                         trace.add("agent_plan", {"parts": plan_parts})
                     else:
                         replies[idx] = ToolResult("invalid", message="parts must be 1 to 10 non-empty strings.").to_json(call_id)
+                    continue
+                if name == TOOLS_LOAD and menu_rest is not None:
+                    out, added = load_tools(args, menu_rest, {_schema_name(sc) for sc in schemas})
+                    replies[idx] = out.to_json(call_id)
+                    to_add += added
                     continue
                 started = clock()
                 if name in QUERY_TOOLS and sum(1 for c in run.tool_calls if c["name"] in QUERY_TOOLS) >= MAX_QUERY_CALLS:
@@ -2404,14 +2466,7 @@ def _run(
                 }
                 if out.status in ("denied", "invalid", "error", "timeout"):
                     run.unchecked.append(TOOL_LABELS.get(name, "another lookup"))
-                complete = (
-                    name == QUOTATION_LINES and out.status == "ok" and isinstance(out.data, dict)
-                    and bool(out.data.get("documents")) and not out.data.get("not_found")
-                )
-                run.tool_calls.append({
-                    "name": name, "status": out.status, "ms": ms,
-                    **({"agents_only": True} if agents else {}), **({"complete": True} if complete else {}),
-                })
+                run.tool_calls.append({"name": name, "status": out.status, "ms": ms})
                 if basis and out.status == "ok" and not turn_basis:
                     turn_basis.append(basis)
                 run.digest.append({"name": name, "args": _args_for_digest(args), "status": out.status})
@@ -2478,7 +2533,14 @@ def _run(
                 )
             if accepted:
                 break
-            schemas = narrow_after_query(schemas, calls, run.tool_calls, plan_parts=len(plan_parts))
+            if menu_rest is not None:
+                # Loaded tools, and a tool of the user's called before it was loaded (UAC U4), join from the next
+                # step for the rest of the turn: the list only grows (confirm still drops from step 2).
+                offered_names = {_schema_name(sc) for sc in schemas}
+                for added in dict.fromkeys([*to_add, *(str(c.get("name") or "") for c in calls)]):
+                    if added in menu_rest and added not in offered_names:
+                        schemas = [*schemas, menu_rest[added]]
+                        loaded.append(added)
 
             if run.rounds >= budgets.max_rounds:
                 limit_hit = "rounds"
