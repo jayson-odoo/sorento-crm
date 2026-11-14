@@ -1097,9 +1097,9 @@ def test_a_question_from_the_batch_tool_is_a_result_not_a_failure(db):
     assert result.reply_text.strip() == f"Sorento or Mocha, and owner or employee, for {c.name}?", result.reply_text
     import json as _json
 
-    replies = [m for m in provider.seen[-1]["messages"] if m.get("role") == "tool"] if len(provider.seen) > 1 else []
-    statuses = [_json.loads(m["content"]).get("status") for m in replies]
-    assert "invalid" not in statuses, statuses
+    # The turn's own record of the call (stored in the tool digest the next turn reads), not a second round's view.
+    statuses = [c["status"] for c in result.tool_calls if c["name"] == BATCH]
+    assert statuses == ["ok"], statuses
 
 
 def test_after_the_question_the_turn_ends_and_a_later_variant_cannot_replace_it(db):
@@ -1145,3 +1145,4 @@ def test_a_single_grant_question_also_ends_the_turn(db):
     result, provider = screenshot_turn(db, w, script, text_=f"give {local(c.phone_number)} chatbot access", images=False)
     assert result.reply_text.strip() == f"Sorento or Mocha, and owner or employee, for {c.name}?", result.reply_text
     assert len(provider.seen) == 1, f"{len(provider.seen)} model rounds after the question"
+    assert [x["status"] for x in result.tool_calls if x["name"] == GRANT] == ["ok"], result.tool_calls
