@@ -301,8 +301,8 @@ describe('ChatbotConsole - errors', () => {
 describe('ChatbotConsole - prompt version select', () => {
   it('passes the picked version id as prompt_version_id on the next turn', async () => {
     getConsolePromptVersions.mockResolvedValue([
-      { id: 'v-2', version: 2, label: null, chars: 120, base: 'compact' },
-      { id: 'v-1', version: 1, label: 'production', chars: 100, base: 'compact' },
+      { id: 'v-2', version: 2, label: null, chars: 120, base: 'compact', serving: false },
+      { id: 'v-1', version: 1, label: 'production', chars: 100, base: 'compact', serving: true },
     ]);
     postConsoleTurn.mockResolvedValue({
       turn_id: 't1',
@@ -333,11 +333,13 @@ describe('ChatbotConsole - prompt version select', () => {
 
 const PROMPT_STORAGE_KEY = 'chatbot-console:prompt-version';
 
+// CONSOLE-DEFAULT-PROMPT: v62 is what production serves (labelled, "other" lineage); v61 is
+// the newest "full" body, which the old default wrongly pinned.
 const VERSIONS = [
-  { id: 'v-19', version: 19, label: 'production', chars: 35301, base: 'compact' as const },
-  { id: 'v-18', version: 18, label: null, chars: 53704, base: 'full' as const },
-  { id: 'v-17', version: 17, label: null, chars: 34513, base: 'compact' as const },
-  { id: 'v-16', version: 16, label: null, chars: 52919, base: 'full' as const },
+  { id: 'v-62', version: 62, label: 'production', chars: 61200, base: 'other' as const, serving: true },
+  { id: 'v-61', version: 61, label: null, chars: 53704, base: 'full' as const, serving: false },
+  { id: 'v-17', version: 17, label: null, chars: 34513, base: 'compact' as const, serving: false },
+  { id: 'v-16', version: 16, label: null, chars: 52919, base: 'full' as const, serving: false },
 ];
 
 function okTurn(promptVersion: number | null) {
@@ -358,34 +360,36 @@ function promptTrigger(): Element {
   return document.querySelectorAll('[data-slot="searchable-select-trigger"]')[1];
 }
 
-describe('ChatbotConsole - item 6, the prompt version defaults to the newest FULL body', () => {
-  it('a fresh load pins the newest full version, not the newest overall and not the label', async () => {
+describe('ChatbotConsole - the prompt version defaults to the one production serves', () => {
+  it('a fresh load pins the version production serves, not the newest full-lineage one', async () => {
     getConsolePromptVersions.mockResolvedValue(VERSIONS);
-    postConsoleTurn.mockResolvedValue(okTurn(18));
+    postConsoleTurn.mockResolvedValue(okTurn(62));
     renderConsole();
 
-    await waitFor(() => expect(promptTrigger().textContent).toContain('v18 \u00b7 full'));
+    await waitFor(() => expect(promptTrigger().textContent).toContain('v62 \u00b7 other \u00b7 production'));
 
     fireEvent.change(textarea(), { target: { value: 'hello' } });
     fireEvent.keyDown(textarea(), { key: 'Enter' });
     await waitFor(() => expect(postConsoleTurn).toHaveBeenCalledTimes(1));
-    expect(postConsoleTurn.mock.calls[0][0]).toMatchObject({ prompt_version_id: 'v-18' });
+    // The serving row is shown as picked but sent as no pin: a pinned parser id would also pin
+    // the span prompt published with it, which a live turn never does.
+    expect(postConsoleTurn.mock.calls[0][0].prompt_version_id).toBeNull();
   });
 
   it('the option label reads version, base and label, never a UUID', async () => {
     getConsolePromptVersions.mockResolvedValue(VERSIONS);
     renderConsole();
-    await waitFor(() => expect(promptTrigger().textContent).toContain('v18'));
+    await waitFor(() => expect(promptTrigger().textContent).toContain('v62'));
     fireEvent.click(promptTrigger());
-    expect(await screen.findByText('v19 \u00b7 compact \u00b7 production')).toBeInTheDocument();
-    expect(screen.queryByText(/v-19/)).not.toBeInTheDocument();
+    expect(await screen.findByText('v61 \u00b7 full')).toBeInTheDocument();
+    expect(screen.queryByText(/v-61/)).not.toBeInTheDocument();
   });
 
   it('a pick made in this session is used for the next turn, and is never written to storage', async () => {
     getConsolePromptVersions.mockResolvedValue(VERSIONS);
     postConsoleTurn.mockResolvedValue(okTurn(16));
     renderConsole();
-    await waitFor(() => expect(promptTrigger().textContent).toContain('v18 \u00b7 full'));
+    await waitFor(() => expect(promptTrigger().textContent).toContain('v62 \u00b7 other \u00b7 production'));
 
     fireEvent.click(promptTrigger());
     fireEvent.click(await screen.findByText('v16 \u00b7 full'));
@@ -402,17 +406,31 @@ describe('ChatbotConsole - item 6, the prompt version defaults to the newest FUL
     expect(window.sessionStorage.getItem(PROMPT_STORAGE_KEY)).toBeNull();
   });
 
-  it('a remount (new page load) starts at the newest full version again, ignoring a stale stored value', async () => {
+  it('a remount (new page load) starts at the serving version again, ignoring a stale stored value', async () => {
     // A value here simulates what an earlier build's now-removed persistence left behind -
     // the console must never read it, on this load or the next.
     window.localStorage.setItem(PROMPT_STORAGE_KEY, JSON.stringify({ id: 'v-17' }));
     getConsolePromptVersions.mockResolvedValue(VERSIONS);
     renderConsole();
-    await waitFor(() => expect(promptTrigger().textContent).toContain('v18 \u00b7 full'));
+    await waitFor(() => expect(promptTrigger().textContent).toContain('v62 \u00b7 other \u00b7 production'));
 
     cleanup();
     renderConsole();
-    await waitFor(() => expect(promptTrigger().textContent).toContain('v18 \u00b7 full'));
+    await waitFor(() => expect(promptTrigger().textContent).toContain('v62 \u00b7 other \u00b7 production'));
+  });
+});
+
+describe('ChatbotConsole - CONSOLE-DEFAULT-PROMPT, no labelled version (fresh database)', () => {
+  it('pins nothing, so the turn runs what production runs (the code prompt)', async () => {
+    getConsolePromptVersions.mockResolvedValue(VERSIONS.map((v) => ({ ...v, label: null, serving: false })));
+    postConsoleTurn.mockResolvedValue(okTurn(null));
+    renderConsole();
+
+    expect(await screen.findByTestId('chatbot-console-active-prompt')).toHaveTextContent('Parser live (production)');
+    fireEvent.change(textarea(), { target: { value: 'hello' } });
+    fireEvent.keyDown(textarea(), { key: 'Enter' });
+    await waitFor(() => expect(postConsoleTurn).toHaveBeenCalledTimes(1));
+    expect(postConsoleTurn.mock.calls[0][0].prompt_version_id ?? null).toBeNull();
   });
 });
 
@@ -420,14 +438,14 @@ describe('ChatbotConsole - item 6, the active parser version next to the compose
   it('reads "Parser v<version>", plain words and no uuid', async () => {
     getConsolePromptVersions.mockResolvedValue(VERSIONS);
     renderConsole();
-    expect(await screen.findByTestId('chatbot-console-active-prompt')).toHaveTextContent('Parser v18');
-    expect(screen.queryByText(/v-18/)).not.toBeInTheDocument();
+    expect(await screen.findByTestId('chatbot-console-active-prompt')).toHaveTextContent('Parser v62');
+    expect(screen.queryByText(/v-62/)).not.toBeInTheDocument();
   });
 
   it('updates to the picked version', async () => {
     getConsolePromptVersions.mockResolvedValue(VERSIONS);
     renderConsole();
-    await waitFor(() => expect(promptTrigger().textContent).toContain('v18'));
+    await waitFor(() => expect(promptTrigger().textContent).toContain('v62'));
     fireEvent.click(promptTrigger());
     fireEvent.click(await screen.findByText('v16 \u00b7 full'));
     await waitFor(() =>
@@ -439,16 +457,16 @@ describe('ChatbotConsole - item 6, the active parser version next to the compose
 describe('ChatbotConsole - item 6, the version pill', () => {
   it('a bot bubble wears the version its turn ran; user bubbles and null wear none', async () => {
     getConsolePromptVersions.mockResolvedValue(VERSIONS);
-    postConsoleTurn.mockResolvedValueOnce(okTurn(18)).mockResolvedValueOnce(okTurn(null));
+    postConsoleTurn.mockResolvedValueOnce(okTurn(62)).mockResolvedValueOnce(okTurn(null));
     renderConsole();
-    await waitFor(() => expect(promptTrigger().textContent).toContain('v18'));
+    await waitFor(() => expect(promptTrigger().textContent).toContain('v62'));
 
     fireEvent.change(textarea(), { target: { value: 'hello' } });
     fireEvent.keyDown(textarea(), { key: 'Enter' });
     await waitFor(() => expect(postConsoleTurn).toHaveBeenCalledTimes(1));
     const pills = await screen.findAllByTestId('chatbot-console-prompt-pill');
     expect(pills).toHaveLength(1);
-    expect(pills[0].textContent).toBe('v18');
+    expect(pills[0].textContent).toBe('v62');
 
     fireEvent.change(textarea(), { target: { value: 'again' } });
     fireEvent.keyDown(textarea(), { key: 'Enter' });

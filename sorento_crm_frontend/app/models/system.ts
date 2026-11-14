@@ -105,6 +105,8 @@ export interface SystemSetting {
   orderChangeNoticeRequireProject?: boolean;
   /** AutoCount quotations and sales orders from Project sales (AC-QTSO-CRM). Off by default. */
   projectAutocountWriteEnabled?: boolean;
+  /** AutoCount project registration (AC-PROJECT-REGISTER). Off by default. */
+  projectAutocountRegisterEnabled?: boolean;
   stockDebtPoLinkEnabled?: boolean;
 
   /** UI v2 (phase 0): the company brand input. Missing means Sorento Blue, no custom colour. */

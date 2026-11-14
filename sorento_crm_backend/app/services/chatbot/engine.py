@@ -1844,6 +1844,10 @@ class _SpanPrep:
     # Fix round 9 (crew turn 4ff1d7b8): the spans the span model typed `supplier`, placed or not; a turn naming one is
     # supplier-scoped even when the parser returned no entity for it (`_supplier_scope`).
     supplier_typed: list[str] = field(default_factory=list)
+    # CHATBOT-SPEED: how long `_span_prep` took (row loading, visibility, spec keys, numbers), for the trace event.
+    prep_ms: int = 0
+    # CHATBOT-SPEED: the span call `_span_prep` already started (`_start_span_call`); None: `_span_lookup` makes it.
+    span_answer: Callable[[], span_extract.SpanAnswer | None] | None = None
 
 
 def _span_override(db: Session, envelope: Envelope, *, dry_run: bool) -> str | None:
@@ -1877,7 +1881,18 @@ def _span_prep(
     """ENTITY-EXTRACT-MATCH S2: the rows the contact may see (the same visibility as `_lookup_lines`), the spec-name
     rows, the number hits and the span call's config, read inside the session. None when the loader itself fails.
     `companies` (`_candidate_companies`): the Company rows, offered by the near-exact spelling pass only."""
+    started = time.perf_counter()
     try:
+        # CHATBOT-SPEED: the span call reads only its config and the message, so it starts here, on a thread, and
+        # the row loading below (and the rest of the step before the parser) runs while it waits on the model.
+        config = None
+        try:
+            with db.begin_nested():
+                pin = {"override_version_id": span_override} if span_override else {}
+                config = span_extract.resolve_config(db, llm_choice=llm_choice, **pin)
+        except Exception:  # noqa: BLE001 - no key or no registry: the n-gram lines take over
+            logger.warning("chatbot: span config failed; using the n-gram lookup", exc_info=True)
+        span_answer = _start_span_call(config, message) if config is not None else None
         embed = _guarded(db, lambda: lookup_lists.embedder(db), None)
         include_salespeople, include_customers, customer_ids, include_suppliers = _lookup_visibility(
             db, contact_respond_id, space_id
@@ -1893,18 +1908,14 @@ def _span_prep(
             spec_keys = [r for r in list_resolver.spec_key_rows(active_registry(db)) if r.key not in hidden]
             brand_words = lookup_lists.brand_words(db, brands)
             numbers = lookup_lists.number_hits(message, db, hidden_spec_keys=hidden)
-        config = None
-        try:
-            with db.begin_nested():
-                pin = {"override_version_id": span_override} if span_override else {}
-                config = span_extract.resolve_config(db, llm_choice=llm_choice, **pin)
-        except Exception:  # noqa: BLE001 - no key or no registry: the n-gram lines take over
-            logger.warning("chatbot: span config failed; using the n-gram lookup", exc_info=True)
         lookup_lists.warm([*rows, *spec_keys], embed)
-        return _SpanPrep(
+        prep = _SpanPrep(
             message, rows, spec_keys, brand_words, numbers, held or {}, embed, config, group_categories, row_ids,
             supplier_ids,
         )
+        prep.span_answer = span_answer
+        prep.prep_ms = int((time.perf_counter() - started) * 1000)
+        return prep
     except Exception:  # noqa: BLE001 - advisory block, never a failed turn
         logger.warning("chatbot: span prep failed; parsing without lookup lists", exc_info=True)
         return None
@@ -2269,20 +2280,56 @@ def _hits_of(resolutions: list[list_resolver.Resolution]) -> dict[str, list[look
     return {name: sorted(h.values(), key=lambda x: (-(x.spelling + x.meaning), x.row.label)) for name, h in best.items()}
 
 
+def _start_span_call(config: span_extract.SpanConfig, message: str) -> Callable[[], span_extract.SpanAnswer | None]:
+    """CHATBOT-SPEED: `span_extract.extract(config, message)` on a thread, started now; the returned call waits for
+    its answer. Same config, same message, so the same request as the serial call. The turn's context (the usage
+    capture `llm_call` reads) goes with it. `extract` never raises and has its own deadline; a thread that outlives
+    it by `_SPAN_JOIN_GRACE_SECONDS` reads as a timed-out call."""
+    import contextvars
+
+    box: list[span_extract.SpanAnswer | None] = []
+    began = time.perf_counter()
+    context = contextvars.copy_context()
+    thread = threading.Thread(
+        target=lambda: box.append(context.run(span_extract.extract, config, message)), name="span-call", daemon=True
+    )
+    thread.start()
+
+    def answer() -> span_extract.SpanAnswer | None:
+        thread.join(span_extract.SPAN_TIMEOUT_SECONDS + _SPAN_JOIN_GRACE_SECONDS)
+        if box:
+            return box[0]
+        # Still running: late. Ended with no answer: `extract` raised, which it is written never to do.
+        failure = "timeout" if thread.is_alive() else "call_error"
+        return span_extract.SpanAnswer(None, {}, int((time.perf_counter() - began) * 1000), failure)
+
+    return answer
+
+
+#: How long past the span call's own deadline the turn waits for its thread.
+_SPAN_JOIN_GRACE_SECONDS = 2.0
+
+
 def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_respond_id: str, dry_run: bool,
                  turn_id: str | None) -> tuple[list[str], dict[str, Any], dict[str, Any]]:
     """The span call, then the lookup blocks. Runs with no DB session open. Returns (lines, `lookup_lists` event,
     `span_extract` event). A call that fails or answers unreadably leaves today's n-gram lines (`fallback`)."""
     config = prep.config
-    answer = span_extract.extract(config, prep.message) if config is not None else None
+    if prep.span_answer is not None:
+        answer = prep.span_answer()
+    else:
+        answer = span_extract.extract(config, prep.message) if config is not None else None
     event: dict[str, Any] = {
         "spans": [], "rows_rendered": 0, "ms": answer.ms if answer else 0,
         "provider": config.provider if config else None, "model": config.model if config else None,
         "model_source": config.model_source if config else None,
         "embedding_model": None, "fallback": False, "fallback_reason": None, "near_exact_rows": 0,
         "tokens": {k: answer.usage.get(k) or 0 for k in ("prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens")} if answer else {},
+        # CHATBOT-SPEED: the rest of the time before the parser, per piece (measurement only).
+        "prep_ms": prep.prep_ms, "resolve_ms": 0, "usage_log_ms": 0,
     }
     if answer is not None and answer.usage and not dry_run:
+        log_started = time.perf_counter()
         try:
             with _session(session_factory) as db:
                 record_turn_llm_usage(
@@ -2291,7 +2338,9 @@ def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_re
                 )
         except Exception:  # noqa: BLE001 - telemetry must never fail a customer's turn
             logger.warning("chatbot turn %s: span usage log failed", turn_id, exc_info=True)
+        event["usage_log_ms"] = int((time.perf_counter() - log_started) * 1000)
     reason = "no_config" if answer is None else answer.failure
+    resolve_started = time.perf_counter()
     try:
         hits: dict[str, list[lookup_lists.Hit]] | None = None
         if answer is not None and answer.spans is not None:
@@ -2395,6 +2444,7 @@ def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_re
             prep.supplier_groups = {}
             prep.supplier_spans = {}
         event["rows_rendered"] = sum(1 for ln in lines if ln.startswith("- "))
+        event["resolve_ms"] = int((time.perf_counter() - resolve_started) * 1000)
         lookup_event["hits"] = [
             {"label": h.row.label, "piece": h.piece, "spelling": round(h.spelling, 3), "meaning": round(h.meaning, 3)}
             for name in hits
@@ -9184,13 +9234,19 @@ def _run_stages_body(  # noqa: PLR0915
                 from app.services.chatbot.lanes.business import answer as business_answer
 
                 class_terms = turn_runtime.class_scope_terms(verdict)
-                qualifying = int((predicate or {}).get("qualifying_total") or 0)
+                # A turn records a browse page only when its fetch actually listed that browse.
+                carry_predicate = (
+                    predicate
+                    if plan.fetch and turn_runtime.predicate_rides(plan.fetch[0], compatible_entities)
+                    else None
+                )
+                qualifying = int((carry_predicate or {}).get("qualifying_total") or 0)
                 asked = named_count(verdict.get("top_n"))
                 # Fix round 9 on PR #833: a long set lists what fits, and is carried like
                 # a named count so "another N" continues it (SET-STOCK-RENDER, owner 16
                 # Oct 2026: every long set, never withheld for a breakdown).
                 listed_to_the_limit = (
-                    predicate is not None
+                    carry_predicate is not None
                     and plan.fetch
                     and spec_tier
                     and qualifying > business_answer.SET_LIST_MAX
@@ -9200,7 +9256,7 @@ def _run_stages_body(  # noqa: PLR0915
                 # named fewer than qualify) is carried too, so their own "another N"
                 # continues it. The reply never offers that.
                 partly_listed = (
-                    predicate is not None
+                    carry_predicate is not None
                     and plan.fetch
                     and spec_tier
                     and asked is not None
@@ -9215,11 +9271,13 @@ def _run_stages_body(  # noqa: PLR0915
                 window_last = (
                     int(window["last"]) if isinstance(window, dict) and window.get("last") else None
                 )
-                members = (predicate or {}).get("members") if isinstance(predicate, dict) else None
+                members = (
+                    (carry_predicate or {}).get("members") if isinstance(carry_predicate, dict) else None
+                )
                 members_total = int((members or {}).get("total") or 0) if isinstance(members, dict) else 0
                 members_listed = len((members or {}).get("codes") or []) if isinstance(members, dict) else 0
                 cut_small = bool(
-                    predicate is not None
+                    carry_predicate is not None
                     and plan.fetch
                     and spec_tier
                     and window_last is not None
@@ -9228,7 +9286,7 @@ def _run_stages_body(  # noqa: PLR0915
                 )
                 members_paged = bool(
                     composers.enabled()
-                    and predicate is not None
+                    and carry_predicate is not None
                     and plan.fetch
                     and not qualifying
                     and members_total > members_listed > 0
@@ -9275,7 +9333,7 @@ def _run_stages_body(  # noqa: PLR0915
                     state_out.focus.set_page = None
                 elif members_paged:
                     state_out.focus.set_page = turn_runtime.set_page_carry(
-                        {**predicate, "qualifying_total": members_total},
+                        {**carry_predicate, "qualifying_total": members_total},
                         plan.fetch[0],
                         class_terms,
                         access_levels=(envelopes[0].get("access_levels_used") if envelopes else None),
@@ -9290,7 +9348,7 @@ def _run_stages_body(  # noqa: PLR0915
                             state_out.focus.set_page["set_key"]["offer_team"] = first_team
                 elif partly_listed or listed_to_the_limit or cut_small:
                     state_out.focus.set_page = turn_runtime.set_page_carry(
-                        predicate,
+                        carry_predicate,
                         plan.fetch[0],
                         class_terms,
                         access_levels=(
@@ -9309,13 +9367,13 @@ def _run_stages_body(  # noqa: PLR0915
                             envelopes[0].get("attachment_type_ids") if envelopes else None
                         ),
                     )
-                elif predicate is not None and plan.fetch and spec_tier and (
-                    predicate.get("other_brands") or predicate.get("set_brands")
+                elif carry_predicate is not None and plan.fetch and spec_tier and (
+                    carry_predicate.get("other_brands") or carry_predicate.get("set_brands")
                 ):
                     # Round 7 item 6: the reply closed with "Other brands ... Name one to
                     # see them.", so the brand named next narrows this set.
                     state_out.focus.set_page = turn_runtime.set_page_carry(
-                        predicate,
+                        carry_predicate,
                         plan.fetch[0],
                         class_terms,
                         access_levels=(
@@ -9568,9 +9626,10 @@ def _run_stages_body(  # noqa: PLR0915
             )
             turn_trace.add("held_none_match", {"held": held_none_match["held"], "said": held_none_match["said"]})
 
-        if answer is not None and unplaced_tokens:
+        if answer is not None and (unplaced_tokens or resolver_payload):
             # CHATBOT-CODE-MATCH R6: every missed code, single or beside found ones, and the
             # close codes it was offered from (the same `did_you_mean_by_token` read).
+            # CHATBOT-SET-CODES AC-8: and every set a typed word was answered as.
             for event in trace_mod.code_candidates_events(
                 resolver_payload,
                 unplaced=unplaced_tokens,
@@ -9578,6 +9637,8 @@ def _run_stages_body(  # noqa: PLR0915
                 question=getattr(answer, "question", None),
                 shown_codes=getattr(answer, "shown_codes", None),
                 answered=turn_compose.answered_codes(envelopes),
+                typed_words=_typed_product_words(verdict),
+                read_codes=_read_product_codes(envelopes),
             ):
                 turn_trace.add("code_candidates", event)
 
@@ -10168,6 +10229,32 @@ def _with_settled_picks(
         if isinstance(p, dict) and p.get("uuid") and str(p.get("uuid")) not in held
     ]
     return [*compatible, *extra] if extra else compatible
+
+
+def _typed_product_words(verdict: Any) -> dict[str, str]:
+    """The product words the parser read off this message, folded the way the resolver's
+    token is (`turn.state.token_key`) to the word as typed (CHATBOT-SET-CODES AC-8)."""
+    out: dict[str, str] = {}
+    for e in (verdict.get("entities") if isinstance(verdict, dict) else None) or []:
+        if not isinstance(e, dict) or e.get("hint") not in (None, "product"):
+            continue
+        word = str(e.get("raw") or e.get("canonical_code") or "").strip()
+        for value in (e.get("canonical_code"), e.get("raw")):
+            if isinstance(value, str) and value.strip() and word:
+                out.setdefault(turn_state.token_key(value), word)
+    return out
+
+
+def _read_product_codes(envelopes: list[dict[str, Any]]) -> set[str]:
+    """The product codes a tool that ran read this turn (`product_codes` of an envelope with
+    `tool_ran`, less its `miss`), folded by `turn.state.token_key` (CHATBOT-SET-CODES AC-8b)."""
+    out: set[str] = set()
+    for env in envelopes or []:
+        if not isinstance(env, dict) or env.get("tool_ran") is not True:
+            continue
+        missed = {turn_state.token_key(c) for c in env.get("miss") or [] if isinstance(c, str)}
+        out |= {turn_state.token_key(c) for c in env.get("product_codes") or [] if isinstance(c, str)} - missed
+    return out
 
 
 def _unplaced_suggestions(

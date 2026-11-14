@@ -1958,7 +1958,9 @@ _SET_PRICE_KEYS: frozenset[str] = frozenset({"list_price", "selling_price"})
 _SET_PRICE_LABELS: frozenset[str] = frozenset({"List Price", "Selling Price"})
 
 
-def _group_set_rows(e: dict[str, Any], set_by_code: dict[str, list[str]], typed: Any = None) -> None:
+def _group_set_rows(
+    e: dict[str, Any], set_by_code: dict[str, list[str]], typed: Any = None, asked: Any = None
+) -> None:
     """CHAT-CODE-LOOKUP R2 (U2.3): the rows that are members of a typed product set drop their
     price and sit under their own "Set <code>" heading, one block per set; a plain product's
     row keeps its price and sits under no set (its block comes first, with no heading).
@@ -1967,15 +1969,31 @@ def _group_set_rows(e: dict[str, Any], set_by_code: dict[str, list[str]], typed:
     (a caller with no typed list)."""
     plain: list[Any] = []
     by_set: dict[str, list[Any]] = {}
-    for row in e.get("items") or []:
+
+    def code_of(row: Any) -> str | None:
         fields = row.get("fields") if isinstance(row, dict) else None
-        code = next(
+        return next(
             (jsc.js_string(f.get("value")).casefold() for f in fields or [] if isinstance(f, dict) and f.get("label") == "Product Code"),
             None,
         )
+
+    # CHATBOT-SET-CODES F1: a member's alternative (`flags.alternatives`) is the "Alternative:"
+    # line under that member inside its set block, never an item of its own beside the block,
+    # unless the customer asked for that code too (R1, `asked`: the products placed in their own
+    # right), when it is answered as its own item as well.
+    member_alternatives = {
+        jsc.nullish_str(alt).strip().casefold()
+        for row in e.get("items") or []
+        if set_by_code.get(code_of(row) or "")
+        for alt in jsc.array(jsc.get(jsc.get(row, "flags"), "alternatives"))
+    } - {str(c).casefold() for c in asked or []}
+    for row in e.get("items") or []:
+        fields = row.get("fields") if isinstance(row, dict) else None
+        code = code_of(row)
         owners = set_by_code.get(code) if code else None
         if not owners:
-            plain.append(row)
+            if code not in member_alternatives:
+                plain.append(row)
             continue
         if typed is not None and not any(owner in typed for owner in owners):
             for owner in owners:
@@ -3451,7 +3469,7 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
         drop_restricted_fields(e, granted, group_axis(ctx))
 
     if ctx.get("set_by_code") and not e.get("groups"):
-        _group_set_rows(e, ctx["set_by_code"], ctx.get("set_typed"))
+        _group_set_rows(e, ctx["set_by_code"], ctx.get("set_typed"), ctx.get("set_asked"))
 
     # -- requested-attribute projection ------------------------------------- #
     # The CRM dumps every clearance field the caller may see, by design: it prevents the

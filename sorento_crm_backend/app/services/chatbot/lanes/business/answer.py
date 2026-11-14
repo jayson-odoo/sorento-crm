@@ -4216,9 +4216,12 @@ def not_found_error_message(
             # production's did-you-mean, and it has to be reachable: `build_suggest_offer`
             # skips its own D1 candidates entirely whenever a clarify fired here, so the
             # set answer does not merely come FIRST, it silences the other one.
-            described_set_answers = isinstance(predicate, dict) and not _unplaced_token_has_neighbours(
-                r, g, product_typed=product_typed_tokens(q)
-            )
+            # #2370 regression fix (release sweep, 13 Nov): the described-set guard keeps its own
+            # code-shape test (`_CODE_RE` only). AC-19's widening by the parser's product hint
+            # belongs to the did-you-mean paths, not here: here it let a class word the parser
+            # hinted as a product ("bidet") silence AC-1319's certificate miss with its
+            # substring neighbours, exactly what this guard's docstring rules out.
+            described_set_answers = isinstance(predicate, dict) and not _unplaced_token_has_neighbours(r, g)
             if jsc.truthy(require_specific):
                 escalate_message = jsc.get(g, "gate_clarification")
             elif described_set_answers and "schemes_on_file" in predicate:
@@ -5018,15 +5021,22 @@ def miss_token_candidates(res: Any, allowed_types: list | None, *, typed: Any = 
     )
     for i, match in zip(slots, ranked):
         keep[i] = match
-    return _set_then_its_members(keep, first, close)
+    return _set_then_its_members(keep, first, close, token)
 
 
-def _set_then_its_members(keep: list, first: int, close: list) -> list:
+def _set_then_its_members(keep: list, first: int, close: list, token: Any = None) -> list:
     """CHATBOT-CODE-MATCH R3: a close registered set leads the offer, then its member products
     in the membership table's order (the resolver's set row carries them,
     `entity_resolver._product_set_entities`), then the other candidates, a code never twice.
     Only a close set (the token's trigram `alternatives`, never one its own probe matched)
-    and only one the contact may be told about (`visible_set_clauses`)."""
+    and only one the contact may be told about (`visible_set_clauses`).
+
+    CHATBOT-SET-CODES AC-1: when more than one close set holds every typed part
+    (`holds_every_typed_part`), the contact is choosing between those sets, so they are the
+    offer, in the order ranked above, and nothing else (the caller caps it)."""
+    whole = several_close_sets(keep[first:], close, token)
+    if whole:
+        return keep[:first] + whole
     at = next(
         (
             i
@@ -5053,6 +5063,21 @@ def _set_then_its_members(keep: list, first: int, close: list) -> list:
     codes = {jsc.get(g, "canonical_code") for g in group}
     rest = [m for i, m in enumerate(keep[first:], first) if i != at and jsc.get(m, "canonical_code") not in codes]
     return keep[:first] + group + rest
+
+
+def several_close_sets(candidates: list, close: list, token: Any) -> list:
+    """CHATBOT-SET-CODES AC-1: the close sets among `candidates` (in their order) that hold
+    every typed part of `token`, when there are more than one; else empty. Those sets are the
+    whole offer (`_set_then_its_members`), so the has-stock probe planner reads this too
+    (`miss_suggest._token_candidates`) and probes no code the offer does not hold."""
+    whole = [
+        m
+        for m in candidates
+        if jsc.js_string(jsc.get(m, "entity_type") or "").lower() == "product_set"
+        and any(m is a for a in close)
+        and holds_every_typed_part(token, jsc.get(m, "canonical_code"))
+    ]
+    return whole if len(whole) > 1 else []
 
 
 def offer_extras(match: Any) -> dict[str, Any]:
@@ -5103,10 +5128,16 @@ def _dym_type_label(pick: Any, asked: Any) -> str:
 
 def _set_members(product_set: Any) -> list[dict[str, Any]]:
     """A resolver set row's member products (`display.members`, the membership table's
-    order, `entity_resolver._product_set_entities`) as `{"uuid", "code"}`, each with both."""
+    order, `entity_resolver._product_set_entities`) as `{"uuid", "code"}`, each with both,
+    plus the part's `quantity` in the set when recorded (CHATBOT-SET-CODES B: a pick of the set
+    asks each part at it, as the typed set does)."""
     display = jsc.get(product_set, "display")
     return [
-        {"uuid": jsc.get(m, "uuid"), "code": jsc.get(m, "product_code")}
+        {
+            "uuid": jsc.get(m, "uuid"),
+            "code": jsc.get(m, "product_code"),
+            **({"quantity": jsc.get(m, "quantity")} if jsc.truthy(jsc.get(m, "quantity")) else {}),
+        }
         for m in (jsc.get(display, "members") if isinstance(display, dict) else None) or []
         if isinstance(m, dict) and jsc.truthy(jsc.get(m, "uuid")) and jsc.truthy(jsc.get(m, "product_code"))
     ]

@@ -11,6 +11,7 @@ from app.models.access import RespondContact
 from app.models.product import UnitOfMeasure
 from app.models.user import SystemSetting, User, UserRole
 from app.services.error_handler import handle_internal_error
+from app.services.user_service import UserPermissionService
 from app.services.signin_background import resolve_signin_background_url
 
 logger = logging.getLogger(__name__)
@@ -62,6 +63,18 @@ class SystemSettingUpdate(BaseModel):
     notify_system_error_role_ids: Optional[list[str]] = None
     complaint_do_delivered_notify_tiers: Optional[str] = None
     import_job_rows_retention_days: Optional[int] = Field(None, ge=1, le=3650)
+    # DB retention jobs (PLAN-db-retention-12nov).
+    integration_log_payload_retention_days: Optional[int] = Field(None, ge=1, le=3650)
+    integration_log_row_retention_days: Optional[int] = Field(None, ge=1, le=3650)
+    chatbot_turn_trace_retention_days: Optional[int] = Field(None, ge=1, le=3650)
+    scheduled_task_run_retention_days: Optional[int] = Field(None, ge=1, le=3650)
+    reorder_run_retention_days: Optional[int] = Field(None, ge=1, le=3650)
+    embedding_superseded_retention_days: Optional[int] = Field(None, ge=1, le=3650)
+    plan_exception_superseded_grace_days: Optional[int] = Field(None, ge=0, le=3650)
+    data_retention_dry_run: Optional[bool] = None
+    data_retention_batch_size: Optional[int] = Field(None, ge=1, le=100000)
+    data_retention_batch_sleep_ms: Optional[int] = Field(None, ge=0, le=60000)
+    data_retention_max_run_minutes: Optional[int] = Field(None, ge=1, le=1440)
     smtp_host: Optional[str] = None
     smtp_port: Optional[str] = None
     smtp_secure: Optional[bool] = None
@@ -149,6 +162,9 @@ class SystemSettingUpdate(BaseModel):
     # AC-QTSO-CRM: "AutoCount quotations and sales orders from Project sales", OFF on deploy.
     # Here, in the GET dict, and in AppConfigResponse below.
     project_autocount_write_enabled: Optional[bool] = None
+    # AC-PROJECT-REGISTER: "AutoCount project registration", OFF on deploy. Here, in the GET
+    # dict, and in AppConfigResponse below.
+    project_autocount_register_enabled: Optional[bool] = None
     # AC-LINK-CRM-UI: "AutoCount links from Stock Debt", OFF on deploy. Here, in the GET
     # dict, and in AppConfigResponse below.
     stock_debt_po_link_enabled: Optional[bool] = None
@@ -316,6 +332,8 @@ class AppConfigResponse(BaseModel):
     #: AC-QTSO-CRM: Project sales hides every AutoCount write action while this is off; the
     #: salesperson who sends holds no `user_management.settings.view`.
     project_autocount_write_enabled: bool = False
+    #: AC-PROJECT-REGISTER: the project page hides "Register in AutoCount" while this is off.
+    project_autocount_register_enabled: bool = False
     #: AC-LINK-CRM-UI: the Stock Debt drill hides its PO actions while this is off, and the
     #: purchasing user who links holds no `user_management.settings.view`.
     stock_debt_po_link_enabled: bool = False
@@ -495,6 +513,13 @@ def get_settings(
                 )
                 if settings
                 else None,
+                # DB retention jobs (PLAN-db-retention-12nov); a new column reaches the FE
+                # only through this manual dict (LESSONS).
+                **{
+                    name: (getattr(settings, name, default) if settings else None)
+                    for name, default in _RETENTION_SETTING_DEFAULTS.items()
+                    if name != "import_job_rows_retention_days"
+                },
                 "ai_trace_ttl_days": getattr(settings, "ai_trace_ttl_days", 30) if settings else None,
                 "ai_trace_error_ttl_days": getattr(settings, "ai_trace_error_ttl_days", 90) if settings else None,
                 "ai_trace_max_payload_bytes": getattr(settings, "ai_trace_max_payload_bytes", 16384) if settings else None,
@@ -535,6 +560,9 @@ def get_settings(
                 ),
                 "project_autocount_write_enabled": (
                     bool(getattr(settings, "project_autocount_write_enabled", False)) if settings else False
+                ),
+                "project_autocount_register_enabled": (
+                    bool(getattr(settings, "project_autocount_register_enabled", False)) if settings else False
                 ),
                 "stock_debt_po_link_enabled": (
                     bool(getattr(settings, "stock_debt_po_link_enabled", False)) if settings else False
@@ -687,6 +715,9 @@ def get_app_config(
             ),
             project_autocount_write_enabled=bool(
                 getattr(settings, "project_autocount_write_enabled", False)
+            ),
+            project_autocount_register_enabled=bool(
+                getattr(settings, "project_autocount_register_enabled", False)
             ),
             stock_debt_po_link_enabled=bool(getattr(settings, "stock_debt_po_link_enabled", False)),
             # Same value and fallback as the admin GET above.
@@ -980,6 +1011,39 @@ def get_chatbot_lanes(
 # setattr loop below took them on `.edit` alone, which went around that gate).
 _SMTP_FIELDS = ("smtp_host", "smtp_port", "smtp_secure", "smtp_username", "smtp_password", "smtp_from")
 
+# Retention settings decide how much history the nightly jobs delete
+# (PLAN-db-retention-12nov), so on `/general` they need the secrets slug the SMTP login
+# sits behind (admin passes through its bypass), not `.edit` alone. Every column is NOT
+# NULL, so an explicit null is a 422 rather than a 500 at commit. Name -> column default.
+_RETENTION_SETTING_DEFAULTS = {
+    "import_job_rows_retention_days": 90,
+    "integration_log_payload_retention_days": 30,
+    "integration_log_row_retention_days": 180,
+    "chatbot_turn_trace_retention_days": 90,
+    "scheduled_task_run_retention_days": 90,
+    "reorder_run_retention_days": 90,
+    "embedding_superseded_retention_days": 90,
+    "plan_exception_superseded_grace_days": 1,
+    "data_retention_dry_run": False,
+    "data_retention_batch_size": 5000,
+    "data_retention_batch_sleep_ms": 200,
+    "data_retention_max_run_minutes": 30,
+}
+
+
+def _require_secrets_slug_for_retention(settings_data: SystemSettingUpdate, current_user: dict, db: Session) -> None:
+    """Refuse the whole body (nothing applied) when it carries a retention key and the
+    caller lacks RUNTIME_SETTINGS_PERMISSION."""
+    sent = settings_data.model_dump(exclude_unset=True)
+    keys = sorted(k for k in sent if k in _RETENTION_SETTING_DEFAULTS)
+    if keys and not UserPermissionService(db).check_user_has_permission(
+        current_user["id"], RUNTIME_SETTINGS_PERMISSION
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Permission required: {RUNTIME_SETTINGS_PERMISSION} ({', '.join(keys)})",
+        )
+
 
 def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Session):
     """Shared implementation for PUT/POST general settings."""
@@ -996,6 +1060,15 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"SMTP settings are saved through PUT /settings/smtp, not here: {', '.join(smtp_keys)}",
+        )
+
+    null_retention = sorted(
+        k for k in update_data if k in _RETENTION_SETTING_DEFAULTS and update_data[k] is None
+    )
+    if null_retention:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"These settings cannot be null: {', '.join(null_retention)}",
         )
 
     if "default_product_supplier_id" in update_data:
@@ -1309,6 +1382,7 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
         "sample_request_require_project",
         "order_change_notice_require_project",
         "project_autocount_write_enabled",
+        "project_autocount_register_enabled",
         "stock_debt_po_link_enabled",
     ):
         if column in update_data and update_data[column] is None:
@@ -1393,6 +1467,7 @@ def update_general_settings(
     No new slug and no grant sweep: every role holding `.view` today also holds
     `.edit` (admin, warehouse_manager and the three integration roles).
     """
+    _require_secrets_slug_for_retention(settings_data, current_user, db)
     try:
         return _update_general_settings_impl(settings_data, db)
     except HTTPException:
@@ -1413,6 +1488,7 @@ def update_general_settings_post(
     through the same implementation, so gating only one would leave the other as
     the way around it.
     """
+    _require_secrets_slug_for_retention(settings_data, current_user, db)
     try:
         return _update_general_settings_impl(settings_data, db)
     except HTTPException:

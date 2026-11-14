@@ -514,6 +514,9 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
    * inquiry raised since is stamped with one.
    */
   inquiry_no?: string | null;
+  /** SPARE-PART-OR-B (U2.7): the row's header's OI- number, set once a spare part request
+   *  is approved (its `inquiry_no` is the OR- number); null otherwise. */
+  oi_no?: string | null;
   /** SPARE-PART-ORDER-REQUEST: the inquiry's type, and a spare part request's unit
    *  price, line total and the qty / unit price its requester SUBMITTED (the "was" mark).
    *  `requested_qty` below is a different fact: the open reserve request's qty. */
@@ -1501,6 +1504,9 @@ export interface WaitingChange {
 export interface OrderInquiryHeader {
   id: string;
   inquiry_no: string;
+  /** SPARE-PART-OR-B (U3.4): a spare part request's OI- number once approved; purchasing
+   *  reads it in place of the OR- `inquiry_no`. Null on a sales-order inquiry. */
+  oi_no?: string | null;
   /** The pre-renumbering number (plan S1) - never shown, only ever matched by search. */
   legacy_inquiry_no?: string | null;
   /** The FIRST raise, fixed for life (owner ruling R5). */
@@ -1560,6 +1566,9 @@ export interface OrderInquiryHeaderDetail extends OrderInquiryHeader {
   can_decide?: boolean;
   can_edit?: boolean;
   can_revise?: boolean;
+  /** SPARE-PART-OR-B (U4.2): an open revision's state (draft / pending_approval /
+   *  rejected), else null. */
+  revision_state?: string | null;
   /** A spare part request's amount; null when the reader may not see its prices. */
   total?: string | null;
 }

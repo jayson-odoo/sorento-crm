@@ -145,6 +145,16 @@ def world(r4world):
             "SRTWCX7604-P-RL-NEW", "Sorento 7604 Pedestal P Trap", "SRTWCX7604-P-RL-NEW PEDESTAL WATER CLOSET P-TRAP"
         ),
     }
+    # The X-coded variants are linked to their base family by catalogue data (hand-set Family code);
+    # the X insert is gone from `product_code_family`.
+    for variant, family in (
+        (f8840["SRTWCX8840-P"], "SRTWC8840"),
+        (f8840["SRTWCX8840-S"], "SRTWC8840"),
+        (f7604["SRTWCX7604-P-RL-NEW"], "SRTWC7604"),
+    ):
+        variant.family_code = family
+        variant.family_code_manual = True
+    db.flush()
     close_couple = {
         "sorento": [
             make(f"SRTWCC{i}", f"Sorento Close Coupled WC {i}", f"SRTWCC{i} CLOSE COUPLED P-TRAP WATER CLOSET")
