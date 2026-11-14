@@ -148,6 +148,12 @@ def test_f4_a_typo_in_a_spaced_code_names_the_typed_code_in_the_miss_line(sessio
     text = c.say(f"{raw} stock", stock({**product(raw), "canonical_code": pick}))
     assert "Couldn't find" in text and raw in text.upper(), f"the miss line does not name {raw!r}: {text!r}"
     assert "ZZUB668BACK" not in text.upper(), f"the miss line names the folded token: {text!r}"
+    if who == "dealer" and pick is None:
+        # Lead ruling, round 12: with no parser pick the dealer still gets the offer of the close code (AC-6), never a
+        # bare miss with the refer line while a close code exists.
+        assert f"Couldn't find {raw}" in text, f"the miss line does not name {raw!r} as typed: {text!r}"
+        assert "Did you mean" in text and INLET in text.split("Did you mean", 1)[1], f"no offer of {INLET}: {text!r}"
+        assert R not in text, f"referred while a close code exists: {text!r}"
 
 
 @pytest.mark.parametrize("pick", [None, INLET], ids=["no_pick", "inlet_picked"])
