@@ -81,6 +81,8 @@ export const GeneralSettingsSchema = z.object({
   orderChangeNoticeRequireProject: z.boolean(),
   /** AutoCount quotations and sales orders from Project sales (AC-QTSO-CRM). Off by default. */
   projectAutocountWriteEnabled: z.boolean(),
+  /** AC-PROJECT-REGISTER: "AutoCount project registration". Off by default. */
+  projectAutocountRegisterEnabled: z.boolean(),
   /** AC-LINK-CRM-UI: "AutoCount links from Stock Debt", off until tested end to end. */
   stockDebtPoLinkEnabled: z.boolean(),
   /** Price tag packages (D2): the product classes a line is warned about when it
