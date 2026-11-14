@@ -62,7 +62,9 @@ for (const [label, extra] of [
           {...extra}
         />,
       );
-      await waitFor(() => expect(spaced(editor!.getHTML())).toContain('<p>   L580xW450xH450mm</p>'));
+      await waitFor(() => expect(spaced(editor!.getHTML())).toContain('<p>   L580xW450xH450mm</p>'), {
+        timeout: 1000,
+      });
       for (const call of onChange.mock.calls) {
         expect(spaced(String(call[0]))).toContain('   L580');
       }
