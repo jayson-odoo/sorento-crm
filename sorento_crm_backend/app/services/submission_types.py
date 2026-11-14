@@ -23,19 +23,20 @@ class SubmissionType:
     #: The value of the ss `type` field. A create of the default type sends none (its payload stays as it
     #: was); an edit sends it explicitly, so an issue can be turned back into an idea.
     ss_type: str
-    #: `ideation_capture_*` copy names (`chatbot_reply_copy`) of the ask-back and the filed reply.
+    #: `ideation_capture_*` copy names (`chatbot_reply_copy`) of the ask-back, the filed reply and the give-up.
     ask_copy: str
     complete_copy: str
+    give_up_copy: str
 
 
 SUBMISSION_TYPES: dict[str, SubmissionType] = {
     "idea": SubmissionType(
         label="Feature request", required_field="problem", ss_type="idea",
-        ask_copy="ask_idea", complete_copy="complete",
+        ask_copy="ask_idea", complete_copy="complete", give_up_copy="give_up",
     ),
     "issue": SubmissionType(
         label="Issue", required_field="problem", ss_type="issue",
-        ask_copy="ask_issue", complete_copy="complete_issue",
+        ask_copy="ask_issue", complete_copy="complete_issue", give_up_copy="give_up_issue",
     ),
 }
 DEFAULT_TYPE = "idea"

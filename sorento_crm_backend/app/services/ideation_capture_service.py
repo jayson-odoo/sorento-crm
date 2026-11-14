@@ -30,6 +30,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models.access import RespondContact
 from app.models.user import User
+from app.services.chat_exchanges import exchange_text, recent_exchanges
 from app.services.chatbot_reply_copy import FALLBACK_LANGUAGES
 from app.services.conversation_variables_service import overwrite_for_contact
 from app.services.ideation_capture_replies import render_reply
@@ -208,6 +209,28 @@ def _held_pointer(ideation_state: dict[str, Any], is_test: bool) -> dict[str, An
     if updated is None or datetime.now(timezone.utc) - updated >= _HOLD_MAX_AGE:
         return None
     return ideation_state
+
+
+def _asked_pointer(ideation_state: dict[str, Any], is_test: bool) -> dict[str, Any]:
+    """The ask-back this turn may answer (round 14): the type it asked for and the message it asked
+    about, same `is_test`, under 24h; else {}."""
+    if not isinstance(ideation_state, dict) or ideation_state.get("status") != "asked":
+        return {}
+    if bool(ideation_state.get("is_test")) != bool(is_test):
+        return {}
+    updated = _parse_iso(ideation_state.get("updated_at"))
+    if updated is None or datetime.now(timezone.utc) - updated >= _HOLD_MAX_AGE:
+        return {}
+    return ideation_state
+
+
+def _with_exchanges(text: str, exchanges: list[tuple[str, str]]) -> str:
+    """The transcript of an issue: the exchanges before it (oldest first), then the user's message, so
+    whoever reads the issue sees the answer it complains about (round 14)."""
+    if not exchanges:
+        return text
+    lines = [f"User: {exchange_text(said)}\nAssistant: {exchange_text(answered)}" for said, answered in exchanges]
+    return "\n".join(lines) + f"\n\n{text}"
 
 
 def _access_user(db: Session, respond_io_id: str) -> User | None:
@@ -505,7 +528,9 @@ def handle_capture_turn(
         # A live turn trusts only what this service persisted, in the contact's own row.
         ideation_state = session_vars.get("ideation") or {}
     held = _held_pointer(ideation_state, is_test)
+    asked = _asked_pointer(ideation_state, is_test) if ask_reply else {}
     text_in = (message_text or "").strip()
+    exchanges: list[tuple[str, str]] = []
 
     def finish(
         status: str,
@@ -554,8 +579,13 @@ def handle_capture_turn(
     if choice is None:
         # Fresh message (a held list is dropped). The extractor also reads the language, so it
         # runs before the gates and the gate replies can follow it.
+        # The contact's last exchanges, under the parser's scopes: a complaint about the assistant's
+        # last answer is read against that answer (round 14).
+        exchanges = recent_exchanges(
+            db, contact_respond_id=respond_io_id, ingress="console" if is_test else None, is_test=is_test, limit=2
+        )
         try:
-            extraction = extract_ideate_turn(db, message_text=text_in)
+            extraction = extract_ideate_turn(db, message_text=text_in, recent_exchanges=exchanges)
         except Exception:  # noqa: BLE001 - a failed read is answered, never a 500
             logger.warning("ideation extractor raised for respond_io_id=%s", respond_io_id, exc_info=True)
             extraction = IdeateExtraction(failed=True)
@@ -629,12 +659,30 @@ def handle_capture_turn(
             if extraction.has_idea is False
             else fields
         )
-        if _missing_required(checked):
+        if _missing_required(checked) and ask_reply and "issue" in (submission_type, asked.get("type")):
+            # Round 14: an issue flow asks once and never gives up. The answer to the ask, with no
+            # problem in it, files the issue in the user's own words (this answer and the message asked about).
+            said = [t for t in (str(asked.get("message_text") or "").strip(), text_in) if t]
+            words = "\n".join(dict.fromkeys(said))
+            if not words:
+                return finish("ask_idea_gave_up", "ask_idea_gave_up", {"type": "issue"}, language)
+            fields = {**fields, "problem": normalise_field_value("problem", words)}
+            submission_type = "issue"
+            source_text = words
+        elif _missing_required(checked):
             if ask_reply:
                 # The user answered the ask-back and still gave no idea: end the ask with a
                 # statement, never a second identical question.
                 return finish("ask_idea_gave_up", "ask_idea_gave_up", {}, language)
-            return finish("ask_idea", "ask_idea", {"type": submission_type}, language)
+            # An issue ask remembers the message it asked about, so the answer files the issue (round 14).
+            # An idea ask keeps nothing, as before.
+            asking = {
+                "status": "asked", "type": "issue", "message_text": text_in,
+                "updated_at": _now_iso(), "is_test": bool(is_test),
+            } if submission_type == "issue" else None
+            return finish("ask_idea", "ask_idea", {"type": submission_type}, language, pointer=asking)
+        if submission_type == "issue":
+            source_text = _with_exchanges(source_text, exchanges)
         # Minted once the create is decided; a list offer keeps it so NEW (even retried after
         # an ss failure) lands on the same idea.
         intake_ref = str(uuid.uuid4())

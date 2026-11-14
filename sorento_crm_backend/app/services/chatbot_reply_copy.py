@@ -308,6 +308,19 @@ IDEATION_CAPTURE_GIVE_UP = {
     ),
     "zh": "我还是没能从中找到创意。准备好后，请用一条消息发送您的创意，例如您想改进什么。",
 }
+#: WA-COMPLAINT-INTAKE round 14: an issue flow's answer held no words to file. The general word
+#: (owner 14 Nov 23:20): feedback / maklum balas / 反馈, never idea.
+IDEATION_CAPTURE_GIVE_UP_ISSUE = {
+    "en": (
+        "I still could not tell what went wrong. When you are ready, send what you saw and where, "
+        "in one message, and I will log it as feedback."
+    ),
+    "ms": (
+        "Saya masih tidak dapat tahu apa yang tidak kena. Bila anda sudah bersedia, hantar apa yang "
+        "anda nampak dan di mana dalam satu mesej, dan saya akan merekodkannya sebagai maklum balas."
+    ),
+    "zh": "我还是没能弄清楚出了什么问题。准备好后，请在一条消息里告诉我您看到了什么、在哪里看到的，我会把它记录为反馈。",
+}
 #: AI-KEY-PER-PROVIDER: the message could not be read at all (provider or key error, timeout).
 #: Not "no idea": a plain statement of what happened, no apology, no question.
 IDEATION_CAPTURE_READ_FAILED = {
@@ -492,6 +505,7 @@ FALLBACK_REPLY_COPY: dict[str, tuple[dict[str, str], tuple[str, ...]]] = {
     "ideation_capture_unconfigured": (IDEATION_CAPTURE_UNCONFIGURED, ()),
     "ideation_capture_ask_idea": (IDEATION_CAPTURE_ASK_IDEA, ()),
     "ideation_capture_give_up": (IDEATION_CAPTURE_GIVE_UP, ()),
+    "ideation_capture_give_up_issue": (IDEATION_CAPTURE_GIVE_UP_ISSUE, ()),
     "ideation_capture_read_failed": (IDEATION_CAPTURE_READ_FAILED, ()),
     "ideation_capture_similar_offered": (IDEATION_CAPTURE_SIMILAR_OFFERED, ()),
     "ideation_capture_similar_offered_reply": (IDEATION_CAPTURE_SIMILAR_OFFERED_REPLY, ()),

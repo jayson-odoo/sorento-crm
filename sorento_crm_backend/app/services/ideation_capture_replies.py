@@ -25,8 +25,6 @@ from app.services.submission_types import SUBMISSION_TYPES, normalise_type
 logger = logging.getLogger(__name__)
 
 _PREFIX = "ideation_capture_"
-#: Reply kinds whose copy key differs from the kind.
-_COPY_NAME = {"ask_idea_gave_up": "give_up"}
 
 
 def _template(name: str, language: str, db: Any) -> str:
@@ -82,6 +80,9 @@ def render_reply(
     if kind == "ask_idea":
         return _template(row.ask_copy, lang, db)
 
+    if kind == "ask_idea_gave_up":
+        return _template(row.give_up_copy, lang, db)
+
     if kind == "complete" and row.complete_copy != "complete":
         # One fact per line: what was logged, the title, the photos that landed, the link.
         lines = [
@@ -118,4 +119,4 @@ def render_reply(
             link=facts.get("link"),
         )
 
-    return _template(_COPY_NAME.get(kind, kind), lang, db)
+    return _template(kind, lang, db)

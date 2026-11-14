@@ -128,7 +128,10 @@ IDEATE_EXTRACTION_JSON_SCHEMA: dict[str, Any] = {
                             "here, in their own words; a complaint alone gives no "
                             "desired_outcome, leave it out and never infer or guess "
                             "the fix. current_workaround = what they do today or "
-                            "right now to cope. A team name is not a field."
+                            "right now to cope. A team name is not a field. When the user says the "
+                            "assistant's answer was wrong or not what they wanted, problem names what "
+                            "they asked (from the recent exchanges) and that the answer was not what "
+                            "they wanted."
                         ),
                     },
                     "value": {"type": "string"},
@@ -172,7 +175,9 @@ IDEATE_EXTRACTION_JSON_SCHEMA: dict[str, Any] = {
                 "A short label for the idea, at most 8 words, generated from the "
                 "problem statement, in the same language as the user's message (English "
                 "stays English), never translated. It is never empty once there is a problem statement, "
-                "whatever the language. Empty string only when the draft has no problem statement yet."
+                "whatever the language (for a complaint about the assistant's answer, for example "
+                "'Assistant answer not satisfying'). Empty string only when the draft has no problem "
+                "statement yet."
             ),
         },
         "review_action": {
@@ -211,7 +216,8 @@ IDEATE_EXTRACTION_JSON_SCHEMA: dict[str, Any] = {
                 "false when the message only says the user wants to submit or share an "
                 "idea without stating one (for example 'I have an idea', 'want to submit "
                 "idea', 'boleh saya hantar idea'); true when it states an idea, a need or "
-                "a change."
+                "a change. A message saying the assistant's answer was wrong or not what the user "
+                "wanted is an issue WITH a problem (true), even with no other detail."
             ),
         },
         "type": {
@@ -378,8 +384,12 @@ def extract_ideate_turn(
     field_labels: dict[str, str] | None = None,
     captured: dict[str, str] | None = None,
     prior_title: str | None = None,
+    recent_exchanges: list[tuple[str, str]] | None = None,
 ) -> IdeateExtraction:
     """Extract the ideate NLU output from ``message_text`` given the draft context.
+
+    ``recent_exchanges`` (oldest first, `chat_exchanges.recent_exchanges`) lets a complaint about the
+    assistant's last answer be read against that answer (WA-COMPLAINT-INTAKE round 14).
 
     Never raises - degrades to an empty extraction with ``failed=True`` on any failure. ``confirm`` is
     derived here (AC-1201) by ``derive_confirm``: only a yes while ``status ==
@@ -446,6 +456,16 @@ def extract_ideate_turn(
         context_lines.append(
             f"Current stored title (keep the SAME title unless the problem "
             f"statement itself changes enough to need a new one): {prior_title}"
+        )
+    if recent_exchanges:
+        from app.services.chat_exchanges import exchange_text
+
+        context_lines.append(
+            "Recent exchanges (oldest first; the user may be reporting the assistant's last answer as wrong):\n"
+            + "\n".join(
+                f"User: {exchange_text(said)}\nAssistant: {exchange_text(answered)}"
+                for said, answered in recent_exchanges
+            )
         )
     user_block = "\n".join(context_lines) + f"\n\nUser message:\n{raw}"
 
