@@ -408,6 +408,55 @@ describe('B5: right-click a row to reassign or dismiss', () => {
     }
   });
 
+  it('a touch long-press opens no empty menu: not for a non-manager, not on the owner row', async () => {
+    const longPress = async (name: string) => {
+      const { table } = await leadsTable();
+      fireEvent.pointerDown(within(rowFor(table, name)).getAllByRole('cell')[0], {
+        pointerType: 'touch',
+        button: 0,
+      });
+      // Past the long-press timer, so a menu that was going to open has opened.
+      await new Promise((r) => setTimeout(r, 900));
+    };
+    granted = new Set(['projects.projects.edit']);
+    const first = wrap(<ProjectAccessPanel project={project()} />);
+    await longPress('Sales C');
+    expect(screen.queryByRole('menu')).toBeNull();
+    first.unmount();
+
+    granted = new Set(['projects.projects.manage']);
+    wrap(<ProjectAccessPanel project={project()} />);
+    await longPress('Sales B');
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  it('an owner who also holds a secondary-lead row gets no Reassign to themselves on it', async () => {
+    granted = new Set(['projects.projects.manage']);
+    // Sales A is the primary AND (here) owner; give Sales A a decided secondary-lead row too.
+    REQUESTS.push({
+      id: 'r-a',
+      project_id: 'p1',
+      kind: 'dispute',
+      status: 'rejected',
+      requester_user_id: 'u-a',
+      requester_name: 'Sales A',
+      reason: 'Claimed it again.',
+      created_at: '2026-10-25T02:00:00Z',
+    });
+    try {
+      wrap(<ProjectAccessPanel project={project({ owner_user_id: 'u-a', owner_name: 'Sales A' })} />);
+      const { table } = await leadsTable();
+      const secondRow = dataRows(table).find(
+        (r) => cellsOf(table, r).Salesperson === 'Sales A' && cellsOf(table, r).Lead === 'Secondary',
+      )!;
+      fireEvent.contextMenu(within(secondRow).getAllByRole('cell')[0]);
+      await new Promise((r) => setTimeout(r, 50));
+      expect(screen.queryByRole('menuitem', { name: /Reassign to/ })).toBeNull();
+    } finally {
+      REQUESTS.pop();
+    }
+  });
+
   it('Reassign to the primary opens the reassign dialog with them preselected; submitting moves the owner', async () => {
     granted = new Set(['projects.projects.manage']);
     wrap(<ProjectAccessPanel project={project()} />);
