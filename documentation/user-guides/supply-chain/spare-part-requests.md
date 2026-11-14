@@ -59,23 +59,29 @@ The approver team of the current level is notified; the notification opens the r
 
 You can never approve your own request. If every line is at 0 you cannot approve; reject it instead. After the last level approves, lines with a quantity go to purchasing and lines at 0 are cancelled.
 
+### A request raised by an approver
+
+If you are on the team of the last approval level (or an admin), a request you submit needs no approval: it goes straight to purchasing, gets its order inquiry number and sends purchasing the email, the same as a request the last level has just approved.
+
 ## What purchasing sees
 
 * A request appears in **Order Inquiries** only after the last approval. Before that (draft, waiting for approval, rejected) purchasing does not see it in the list, counts, exports or notifications.
-* On final approval the request gets an order inquiry number, for example `OI-2611-0021`, and purchasing gets one notification. Purchasing's list and the order inquiry page show the `OI-` number; the request page keeps its `OR-` number.
+* On final approval the request gets an order inquiry number, for example `OI-2611-0021`, and purchasing gets one notification and the order inquiry email, the same email a confirmed sales order sends. Its subject reads `OI: <location> @ OR-2611-0001`, and the header row reads **OR NO**, **OR DATE**, **REQUESTER** and **REASON** instead of the sales order fields. Purchasing's list and the order inquiry page show the `OI-` number; the request page keeps its `OR-` number.
 * On the request page, each line's **OI** column shows that number; click it to open the order inquiry at that line. On the order inquiry page, the line under the number says **Order request OR-...**; click it to go back to the request.
 * The list has a **Type** column and a **Type** filter. These requests read **Order request**, and **S/O no** shows "-".
-* The page has the same tabs as any order inquiry. **General** adds a **Request** card and an **Approval** card. **Lines** shows the approved quantity only (not what the requester first asked for), with unit price, total, location and photos.
+* The page has the same tabs as any order inquiry. **General** adds a **Request** card and an **Approval** card. **Lines** shows the approved quantity only (not what the requester first asked for), with unit price, total, location, delivery date and photos. A quantity changed after approval shows "Was N" beside it, with the old and new figures behind it, as on a sales order line.
 * Purchasing works it as usual: **Acknowledge**, reject a single line, and link a purchase order.
 
-## Revise after approval (requester)
+## Revise after approval (requester or approver)
 
-An approved request has a **Revise** button, also after purchasing has started on it. Revise lets you change the **Qty** of its lines (not the products, prices or the list of lines). While the change waits for approval, purchasing keeps seeing and working the request as it was approved. Click **Submit**; approval runs again from level 1.
+An approved request has a **Revise** button, also after purchasing has started on it. It opens the same form as **Create**: change a line's **Qty**, **Product** or **Delivery date**, add a line or remove one (prices, location and the request fields stay as approved). Save, then click **Submit**; approval runs again from level 1. If you are on the last level's team, your revision applies as soon as you submit it.
+
+While the revision waits, purchasing keeps the request as it was approved, and every line you changed reads **Waiting for CS** on the order inquiry, exactly like a sales order line that changed: purchasing cannot confirm that line until the change is approved.
 
 When the last level approves the change:
 
-* Each line whose quantity moved is updated on the order inquiry, and purchasing gets the same order inquiry email a sales order change sends, with the old and new quantity. A line purchasing had already acknowledged goes back to **To order** for them to confirm again. A line set to 0 is cancelled.
-* Lines whose quantity did not move stay exactly as they were.
+* Each changed line is updated on the order inquiry (quantity, product, delivery date), and purchasing gets the same order inquiry email a sales order change sends, old to new. A line purchasing had already acknowledged goes back to **To order** for them to confirm again. A removed line, or one set to 0, is cancelled; an added line goes to purchasing as a new line.
+* Lines you did not change stay exactly as they were.
 * The order inquiry number stays the same.
 
 ## Who sees prices
@@ -84,7 +90,9 @@ Unit price and total are visible to the requester, the approvers (also after the
 
 ## History
 
-The **History** tab, on the request page and on the order inquiry page alike, shows the whole life of the request: the submit, each approval, every change the requester or an approver made (old value to new value, who and when), a reject with its reason, a revise, the raise to purchasing, and what purchasing did after that. The **History** icon beside a line's **Qty** opens the same history for that one line. On the order inquiry page that icon is in colour only when the quantity changed after approval.
+The **History** tab on the request page shows the whole life of the request: the submit, each approval, every change the requester or an approver made (old value to new value, who and when), a reject with its reason, a revise, the raise to purchasing, and what purchasing did after that. The **History** icon beside a line's **Qty** opens the same history for that one line.
+
+On the order inquiry page, purchasing sees only what happened from the raise onwards: the raise, their own actions, and any change approved after that. What the requester and approvers did before the approval stays on the request page.
 
 ## What gets created
 
@@ -94,7 +102,7 @@ The **History** tab, on the request page and on the order inquiry page alike, sh
 ## How you'll be notified
 
 * The approver team of the current level is notified when a request is submitted or reaches their level.
-* Purchasing gets the notification once, on the last approval, and the order inquiry email again only when an approved quantity changes through **Revise**.
+* Purchasing gets the notification and the order inquiry email on the last approval (or when an approver raises the request), and the email again only when an approved line changes through **Revise**.
 
 ## See also
 
