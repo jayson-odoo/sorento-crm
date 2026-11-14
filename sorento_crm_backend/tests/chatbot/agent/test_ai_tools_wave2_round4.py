@@ -1,4 +1,4 @@
-"""AI-TOOLS-WAVE2 crew pass on 69b3b479 (5 Nov): the specific panel refusal, the registry-round tool narrowing, the
+"""AI-TOOLS-WAVE2 crew pass on 69b3b479 (5 Nov): the specific panel refusal, the
 trimmed default columns and the payout default window. No LLM; the loop runs with a scripted model.
 (The staff proof that fixes the identity gate is tested in `tests/test_staff_read_identity.py`.)"""
 from __future__ import annotations
@@ -38,26 +38,6 @@ def test_F2_a_contact_turns_refusal_is_unchanged():
 
     out = tools._http_failure(403, "Sales report is not enabled for your account.")
     assert out.message == "Sales report is not enabled for your account."
-
-
-# ------------------------------------------------------------------ (3) the registry round carries few tools
-
-
-def test_N1_after_a_registry_round_only_the_registry_tools_and_answer_remain():
-    from app.services.chatbot.agent.loop import narrow_after_query
-
-    schemas = [{"type": "function", "function": {"name": n}} for n in
-               ("crm_report_ask", "crm_query", "crm_describe", "answer", "plan", "crm_inventory_stock_balance_list")]
-    ok = [{"name": "crm_query", "status": "ok"}]
-    names = lambda s: [x["function"]["name"] for x in s]  # noqa: E731
-    assert names(narrow_after_query(schemas, [{"name": "crm_query"}], ok)) == ["crm_query", "crm_describe", "answer", "plan"]
-    # a round that also used another tool, or no query that answered: unchanged
-    assert narrow_after_query(schemas, [{"name": "crm_query"}, {"name": "crm_report_ask"}], ok) == schemas
-    # a describe round that answered narrows too (the model chose the registry); one that was refused does not
-    assert names(narrow_after_query(schemas, [{"name": "crm_describe"}], [{"name": "crm_describe", "status": "ok"}])) == [
-        "crm_query", "crm_describe", "answer", "plan"]
-    assert narrow_after_query(schemas, [{"name": "crm_describe"}], [{"name": "crm_describe", "status": "denied"}]) == schemas
-    assert narrow_after_query(schemas, [{"name": "crm_query"}], [{"name": "crm_query", "status": "denied"}]) == schemas
 
 
 # ------------------------------------------------------------------ (3) default columns, (5) payout default

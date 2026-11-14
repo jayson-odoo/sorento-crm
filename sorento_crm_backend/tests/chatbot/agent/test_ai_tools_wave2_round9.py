@@ -1,8 +1,8 @@
 """AI-TOOLS-WAVE2 crew live x3 on 3c6924bf (round 9): answers 21/21, token budget failed. No LLM.
 
 - The model resolved the agent's name with crm_resolve first (+1 call, ~+20k): `crm_query` takes `agent` as the
-  user said it and resolves it inside, and a crm_resolve round that found only sales agents points at it and narrows
-  the next rounds' schemas.
+  user said it and resolves it inside, and a crm_resolve round that found only sales agents points at it (the
+  narrowing of the next rounds' schemas was retired by AGENT-CONTEXT-BUDGET slice 2).
 - "Since July" read crm_describe and re-queried: `crm_query` takes `period` (a window name or [from, to]).
 - "Who is below target" lost its table and its "Not reached = ..." note to a later payout query: one table per
   entity, a later entity never replaces the first.
@@ -116,33 +116,6 @@ def test_P7_the_schema_offers_agent_and_period():
 # ------------------------------------------------------------------ a crm_resolve round that named an agent
 
 
-def _schema(name):
-    return {"type": "function", "function": {"name": name}}
-
-
-ALL = [_schema(n) for n in ("crm_query", "crm_describe", "answer", "plan", "crm_resolve", "crm_report_ask",
-                            "crm_order_management_orders_list", "crm_products_find")]
-
-
-def test_N1_a_resolve_round_that_found_only_agents_narrows_the_schemas():
-    from app.services.chatbot.agent.loop import narrow_after_query
-
-    calls = [{"name": "crm_resolve"}]
-    done = [{"name": "crm_resolve", "status": "ok", "agents_only": True}]
-    kept = [s["function"]["name"] for s in narrow_after_query(ALL, calls, done)]
-    assert kept == ["crm_query", "crm_describe", "answer", "plan", "crm_report_ask"]
-
-
-@pytest.mark.parametrize("done", [
-    [{"name": "crm_resolve", "status": "ok", "agents_only": False}],
-    [{"name": "crm_resolve", "status": "invalid", "agents_only": False}],
-])
-def test_N2_a_resolve_round_for_anything_else_keeps_every_schema(done):
-    from app.services.chatbot.agent.loop import narrow_after_query
-
-    assert narrow_after_query(ALL, [{"name": "crm_resolve"}], done) == ALL
-
-
 def test_N3_found_agents_only_when_every_term_is_one_sales_agent():
     from app.services.chatbot.agent.loop import found_agents
 
@@ -197,12 +170,3 @@ def test_P8_agent_on_a_computed_entity_is_exact_never_a_team_containing_it(targe
     assert out["rows"] == [] and "do not show or total other records" in out["instruction"]
     out = run(db, {"entity": "target_list", "agent": "Agent A"})
     assert [r["label"] for r in out["rows"]] == [f"{t['ta']['target_no']}: {t['a'].sales_agent} - Agent A"]
-
-
-def test_N4_a_plan_in_several_parts_keeps_every_schema_after_an_agent_resolve():
-    from app.services.chatbot.agent.loop import narrow_after_query
-
-    done = [{"name": "crm_resolve", "status": "ok", "agents_only": True}]
-    assert narrow_after_query(ALL, [{"name": "plan"}, {"name": "crm_resolve"}], done, plan_parts=2) == ALL
-    kept = narrow_after_query(ALL, [{"name": "plan"}, {"name": "crm_resolve"}], done, plan_parts=1)
-    assert [s["function"]["name"] for s in kept] == ["crm_query", "crm_describe", "answer", "plan", "crm_report_ask"]

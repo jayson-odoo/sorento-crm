@@ -44,7 +44,7 @@ from tests.chatbot.agent.test_agent_writes import (  # noqa: F401 - helpers, not
     round_of,
     run_turn,
     tc,
-    tool_names,
+    usable_names,
 )
 
 LIST = "crm_opportunities_list"
@@ -445,7 +445,7 @@ def test_a_turn_reads_then_proposes_a_stage_move_and_writes_nothing(db):
 
     result, provider = run_turn(db, w, script, text_="move my opportunity to qualified")
 
-    assert {LIST, META, UPDATE, CREATE} <= tool_names(provider)
+    assert {LIST, META, UPDATE, CREATE} <= usable_names(provider)
     assert result.pending_action is not None
     assert PROPOSAL_HEAD in result.reply_text
     assert f"{stage(db, 'new').label} -> {qualified.label}" in result.reply_text

@@ -125,11 +125,13 @@ def _today_names(db, ctx, cat) -> list[str]:
     return [*names, "plan", "answer"]
 
 
-def _staff_ctx(db, principal):
+def _staff_today(db, principal, cat) -> list[str]:
+    """Today's step-1 list for a staff turn, built inside the staff principal as the turn itself runs (panel-only
+    tools are closed outside it)."""
     from app.services.chatbot.agent.access import build_context
 
     with staff_principal.acting_as(principal):
-        return build_context(db, principal.key)
+        return _today_names(db, build_context(db, principal.key), cat)
 
 
 # ------------------------------------------------------------------ the scripted model
@@ -233,7 +235,7 @@ def test_t1_an_all_permissions_staff_turn_offers_only_the_core_set_at_step_one(d
 
     if channel == "panel":
         principal = _principal(_all_user(db))
-        today = _today_names(db, _staff_ctx(db, principal), _catalog())
+        today = _staff_today(db, principal, _catalog())
         result, prov, _rec = _panel(db, principal, [_answer("Hello.")])
     else:
         contact = seed_contact(db)
@@ -254,7 +256,7 @@ def test_t1_an_all_permissions_staff_turn_offers_only_the_core_set_at_step_one(d
 
 def test_t2_the_directory_lists_exactly_the_permitted_non_core_tools_one_short_line_each(db):
     principal = _principal(_all_user(db))
-    today = _today_names(db, _staff_ctx(db, principal), _catalog())
+    today = _staff_today(db, principal, _catalog())
     _result, prov, _rec = _panel(db, principal, [_answer("Hello.")])
     assert LOAD in prov.names(0), prov.names(0)
     load = prov.schema(0, LOAD)
@@ -269,7 +271,7 @@ def test_t2_the_directory_lists_exactly_the_permitted_non_core_tools_one_short_l
 
 def test_t2_a_projects_only_users_directory_names_no_tool_it_lacks(db):
     principal = _principal(seed_user(db, contact_pk=None, slugs=(PROJECTS_VIEW,)))
-    today = _today_names(db, _staff_ctx(db, principal), _catalog())
+    today = _staff_today(db, principal, _catalog())
     _result, prov, _rec = _panel(db, principal, [_answer("Hello.")])
     assert LOAD in prov.names(0), prov.names(0)
     lines = _directory(prov.schema(0, LOAD))
@@ -383,7 +385,7 @@ def test_t8_the_dealer_flow_offers_exactly_todays_dealer_list(db):
     from app.services.chatbot.agent.loop import CANCEL_ACTION, CONFIRM_ACTION, _dealer_tools
 
     principal = _principal(_all_user(db))
-    today = _today_names(db, _staff_ctx(db, principal), _catalog())
+    today = _staff_today(db, principal, _catalog())
     expected = [n for n in today if n in {*_dealer_tools(), "answer", CONFIRM_ACTION, CANCEL_ACTION}]
     _result, prov, _rec = _panel(db, principal, [_answer("Ok.")],
                                  text="give 0123456789 dealer access to ZZT", dealer=True)
@@ -401,7 +403,7 @@ def test_t9_the_previous_agent_turns_tools_are_preloaded_on_a_follow_up_and_abse
     first, prov1, _rec = _panel(db, principal, [_round(_tc(STOCK, {"page": "1"}, "s1")), _answer("Read.")],
                                 text="stock of ZZT-1?", rec=Recorder(result=STOCK_BODY))
     assert first.status == "answered", (first.status, first.reply_text)
-    today = _today_names(db, _staff_ctx(db, principal), _catalog())
+    today = _staff_today(db, principal, _catalog())
     core = _expected_core(today)
 
     follow, prov2, _rec = _panel(db, principal, [_answer("Same.")], text="and last month?")

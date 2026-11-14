@@ -52,7 +52,7 @@ from tests.chatbot.agent.test_agent_writes import (  # noqa: F401 - helpers, not
     proposal_script,
     round_of,
     tc,
-    tool_names,
+    usable_names,
 )
 from tests.chatbot.agent.test_agent_writes_contacts import (  # noqa: F401 - helpers, not tests
     MCH_TAG,
@@ -454,9 +454,9 @@ def test_r1_write_tools_are_offered_to_an_operator_only_when_they_hold_the_slugs
     _, as_linked = go(db, w, [answer_("Hi.")], operator=w.user_id)
     _, as_chat = go(db, w, [answer_("Hi.")], operator=None)
 
-    assert not ({UPDATE_ASK, CONFIRM, CANCEL} & tool_names(as_stranger))
+    assert not ({UPDATE_ASK, CONFIRM, CANCEL} & usable_names(as_stranger))
     for offered in (as_holder, as_linked, as_chat):
-        assert {UPDATE_ASK, CONFIRM, CANCEL} <= tool_names(offered)
+        assert {UPDATE_ASK, CONFIRM, CANCEL} <= usable_names(offered)
     assert first.pending_action is not None
 
 

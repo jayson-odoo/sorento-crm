@@ -704,9 +704,13 @@ def test_AC_E2_a_rate_only_line_is_flagged_and_others_are_not(db):
 
 
 def test_the_model_is_offered_the_tool_on_a_staff_panel_turn_for_a_slug_holder(db):
+    from tests.chatbot.agent.test_agent_writes import directory_of
+
     user_id = _viewer(db)
-    result, prov, _rec = _panel_run(db, user_id, [_answer()])
-    offered = {t["function"]["name"]: t["function"] for t in prov.seen[0]["tools"]}
+    # AGENT-CONTEXT-BUDGET slice 2: listed in crm_tools_load at step 1, its full schema offered once loaded.
+    result, prov, _rec = _panel_run(db, user_id, [_round(_tc("crm_tools_load", {"names": [LINES]}, "l1")), _answer()])
+    assert LINES in directory_of(prov.seen[0]["tools"])
+    offered = {t["function"]["name"]: t["function"] for t in prov.seen[1]["tools"]}
     assert LINES in offered, sorted(offered)
     props = offered[LINES]["parameters"]["properties"]
     assert "project_id" in props and "refs" in props, props

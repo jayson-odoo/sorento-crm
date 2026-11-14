@@ -23,7 +23,7 @@ from tests.chatbot.agent.test_agent_bulk_grant import (  # noqa: F401  (fixtures
     local,
     make_world,
 )
-from tests.chatbot.agent.test_agent_writes import answer_, round_of, run_turn, tc
+from tests.chatbot.agent.test_agent_writes import answer_, directory_of, round_of, run_turn, tc
 
 EDIT_WRITE = "crm_contact_edit"
 
@@ -128,6 +128,8 @@ def test_a_plain_turn_after_no_table_shows_no_table(db):
 def test_with_the_side_call_saying_no_the_contact_edit_is_offered_on_the_batch_tool(db):
     """The routing seam itself: a turn not judged dealer access keeps every permitted batch write."""
     w = make_world(db)
-    _, provider = turn(db, w, PASS_TURNS["P1"])
-    batch_tool = [t for t in provider.seen[0]["tools"] if t["function"]["name"] == BATCH]
+    # AGENT-CONTEXT-BUDGET slice 2: the batch tool is listed in crm_tools_load at step 1; once loaded, its schema.
+    _, provider = turn(db, w, PASS_TURNS["P1"], [round_of(tc("crm_tools_load", {"names": [BATCH]}, "l1")), answer_("Done.")])
+    assert BATCH in directory_of(provider.seen[0]["tools"])
+    batch_tool = [t for t in provider.seen[1]["tools"] if t["function"]["name"] == BATCH]
     assert batch_tool and EDIT_WRITE in batch_tool[0]["function"]["parameters"]["properties"]["write"]["enum"]
