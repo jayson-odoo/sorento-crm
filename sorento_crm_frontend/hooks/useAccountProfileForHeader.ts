@@ -29,7 +29,12 @@ export function useAccountProfileForHeader() {
         avatar?: string | null;
         name?: string | null;
         email?: string | null;
-        salesperson?: { portal_kinds: string[]; portal_slug: string; contact_id?: string | null } | null;
+        salesperson?: {
+          portal_kinds: string[];
+          portal_slug: string;
+          contact_id?: string | null;
+          contact_name?: string | null;
+        } | null;
       }>;
     },
     enabled: status === 'authenticated',
@@ -46,6 +51,8 @@ export function useAccountProfileForHeader() {
   const salesperson = profile?.salesperson
     ? { portalKinds: profile.salesperson.portal_kinds, portalSlug: profile.salesperson.portal_slug,
         contactId: profile.salesperson.contact_id ?? null,
+        // Left out when absent (the shape the existing callers and tests read is unchanged).
+        contactName: profile.salesperson.contact_name ?? undefined,
       }
     : null;
 

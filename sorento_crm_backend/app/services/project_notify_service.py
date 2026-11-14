@@ -223,31 +223,86 @@ def notify_reassigned(
     db: Session,
     *,
     project: Project,
-    request,
+    request=None,
     previous_owner_id: Optional[str],
     new_owner_id: str,
+    dedup_key: Optional[str] = None,
 ) -> int:
-    """An interest was approved and the owner changed: tell the new and the previous owner
-    (PROJECT-REGISTER-V2 F2)."""
+    """The owner changed: tell the new and the previous owner (PROJECT-REGISTER-V2 F2,
+    PROJECT-LEADS-REASSIGN A1). The dedup key is one per REASSIGNMENT, not per request or
+    project: a reassign back to someone who held the project before must arrive again (A2)."""
     label = project_label(project)
     recipients = {str(new_owner_id)}
     if previous_owner_id:
         recipients.add(str(previous_owner_id))
+    data = {
+        "project_id": str(project.id),
+        "project_code": project.project_code,
+        "link": f"/project-sales/{project.id}",
+    }
+    if request is not None:
+        data["request_id"] = str(request.id)
     return _send(
         db,
         user_ids=sorted(recipients),
         notif_type="project_reassigned",
         title=f"{label} was reassigned",
         body=f"{label}: {project_display_name(project)} has a new owner.",
-        data={
-            "project_id": str(project.id),
-            "project_code": project.project_code,
-            "request_id": str(request.id),
-            "link": f"/project-sales/{project.id}",
-        },
+        data=data,
         project_id=str(project.id),
-        dedup_key=f"{request.id}:reassigned",
+        dedup_key=dedup_key or (f"{request.id}:reassigned" if request is not None else str(uuid.uuid4())),
     )
+
+
+# A reassignment is recorded inside the caller's transaction, but the notification service
+# commits, so the send waits for the caller's own commit: the reassignment queues itself on the
+# session and the route sends the queue after `db.commit()` (or drops it on rollback).
+_PENDING_REASSIGNED_KEY = "project_reassigned_pending"
+
+
+def queue_reassigned(
+    db: Session, *, project_id: str, previous_owner_id: Optional[str], new_owner_id: str
+) -> None:
+    db.info.setdefault(_PENDING_REASSIGNED_KEY, []).append(
+        {
+            "project_id": str(project_id),
+            "previous_owner_id": previous_owner_id,
+            "new_owner_id": new_owner_id,
+            "dedup_key": f"{uuid.uuid4()}:reassigned",
+        }
+    )
+
+
+def drop_queued_reassigned(db: Session) -> None:
+    db.info.pop(_PENDING_REASSIGNED_KEY, None)
+
+
+def send_queued_reassigned(db: Session) -> int:
+    """Send every reassignment queued on this session. Call only after the commit.
+
+    Best-effort per notice: the reassignment has already saved, so a notice that fails to build
+    or send is logged and never turns that saved change into a 500."""
+    pending = db.info.pop(_PENDING_REASSIGNED_KEY, None) or []
+    sent = 0
+    for item in pending:
+        try:
+            project = db.get(Project, item["project_id"])
+            if project is None:
+                continue
+            sent += notify_reassigned(
+                db,
+                project=project,
+                previous_owner_id=item["previous_owner_id"],
+                new_owner_id=item["new_owner_id"],
+                dedup_key=item["dedup_key"],
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "project reassigned notice not sent: project=%s (%s)", item.get("project_id"), exc
+            )
+            if not db.is_active:
+                db.rollback()
+    return sent
 
 
 def floor_breach_dedup_key(event: Dict[str, Any]) -> str:

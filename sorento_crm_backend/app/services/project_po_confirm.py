@@ -26,11 +26,13 @@ from app.models.project_so import (
 )
 from app.models.projects import (
     Project,
+    ProjectParty,
     ProjectPurchaseOrder,
     ProjectPurchaseOrderLine,
     ProjectQuotation,
     ProjectQuotationVersion,
 )
+from app.services import customer_code_map
 from app.services.error_handler import AppException
 from app.services.project_po_reading import (  # noqa: F401 - shared vocabulary
     STATE_QUEUED,
@@ -76,8 +78,6 @@ from app.services.project_po_reading import (  # noqa: F401 - shared vocabulary
     dedup_key,
     successor_po_number,
     _looks_like_code,
-    _squash,
-    _code_tokens,
     _proposed_code,
     classify_annotation,
 )
@@ -142,6 +142,17 @@ def blocking_notes_message(
     )
 
 
+def lines_need_attention_message(line_nos: List[int]) -> str:
+    """AC-Q3: every line still holding Confirm, by number, and what to do about it."""
+    named = [str(n) for n in line_nos]
+    listed = named[0] if len(named) == 1 else f"{', '.join(named[:-1])} and {named[-1]}"
+    noun, verb = ("Line", "needs") if len(named) == 1 else ("Lines", "need")
+    return (
+        f"{noun} {listed} still {verb} a quantity or a suggestion accepted. Enter a "
+        "quantity above zero, and accept or change each suggested product or quantity."
+    )
+
+
 class POConfirmationMixin:
     """Requires ``self.db`` and the lifecycle lookups."""
 
@@ -191,7 +202,41 @@ class POConfirmationMixin:
                 code="po_version_no_live_lines",
             )
 
+        attention = [
+            line.line_no
+            for line in live
+            if _to_decimal(line.qty) is None
+            or _to_decimal(line.qty) <= 0
+            or self.has_suggestion(version, line)
+        ]
+        if attention:
+            raise AppException(
+                status_code=422,
+                message=lines_need_attention_message(sorted(attention)),
+                code="po_version_lines_need_attention",
+            )
+
         po = self.get_po(version.purchase_order_id)
+        # Whose codes this PO teaches: the issuer's customer, else the project lead's buyer.
+        # Refused only when nobody is named at all. A chosen issuer that is not linked to a
+        # customer confirms, learns nothing, and the result says why (lead decision: no
+        # extra refusals).
+        customer_id = customer_code_map.customer_id_for_po(self.db, po)
+        codes_not_remembered: Optional[str] = None
+        codes_not_remembered_party: Optional[str] = None
+        if not customer_id and po.issuing_party_id:
+            party = self.db.get(ProjectParty, po.issuing_party_id)
+            codes_not_remembered = "issuer_not_linked"
+            codes_not_remembered_party = party.name if party is not None else None
+        elif not customer_id:
+            raise AppException(
+                status_code=422,
+                message=(
+                    "Choose who issued this PO under Issued by, so its codes are remembered "
+                    "for that customer."
+                ),
+                code="po_version_issuer_required",
+            )
         header = (version.extracted_json or {}).get("header") or {}
 
         number = str(header.get("po_number") or "").strip()
@@ -261,12 +306,29 @@ class POConfirmationMixin:
                         "product_code": code or None,
                         "description": line.description_raw,
                         "unit_price": _money(_to_decimal(line.unit_price)),
-                        "quantity": _to_decimal(line.qty) or Decimal("1"),
+                        # Never a silent 1 (AC-Q1): the gate above refuses an empty qty.
+                        "quantity": _to_decimal(line.qty),
                         "uom": line.uom_raw,
                         "sort_order": line.line_no,
                     },
                 )
             )
+
+        # Every product a person chose on this document (accepted or picked by hand) is
+        # remembered for the customer now that the customer is known. Exact-code and map
+        # lines already resolve by themselves and are left as they are.
+        for line in live if customer_id else []:
+            if line.resolution_source in ("accepted", "manual") and line.resolved_product_id:
+                customer_code_map.remember_code(
+                    self.db,
+                    company_id=line.company_id,
+                    customer_id=customer_id,
+                    customer_code=customer_code_map.customer_code_for(
+                        line.stock_code_raw, line.description_raw
+                    ),
+                    product_id=line.resolved_product_id,
+                    actor_user_id=actor_user_id,
+                )
 
         totals = self.recompute_totals(version)
         po.po_amount = totals["lines_total"]
@@ -286,6 +348,9 @@ class POConfirmationMixin:
             "po_amount": po.po_amount,
             "model_mismatch_count": sum(1 for line in written if line.model_mismatch),
             "price_mismatch_count": sum(1 for line in written if line.price_mismatch),
+            # Null both when a customer is known and the codes were remembered.
+            "codes_not_remembered": codes_not_remembered,
+            "codes_not_remembered_party": codes_not_remembered_party,
         }
 
     def _bind_quotation_version(
@@ -311,6 +376,24 @@ class POConfirmationMixin:
         """
         if po.quotation_version_id:
             return None
+        version = self._quotation_version_for(po)
+        if version is None:
+            return None
+        po.quotation_version_id = version.id
+        self.db.flush()
+        return version
+
+    def _quotation_version_for(
+        self, po: ProjectPurchaseOrder
+    ) -> Optional[ProjectQuotationVersion]:
+        """The quotation version ``po`` is (or would be) checked against, without binding.
+
+        The PO's own binding when it has one; otherwise the one ``_bind_quotation_version``
+        would bind, by its rules. The PO reader's matcher offers that version's products
+        as candidates (PO-UPLOAD-MATCHING), so read time and confirm agree on the scope.
+        """
+        if po.quotation_version_id:
+            return self.db.get(ProjectQuotationVersion, po.quotation_version_id)
 
         query = self.db.query(ProjectQuotation).filter(
             ProjectQuotation.project_id == po.project_id
@@ -344,11 +427,6 @@ class POConfirmationMixin:
             .order_by(ProjectQuotationVersion.version_no.desc())
             .first()
         )
-        if version is None:
-            return None
-
-        po.quotation_version_id = version.id
-        self.db.flush()
         return version
 
 

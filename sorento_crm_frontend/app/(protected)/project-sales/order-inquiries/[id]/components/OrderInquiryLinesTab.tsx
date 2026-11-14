@@ -35,7 +35,9 @@ import {
 import { DEFAULT_HIDDEN_COLUMNS } from '../../components/orderInquiryWorklistColumns';
 import {
   StagedReserveEntry,
+  SPARE_PART_REQUEST_HIDDEN_COLUMNS,
   useOrderInquiryHeaderLinesColumns,
+  type SparePartLineEdit,
 } from './orderInquiryHeaderLinesColumns';
 import {
   foldInquiryLines,
@@ -149,6 +151,7 @@ export function OrderInquiryLinesTab({
   decideSlot,
   splitSheet,
   reserveRequests = NO_REQUESTS,
+  sparePart,
 }: {
   lines: OrderInquiryWorklistRow[];
   isLoading: boolean;
@@ -184,6 +187,21 @@ export function OrderInquiryLinesTab({
   /** OI-RESERVE-ROUND: this OI's reserve requests; feeds the Request filter, which a
    * one-OI email link (`?reserve=<id>[,<id>]`) ticks. */
   reserveRequests?: OrderInquiryReserveRequest[];
+  /** SPARE-PART-ORDER-REQUEST: a spare part request's own columns (unit price, total, the
+   *  approver's in-place edits) and its row photos. SPARE-PART-OR-B: `view` says which page
+   *  reads them ('request' = its order request record, else the order inquiry), and on the
+   *  order request page an open revision lets its qtys change (`revisionState`,
+   *  `canEditRevision`). */
+  sparePart?: {
+    view?: 'request' | 'inquiry';
+    headerState?: string | null;
+    revisionState?: string | null;
+    canEditRevision?: boolean;
+    canDecide: boolean;
+    canEditPhotos: boolean;
+    currency?: string | null;
+    onEditLine?: (row: OrderInquiryWorklistRow, edit: SparePartLineEdit) => void;
+  };
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -273,6 +291,12 @@ export function OrderInquiryLinesTab({
     [lines],
   );
   const { data: attachmentsByLine } = useSoLineAttachmentLookup(attachmentLineIds);
+  // A spare part request's photos hang off its rows, one lookup for the tab.
+  const sparePartRowIds = useMemo(
+    () => (sparePart ? lines.map((row) => row.id) : []),
+    [lines, sparePart],
+  );
+  const { data: attachmentsByRow } = useSoLineAttachmentLookup(sparePartRowIds, 'order_inquiry_row');
   const columns = useOrderInquiryHeaderLinesColumns({
     canReserve,
     stagedByRowId,
@@ -283,8 +307,21 @@ export function OrderInquiryLinesTab({
     onLineHistoryClick,
     onUndoStaged,
     attachmentsByLine,
-    canEditAttachments,
+    canEditAttachments: sparePart ? sparePart.canEditPhotos : canEditAttachments,
     splitSheet,
+    ...(sparePart
+      ? {
+          inquiryType: 'spare_part_request' as const,
+          sparePartView: sparePart.view ?? 'inquiry',
+          headerState: sparePart.headerState,
+          revisionState: sparePart.revisionState ?? null,
+          canEditRevision: Boolean(sparePart.canEditRevision),
+          canDecide: sparePart.canDecide,
+          onEditLine: sparePart.onEditLine,
+          currency: sparePart.currency,
+          attachmentsByRow,
+        }
+      : {}),
   });
 
   // The param is dropped the moment the reader touches a filter themselves - it has done
@@ -347,7 +384,11 @@ export function OrderInquiryLinesTab({
     // still applies afterwards and wins.
     initialState: {
       columnVisibility: Object.fromEntries(
-        DEFAULT_HIDDEN_COLUMNS.map((id) => [id, false]),
+        [
+          ...DEFAULT_HIDDEN_COLUMNS,
+          // SPARE-PART-OR-B U3.3b: PO starts hidden on the order request page.
+          ...(sparePart?.view === 'request' ? SPARE_PART_REQUEST_HIDDEN_COLUMNS : []),
+        ].map((id) => [id, false]),
       ),
     },
     state: { pagination, sorting, rowSelection: lineSelection, globalFilter: search, expanded },
@@ -413,7 +454,13 @@ export function OrderInquiryLinesTab({
       isLoading={isLoading}
       error={error}
       onRetry={onRetry}
-      tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
+      // A spare part grid is dense: ten columns, the approver's inputs among them, in 950 px.
+      tableLayout={{
+        width: 'fixed',
+        columnsResizable: true,
+        columnsVisibility: true,
+        dense: Boolean(sparePart),
+      }}
       emptyMessage={
         allLineRows.length === 0
           ? lines.length > 0 && lines.every((row) => row.state === 'cancelled')

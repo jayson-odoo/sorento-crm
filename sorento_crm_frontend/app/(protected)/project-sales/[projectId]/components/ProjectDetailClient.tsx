@@ -1,7 +1,6 @@
 'use client';
 
 import * as React from 'react';
-import { useLookupSetOptions } from '@/hooks/useLookupSetOptions';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
@@ -47,6 +46,7 @@ import { useHasPermission } from '@/hooks/usePermissions';
 import DetailActions from '@/components/common/DetailActions';
 import { TruncatedTextCell } from '@/components/common/TruncatedTextCell';
 import { useProjectStatusGraph } from '@/app/(protected)/project-sales/_shared/hooks/useProjectStatusGraph';
+import { useLeadSourceLabel } from '@/app/(protected)/project-sales/_shared/hooks/useLeadSourceLabel';
 import type { Project, ProjectPossibleDuplicate } from '../../_shared/types/project.types';
 import {
   projectsPagerQuery,
@@ -86,6 +86,7 @@ import { SalesOrdersPanel } from './SalesOrdersPanel';
 import { QuotationsPanel } from './QuotationsPanel';
 import { SampleRequestsPanel } from './SampleRequestsPanel';
 import { RelatedRecordsPanel, RelatedTabCount } from './RelatedRecordsPanel';
+import { LEGACY_SPONSORSHIP_TAB } from './relatedRecordTypes';
 import { StakeholdersPanel } from './StakeholdersPanel';
 import { TasksPanel } from './TasksPanel';
 
@@ -127,9 +128,6 @@ const STAGE_FORM_ROUTE: Record<string, (projectId: string) => string> = {
   // The PO tab with its existing "Upload a customer PO" dialog already open.
   po_received: (id) => `/project-sales/${id}?tab=orders&upload=po`,
 };
-
-/** The retired Sponsorship Form tab; its old links open Related, filtered to sponsorship forms. */
-const LEGACY_SPONSORSHIP_TAB = 'sponsorships';
 
 export function resolveProjectTab(requested: string | null): TabId {
   if (requested === 'samples') return 'sample-requests';
@@ -511,10 +509,9 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
           ))}
         </TabsList>
         <TabsContent value="overview">
-          {/* One even grid: every card in a row is the same height and the columns line up
-              (owner, 13 Oct: "aligned and nicer"). Critical runs full width under it, because
-              it carries its own actions and notes and reads badly squeezed into a column. */}
-          <div className="grid gap-4 md:grid-cols-2 [&>*]:h-full">
+          {/* One column, every card full width, at every width (owner, 14 Nov,
+              PROJECT-LEADS-REASSIGN C1): the Access card's leads list needs the room. */}
+          <div className="grid gap-4">
             <Section title="The development">
               <div className="min-w-0 sm:col-span-2">
                 <dt className="text-xs text-muted-foreground">Project title</dt>
@@ -816,10 +813,7 @@ function RejectProjectDialog({
  */
 function SourceCard({ project }: { project: Project }) {
   // The project's own lead source (PS-REGISTRATION-V3), labelled from its editable list.
-  const sources = useLookupSetOptions('project_lead_source');
-  const options = Array.isArray(sources.data) ? sources.data : [];
-  const sourceLabel =
-    options.find((o) => o.value === project.lead_source)?.label ?? labelise(project.lead_source);
+  const sourceLabel = useLeadSourceLabel(project.lead_source);
   return (
     <Card>
       <CardHeader>
@@ -885,13 +879,6 @@ function formatMyr(value: string): string {
   const amount = Number(value);
   if (Number.isNaN(amount)) return value;
   return `RM ${amount.toLocaleString('en-MY', { maximumFractionDigits: 2 })}`;
-}
-
-/** A stored code ("tender_notice") as a readable phrase. No dictionary to drift. */
-function labelise(value?: string | null): string | null {
-  if (!value) return null;
-  const words = value.replace(/[_-]+/g, ' ').trim();
-  return words ? words.charAt(0).toUpperCase() + words.slice(1) : null;
 }
 
 function formatDate(iso?: string | null): string | null {

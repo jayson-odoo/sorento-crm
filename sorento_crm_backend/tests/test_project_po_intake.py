@@ -177,6 +177,55 @@ def _buimaco_like_page() -> PageResult:
     )
 
 
+@pytest.fixture(autouse=True)
+def _no_line_matcher_model(monkeypatch):
+    """PO-UPLOAD-MATCHING: a read puts unresolved lines to one model call
+    (`project_po_matching.ask_line_matcher`). No test in this file reaches a provider: by
+    default the matcher answers nothing, so lines it would have been asked about stay
+    unmatched. Tests that need a pick replace it again (`_matcher_answers`)."""
+    try:
+        from app.services import project_po_matching
+    except ImportError:  # red phase: the module does not exist yet, so nothing can call it
+        return
+    monkeypatch.setattr(
+        project_po_matching, "ask_line_matcher", lambda db, lines, **kwargs: []
+    )
+
+
+def _lead_buyer(db, project) -> str:
+    """Give the project a lead whose buyer is a customer, and return that customer's id.
+
+    PO-UPLOAD-MATCHING crew pass 2: Confirm needs to know whose codes it is learning, and
+    refuses (`po_version_issuer_required`) when neither the PO's issuer nor the project
+    names a customer. The tests in this file are about reading and confirming, not about
+    that gate, so their project names a buyer.
+    """
+    from app.models.order import Customer
+    from app.models.projects import ProjectLead
+
+    customer = Customer(
+        id=_uid(),
+        company_id=project.company_id,
+        customer_code=f"ZZT-{_uid()[:8]}",
+        customer_name=f"{MARKER} buyer",
+    )
+    db.add(customer)
+    db.flush()
+    lead = ProjectLead(
+        id=_uid(),
+        company_id=project.company_id,
+        lead_code=f"ZZT-L-{_uid()[:6]}",
+        customer_id=customer.id,
+        title=f"{MARKER} lead",
+        normalised_title=f"{MARKER} lead",
+    )
+    db.add(lead)
+    db.flush()
+    project.lead_id = lead.id
+    db.flush()
+    return customer.id
+
+
 @pytest.fixture()
 def seeded():
     with blank_session() as db:
@@ -184,6 +233,7 @@ def seeded():
         project_seed_service.run(db, company_id=company_id)
         owner = _user(db, f"{MARKER} CONTACT AH")
         project = _project(db, company_id, owner)
+        _lead_buyer(db, project)
         yield db, project, owner
 
 
@@ -1820,194 +1870,255 @@ def _catalogue(db, *codes: str, company_id: Optional[str] = None) -> dict[str, s
     return out
 
 
-def test_a_code_spelt_with_different_punctuation_is_the_same_product(seeded):
-    """Their paper says SRTFH15CR, our item master says SRTFH15-CR. One product.
-
-    Taken from line 30 of the client's real purchase order.
-    """
-    db, _project, _owner = seeded
-    ids = _catalogue(db, "SRTFH15-CR")
-    service = ProjectPOExtractionService(db)
-
-    product_id, source = service._resolve_product(
-        "IFH15CR", "ADJUSTABLE WATER FLOW RATE SORENTO SRTFH15CR FLEXIBLE HOSE 1.5M"
-    )
-
-    assert product_id == ids["SRTFH15-CR"]
-    assert source == "code_normalised"
+# PO-UPLOAD-MATCHING (14 Nov 2026) replaced the loose string tiers (`code_normalised`,
+# `code_reordered`, `code_truncated`) and the description-token rule with one model call per
+# batch of unresolved lines (`project_po_matching.ask_line_matcher`), choosing only among the
+# candidates the line was offered. The cases below are the same real-paper shapes as before;
+# what changed is that a near-code is now a SUGGESTION a person accepts, never a silent match.
 
 
-def test_a_code_whose_parts_are_in_another_order_is_the_same_product(seeded):
-    """They write B2155-BLUE-NL, we stock B2155-NL-BLUE. Lines 4, 19 and 22 of the
-    real PO, which is three lines of one document lost to a word order."""
-    db, _project, _owner = seeded
-    ids = _catalogue(db, "B2155-NL-BLUE")
-    service = ProjectPOExtractionService(db)
+def _matcher_answers(monkeypatch, answers: dict) -> list:
+    """Replace the one model call with a recording fake answering ``answers[line_no]``."""
+    from app.services import project_po_matching
 
-    product_id, source = service._resolve_product(
-        "CB2155-BLUE", "SORENTO B2155-BLUE-NL ANGLE VALVE"
-    )
+    calls: list = []
 
-    assert product_id == ids["B2155-NL-BLUE"]
-    assert source == "code_reordered"
+    def fake(db, lines, *, company_id=None, **kwargs):
+        calls.append(list(lines))
+        return [
+            {"line_no": int(item["line_no"]), **answers[int(item["line_no"])]}
+            for item in lines
+            if int(item["line_no"]) in answers
+        ]
 
-
-def test_a_truncated_column_plus_the_description_names_one_product(seeded):
-    """The customer's stock-code column is narrow and cuts the code off.
-
-    Line 1 of the real PO prints `SRTWC86` in the column, and the description carries
-    the rest. Neither half identifies the product alone: the prefix matches dozens, and
-    the description spells it `SRTW8613-RL` where we spell it `SRTWC8613-RL`. Together
-    they are unambiguous, which is exactly how a person reads that row.
-    """
-    db, _project, _owner = seeded
-    ids = _catalogue(db, "SRTWC8613-RL", "SRTWC8608-SC", "SRTWC8640-P")
-    service = ProjectPOExtractionService(db)
-
-    product_id, source = service._resolve_product(
-        "SRTWC86", "SORENTO SRTW8613-RL ONE PIECE WC - SET - Washdown One-Piece WC"
-    )
-
-    assert product_id == ids["SRTWC8613-RL"]
-    assert source == "code_truncated"
-
-
-def test_one_code_stocked_by_two_companies_is_one_answer_not_an_ambiguity(seeded):
-    """The same code exists once per company, so a cross-company read sees it twice.
-
-    That is one product spelt once, not two candidates. Counting ROWS rather than
-    distinct CODES is the bug that made the loose matcher resolve nothing at all on the
-    client's real document, where the item master carries `C-FH12` for both companies.
-    """
-    from app.models.company import Company
-
-    db, _project, _owner = seeded
-    other_company = str(uuid.uuid4())
-    db.add(Company(id=other_company, name=f"{MARKER} Other", code=str(uuid.uuid4())[:8]))
-    db.flush()
-
-    ids = _catalogue(db, "C-FH16")
-    _catalogue(db, "C-FH16", company_id=other_company)
-    service = ProjectPOExtractionService(db)
-
-    product_id, source = service._resolve_product("CFH16", "CABANA C-FH16 FLEXIBLE HOSE")
-
-    assert product_id in {ids["C-FH16"], product_id}
-    assert product_id is not None
-    assert source == "code_normalised"
-
-
-def test_two_different_codes_that_both_fit_are_left_for_a_person(seeded):
-    """Refusing is the feature. On a 1.8 million ringgit order, quietly attaching the
-    wrong product costs more than asking, so a relaxed form that fits two DIFFERENT
-    codes resolves to neither."""
-    db, _project, _owner = seeded
-    _catalogue(db, "SRT-100-A", "SRT-100-B")
-    service = ProjectPOExtractionService(db)
-
-    product_id, source = service._resolve_product("SRT100", "SORENTO SRT100 SOMETHING")
-
-    assert product_id is None
-    assert source is None
-
-
-def test_a_product_that_is_simply_not_stocked_stays_unresolved(seeded):
-    """Half the client's unresolved lines name something genuinely absent from the item
-    master. Saying so is the correct answer, and inventing a near neighbour is not."""
-    db, _project, _owner = seeded
-    _catalogue(db, "SRTWC8613-RL")
-    service = ProjectPOExtractionService(db)
-
-    product_id, source = service._resolve_product(
-        "SRTCB2829", "SORENTO SRTCB2829 DECK MOUNT KITCHEN SINK TAP"
-    )
-
-    assert product_id is None
-    assert source is None
-
-
-def test_an_exact_code_still_wins_before_anything_is_relaxed(seeded):
-    """Order matters: the loose tiers must never pre-empt a character-for-character
-    match, or a correct resolution could be replaced by a plausible one."""
-    db, _project, _owner = seeded
-    ids = _catalogue(db, "SRTWC8613-RL", "SRTWC8613RL")
-    service = ProjectPOExtractionService(db)
-
-    product_id, source = service._resolve_product("SRTWC8613-RL", "SORENTO ONE PIECE WC")
-
-    assert product_id == ids["SRTWC8613-RL"]
-    assert source == "code"
-
-
-# ---------------------------------------------- the catalogue is read once per document
-
-
-def _counting_execute(db):
-    """Patch ``db.execute`` to count every statement sent, returning the running list.
-
-    Legacy ``Query.all()`` routes through ``session.execute`` in SQLAlchemy 2.0, so
-    this catches ``db.query(...)`` calls too - the shape ``_catalogue_index`` uses.
-    """
-    calls: list[str] = []
-    original = db.execute
-
-    def counting(statement, *args, **kwargs):
-        calls.append(str(statement))
-        return original(statement, *args, **kwargs)
-
-    db.execute = counting
+    monkeypatch.setattr(project_po_matching, "ask_line_matcher", fake)
     return calls
 
 
-def test_the_catalogue_is_indexed_once_and_reused_across_lines(seeded):
-    """B4 (19 Aug follow-up): resolving several unmatched lines on one document must
-    not re-SELECT the whole catalogue per line.
-
-    Three lines here all miss the exact tiers and fall to the loose matcher. Before
-    memoising, each one ran its own ``SELECT id, product_code FROM products`` and
-    rebuilt both lookup dicts from scratch; now the SELECT happens once."""
-    db, _project, _owner = seeded
-    _catalogue(db, "SRTFH15-CR", "B2155-NL-BLUE", "SRTWC8613-RL")
+def _read_one(db, project, owner, number: str, *rows) -> tuple:
     service = ProjectPOExtractionService(db)
-
-    calls = _counting_execute(db)
-
-    for stock_code, description in (
-        ("IFH15CR", "ADJUSTABLE WATER FLOW RATE SORENTO SRTFH15CR FLEXIBLE HOSE 1.5M"),
-        ("CB2155-BLUE", "SORENTO B2155-BLUE-NL ANGLE VALVE"),
-        ("SRTWC86", "SORENTO SRTW8613-RL ONE PIECE WC"),
-    ):
-        product_id, source = service._resolve_product(stock_code, description)
-        assert product_id is not None, f"{stock_code} did not resolve"
-        assert source is not None
-
-    # The catalogue-index projection is exactly (id, product_code) - narrower than the
-    # exact-match tiers' `SELECT *`, so this substring names only the SELECT under test.
-    marker = "products.product_code AS products_product_code \nFROM products"
-    catalogue_selects = [c for c in calls if marker in c]
-    assert len(catalogue_selects) == 1, catalogue_selects
+    version = _version(db, _po(db, project, owner, number))
+    service.persist_pages(version, [_page(1, lines=list(rows))])
+    return service, version, {line.line_no: line for line in service._lines(version.id)}
 
 
-def test_the_catalogue_index_is_memoised_per_company(seeded):
-    """The cache is identity-checked, not content-checked: a second call for the SAME
-    company must return the EXACT SAME dicts, proving no fresh SELECT ran, while a
-    different company still gets its own (correctness the memo must not break)."""
+def _offered(calls: list, line_no: int) -> set:
+    return {
+        candidate["code"]
+        for batch in calls
+        for item in batch
+        if int(item["line_no"]) == line_no
+        for candidate in item.get("candidates") or []
+    }
+
+
+def test_a_code_spelt_with_different_punctuation_is_suggested_not_matched(seeded, monkeypatch):
+    """Their paper says SRTFH15CR, our item master says SRTFH15-CR (line 30 of the client's
+    real PO). Offered to the matcher as a catalogue candidate; its pick is a suggestion."""
+    db, project, owner = seeded
+    ids = _catalogue(db, "SRTFH15-CR", company_id=project.company_id)
+    calls = _matcher_answers(
+        monkeypatch, {1: {"product_code": "SRTFH15-CR", "confidence": "high", "options": []}}
+    )
+
+    _service, _version_row, lines = _read_one(
+        db, project, owner, "PO-PUNCT",
+        {"no": 1, "stock_code": "IFH15CR",
+         "description": "ADJUSTABLE WATER FLOW RATE SORENTO SRTFH15CR FLEXIBLE HOSE 1.5M",
+         "qty": 1, "unit_price": 10, "amount": 10},
+    )
+
+    assert "SRTFH15-CR" in _offered(calls, 1)
+    assert lines[1].resolved_product_id == ids["SRTFH15-CR"]
+    assert lines[1].resolution_source == "suggested"
+
+
+def test_a_code_whose_parts_are_in_another_order_is_suggested_not_matched(seeded, monkeypatch):
+    """They write B2155-BLUE-NL, we stock B2155-NL-BLUE (lines 4, 19 and 22 of the real PO)."""
+    db, project, owner = seeded
+    ids = _catalogue(db, "B2155-NL-BLUE", company_id=project.company_id)
+    calls = _matcher_answers(
+        monkeypatch, {1: {"product_code": "B2155-NL-BLUE", "confidence": "high", "options": []}}
+    )
+
+    _service, _version_row, lines = _read_one(
+        db, project, owner, "PO-ORDER",
+        {"no": 1, "stock_code": "CB2155-BLUE", "description": "SORENTO B2155-BLUE-NL ANGLE VALVE",
+         "qty": 1, "unit_price": 10, "amount": 10},
+    )
+
+    assert "B2155-NL-BLUE" in _offered(calls, 1)
+    assert lines[1].resolved_product_id == ids["B2155-NL-BLUE"]
+    assert lines[1].resolution_source == "suggested"
+
+
+def test_a_truncated_column_plus_the_description_is_suggested_not_matched(seeded, monkeypatch):
+    """Line 1 of the real PO prints `SRTWC86` in the narrow column; the description carries
+    `SRTW8613-RL`. The matcher is offered the catalogue neighbours and picks one."""
+    db, project, owner = seeded
+    ids = _catalogue(
+        db, "SRTWC8613-RL", "SRTWC8608-SC", "SRTWC8640-P", company_id=project.company_id
+    )
+    calls = _matcher_answers(
+        monkeypatch, {1: {"product_code": "SRTWC8613-RL", "confidence": "medium", "options": []}}
+    )
+
+    _service, _version_row, lines = _read_one(
+        db, project, owner, "PO-TRUNC",
+        {"no": 1, "stock_code": "SRTWC86",
+         "description": "SORENTO SRTW8613-RL ONE PIECE WC - SET - Washdown One-Piece WC",
+         "qty": 1, "unit_price": 10, "amount": 10},
+    )
+
+    assert "SRTWC8613-RL" in _offered(calls, 1)
+    assert lines[1].resolved_product_id == ids["SRTWC8613-RL"]
+    assert lines[1].resolution_source == "suggested"
+
+
+def test_one_code_stocked_by_two_companies_suggests_the_po_companys_row(seeded, monkeypatch):
+    """The same code exists once per company. The PO's company row is the one suggested."""
     from app.models.company import Company
 
-    db, _project, _owner = seeded
+    db, project, owner = seeded
     other_company = str(uuid.uuid4())
     db.add(Company(id=other_company, name=f"{MARKER} Other", code=str(uuid.uuid4())[:8]))
     db.flush()
-    _catalogue(db, "SRTWC8613-RL")
-    service = ProjectPOExtractionService(db)
+    ids = _catalogue(db, "C-FH16", company_id=project.company_id)
+    elsewhere = _catalogue(db, "C-FH16", company_id=other_company)
+    _matcher_answers(
+        monkeypatch, {1: {"product_code": "C-FH16", "confidence": "high", "options": []}}
+    )
 
-    first = service._catalogue_index(None)
-    second = service._catalogue_index(None)
-    assert first[0] is second[0]
-    assert first[1] is second[1]
+    _service, _version_row, lines = _read_one(
+        db, project, owner, "PO-TWOCO",
+        {"no": 1, "stock_code": "CFH16", "description": "CABANA C-FH16 FLEXIBLE HOSE",
+         "qty": 1, "unit_price": 10, "amount": 10},
+    )
 
-    other = service._catalogue_index(other_company)
-    assert other[0] is not first[0]
+    assert lines[1].resolved_product_id == ids["C-FH16"]
+    assert lines[1].resolved_product_id != elsewhere["C-FH16"]
+    assert lines[1].resolution_source == "suggested"
+
+
+def test_two_different_codes_that_both_fit_are_left_for_a_person(seeded, monkeypatch):
+    """Refusing is still the feature: no pick with two options leaves the line unmatched and
+    keeps the options for the picker (AC-M3)."""
+    db, project, owner = seeded
+    ids = _catalogue(db, "SRT-100-A", "SRT-100-B", company_id=project.company_id)
+    _matcher_answers(
+        monkeypatch,
+        {1: {"product_code": None, "confidence": "low", "options": ["SRT-100-A", "SRT-100-B"]}},
+    )
+
+    _service, version, lines = _read_one(
+        db, project, owner, "PO-TWOFIT",
+        {"no": 1, "stock_code": "SRT100", "description": "SORENTO SRT100 SOMETHING",
+         "qty": 1, "unit_price": 10, "amount": 10},
+    )
+
+    assert lines[1].resolved_product_id is None
+    assert lines[1].resolution_source is None
+    options = ((version.extracted_json or {}).get("line_matches") or {}).get("1", {}).get("options")
+    assert set(options or []) == {ids["SRT-100-A"], ids["SRT-100-B"]}
+
+
+def test_a_product_that_is_simply_not_stocked_stays_unresolved(seeded, monkeypatch):
+    """The matcher answers nothing for a line naming something absent from the item master."""
+    db, project, owner = seeded
+    _catalogue(db, "SRTWC8613-RL", company_id=project.company_id)
+    _matcher_answers(monkeypatch, {})
+
+    _service, _version_row, lines = _read_one(
+        db, project, owner, "PO-ABSENT",
+        {"no": 1, "stock_code": "SRTCB2829",
+         "description": "SORENTO SRTCB2829 DECK MOUNT KITCHEN SINK TAP",
+         "qty": 1, "unit_price": 10, "amount": 10},
+    )
+
+    assert lines[1].resolved_product_id is None
+    assert lines[1].resolution_source is None
+
+
+def test_an_exact_code_still_wins_and_never_reaches_the_matcher(seeded, monkeypatch):
+    """Order matters: the model must never pre-empt a character-for-character match."""
+    db, project, owner = seeded
+    ids = _catalogue(db, "SRTWC8613-RL", "SRTWC8613RL", company_id=project.company_id)
+    calls = _matcher_answers(
+        monkeypatch, {1: {"product_code": "SRTWC8613RL", "confidence": "high", "options": []}}
+    )
+
+    _service, _version_row, lines = _read_one(
+        db, project, owner, "PO-EXACT",
+        {"no": 1, "stock_code": "SRTWC8613-RL", "description": "SORENTO ONE PIECE WC",
+         "qty": 1, "unit_price": 10, "amount": 10},
+    )
+
+    assert lines[1].resolved_product_id == ids["SRTWC8613-RL"]
+    assert lines[1].resolution_source == "code"
+    assert all(int(item["line_no"]) != 1 for batch in calls for item in batch)
+
+
+# ---------------------------------------------- the catalogue is read once per batch
+
+
+def test_the_catalogue_shortlist_is_built_per_batch_not_per_line(seeded, monkeypatch):
+    """B4 (19 Aug follow-up), restated for the matcher: several unresolved lines on one
+    document must not run the catalogue lookup once per line. The shortlist comes from
+    `resolve_references`, which takes a token list, so one batch is at most one call."""
+    from app.services import entity_resolver, project_po_matching
+
+    db, project, owner = seeded
+    _catalogue(db, "SRTFH15-CR", "B2155-NL-BLUE", "SRTWC8613-RL", company_id=project.company_id)
+    _matcher_answers(monkeypatch, {})
+    real = entity_resolver.resolve_references
+    counted: list = []
+
+    def counting(*args, **kwargs):
+        counted.append(1)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(entity_resolver, "resolve_references", counting)
+    monkeypatch.setattr(project_po_matching, "resolve_references", counting, raising=False)
+
+    _read_one(
+        db, project, owner, "PO-ONCE",
+        *[
+            {"no": n, "stock_code": code, "description": description,
+             "qty": 1, "unit_price": 10, "amount": 10}
+            for n, (code, description) in enumerate(
+                (
+                    ("IFH15CR", "SORENTO SRTFH15CR FLEXIBLE HOSE 1.5M"),
+                    ("CB2155-BLUE", "SORENTO B2155-BLUE-NL ANGLE VALVE"),
+                    ("SRTWC86", "SORENTO SRTW8613-RL ONE PIECE WC"),
+                ),
+                start=1,
+            )
+        ],
+    )
+
+    assert len(counted) == 1, f"resolve_references ran {len(counted)} times for 3 lines"
+
+
+def test_the_catalogue_shortlist_never_offers_another_companys_product(seeded, monkeypatch):
+    """Was: the catalogue index is memoised per company. The per-company rule survives the
+    rewrite: a product only another company stocks is never a candidate on this PO."""
+    from app.models.company import Company
+
+    db, project, owner = seeded
+    other_company = str(uuid.uuid4())
+    db.add(Company(id=other_company, name=f"{MARKER} Other", code=str(uuid.uuid4())[:8]))
+    db.flush()
+    _catalogue(db, "ZZT-ELSE-77", company_id=other_company)
+    _catalogue(db, "SRTWC8613-RL", company_id=project.company_id)
+    calls = _matcher_answers(monkeypatch, {})
+
+    _read_one(
+        db, project, owner, "PO-SCOPED",
+        {"no": 1, "stock_code": "ZZTELSE77", "description": "ZZT ELSE 77 ITEM",
+         "qty": 1, "unit_price": 10, "amount": 10},
+    )
+
+    assert "ZZT-ELSE-77" not in _offered(calls, 1)
 
 
 # ------------------------------------------- PO-EXTRACT-LIST-FIX (11 Nov 2026)
@@ -2152,7 +2263,9 @@ def test_the_po_reader_asks_for_one_page_object_by_schema(seeded, monkeypatch):
     schema = reader.kwargs[0].get("json_schema")
     assert schema is not None, "the PO reader still asks in JSON mode only"
     assert schema["type"] == "object"
-    assert set(schema["required"]) == {"header", "lines", "annotations"}
+    # PO-UPLOAD-MATCHING AC-T1: the printed grand total is asked for at the top level.
+    assert set(schema["required"]) == {"header", "lines", "annotations", "printed_total"}
+    assert set(schema["properties"]["printed_total"]["type"]) == {"number", "null"}
     props = schema["properties"]
     assert set(props["header"]["properties"]) == {
         "po_number", "po_date", "term", "sales_person", "cust_order_no", "remark",

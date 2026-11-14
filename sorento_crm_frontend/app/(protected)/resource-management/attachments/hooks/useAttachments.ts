@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
 
-import { getAttachments, uploadAttachment, updateAttachment, deleteAttachment, bulkDeleteAttachments, archiveAttachment, bulkArchiveAttachments, restoreAttachment, bulkRestoreAttachments, downloadAttachment, resubmitAttachmentWebhook, reorderAttachments, bulkImportAttachments, bulkMoveAttachments, type AttachmentsListParams } from '../services/attachmentService';
+import { getAttachments, uploadAttachment, updateAttachment, deleteAttachment, bulkDeleteAttachments, archiveAttachment, bulkArchiveAttachments, restoreAttachment, bulkRestoreAttachments, downloadAttachment, resubmitAttachmentWebhook, reorderAttachments, bulkImportAttachments, bulkMoveAttachments, type AttachmentsListParams, type AttachmentConflictResolution } from '../services/attachmentService';
 import type { Attachment } from '../types/attachment.types';
 import { getDirectoryTree, createDirectory, updateDirectory, moveDirectory, deleteDirectory, restoreDirectory, permanentDeleteDirectory } from '../services/directoryService';
 import { getDriveContents, type DriveListParams } from '../services/driveService';
@@ -149,7 +149,7 @@ export function useUploadAttachment() {
       directoryId?: string | null;
       targetEntityType?: string | null;
       targetFieldKeys?: string[] | null;
-      onConflict?: 'copy' | 'replace';
+      onConflict?: AttachmentConflictResolution;
       uploadBatchId?: string;
     }) =>
       uploadAttachment(file, {
@@ -336,8 +336,11 @@ export function useBulkRestoreAttachments() {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['attachments'] });
       queryClient.invalidateQueries({ queryKey: ['drive-contents'] });
-      const count = data?.restored_count ?? 0;
-      toast.success(count === 1 ? '1 attachment restored' : `${count} attachments restored`);
+      const count = data?.updated ?? 0;
+      const notRestored = (data?.not_moved ?? []).map((n) => n.message);
+      const restoredText = count === 1 ? '1 attachment restored' : `${count} attachments restored`;
+      if (notRestored.length === 0) toast.success(restoredText);
+      else toast.error(`${restoredText}. ${notRestored.length} not restored: ${notRestored.join(' ')}`);
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to restore attachments'),
   });
@@ -410,7 +413,10 @@ export function useRestoreDirectory() {
       queryClient.invalidateQueries({ queryKey: ['drive-contents'] });
       const dirs = data?.directories_restored ?? 0;
       const atts = data?.attachments_restored ?? 0;
-      toast.success(`Restored ${dirs} folder(s) and ${atts} attachment(s)`);
+      const notRestored = data?.attachments_not_restored ?? [];
+      const restoredText = `Restored ${dirs} folder(s) and ${atts} attachment(s)`;
+      if (notRestored.length === 0) toast.success(restoredText);
+      else toast.error(`${restoredText}. ${notRestored.length} not restored: ${notRestored.join(' ')}`);
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to restore directory'),
   });

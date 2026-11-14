@@ -533,6 +533,22 @@ class SystemSetting(Base):
     # breakdown live on import_jobs.result and are never pruned - only the
     # drill-down rows age out.
     import_job_rows_retention_days = Column(Integer, nullable=False, server_default="90", default=90)
+    # DB retention jobs (PLAN-db-retention-12nov): one column per value, read by the
+    # *_prune scheduled tasks (app/services/data_retention_service.py).
+    integration_log_payload_retention_days = Column(Integer, nullable=False, server_default="30", default=30)
+    integration_log_row_retention_days = Column(Integer, nullable=False, server_default="180", default=180)
+    chatbot_turn_trace_retention_days = Column(Integer, nullable=False, server_default="90", default=90)
+    scheduled_task_run_retention_days = Column(Integer, nullable=False, server_default="90", default=90)
+    reorder_run_retention_days = Column(Integer, nullable=False, server_default="90", default=90)
+    embedding_superseded_retention_days = Column(Integer, nullable=False, server_default="90", default=90)
+    plan_exception_superseded_grace_days = Column(Integer, nullable=False, server_default="1", default=1)
+    # Shared by every retention rule: dry-run only counts (crew ruling: off, the jobs
+    # delete from the first night); batches of batch_size, one commit each, a sleep
+    # between batches, and a run stops after max_run_minutes (the next run continues).
+    data_retention_dry_run = Column(Boolean, nullable=False, server_default="false", default=False)
+    data_retention_batch_size = Column(Integer, nullable=False, server_default="5000", default=5000)
+    data_retention_batch_sleep_ms = Column(Integer, nullable=False, server_default="200", default=200)
+    data_retention_max_run_minutes = Column(Integer, nullable=False, server_default="30", default=30)
 
     # New products / import: default product_supplier (standard lead time + supplier)
     default_product_supplier_id = Column(
@@ -584,6 +600,16 @@ class SystemSetting(Base):
         String,
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
+    )
+    # Order change notice (OCN-ORDER-CHANGE-NOTICE): the approval stage's default approver,
+    # and whether Submit needs a project.
+    order_change_notice_default_approver_user_id = Column(
+        String,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    order_change_notice_require_project = Column(
+        Boolean, default=False, nullable=False, server_default="false"
     )
     # Who approves a project quotation carrying a line outside its series (PS-QUOTE-RULES R4.1).
     off_series_approver_user_id = Column(

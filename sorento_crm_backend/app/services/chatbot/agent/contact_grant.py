@@ -292,6 +292,61 @@ class NeedsChoice(AppException):
         self.choices = choices
 
 
+class NeedsFacts(AppException):
+    """A row whose only gap is what the user did not say: the company and/or Owner or Employee (crew decision 14 Nov).
+    The batch tool asks ONE plain question for every such row instead of listing them as not changed. `needs` holds
+    "company" and/or "role"; `label` names the person (their name, else the phone)."""
+
+    def __init__(self, needs: list[str], label: str):
+        self.needs, self.label = list(needs), label
+        super().__init__(status_code=409, message=question(self.needs, [label]), code="NEEDS_FACTS")
+
+
+def question(needs: list[str], labels: list[str]) -> str:
+    """The one plain question for these people: 'Owner or employee for X, Y?', 'Sorento or Mocha for X?', or both."""
+    ask = {
+        ("role",): "Owner or employee", ("company",): "Sorento or Mocha",
+        ("company", "role"): "Sorento or Mocha, and owner or employee,",
+    }[tuple(sorted(set(needs)))]
+    return f"{ask} for {', '.join(labels)}?"
+
+
+def held_role(
+    db, contact_id: str, companies: list[str], allowed: set[str], carry_across: bool = True
+) -> tuple[str | None, str | None]:
+    """(level, company code it was read from) for the contact, as the Dealer access screen reads it: Business owner
+    where it holds a company's owner tag, else Employee where it is linked to one of that company's accounts. Only
+    the companies the user is granted (`allowed`) are read (security review S1). A requested company it holds
+    decides for itself, any other requested company takes Employee only when that is the contact's level everywhere;
+    every requested company must come out the same, else (None, None) and the role is asked (never guessed)."""
+    from app.models.base import company_scope
+    from app.models.company import Company
+    from app.models.order import Customer
+    from app.services.contact_tag_service import owner_codes_by_contact
+
+    codes = sorted(allowed)
+    owned = owner_codes_by_contact(db, [contact_id], codes).get(contact_id, set())
+    links = writes._all_links(db, contact_id)
+    with company_scope(db, None):
+        linked = {
+            code for (code,) in db.query(Company.code).join(Customer, Customer.company_id == Company.id)
+            .filter(Customer.id.in_(links))
+        } if links else set()
+    held = {code: "owner" if code in owned else "employee" for code in (linked | owned) & set(codes)}
+    # Another company's level carries only as Employee: Business owner is that company's own tag, so carrying it
+    # would be a promotion nobody asked for (review B1). Owner elsewhere, or both levels: no carry.
+    # Own scope carries nothing (`carry_across` False): an owner tag in a company it cannot read could sit under a
+    # carried Employee (review round 2 S1); only a requested company's own visible level decides.
+    carry = "employee" if carry_across and held and set(held.values()) == {"employee"} else None
+    # Each requested company on its own: its own level, else the carried Employee. One level for all of them, or
+    # asked (a Sorento owner given Sorento and Mocha is asked, never made Mocha owner: review round 2).
+    per = [held.get(code) or carry for code in companies] or [carry]
+    if None in per or len(set(per)) != 1:
+        return None, None
+    source = next((code for code in companies if code in held), None) or sorted(held)[0]
+    return per[0], source
+
+
 def _find_contact(db, phone: str):
     """The one contact holding this phone, stored in either form (+60 1... or 01...); None when there is none.
     Two contacts holding it is refused: the row would not know which to change, and a new one would be a third."""
@@ -353,17 +408,23 @@ def plan(db, user: dict, args: dict) -> dict:
         problems.append(f"Phone \"{_clean(args.get('phone'))}\" is not a Malaysian mobile number.")
     name = _clean(args.get("name"))[:255]
     role = args.get("role")
+    needs: list[str] = []  # what the user did not say: asked in one question, never guessed (crew decision 14 Nov)
+    said = _clean(args.get("access_as_written"))[:60]
     if role not in ("owner", "employee"):
-        # The model reads the access word; a word that is neither role is never forced into one (owner card Q3).
-        said = _clean(args.get("access_as_written"))[:60] or "not given"
-        problems.append(f"Unknown access: {said}.")
+        if said:
+            # The model reads the access word; a word that is neither role is never forced into one (owner card Q3).
+            problems.append(f"Unknown access: {said}.")
+        else:
+            role = None  # not said: the contact's current level below, else the question
     companies = list(dict.fromkeys(_clean(c).upper() for c in args.get("companies") or []))
     unknown = [c for c in companies if c not in sheet.TEMPLATE["companies"].values()]
     company_ids: dict[str, str] = {}
     customers: list = []
     choices: list[dict] = []
-    if unknown or not companies:
+    if unknown:
         problems.append("Name the company as SRT (Sorento) or MCH (Mocha).")
+    elif not companies:
+        needs.append("company")
     else:
         companies = [c for c in sheet.COMPANY_ORDER if c in companies]
         company_ids = {code: str(cid) for cid, code in db.query(Company.id, Company.code).filter(Company.code.in_(companies))}
@@ -379,8 +440,52 @@ def plan(db, user: dict, args: dict) -> dict:
         raise _refuse("; ".join(p.rstrip(".") for p in problems) + ".")
     if choices:
         raise NeedsChoice(choices)
-    if own_agents is not None and not customers:
+    contact = _find_contact(db, phone)
+    # A question about the company or role comes only once every check that could refuse the row has passed, and
+    # names the person by what the user gave (their typed name, else the phone), never the stored name of a person
+    # the user may not change: an own-scope user learns nothing of them (security review B1, S2).
+    staff = _is_staff(db, phone, str(contact.id) if contact is not None else None)
+    in_scope = own_agents is None or (contact is not None and writes.contact_in_scope(db, uid, str(contact.id)))
+    # A name read from an attached picture can be misread (crew pass 4): for such a row (`_from_attachment`, set by the
+    # batch tool, never the model, also on the answer to that picture's question) a person the user may change shows
+    # by their record's name. Rows of a typed table keep the name the user typed.
+    record_name = (
+        contact.name if args.get("_from_attachment") and contact is not None and contact.name and in_scope else ""
+    )
+    label = record_name or name or phone
+    if "company" in needs:
+        if staff or not in_scope:
+            raise _refuse("Name the company as SRT (Sorento) or MCH (Mocha).")  # as before: nothing told
+    elif own_agents is not None and not customers:
         raise _refuse(NO_OWN_ACCOUNT)  # UAC A12: no grant without one of the user's own accounts
+    if staff:
+        raise _refuse("This number belongs to a staff member.")
+    kept_from = None
+    if role is None:
+        # The contact's current level, read only where the user may already see it (S1).
+        if contact is not None and in_scope:
+            scope = get_company_scope(db)
+            allowed = {
+                code for cid, code in db.query(Company.id, Company.code).filter(Company.code.in_(sheet.COMPANY_ORDER))
+                if not isinstance(scope, frozenset) or str(cid) in {str(x) for x in scope}
+            }
+            if own_agents is not None:
+                from app.models.base import company_scope
+                from app.models.order import Customer
+
+                # Own scope: only the companies where the contact has one of the user's own accounts, as the Dealer
+                # access screen shows them (security review nit).
+                own = writes._all_links(db, str(contact.id)) - writes._not_own_links(db, uid, str(contact.id))
+                with company_scope(db, None):
+                    allowed &= {
+                        code for (code,) in db.query(Company.code).join(Customer, Customer.company_id == Company.id)
+                        .filter(Customer.id.in_(own))
+                    } if own else set()
+            role, kept_from = held_role(db, str(contact.id), companies, allowed, carry_across=own_agents is None)
+        if role is None:
+            needs.append("role")
+    if needs:
+        raise NeedsFacts(needs, label)
     # Business owner is the company's owner tag (UAC A6); a missing or switched-off tag refuses the row (A7). Checked
     # once the row is otherwise ready: the row's own problems and its account pick come first.
     tags: list = []
@@ -394,9 +499,6 @@ def plan(db, user: dict, args: dict) -> dict:
                 tags.append(tag)
         if missing:
             raise _refuse("; ".join(missing) + ".")
-    contact = _find_contact(db, phone)
-    if _is_staff(db, phone, str(contact.id) if contact is not None else None):
-        raise _refuse("This number belongs to a staff member.")
     # Own scope: links to accounts that are not the user's own, counted, never named (A10, A13, A14, B3).
     others = writes._not_own_links(db, uid, str(contact.id)) if own_agents is not None and contact is not None else set()
     if others and role == "owner":
@@ -435,8 +537,14 @@ def plan(db, user: dict, args: dict) -> dict:
 
     facets = {c["facet"] for c in changed}
     lines = [] if contact is not None else ["create contact"]
-    if "access_types" in facets or contact is None or add_tags:
-        lines.append(f"{'Business owner' if role == 'owner' else 'Employee'} ({_company_words(companies)})")
+    # A role read from the record is always shown, so the card says which role the change keeps.
+    if "access_types" in facets or contact is None or add_tags or kept_from:
+        lines.append(
+            f"{'Business owner' if role == 'owner' else 'Employee'} ({_company_words(companies)})" + (
+                "" if kept_from is None else ", their current role" if kept_from in companies and not add_tags
+                else f", as at {_company_words([kept_from])}"
+            )
+        )
     if "companies" in facets:
         added = [code for code, i in company_ids.items() if i in set(todo["companies"])]
         lines.append(f"add company {_company_words(added)}")
@@ -454,11 +562,14 @@ def plan(db, user: dict, args: dict) -> dict:
     before = {
         "contact_id": cid, "types": sorted(snap.access_types), "companies": sorted(snap.companies),
         "links": [h for h in held if h not in others], "targets": sorted(str(c.id) for c in customers),
+        # The level the card shows; read from the record when the user gave none, so confirm refuses a drift (N1).
+        "role": role,
     }
     if own_agents is not None:
         before["other_links"] = len(others)
     return {
-        "phone": phone, "name": name or (contact.name if contact is not None else "") or "", "contact": contact,
+        "phone": phone, "name": record_name or name or (contact.name if contact is not None else "") or "",
+        "contact": contact,
         "contact_id": cid, "desired": desired, "todo": todo, "changed": changed, "add_links": add_links,
         "lines": lines, "snap": snap, "held": held, "add_tags": add_tags, "held_tags": [h["name"] for h in held_tags],
         "before": before,
@@ -506,7 +617,9 @@ def _words(value: Any) -> str:
     return "none" if value in (None, "") else str(value)
 
 
-def _execute(db, user: dict, args: dict) -> dict:
+def _execute(db, user: dict, args: dict, *, queue_respond: bool = True) -> dict:
+    """Write one planned row. `queue_respond=False` (the Dealer access screen) skips the Respond.io job: the screen
+    asks Respond.io itself inside the request (DEALER-ACCESS-NAMES N5.1)."""
     from app.models.access import RespondContact
     from app.services import audit_service, contact_customer_service
     from app.services import contact_access_sheet_service as sheet
@@ -575,7 +688,7 @@ def _execute(db, user: dict, args: dict) -> dict:
         except Exception:  # noqa: BLE001 - the grant is committed; the defaults are best effort, as on the screen
             logger.warning("agent: default agents for a new contact failed", exc_info=True)
             db.rollback()
-    if not db.query(RespondContact.respond_io_id).filter(RespondContact.id == cid).scalar():
+    if queue_respond and not db.query(RespondContact.respond_io_id).filter(RespondContact.id == cid).scalar():
         # Instant (UAC B1, V8): the worker finds or creates the person in Respond.io, so the bot answers their
         # first message instead of waiting for the 15 minute sync. The grant is committed either way.
         try:
@@ -625,15 +738,25 @@ writes.WRITES[GRANT] = writes.WriteDef(
                         "description": (
                             "owner = the row says the person owns the business (Business owner, Owner, Pemilik, "
                             "Tauke); employee = the row says they are an employee (Employee, Staff, Pekerja). Any "
-                            "other access word, or none: unknown (the row is then skipped, never guessed)."
+                            "other access word: unknown, with the word in access_as_written (the row is skipped). No "
+                            "access word at all: unknown with access_as_written empty; the tool keeps the contact's "
+                            "current role or asks the user. Never guess a role."
                         ),
                     },
                     "access_as_written": {
-                        "type": "string", "description": "The row's access cell exactly as written in the table.",
+                        "type": "string",
+                        "description": (
+                            "The row's access cell exactly as written in the table; when the user answers an Owner "
+                            "or employee question, the user's own word for it, copied from their message. Empty when "
+                            "the user gave none: a role without the user's word is not taken."
+                        ),
                     },
                     "companies": {
                         "type": "array", "items": {"type": "string"}, "maxItems": 2,
-                        "description": "SRT for Sorento, MCH for Mocha (one or both).",
+                        "description": (
+                            "SRT for Sorento, MCH for Mocha (one or both), as the user said it (any spelling or "
+                            "case). Empty when the user named no company: the tool asks. Never guess one."
+                        ),
                     },
                     "customer_codes": {**_TEXT_LIST, "description": "Customer codes as written in the table."},
                     "customer_names": {

@@ -66,7 +66,7 @@ CONTACT_COLUMNS = engine.CONTACT_COLUMNS + (
     RespondContact.brand_ids, RespondContact.chatbot_allowed, RespondContact.regions,
     # read by `snapshots`; left out they would lazy-load once per contact
     RespondContact.chatbot_skip_period_questions, RespondContact.chatbot_files_as_links,
-    RespondContact.requires_registered_project,
+    RespondContact.requires_registered_project, RespondContact.chatbot_agent_enabled,
 )
 MAX_TAGS_CHARS = 1000
 MAX_ALTS = 5

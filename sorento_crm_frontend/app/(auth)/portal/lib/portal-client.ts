@@ -1008,6 +1008,43 @@ export async function endCrmSession(): Promise<void> {
 }
 
 /**
+ * POST /api/v1/public/portal/session-from-crm (SIGNIN-2FA-NOT-ROLE): a signed-in CRM user opening
+ * their OWN contact's portal gets a verified portal token with no code. Null on no CRM session, any
+ * refusal or failure, or no answer within the token-read budget (the caller shows the verify card
+ * instead). A plain fetch, not apiFetch: a refused or dead CRM session here must never trigger the
+ * app-wide sign-out redirect.
+ */
+export async function openPortalFromCrm(
+  slug: string,
+): Promise<{ token: string; expires_at: string } | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const { getAuthToken, TOKEN_FETCH_TIMEOUT_MS } = await import('@/lib/api');
+    const bearer = await getAuthToken();
+    if (!bearer) return null;
+    const abort = new AbortController();
+    timer = setTimeout(() => abort.abort(), TOKEN_FETCH_TIMEOUT_MS);
+    const res = await fetch('/api/v1/public/portal/session-from-crm', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${bearer}`,
+      },
+      body: JSON.stringify({ slug }),
+      signal: abort.signal,
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { token?: unknown; expires_at?: unknown };
+    if (typeof data?.token !== 'string' || !data.token) return null;
+    return { token: data.token, expires_at: String(data.expires_at ?? '') };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
  * POST /api/v1/public/portal/logout - revokes the active token server-side
  * (clearing client storage alone would leave a copied token valid).
  */
@@ -1328,6 +1365,8 @@ export const AI_EXTRACT_FORM_KEYS: Record<PortalLandingKind, string> = {
   sample_request: 'portal.sample_request',
   // Never read: the application form offers no AI extract.
   new_product_application: 'portal.new_product_application',
+  // Never read: the notice offers no AI extract (and has no portal form yet, UAC I5).
+  order_change_notice: 'portal.order_change_notice',
   // Never read: the opportunity form offers no AI extract. Present because the map is keyed
   // by every landing kind.
   sales_opportunity: 'portal.sales_opportunity',

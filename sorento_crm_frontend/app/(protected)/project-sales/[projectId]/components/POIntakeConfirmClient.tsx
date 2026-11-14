@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/common/PageHeader';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
-import { useProject } from '../../_shared/hooks/useProjects';
+import { useProject, usePurchaseOrderMutations } from '../../_shared/hooks/useProjects';
 import { projectDisplayName } from '../../_shared/lib/projectName';
 import { usePOIntakeController } from '../../_shared/hooks/usePOIntake';
 import { useReviewOriginHref } from '../../_shared/hooks/useReviewOrigin';
@@ -30,6 +30,7 @@ import {
   type POIntakeLinesGridHandle,
 } from './POIntakeLinesGrid';
 import { POIntakeUploadDialog } from './POIntakeUploadDialog';
+import { POIssuerSelect } from './POIssuerSelect';
 import { QtyOverQuoteDialog } from '../../_shared/components/QtyOverQuoteDialog';
 
 type ReviewTab = 'lines' | 'documents';
@@ -55,6 +56,9 @@ export function POIntakeConfirmClient({
 
   const project = useProject(projectId);
   const canEdit = project.data ? project.data.can_edit !== false : true;
+  const poMutations = usePurchaseOrderMutations(projectId);
+  // The issuer just picked, shown at once while the save and the re-read run.
+  const [issuer, setIssuer] = React.useState<string | null | undefined>(undefined);
 
   const gridRef = React.useRef<POIntakeLinesGridHandle>(null);
   const [activeTab, setActiveTab] = React.useState<ReviewTab>('lines');
@@ -238,18 +242,56 @@ export function POIntakeConfirmClient({
         }
       />
       {extractionSettled && (
-        <p className="text-sm text-muted-foreground">
-          <span
-            className="inline-block max-w-full truncate align-bottom"
-            title={project.data?.title ?? undefined}
-          >
-            {project.data?.project_code
-              ? `${projectDisplayName(project.data)} (${project.data.project_code})`
-              : project.data && projectDisplayName(project.data)}
-          </span>
-          {` · ${version.lines.length} line${version.lines.length === 1 ? '' : 's'}`}
-          <TotalsMetaLine version={version} onJumpToProblem={jumpToProblem} />
-        </p>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="min-w-0 text-sm text-muted-foreground">
+            <span
+              className="inline-block max-w-full truncate align-bottom"
+              title={project.data?.title ?? undefined}
+            >
+              {project.data?.project_code
+                ? `${projectDisplayName(project.data)} (${project.data.project_code})`
+                : project.data && projectDisplayName(project.data)}
+            </span>
+            {` · ${version.lines.length} line${version.lines.length === 1 ? '' : 's'}`}
+            <TotalsMetaLine version={version} onJumpToProblem={jumpToProblem} />
+          </p>
+          {/* Crew pass item 2: accepted codes are remembered for the PO's customer, which
+              comes from its issuer. Settable here while the version is To confirm. */}
+          {!readOnly && (
+            <div className="flex max-w-full flex-col gap-1">
+              <div className="flex items-center gap-2">
+                <label htmlFor="po-intake-issuer" className="text-sm text-muted-foreground">
+                  Issued by
+                </label>
+                <div className="w-56 max-w-full">
+                  <POIssuerSelect
+                    id="po-intake-issuer"
+                    value={issuer !== undefined ? issuer : version.purchase_order?.issuing_party_id}
+                    issuerName={version.purchase_order?.issuing_party_name}
+                    disabled={poMutations.update.isPending}
+                    onChange={(partyId) => {
+                      setIssuer(partyId);
+                      intake.clearIssuerError?.();
+                      poMutations.update.mutate(
+                        { id: version.purchase_order_id, body: { issuing_party_id: partyId } },
+                        {
+                          // A refused save puts the previous issuer back on screen.
+                          onError: () => setIssuer(undefined),
+                          onSettled: () => intake.refresh?.(),
+                        },
+                      );
+                    }}
+                  />
+                </div>
+              </div>
+              {intake.issuerError && (
+                <p className="text-xs text-destructive" role="alert">
+                  {intake.issuerError}
+                </p>
+              )}
+            </div>
+          )}
+        </div>
       )}
 
       {version.extraction_state === 'failed' ? (
@@ -297,6 +339,10 @@ export function POIntakeConfirmClient({
                   onEditAnnotation={intake.editAnnotation}
                   onRejectAnnotation={intake.rejectAnnotation}
                   defaultFlaggedOnly={!confirmed}
+                  suggestionCount={version.suggestion_count ?? 0}
+                  onAcceptSuggestion={(line) => intake.acceptSuggestion(line.id)}
+                  onAcceptAllSuggestions={intake.acceptAllSuggestions}
+                  isAcceptingSuggestions={intake.isAcceptingSuggestions}
                 />
               )}
             </TabsContent>
@@ -367,6 +413,10 @@ function StatusPill({ version }: { version: POVersion }) {
  * separate totals banner. One case is deliberately not alarming: once a handwritten
  * cancellation has been accepted, our sum legitimately drops below the printed total by
  * exactly the cancelled amount, so that gap is named as a fact rather than a fault.
+ *
+ * PO-UPLOAD-MATCHING AC-T2: when no grand total was printed (or read), the "document total" is
+ * only the sum of the amounts read off the lines, so it is labelled that and never compared
+ * with a printed total that does not exist.
  */
 function TotalsMetaLine({
   version,
@@ -390,6 +440,15 @@ function TotalsMetaLine({
   }
 
   const ourSum = ` · Our sum ${formatMyrExact(totals.lines_total)}`;
+
+  if (!totals.printed_total_read) {
+    return (
+      <>
+        {` · Sum of lines read ${formatMyrExact(totals.extracted_total)}`}
+        {ourSum}
+      </>
+    );
+  }
 
   if (difference === null || isMoneyZero(difference)) {
     return (

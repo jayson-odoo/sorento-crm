@@ -120,6 +120,7 @@ const CHATBOT_BOOLS: [string, string][] = [
   ['chatbot_eta_offset_applied', 'ETA buffer days'],
   ['chatbot_skip_period_questions', 'Skip date-range questions'],
   ['chatbot_files_as_links', 'Files as links'],
+  ['chatbot_agent_enabled', 'Agent mode'],
 ];
 const MEMORY: CatalogOption[] = [
   { value: 'off', label: 'Off' },

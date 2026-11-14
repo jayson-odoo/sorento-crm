@@ -18,6 +18,8 @@ hands `narrow_code_tokens` the exact tokens #1511's parser emits for the verbati
 """
 from __future__ import annotations
 
+import re
+
 from typing import Any
 
 
@@ -68,6 +70,12 @@ def _seed(session_factory, *codes: str, names: dict[str, str] | None = None) -> 
         row = seed_product(db, company_id=DEFAULT_COMPANY_ID, code=code)
         if names and code in names:
             row.product_name = names[code]
+        # The X-coded variant is linked to its base family by catalogue data (hand-set Family code);
+        # the X insert is gone from `product_code_family`.
+        x_coded = re.match(r"^([A-Z]+?)X(\d+)", code)
+        if x_coded:
+            row.family_code = f"{x_coded.group(1)}{x_coded.group(2)}"
+            row.family_code_manual = True
     db.commit()
 
 
