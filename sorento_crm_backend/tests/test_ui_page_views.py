@@ -181,8 +181,9 @@ def test_page_views_rate_limited_429(db):
     with api_client(db, []) as client:
         me = _seed_user(db, client.actor["id"], client.actor["email"])
         now = datetime.utcnow()
-        for _ in range(RATE_LIMIT_PER_HOUR):
-            _insert_view(db, me, "/seeded", now - timedelta(minutes=5))
+        # 120 POSTS: each post stamps its rows with one created_at, so seed 120 distinct stamps.
+        for i in range(RATE_LIMIT_PER_HOUR):
+            _insert_view(db, me, "/seeded", now - timedelta(minutes=5) - timedelta(seconds=i))
         db.commit()
         r = client.post(URL, json=_body([_item()]))
     assert r.status_code == 429

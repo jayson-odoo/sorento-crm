@@ -76,6 +76,9 @@ EXPECTED_FIELDS = {
     # PS-QUOTE-MATRIX: the column-removal countdown reads the deferred-action window; a
     # number of seconds is not sensitive.
     "deferred_delete_seconds",
+    # UI-V2 phase 0 (UAC C-6): the kill switch and the brand input reach every signed-in user.
+    "ui_v2_enabled",
+    "theme",
 }
 
 # Named individually rather than derived, so the test reads as the list of things
@@ -230,6 +233,8 @@ def test_app_config_open_to_a_caller_with_zero_permissions(api, db):
         "stock_debt_po_link_enabled": False,
         # The column default (10), the same value the admin GET returns.
         "deferred_delete_seconds": 10,
+        "ui_v2_enabled": True,
+        "theme": {"preset": "sorento-blue", "custom_hex": None},
     }
 
 
@@ -293,6 +298,8 @@ def test_app_config_returns_nulls_when_no_settings_row_exists(api, db):
     expected["project_autocount_write_enabled"] = False
     expected["stock_debt_po_link_enabled"] = False
     expected["deferred_delete_seconds"] = 10
+    expected["ui_v2_enabled"] = True
+    expected["theme"] = {"preset": "sorento-blue", "custom_hex": None}
     assert resp.json() == expected
 
 

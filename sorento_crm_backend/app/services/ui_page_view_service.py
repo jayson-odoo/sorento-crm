@@ -4,7 +4,8 @@ Every limit lives here so a test can reach it without an HTTP round-trip:
 - the raw body is refused above ``MAX_BODY_BYTES`` (checked by the route while streaming);
 - a batch holds 1 to ``MAX_ITEMS`` items;
 - a user gets ``RATE_LIMIT_PER_HOUR`` posts per rolling hour, counted from this table
-  (the table is the counter: one post stores one or more rows, the count is of rows).
+  (the table is the counter: every row of one post shares one created_at, so the count is of
+  DISTINCT created_at values, i.e. posts).
 """
 from __future__ import annotations
 
@@ -45,7 +46,7 @@ def is_rate_limited(db: Session, user_id: Optional[str], *, now: Optional[dateti
         return False
     since = (now or datetime.utcnow()) - timedelta(hours=1)
     count = (
-        db.query(func.count(UiPageView.id))
+        db.query(func.count(func.distinct(UiPageView.created_at)))
         .filter(UiPageView.user_id == user_id, UiPageView.created_at >= since)
         .scalar()
     )
