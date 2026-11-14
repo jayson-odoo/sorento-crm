@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PRICETAG-DESIGNER-FEEDBACK mock</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Montserrat:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--ink:#1f2328;--mute:#6b7280;--line:#e5e7eb;--pri:#1b84ff;--priSoft:#eef5ff}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 Inter,system-ui,sans-serif}
+main{max-width:1320px;margin:0 auto;padding:16px}
+h1{font-size:18px;margin:0 0 4px}
+.cap{font-size:13px;color:var(--mute);margin:26px 0 8px}
+.frame{max-width:1280px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;overflow:hidden;position:relative}
+.split{display:grid;grid-template-columns:1fr 320px;gap:16px}
+.insp{border:1px solid var(--line);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:12px;align-self:start}
+.insp h3{margin:0;font-size:14px}
+.f{display:flex;flex-direction:column;gap:4px}
+.lbl{font-size:12px;color:var(--mute)}
+.sel{border:1px solid var(--line);border-radius:6px;padding:6px 8px;font-size:13px;display:flex;justify-content:space-between;background:#fff}
+.sel:after{content:"\25BE";color:var(--mute)}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.btn{border:1px solid var(--line);background:#fff;color:var(--ink);border-radius:6px;padding:6px 12px;font-size:13px}
+.btn.p{background:var(--pri);border-color:var(--pri);color:#fff}
+.tb{display:flex;gap:4px;align-items:center;flex-wrap:wrap;border:1px solid var(--line);border-bottom:0;border-radius:8px 8px 0 0;padding:4px 6px;background:#fafbfc}
+.tb button{border:0;background:none;border-radius:5px;width:28px;height:28px;font-size:13px;color:var(--ink)}
+.tb button.on{background:var(--priSoft);color:#0a58ca}
+.tb .sep{width:1px;height:20px;background:var(--line);margin:0 4px}
+.tb .sel{min-width:150px;padding:4px 8px}
+.tb .pt{display:flex;align-items:center;border:1px solid var(--line);border-radius:6px;background:#fff;padding:4px 8px;gap:4px;font-size:13px}
+.tb .new{outline:2px solid var(--pri);outline-offset:1px;border-radius:6px}
+.ed{border:1px solid var(--line);border-radius:0 0 8px 8px;padding:12px;font-size:14px;white-space:pre;min-height:96px}
+.ed mark{background:#cfe3ff;color:inherit;font-family:Montserrat,sans-serif;font-size:19px;font-weight:600}
+.canvas{border:1px dashed #c5cbd3;border-radius:8px;background:#fafbfc;padding:16px;min-height:220px;position:relative}
+.tag{background:#fff;border:1px solid var(--line);border-radius:8px;padding:12px;max-width:640px}
+.tag .hd{font-weight:600;font-size:13px;margin-bottom:8px}
+.grid{display:grid;gap:8px}
+.card{border:1px solid var(--line);border-radius:6px;padding:6px;font-size:11px;background:#fff;position:relative}
+.card .ph,.pic{height:56px;border-radius:4px;background:linear-gradient(135deg,#e3e6ea,#c5cbd3);margin-bottom:4px}
+.card b{font-family:ui-monospace,monospace;font-size:11px;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card.hl{outline:2px solid var(--pri)}
+.menu{position:absolute;border:1px solid var(--line);border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.14);padding:4px;background:#fff;width:210px;z-index:2}
+.menu div{padding:7px 10px;border-radius:6px;font-size:13px}
+.menu div:first-child{background:var(--priSoft)}
+.dlg{border:1px solid var(--line);border-radius:10px;box-shadow:0 6px 20px rgba(0,0,0,.12);max-width:560px;background:#fff}
+.dlg .h{padding:14px 16px;font-weight:600;font-size:16px;border-bottom:1px solid var(--line)}
+.dlg .b{padding:12px 16px}
+.dlg .ft{padding:12px 16px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end;align-items:center}
+.dlg .ft .n{margin-right:auto;font-size:13px;color:var(--mute)}
+.tabs{display:flex;gap:18px;border-bottom:1px solid var(--line);margin-bottom:12px}
+.tabs span{padding:6px 0;color:var(--mute);border-bottom:2px solid transparent;font-size:14px}
+.tabs span.on{color:var(--ink);border-color:var(--pri)}
+.tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.tile{border:1px solid var(--line);border-radius:8px;padding:6px;font-size:12px;position:relative}
+.tile.s{outline:2px solid var(--pri);background:var(--priSoft)}
+.tile .pic{height:70px}
+.tick{position:absolute;top:10px;right:10px;width:18px;height:18px;border-radius:50%;background:var(--pri);color:#fff;font-size:11px;text-align:center;line-height:18px}
+.drop{border:2px dashed var(--line);border-radius:8px;padding:12px;text-align:center;color:var(--mute);font-size:13px;margin-top:12px}
+.chk{display:flex;align-items:center;gap:8px;padding:5px 0;font-size:13px}
+.box{width:16px;height:16px;border:1px solid #c5cbd3;border-radius:4px;font-size:11px;line-height:14px;text-align:center;color:#fff}
+.box.on{background:var(--pri);border-color:var(--pri)}
+.ic{border:1px solid var(--line);border-radius:6px;padding:6px 4px;text-align:center;font-size:10px;background:#fff}
+.ic i{display:block;width:22px;height:22px;border-radius:50%;background:#c5cbd3;margin:0 auto 3px}
+.stack{display:none}
+@media(max-width:760px){.split{grid-template-columns:1fr}.tiles{grid-template-columns:repeat(2,1fr)}.two{grid-template-columns:1fr}}
+</style></head><body><main>
+<h1>Price tag designer feedback</h1>
+<div class="lbl">Desktop 1280 frames. At 375 the inspector stacks under the canvas.</div>
+
+<div class="cap">1. Description editor: font and size controls</div>
+<div class="frame">
+ <div class="tb">
+  <button><b>B</b></button><button><i>I</i></button><button><u>U</u></button><button><s>S</s></button><button>&lt;/&gt;</button>
+  <span class="sep"></span><button>H1</button><button>H2</button><button>H3</button>
+  <span class="sep"></span><button>&#8676;</button><button class="on">&#8801;</button><button>&#8677;</button>
+  <span class="sep"></span><button>&#8226;</button><button>1.</button><button>&#8220;</button>
+  <span class="sep"></span><button>&#8630;</button><button>&#8631;</button>
+  <span class="sep"></span>
+  <div class="sel new" aria-label="Font" style="font-family:Montserrat">Montserrat</div>
+  <div class="pt new"><span>19</span><span class="lbl">pt</span></div>
+ </div>
+ <div class="ed">Wall hung toilet, rimless
+   <mark>L580xW450xH450mm</mark>
+   Soft close seat included</div>
+ <div class="lbl" style="margin-top:6px">Font options: Inter, Montserrat, Fake Brand Sans</div>
+</div>
+
+<div class="cap">2. Accessories box: per-card photo menu and image dialog</div>
+<div class="frame"><div class="canvas">
+ <div class="tag"><div class="hd">Accessories</div>
+  <div class="grid" style="grid-template-columns:repeat(5,1fr)">
+   <div class="card"><div class="ph"></div><b>FAKE-TRAP-150</b></div>
+   <div class="card hl"><div class="ph"></div><b>FAKE-TRAP-180</b></div>
+   <div class="card"><div class="ph"></div><b>FAKE-HOSE-60</b></div>
+   <div class="card"><div class="ph"></div><b>FAKE-VALVE-12</b></div>
+   <div class="card"><div class="ph"></div><b>FAKE-SEAT-01</b></div>
+  </div>
+ </div>
+ <div class="menu" style="left:300px;top:150px"><div>Change photo</div><div>Reset to product photo</div></div>
+</div>
+<div class="cap" style="margin-top:16px">Opens</div>
+<div class="dlg"><div class="h">Choose an image</div><div class="b">
+ <div class="tabs"><span class="on">Product photos</span><span>Asset library</span></div>
+ <div class="tiles"><div class="tile"><div class="pic"></div>FAKE-TRAP-180 front</div><div class="tile"><div class="pic"></div>FAKE-TRAP-180 side</div><div class="tile"><div class="pic"></div>FAKE-TRAP-180 pack</div></div>
+</div><div class="ft"><button class="btn">Cancel</button></div></div>
+</div>
+
+<div class="cap">3. Accessories box and Spec icons box: Columns and Rows</div>
+<div class="frame"><div class="split">
+ <div class="canvas">
+  <div class="lbl">Accessories, Rows 2</div>
+  <div class="grid" style="grid-template-columns:repeat(3,1fr);margin:6px 0 16px;max-width:420px">
+   <div class="card"><div class="ph"></div><b>FAKE-TRAP-150</b></div><div class="card"><div class="ph"></div><b>FAKE-TRAP-180</b></div><div class="card"><div class="ph"></div><b>FAKE-HOSE-60</b></div>
+   <div class="card"><div class="ph"></div><b>FAKE-VALVE-12</b></div><div class="card"><div class="ph"></div><b>FAKE-SEAT-01</b></div>
+  </div>
+  <div class="lbl">Spec icons, Rows 2</div>
+  <div class="grid" style="grid-template-columns:repeat(4,1fr);margin-top:6px;max-width:420px">
+   <div class="ic"><i></i>Dual flush</div><div class="ic"><i></i>Soft close</div><div class="ic"><i></i>Rimless</div><div class="ic"><i></i>Water saving</div>
+   <div class="ic"><i></i>Easy clean</div><div class="ic"><i></i>Anti-bacterial</div><div class="ic"><i></i>Quick release</div>
+  </div>
+ </div>
+ <div class="insp"><h3>Accessories box</h3>
+  <div class="two"><div class="f"><span class="lbl">Columns</span><div class="sel">Auto</div></div><div class="f"><span class="lbl">Rows</span><div class="sel">2</div></div></div>
+  <h3>Spec icons box</h3>
+  <div class="two"><div class="f"><span class="lbl">Columns</span><div class="sel">Auto</div></div><div class="f"><span class="lbl">Rows</span><div class="sel">2</div></div></div>
+ </div>
+</div></div>
+
+<div class="cap">4. Spec icons: choose which icons show</div>
+<div class="frame"><div class="split">
+ <div class="canvas"><div class="grid" style="grid-template-columns:repeat(6,1fr);max-width:480px">
+  <div class="ic"><i></i>Dual flush</div><div class="ic"><i></i>Soft close</div><div class="ic"><i></i>Water saving</div><div class="ic"><i></i>Easy clean</div><div class="ic"><i></i>Anti-bacterial</div><div class="ic"><i></i>Quick release</div>
+ </div></div>
+ <div class="insp"><h3>Spec icons</h3>
+  <div><div class="chk"><span class="box on">&#10003;</span>Dual flush</div><div class="chk"><span class="box on">&#10003;</span>Soft close</div><div class="chk"><span class="box"></span>Rimless</div><div class="chk"><span class="box on">&#10003;</span>Water saving</div><div class="chk"><span class="box on">&#10003;</span>Easy clean</div><div class="chk"><span class="box on">&#10003;</span>Anti-bacterial</div><div class="chk"><span class="box on">&#10003;</span>Quick release</div></div>
+ </div>
+</div></div>
+
+<div class="cap">5. Choose an image: select several</div>
+<div class="frame"><div class="dlg"><div class="h">Choose an image</div><div class="b">
+ <div class="tabs"><span>Product photos</span><span class="on">Asset library</span></div>
+ <div class="tiles">
+  <div class="tile s"><span class="tick">&#10003;</span><div class="pic"></div>FAKE S-TRAP 150mm</div>
+  <div class="tile s"><span class="tick">&#10003;</span><div class="pic"></div>FAKE P-TRAP 180mm</div>
+  <div class="tile s"><span class="tick">&#10003;</span><div class="pic"></div>Honeycomb Structure</div>
+  <div class="tile"><div class="pic"></div>FAKE VALVE 12mm</div>
+ </div>
+ <div class="drop">Upload artwork<br>.png .jpg .jpeg .webp .svg up to 20 MB each, several at once</div>
+</div><div class="ft"><span class="n">3 selected</span><button class="btn">Cancel</button><button class="btn p">Done</button></div></div></div>
+</main></body></html>

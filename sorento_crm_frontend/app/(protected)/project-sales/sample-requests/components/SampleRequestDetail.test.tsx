@@ -215,3 +215,14 @@ describe('SampleRequestDetail', () => {
     expect(screen.getByTestId('audit-trail')).toBeTruthy();
   });
 });
+
+describe('crew pass round 3 (owner point 3): the project is one clamped line', () => {
+  it('a long project title on the view page: one line with the whole title on hover, not two lines', () => {
+    const title = 'Residensi Taman Seri Murni Fasa 2B, Blok A hingga D, Pembangunan Bercampur Kediaman dan Komersial';
+    state.data = detail({ project_id: 'p-9', project_code: 'PPF2611001', project_name: title } as Partial<Detail>);
+    render(<Page />);
+    const label = screen.getByTitle(`PPF2611001 - ${title}`);
+    expect(label.className).toMatch(/(^|\s)truncate(\s|$)/);
+    expect(label.className).not.toMatch(/line-clamp-2/);
+  });
+});
