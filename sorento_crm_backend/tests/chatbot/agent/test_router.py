@@ -80,6 +80,7 @@ CONSOLE_LABELS = [
     "grant a dealer contact access",
     "add or remove contact tags",
     "assign sales agents to customers",
+    "edit contacts from a pasted table",
     "your customer asks",
     "recent changes",
     "your sales opportunities",

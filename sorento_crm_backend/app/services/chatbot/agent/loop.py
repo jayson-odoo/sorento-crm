@@ -604,7 +604,7 @@ def _not_found_backed(what: str, call_id: Any, ledger: dict[str, dict], found: s
         # Only a skipped row's "No customer ..." / "No tag named ..." part backs the claim, for the term it quotes: the claim is that
         # term, quotes it, or repeats the whole part.
         prefixes = ('No customer named "', 'No customer with the code "', 'No customer with the name "', 'No tag named "',
-                    'No sales agent named "')
+                    'No sales agent named "', 'No Respond.io workspace named "')
         for item in entry["data"].get("skipped") or []:
             for part in str(item.get("reason") or "").split("; "):
                 for prefix in prefixes:
@@ -872,6 +872,7 @@ def proposal_block(lines: list[str]) -> str:
 def _propose(
     db, ctx, name: str, args: Any, steps: list[dict], seen_ids: set[str], action_id: str, user_text: str = "",
     is_test: bool = True, previous: dict | None = None, single_waiting: list[dict] | None = None,
+    asked: list[dict] | None = None,
 ) -> ToolResult:
     # `loop`: the loop's own refusal, never shown to the user as the tool's words (UAC F2, review round S6).
     if any(s.get("batch") for s in steps):
@@ -888,6 +889,10 @@ def _propose(
         # The dealer name and company are the user's own words, never the model's re-search (UAC A17, A18), as in a
         # table row: what the immediately preceding pick verified for this person counts (review round S7).
         key = contact_grant._batch_key(args)
+        asked_roles = (previous or {}).get("asked") or {}
+        if key is not None and key in asked_roles:
+            # The answer to its question (crew re-pass b549042d); a role the request already gave stays.
+            args = batch.role_in_users_words(args, user_text, asked_roles.get(key))
         # The same guard as a table row (crew short live check, round 6): a closed pick's codes are refused here too.
         args, problem = batch.grant_row_guard(
             args, key, 1, current=(previous or {}).get("waiting"), earlier_typed=(previous or {}).get("typed"),
@@ -906,6 +911,14 @@ def _propose(
     out, step = writes.propose_step(db, ctx, name, args, seen_ids=seen_ids, loop_args=loop_args)
     if step is None:
         choices = (out.data or {}).get("choices") if isinstance(out.data, dict) else None
+        needs = (out.data or {}).get("needs") if isinstance(out.data, dict) else None
+        if typed is not None and needs and asked is not None:
+            # A single row asked for its company or role: kept like a table row's, so the answer carries what the
+            # user typed (review S1, crew decision 14 Nov).
+            said_role = args.get("role") if args.get("role") in ("owner", "employee") and args.get(
+                "access_as_written") else None
+            asked.append({"row": 1, "key": typed["key"], "needs": list(needs), "label": out.data.get("label"),
+                          "typed": typed, "role": said_role})
         if typed is not None and choices and single_waiting is not None:
             # A single row's pick is a pick like a table row's: the next turn may answer it (UAC F3, S7).
             single_waiting += [
@@ -1500,6 +1513,15 @@ DEALER_NUDGE = (
     "crm_contacts_find then crm_contact_access_update for a change to someone who has access. Your own text is not "
     "shown to the user."
 )
+#: Owner hand test 13 Nov (#2256 F1): the person was found and the model answered without proposing the change.
+FOUND_NUDGE = (
+    "You found the people; propose the change the user asked for now. To give access, call crm_batch_propose with "
+    "write crm_contact_grant, one row per person (company and role as the user said them, or left out: the tool "
+    "asks). To change someone who already has access, call crm_contact_access_update once per found contact. To "
+    "remove one company's access, pass that company in its remove_companies. To remove a person's access "
+    "altogether, unlink every account crm_contacts_find listed for them (their AI replies go off with the last "
+    "link); a removal needs no role, company or dealer. Your own text is not shown to the user."
+)
 _FIND_WORDS = {
     "not_found": "not in the CRM", "ambiguous": "more than one contact has this number",
     "invalid_phone": "not a Malaysian mobile number", "not_yours": "not one of your contacts",
@@ -1512,19 +1534,45 @@ def _dealer_tools() -> tuple[str, ...]:
     return (batch.BATCH, GRANT, writes.FIND_CONTACTS, writes.UPDATE_CONTACT)
 
 
-def dealer_access_prompt(text: str, earlier_table: str, waiting: bool) -> str:
-    """The recognition side call's one message: the question, then the conversation as data."""
+def _found_without_change(ledger: dict[str, dict]) -> bool:
+    """A contact search found someone this turn and no change was proposed or decided yet (#2256 F1)."""
+    from app.services.chatbot.agent.contact_grant import GRANT
+
+    proposed = {GRANT, writes.UPDATE_CONTACT, batch.BATCH, CONFIRM_ACTION, CANCEL_ACTION}
+    if any(e.get("name") in proposed for e in ledger.values()):
+        return False
+    return any(
+        e.get("name") == writes.FIND_CONTACTS and e.get("status") == "ok" and isinstance(e.get("data"), list)
+        and any(isinstance(r, dict) and r.get("status") == "found" for r in e["data"])
+        for e in ledger.values()
+    )
+
+
+def dealer_access_prompt(
+    text: str, earlier_table: str, waiting: bool, other_table: tuple[str, str] | None = None,
+) -> str:
+    """The recognition side call's one message: the question, then the conversation as data.
+
+    `other_table` (AGENT-BULK-W4-CONTACTS crew pass 13 Nov): the immediately preceding reply when it was a table of
+    another write, as (what that table changes, its text). Without it an answer to that table's rows read as
+    "answering for rows of a table" and went to the grant."""
     parts = [
         "Decide whether the user's message below asks to give, change, remove or pick dealer contact access: a "
         "person's access to a dealer's customer account through the AI agent (granting people, Business owner or "
         "Employee, AI replies on or off, removing someone from an account, or picking accounts or answering for rows "
-        "of a table the assistant showed). Answer false for anything else, and for a message that only says yes or "
-        "no to a change waiting for the user's decision.",
+        "of a dealer access table the assistant showed). Answer false for anything else, and for a message that only "
+        "says yes or no to a change waiting for the user's decision. Changing other things about contacts or "
+        "customers is not dealer access, even with a table of phone numbers: a contact's own details (its name, "
+        "whether its sponsorships must name a registered project, its Respond.io workspace), contact tags, or the "
+        "sales agents of customers; nor is answering or correcting the rows of a table about one of those.",
     ]
     if waiting:
         parts.append("A change is waiting for the user's decision.")
     if earlier_table:
         parts.append(f"The assistant's previous reply (a dealer access table):\n{earlier_table}")
+    elif other_table:
+        label, reply = other_table
+        parts.append(f"The assistant's previous reply (a table to {label}, not dealer access):\n{reply}")
     parts.append(f"The user's message:\n{text}")
     return "\n\n".join(parts)
 
@@ -1548,21 +1596,62 @@ def dealer_schemas(schemas: list[dict]) -> list[dict]:
 
 
 def dealer_reply(ledger: dict[str, dict]) -> str:
-    """The flow's reply when nothing was proposed, from this turn's tool results only: the LAST refusal of the grant,
-    the access change or the batch tool, in the tool's own words (never the loop's own messages, flagged `loop`), or
-    "" when there is none. A proposal's card or table is shown instead by the caller (review round S6). Never the
+    """The flow's reply when nothing was proposed, from this turn's tool results only: the LAST refusal of the grant
+    or the access change, in the tool's own words (never the loop's own messages, flagged `loop`), or "" when there
+    is none. Never the batch tool's message, nor an argument or id problem (flagged `loop`): those are guidance for
+    the model (owner hand test 14 Nov); a refusal with a line for the user carries it as `say`. The batch's rows
+    reach the user as the code-built tables. A proposal's card or table is shown instead by the caller (review round S6). Never the
     model's text, so nothing in it is ever marked not verified."""
     from app.services.chatbot.agent.contact_grant import GRANT
 
     last = ""
     for entry in ledger.values():
         data = entry.get("data") if isinstance(entry.get("data"), dict) else {}
-        if (
-            entry.get("name") in (GRANT, writes.UPDATE_CONTACT, batch.BATCH)
-            and entry.get("status") in ("invalid", "denied") and entry.get("message") and not data.get("loop")
-        ):
+        if entry.get("name") not in (GRANT, writes.UPDATE_CONTACT, batch.BATCH) or entry.get("status") not in (
+            "invalid", "denied"
+        ) or data.get("loop"):
+            continue
+        if data.get("say"):
+            last = str(data["say"])  # a line written for the user (no access, too many rows)
+        elif entry.get("name") != batch.BATCH and entry.get("message"):
             last = str(entry["message"])
     return last
+
+
+def contact_grant_write() -> str:
+    from app.services.chatbot.agent.contact_grant import GRANT
+
+    return GRANT
+
+
+def _earlier_keys(db, conv, turn_id: str) -> set:
+    """Every phone an earlier table of this conversation held (ready, waiting, not changed, or a card's step): on a
+    turn with a picture, such a person comes back only when the typed text names them (UAC F4, security review)."""
+    from app.models.chatbot_agent import AgentAction
+    from app.services.chatbot.agent.contact_grant import GRANT
+    from app.services.contact_setup_engine import normalise_phone
+
+    keys: set = set()
+    turns = db.query(ChatbotTurn.response).filter(
+        ChatbotTurn.contact_respond_id == conv.contact_respond_id,
+        ChatbotTurn.ingress == "agent",
+        ChatbotTurn.envelope["agent_conversation_id"].astext == str(conv.id),
+        ChatbotTurn.id != turn_id,
+        ChatbotTurn.response.has_key("batch_waiting"),
+    )
+    for (got,) in turns:
+        for name in ("batch_typed", "batch_waiting", "batch_skipped"):
+            keys |= {r["key"] for r in (got or {}).get(name) or [] if isinstance(r, dict) and r.get("key")}
+    steps = db.query(AgentAction.steps).filter(
+        AgentAction.contact_respond_id == str(conv.contact_respond_id), AgentAction.conversation_id == str(conv.id)
+    )
+    for (rows,) in steps:
+        keys |= {
+            # Every grant step, a one-person card as well as a table row (security re-review).
+            k for step in rows or [] if isinstance(step, dict) and (step.get("batch") or step.get("tool") == GRANT)
+            for k in [normalise_phone((step.get("args") or {}).get("phone"))] if k
+        }
+    return keys
 
 
 def _decided_reply(ledger: dict[str, dict]) -> str:
@@ -1643,9 +1732,29 @@ def _previous_waiting(db, conv, turn_id: str, *, immediate: bool = True) -> dict
     # vouches for nothing on the next turn (UAC M1).
     typed = (
         current["typed"] if current is not None
-        else list(got.get("batch_typed") or []) if action is not None else []
+        # ... or while it asked for a company or role: that table is still open (crew decision 14 Nov).
+        else list(got.get("batch_typed") or []) if action is not None or got.get("batch_asked") else []
     )
-    return {**(current or empty), "typed": typed, "expired": older, "card": card, "ready": ready}
+    # The immediately preceding turn's table, whatever its write and whether or not rows wait (the side call's context).
+    last_table = (got.get("batch_write"), got.get("reply_text") or "") if "batch_waiting" in got else (None, "")
+    return {
+        **(current or empty), "typed": typed, "expired": older, "card": card, "ready": ready, "last_table": last_table,
+        # The rows the preceding turn held while it asked for a company or role: their role came from the record,
+        # so the answer never overrides it (crew pass 4 addendum).
+        "held": {
+            a["key"]: a.get("role") for a in got.get("batch_asked") or []
+            if isinstance(a, dict) and a.get("held") and a.get("key")
+        },
+        # The rows that question asked about: on the answer their role must be in the user's words (crew re-pass).
+        "asked": {
+            a["key"]: a.get("role") for a in got.get("batch_asked") or []
+            if isinstance(a, dict) and a.get("key") and not a.get("held")
+        },
+        # The rows of that question's turn read from a picture: the answer's card names them by the record (B2).
+        "picture": [
+            a["key"] for a in got.get("batch_asked") or [] if isinstance(a, dict) and a.get("key")
+        ] if got.get("batch_picture") else [],
+    }
 
 
 def _run(
@@ -1692,6 +1801,7 @@ def _run(
     # The rows of this turn's table that were not proposed, with the reason (AGENT-BULK-ACTIONS).
     batch_skipped: list[dict] = []
     batch_waiting: list[dict] = []
+    batch_asked: list[dict] = []  # rows lacking the company or role the user did not say, plus the ready rows held
     single_waiting: list[dict] = []  # a single grant row's pick (UAC F3, review round S7)
     batch_called = False
     previous_waiting: list[dict] | None = None
@@ -1969,15 +2079,22 @@ def _run(
         # required; its reply is built from the tool results alone.
         dealer_flow = False
         forced_again = False
+        held_to_change = False
         if ctx.principal != "contact" and writes.holds_ctx(db, ctx, writes.CONTACT_SLUGS) and remaining() >= SIDE_CALL_MIN:
             from app.services.chatbot.agent.contact_grant import GRANT
 
             previous_table = _previous_waiting(db, conv, turn_id)
             previous_waiting = previous_table["waiting"]
             earlier = previous_table["reply"] if previous_table["write"] == GRANT else ""
+            last_write, last_reply = previous_table.get("last_table") or (None, "")
+            other = (
+                (TOOL_LABELS.get(last_write) or "change many records", last_reply)
+                if last_write and last_write != GRANT and last_reply else None
+            )
             try:
                 res = chat(
-                    [{"role": "user", "content": dealer_access_prompt(text, earlier, waiting is not None)}], None,
+                    [{"role": "user", "content": dealer_access_prompt(text, earlier, waiting is not None, other)}],
+                    None,
                     kind=DEALER_ACCESS_KIND, cap=SIDE_CALL_CAP, json_schema=DEALER_ACCESS_SCHEMA,
                 )
                 dealer_flow = json.loads(res.content or "{}").get("dealer_access") is True
@@ -2108,7 +2225,9 @@ def _run(
                     out = batch.propose(
                         db, ctx, args, steps, seen_ids=seen_ids, skipped_out=batch_skipped,
                         waiting_out=batch_waiting, user_text=text, previous_waiting=table["waiting"],
-                        closed=closed_rows, previous=table,
+                        closed=closed_rows, previous=table, attached=bool(images or file_text),
+                        earlier_keys=_earlier_keys(db, conv, turn_id) if images or file_text else None,
+                        asked_out=batch_asked,
                     )
                     if isinstance(args, dict) and isinstance(args.get("write"), str):
                         batch_write = args["write"]
@@ -2120,7 +2239,7 @@ def _run(
                         previous_waiting = previous_table["waiting"]
                     out = _propose(
                         db, ctx, name, args, steps, seen_ids, action_id, text, is_test,
-                        previous=previous_table, single_waiting=single_waiting,
+                        previous=previous_table, single_waiting=single_waiting, asked=batch_asked,
                     )
                 elif name in portal_writes.PORTAL_READS:
                     out = portal_writes.run_read(db, ctx, name, args, seen_ids)
@@ -2215,6 +2334,14 @@ def _run(
                 if dealer_flow and not dealer_ran and not forced_again and remaining() >= SIDE_CALL_MIN:
                     forced_again = True  # once: the answer is refused until a dealer-access tool has run
                     replies[answer_idx] = ToolResult("invalid", message=DEALER_NUDGE).to_json(
+                        assistant_calls[answer_idx]["id"]
+                    )
+                elif (
+                    dealer_flow and not held_to_change and _found_without_change(ledger)
+                    and remaining() >= SIDE_CALL_MIN
+                ):
+                    held_to_change = True  # once: a found person's change is proposed, not answered (#2256 F1)
+                    replies[answer_idx] = ToolResult("invalid", message=FOUND_NUDGE).to_json(
                         assistant_calls[answer_idx]["id"]
                     )
                 elif not (bad_numbers or bad_nf or empty_text):
@@ -2347,10 +2474,14 @@ def _run(
         # Whatever the status: a confirm that ran made the idea even if the model then failed.
         reply = f"{reply}\n\n" + "\n".join(confirm_notes)
     pending = None
-    if status != "failed" and not steps and (batch_skipped or batch_waiting or single_waiting):
+    if status != "failed" and not steps and (batch_skipped or batch_waiting or single_waiting or batch_asked):
         # A table turn with no ready row stores nothing, and still shows who needs a choice and who was not changed.
         # A single grant row's pick shows the same account list (crew live x3 round 5): whichever tool raised it.
-        reply = _batch_reply([], batch_skipped, batch_waiting or single_waiting, confirm_notes)
+        # A row lacking the company or role the user did not say: one question first (crew decision 14 Nov).
+        reply = (
+            batch.question_reply(batch_asked, batch_skipped, batch_waiting) if batch_asked
+            else _batch_reply([], batch_skipped, batch_waiting or single_waiting, confirm_notes)
+        )
         try:
             # The old confirm card no longer matches what the user was just shown.
             actions.expire_previous(db, ctx, [], test=is_test)
@@ -2403,15 +2534,32 @@ def _run(
         ]
         # The rows not changed, read by the pick follow-up so they stay listed when the model leaves them out.
         turn.response["batch_skipped"] = [
-            {"row": s["row"], "key": s.get("key"), "reason": s["reason"], "cells": s.get("cells") or {}}
+            {"row": s["row"], "key": s.get("key"), "reason": s["reason"], "cells": s.get("cells") or {},
+             "args": s.get("args")}
             for s in batch_skipped
         ]
         turn.response["batch_write"] = batch_write
+        # The rows of a table that asked for the company or role, ready rows held alike: the answer's card (F4).
+        turn.response["batch_asked"] = [
+            {"row": a.get("row"), "key": a.get("key"), "role": a.get("role"), **({"held": True} if a.get("held") else {})}
+            for a in batch_asked
+        ]
+        if batch_asked and (images or file_text):
+            turn.response["batch_picture"] = True
         # What each row of this table verified as typed, ready, not changed or waiting alike (UAC A17, A18).
         turn.response["batch_typed"] = [
             {"row": e.get("row"), "key": e.get("key"), **e["typed"]}
-            for e in [*steps, *batch_skipped, *batch_waiting] if isinstance(e.get("typed"), dict)
+            for e in [*steps, *batch_skipped, *batch_waiting, *batch_asked] if isinstance(e.get("typed"), dict)
         ]
+    elif batch_asked:
+        # A single row asked for its company or role: the next turn's answer is that row (review S1).
+        turn.response["batch_waiting"] = []
+        turn.response["batch_skipped"] = []
+        turn.response["batch_write"] = contact_grant_write()
+        turn.response["batch_asked"] = [
+            {"row": a.get("row"), "key": a.get("key"), "role": a.get("role")} for a in batch_asked
+        ]
+        turn.response["batch_typed"] = [{"row": a.get("row"), **a["typed"]} for a in batch_asked if a.get("typed")]
     elif single_waiting:
         # A single row that waits for a pick is the table the next turn may answer (UAC F3, review round S7).
         turn.response["batch_waiting"] = [{k: v for k, v in w.items() if k != "typed"} for w in single_waiting]

@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   Ban,
   Bookmark,
@@ -39,6 +40,8 @@ import { useDeferredBulkAction } from '@/hooks/useDeferredBulkAction';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { LinkDocumentDialog } from '../../../_shared/components/LinkDocumentDialog';
+import { usePoLinkSwitch } from '../../../_shared/po-link/usePoLink';
+import { OiPoLinkHost } from '../../components/OiPoLinkHost';
 import { OrderInquiryHistory } from './OrderInquiryHistory';
 import { OrderSplitsDialog } from '../../../_shared/components/LineSplitInfo';
 import { BulkRejectOrderInquiryDialog } from '../../../_shared/components/BulkRejectOrderInquiryDialog';
@@ -129,9 +132,15 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
+  const queryClient = useQueryClient();
   const canAct = useHasPermission(ORDER_INQUIRY_ACTION_PERMISSION);
   const canAcknowledge = useHasPermission(ORDER_INQUIRY_ACKNOWLEDGE_PERMISSION);
   const canReserve = useHasPermission(ORDER_INQUIRY_RESERVE_PERMISSION);
+  // OI-PO-LINK: one permission and one Settings switch for the AutoCount PO link, as on the worklist.
+  const holdsLinkPo = useHasPermission('projects.stock_debt.link_po');
+  const poLinkSwitch = usePoLinkSwitch(holdsLinkPo);
+  const canLinkPo = holdsLinkPo && poLinkSwitch.data === true;
+  const [poDialog, setPoDialog] = useState<{ rowIds: string[] } | null>(null);
   // #1312 (Q6): the Lines tab's own paperclip upload/remove - the same grant that
   // confirms the board and writes OI lines.
   const canEditAttachments = useHasPermission('projects.projects.edit');
@@ -318,8 +327,22 @@ export function OrderInquiryDetail({ id }: { id: string }) {
     () => selectedLines.filter((l) => l.state === 'placed' || l.state === 'partly_linked'),
     [selectedLines],
   );
+  // The one ticked line the CRM placement dialog (Link to PO... where AutoCount cannot take the
+  // link) is about.
   const chooseDocumentLine =
     selectedIds.length === 1 ? (activeLines.find((l) => l.id === selectedIds[0]) ?? null) : null;
+  // The AutoCount link needs the switch, the grant and a ticked line in AutoCount; ticked lines
+  // that are not in AutoCount yet are left out and named in the popup, as on the lines list
+  // ("1 of 2", crew db3 pass 14 Nov).
+  const poEligible = selectedLines.filter((l) => l.in_autocount !== false).length;
+  const poViaAutocount = canLinkPo && poEligible > 0;
+  const poWhyNot =
+    selectedLines.length === 0
+      ? 'Tick the lines to link to a PO.'
+      : !poViaAutocount && selectedLines.length !== 1
+        ? 'Tick one line to link it by hand.'
+        : undefined;
+  const crmOnlyLinked = selectedLinked.filter((l) => !(canLinkPo && l.in_autocount_link));
 
   // AC-RS-23: enabled only when EVERY selected row is requestable; disabled otherwise,
   // with a tooltip naming the FIRST reason (not a tally of every one).
@@ -693,31 +716,13 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   }
 
   /**
-   * "Link selected" (R18, owner ruling from the hand test on stack C, 25 Sep 2026,
-   * supersedes G1): the SAME mutation as `runAutoLink` below, scoped to exactly the
-   * ticked lines via `row_ids` - it never turns a suggestion into a link on its own.
-   * Pressing it re-runs the AutoCount book step for the ticked lines (in AutoCount's
-   * own name) and refreshes their suggestions, catching a mistake in the automation
-   * rather than promising a placement. Unlike `runAutoLink`, nothing ticked means
-   * nothing to do - there is no whole-OI fallback for this press.
-   */
-  function runLinkSelected() {
-    if (selectedIds.length === 0) return;
-    autoPlace.mutate(
-      { row_ids: selectedIds },
-      { onSuccess: () => setRowSelection({}) },
-    );
-  }
-
-  /**
    * Auto link (AC-DP-06, owner markup 21 Sep): ALWAYS enabled, no confirm dialog -
    * unlike the worklist's own "Auto link all", which asks for a link-horizon date
    * first. Ticked lines -> exactly those (unfiltered - the cascade itself decides what
    * it can and cannot place, the same as the worklist's own unconditional run over
    * everything); nothing ticked -> the whole OI via `filter: { inquiry_id }` (AC-AL-01).
-   * Same hook, same result reporting (`linkOutcomeText`'s toast) as `runLinkSelected`
-   * above - since R18 the two presses share the exact same call, just a different
-   * scope when nothing is ticked.
+   * Same hook and result reporting (`linkOutcomeText`'s toast) as the worklist's Recheck in
+   * AutoCount; scoped to the ticked lines when any are ticked.
    */
   function runAutoLink() {
     // Review S2: a tick on a line with only used rows is still a tick - it links nothing,
@@ -735,8 +740,10 @@ export function OrderInquiryDetail({ id }: { id: string }) {
    * renders in the header card. No dialog, no immediate commit.
    */
   function unlinkSelected() {
-    if (selectedLinked.length === 0) return;
-    unlinkSelectedAction.run(selectedLinked.map((line) => ({ id: line.id })));
+    // CRM-only links: the deferred countdown. A link AutoCount ties to the line is managed in the
+    // Link PO popup, not here.
+    if (crmOnlyLinked.length === 0) return;
+    unlinkSelectedAction.run(crmOnlyLinked.map((line) => ({ id: line.id })));
   }
 
   // S1 (reviewer, fix round 22 Sep 2026): `page.tsx`'s own `PageHeader` already renders
@@ -848,32 +855,33 @@ export function OrderInquiryDetail({ id }: { id: string }) {
                         Auto link
                       </DropdownMenuItem>
                       <DropdownMenuItem
-                        disabled={!chooseDocumentLine}
+                        disabled={Boolean(poWhyNot)}
                         onSelect={
-                          chooseDocumentLine
-                            ? (e) => {
+                          poWhyNot
+                            ? undefined
+                            : (e) => {
                                 e.preventDefault();
-                                setChooseDocumentOpen(true);
+                                if (poViaAutocount) setPoDialog({ rowIds: selectedIds });
+                                else setChooseDocumentOpen(true);
                               }
-                            : undefined
                         }
                       >
                         <Link2 className="size-4" aria-hidden />
-                        Choose document
+                        {poViaAutocount && poEligible !== selectedLines.length
+                          ? `Link PO... (${poEligible} of ${selectedLines.length})`
+                          : `Link PO... (${selectedLines.length})`}
+                        {poWhyNot ? (
+                          <span className="ms-auto max-w-[12rem] truncate ps-2 text-xs text-muted-foreground" title={poWhyNot}>
+                            {poWhyNot}
+                          </span>
+                        ) : null}
                       </DropdownMenuItem>
                       <DropdownMenuItem
-                        disabled={selectedIds.length === 0}
-                        onSelect={selectedIds.length ? runLinkSelected : undefined}
-                      >
-                        <Wand2 className="size-4" aria-hidden />
-                        Link selected
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        disabled={selectedLinked.length === 0}
-                        onSelect={selectedLinked.length ? unlinkSelected : undefined}
+                        disabled={crmOnlyLinked.length === 0}
+                        onSelect={crmOnlyLinked.length ? unlinkSelected : undefined}
                       >
                         <Unlink className="size-4" aria-hidden />
-                        Unlink selected
+                        {`Remove link in CRM (${crmOnlyLinked.length})`}
                       </DropdownMenuItem>
                       <DropdownMenuItem
                         disabled={selectedRejectable.length === 0}
@@ -1130,9 +1138,22 @@ export function OrderInquiryDetail({ id }: { id: string }) {
             (chooseDocumentLine.links ?? []).reduce((sum, l) => sum + Number(l.qty || '0'), 0),
           )}
           deliveryDate={chooseDocumentLine.delivery_date}
+          poLinesOnly
           onDone={() => {
             setChooseDocumentOpen(false);
             setRowSelection({});
+          }}
+        />
+      ) : null}
+
+      {poDialog ? (
+        <OiPoLinkHost
+          rowIds={poDialog.rowIds}
+          onClose={() => {
+            setPoDialog(null);
+            setRowSelection({});
+            void queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_HEADER_LINES_KEY, id] });
+            void queryClient.invalidateQueries({ queryKey: [ORDER_INQUIRY_HEADER_KEY, id] });
           }}
         />
       ) : null}

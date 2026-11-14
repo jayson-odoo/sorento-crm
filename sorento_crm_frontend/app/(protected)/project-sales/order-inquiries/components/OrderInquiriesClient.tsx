@@ -68,6 +68,9 @@ import {
 } from '@/lib/list-filters/multiValue';
 
 import { useHasPermission } from '@/hooks/usePermissions';
+import { usePoLinkSwitch } from '../../_shared/po-link/usePoLink';
+import { OiPoLinkHost } from './OiPoLinkHost';
+import { OiRowMenu } from './OiRowMenu';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { AutoLinkOrderInquiryDialog } from '../../_shared/components/AutoLinkOrderInquiryDialog';
 import { BulkRejectOrderInquiryDialog } from '../../_shared/components/BulkRejectOrderInquiryDialog';
@@ -194,6 +197,8 @@ interface DraftLine {
 
 /** "Link selected (2 of 3)", or "Link selected (3)" when every ticked row is eligible
  * (S4, AC-T2): the count is never "of n" when a === n, which would say the obvious. */
+const LINK_PO_PERMISSION = 'projects.stock_debt.link_po';
+
 function countLabel(base: string, eligible: number, ticked: number): string {
   return eligible === ticked ? `${base} (${ticked})` : `${base} (${eligible} of ${ticked})`;
 }
@@ -380,6 +385,13 @@ export function OrderInquiriesClient({
   );
   const canAcknowledge = useHasPermission(ORDER_INQUIRY_ACKNOWLEDGE_PERMISSION);
   const canReserve = useHasPermission(ORDER_INQUIRY_RESERVE_PERMISSION);
+  // OI-PO-LINK: the Stock Debt PO link, one permission and one Settings switch for both screens.
+  const holdsLinkPo = useHasPermission(LINK_PO_PERMISSION);
+  const poLinkSwitch = usePoLinkSwitch(holdsLinkPo);
+  const canLinkPo = holdsLinkPo && poLinkSwitch.data === true;
+  const [poDialog, setPoDialog] = React.useState<{ rowIds: string[] } | null>(null);
+  // The row a right-click landed on (OI-PO-LINK): the menu acts on that one row.
+  const [menuRowId, setMenuRowId] = React.useState<string | null>(null);
   const { linkNow, acknowledge, unacknowledge } = useOrderInquiryHandshake();
   const [unlinkingSelected, setUnlinkingSelected] = React.useState(false);
   const [linkingSelected, setLinkingSelected] = React.useState(false);
@@ -1182,6 +1194,36 @@ export function OrderInquiriesClient({
   const selectedLinked = selectedRows.filter(
     (row) => row.state === 'placed' || row.state === 'partly_linked',
   );
+  // OI-PO-LINK: ONE Link PO item (link, change or unlink is chosen in its popup), any products.
+  // Rows with no AutoCount sales order line cannot be linked: the count says "2 of 3".
+  const poLinkEligible = selectedRows.filter((row) => row.in_autocount !== false).length;
+  const poLinkWhyNot =
+    selectedRows.length === 0
+      ? 'Tick the rows to link to a PO.'
+      : poLinkEligible === 0
+        ? 'Not in AutoCount yet'
+        : undefined;
+  // Link PO... goes through AutoCount when it can (switch, grant, a row in AutoCount); where
+  // it cannot, ONE ticked row opens the CRM placement dialog with PO lines only.
+  const poViaAutocount = canLinkPo && poLinkEligible > 0;
+  const linkByHandWhyNot =
+    selectedRows.length === 0
+      ? 'Tick a row to link it to a PO.'
+      : selectedRows.length !== 1
+        ? 'Tick exactly one row to link it by hand.'
+        : undefined;
+  const linkToPoItem = {
+    key: 'po-link',
+    label: countLabel('Link PO...', poViaAutocount ? poLinkEligible : selectedRows.length, selectedRows.length),
+    icon: Link2,
+    // The by-hand fallback is the old Choose document: it needs the same grants (acknowledge + action).
+    disabled: Boolean(poViaAutocount ? poLinkWhyNot : !canBulkLink ? (poLinkWhyNot ?? 'Not in AutoCount yet') : linkByHandWhyNot),
+    disabledReason: poViaAutocount ? poLinkWhyNot : !canBulkLink ? (poLinkWhyNot ?? 'Not in AutoCount yet') : linkByHandWhyNot,
+    onClick: () =>
+      poViaAutocount
+        ? setPoDialog({ rowIds: selectedRows.map((row) => row.id) })
+        : setLinkingRowId(selectedRows[0]?.id ?? null),
+  };
   // Every OWED row, linked or not (plan section 1): with drafts written at raise most
   // rows in front of purchasing are already `placed`, so a Reject that only took
   // unlinked ones would refuse almost nothing.
@@ -1209,11 +1251,6 @@ export function OrderInquiriesClient({
     const state = ackStateOf(row);
     return (state === 'acknowledged' || state === 'changed') && row.state !== 'cancelled';
   });
-  // The manual Link dialog is a ONE-row override (R8/S4 "Choose document"), so it is
-  // offered at exactly one tick: two ticked rows would leave the page choosing which of
-  // them it meant.
-  const linkTarget =
-    selectedRows.length === 1 ? (selectedRows[0] ?? null) : null;
   const linkingRow = linkingRowId
     ? (rows.find((row) => row.id === linkingRowId) ?? null)
     : null;
@@ -1853,20 +1890,10 @@ export function OrderInquiriesClient({
         ...(canBulkLink
           ? [
               {
-                key: 'choose-document',
-                label: 'Choose document (1)',
-                icon: Link2,
-                disabled: !linkTarget,
-                disabledReason: linkTarget
-                  ? undefined
-                  : 'Tick exactly one row to choose its document by hand.',
-                onClick: () => setLinkingRowId(linkTarget?.id ?? null),
-              },
-              {
                 key: 'link-selected',
                 // R18: acts on every ticked row, whatever its state - no eligible
                 // subset any more, so the count is never "of n".
-                label: `Link selected (${selectedRows.length})`,
+                label: `Recheck in AutoCount (${selectedRows.length})`,
                 icon: Wand2,
                 disabled: selectedRows.length === 0 || linkingSelected,
                 disabledReason:
@@ -1875,7 +1902,7 @@ export function OrderInquiriesClient({
               },
               {
                 key: 'unlink-selected',
-                label: countLabel('Unlink selected', selectedLinked.length, selectedRows.length),
+                label: countLabel('Remove link in CRM', selectedLinked.length, selectedRows.length),
                 icon: Unlink,
                 disabled:
                   selectedLinked.length === 0 || unlinkingSelected,
@@ -1887,6 +1914,7 @@ export function OrderInquiriesClient({
               },
             ]
           : []),
+        ...(canLinkPo || canBulkLink ? [linkToPoItem] : []),
         ...(canAcknowledge
           ? [
               {
@@ -2271,6 +2299,17 @@ export function OrderInquiriesClient({
           )}
         </div>
       ) : (
+        <OiRowMenu
+          enabled={canLinkPo || canBulkLink}
+          onRow={setMenuRowId}
+          onPick={() => {
+            const row = rows.find((r) => r.id === menuRowId);
+            if (!row) return;
+            // AutoCount when it can take the link; otherwise the CRM placement dialog (PO lines only).
+            if (canLinkPo && row.in_autocount !== false) setPoDialog({ rowIds: [row.id] });
+            else if (canBulkLink) setLinkingRowId(row.id);
+          }}
+        >
         <DataGrid
           table={table}
           recordCount={total}
@@ -2291,6 +2330,7 @@ export function OrderInquiriesClient({
           rowClassName={(row) =>
             row.redirected_to_pool || row.line_cancelled ? 'opacity-60' : undefined
           }
+          rowAttributes={(row) => ({ 'data-oi-row-id': row.id })}
           emptyMessage={
             <div className="px-6 py-10 text-center">
               <p className="text-sm font-semibold">
@@ -2334,6 +2374,7 @@ export function OrderInquiriesClient({
             </CardFooter>
           </Card>
         </DataGrid>
+        </OiRowMenu>
       )}
 
       <AutoLinkOrderInquiryDialog
@@ -2396,6 +2437,7 @@ export function OrderInquiriesClient({
           linkedQty={linkingRow.linked_qty}
           deliveryDate={linkingRow.delivery_date}
           linkUpTo={linkUpTo}
+          poLinesOnly
           onDone={() => setLinkingRowId(null)}
         />
       ) : null}
@@ -2416,7 +2458,7 @@ export function OrderInquiriesClient({
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Unlink selected</AlertDialogTitle>
+            <AlertDialogTitle>Remove link in CRM</AlertDialogTitle>
             <AlertDialogDescription>
               {selectedLinked.length === 1
                 ? 'Remove this row\u2019s links? That quantity goes back to demand, and the next reorder suggestion counts it again.'
@@ -2439,6 +2481,16 @@ export function OrderInquiriesClient({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      {poDialog ? (
+        <OiPoLinkHost
+          rowIds={poDialog.rowIds}
+          onClose={() => {
+            setPoDialog(null);
+            void list.refetch();
+            void summary.refetch();
+          }}
+        />
+      ) : null}
       <UnlinkAllOrderInquiryDialog
         open={unplacingAll}
         onOpenChange={setUnplacingAll}
