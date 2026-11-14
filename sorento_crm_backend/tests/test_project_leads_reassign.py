@@ -222,6 +222,21 @@ def test_a2_a_third_reassign_to_the_same_person_is_not_swallowed_by_dedup(v2):
     assert len(_reassign_rows(v2, row.id)) == 3
 
 
+def test_a1_a_failing_notice_never_fails_the_owner_change_that_already_saved(v2, monkeypatch):
+    """The notice is sent after the commit: a raise while building it is logged, not a 500."""
+    from app.services import project_notify_service as notify
+
+    def boom(*a, **k):
+        raise RuntimeError("label lookup failed")
+
+    monkeypatch.setattr(notify, "project_label", boom)
+    row = approved_project(v2)
+    res = _put_owner(v2, v2.manager, row.id, v2.sales_b)
+    assert res.status_code == 200, res.text
+    assert _project_row(v2, row.id).owner_user_id == v2.sales_b
+    assert len(_reassign_rows(v2, row.id)) == 1
+
+
 # ------------------------------------------------------------------ A3: manager only
 
 
