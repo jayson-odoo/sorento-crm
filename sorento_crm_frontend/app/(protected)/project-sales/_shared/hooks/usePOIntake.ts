@@ -196,9 +196,11 @@ export function usePOIntakeController(
       try {
         settle(await updatePOVersionLine(versionId, lineId, body));
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : 'Could not save this line');
         // Reload so the cell shows what the server holds rather than a value it refused.
+        // The refusal goes back to the caller, which says it: one toast for a cell edit,
+        // one summary for a bulk cancel (PO-UPLOAD-MATCHING B).
         queryClient.invalidateQueries({ queryKey: key });
+        throw error instanceof Error ? error : new Error('Could not save this line');
       } finally {
         setSavingLineIds((current) => current.filter((id) => id !== lineId));
       }

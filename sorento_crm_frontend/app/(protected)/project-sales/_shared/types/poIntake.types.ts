@@ -268,6 +268,7 @@ export interface POIntakeController {
    */
   retryExtraction: () => Promise<void>;
   updateHeader: (body: Partial<POVersionHeader>) => Promise<void>;
+  /** Rejects with the server's sentence when the line is refused; the caller says it. */
   updateLine: (lineId: string, body: POLineUpdateBody) => Promise<void>;
   /** True on success (S4): the caller navigates to the review page's origin, if it carries one. */
   /** `qtyOverReason` is sent on the second press after the qty-over soft stop. */

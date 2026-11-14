@@ -972,7 +972,9 @@ class POIntakeLifecycleMixin:
             if company_id:
                 query = query.filter(Product.company_id == company_id)
             product = query.first()
-            if product is not None:
+            if product is not None and not self._names_a_variant_sibling(
+                product, code, description, company_id
+            ):
                 return product.id, "code"
         product_id = customer_code_map.lookup(
             remembered or {}, customer_code_map.customer_code_for(stock_code, description)
@@ -980,6 +982,22 @@ class POIntakeLifecycleMixin:
         if product_id and self._product_in_company(product_id, company_id) is not None:
             return product_id, "map"
         return None, None
+
+    def _names_a_variant_sibling(
+        self, product, code: str, description: Optional[str], company_id: Optional[str]
+    ) -> bool:
+        """An exact code is settled only when no same-company sibling `<code>-<suffix>` has a
+        suffix the description names (PLAN-po-upload-matching-b section 2, line 46:
+        "SRTWB243" described "WALL HUNG BASIN 35MM" beside SRTWB243-35MM). Otherwise the line
+        goes to the matcher, which is offered the bare code and the siblings."""
+        from app.services import project_po_matching
+
+        if not description:
+            return False
+        family = project_po_matching.variant_family(
+            self.db, [code], company_id=company_id or product.company_id
+        ).get(code, [])
+        return bool(project_po_matching.named_variant_siblings(family, code, description))
 
     def _product_in_company(self, product_id: Optional[str], company_id: Optional[str]):
         """The product, only when it belongs to ``company_id`` (the line's company)."""
