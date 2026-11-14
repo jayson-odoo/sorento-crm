@@ -1082,3 +1082,65 @@ def test_a_stated_role_refills_when_the_model_drops_it():
     from app.services.chatbot.agent.batch import role_in_users_words
 
     assert role_in_users_words({"role": "unknown", "access_as_written": ""}, "Mocha", "owner")["role"] == "owner"
+
+
+# ------------------------------------------------------------------ crew re-pass on 54185b35 (tool-call loop)
+
+
+def test_a_question_from_the_batch_tool_is_a_result_not_a_failure(db):
+    """Crew re-pass 54185b35: the question came back as status 'invalid', so the model kept re-calling the tool
+    (15 model calls, 'Stopped: token limit') and its last variant decided the reply. Asking is a result."""
+    w = make_world(db)
+    c = dealer(db, w, name="ZZT Asked Once")
+    result, provider = screenshot_turn(db, w, [_batch([_unsaid(c, 1, companies=())]), answer_("Done.")],
+                                       text_="Please grant them access to the chatbot")
+    assert result.reply_text.strip() == f"Sorento or Mocha, and owner or employee, for {c.name}?", result.reply_text
+    # The turn's own record of the call (stored in the tool digest the next turn reads), not a second round's view.
+    statuses = [c["status"] for c in result.tool_calls if c["name"] == BATCH]
+    assert statuses == ["ok"], statuses
+
+
+def test_after_the_question_the_turn_ends_and_a_later_variant_cannot_replace_it(db):
+    """The turn stops once the batch tool has asked: no further model round, so the first call's rows stand."""
+    w = make_world(db)
+    a, b = dealer(db, w, name="ZZT First Call"), dealer(db, w, name="ZZT Retry Variant")
+    first_rows = [_unsaid(a, 1, companies=())]
+    retry_rows = [_unsaid(b, 1, companies=())]
+    script = [_batch(first_rows), _batch(retry_rows, "b2"), _batch(retry_rows, "b3"), answer_("Done.")]
+    result, provider = screenshot_turn(db, w, script, text_="Please grant them access to the chatbot")
+    assert result.reply_text.strip() == f"Sorento or Mocha, and owner or employee, for {a.name}?", result.reply_text
+    assert len(provider.seen) == 1, f"{len(provider.seen)} model rounds after the question"
+
+
+def test_f14c_mocha_answer_asks_only_the_open_role_then_one_card(db):
+    """Crew's F14c shape: a Sorento employee asked only the company is not asked it again after 'Mocha'."""
+    w = make_world(db)
+    devi = dealer(db, w, name="ZZT Srt Devi", customers=[w.cust_a])
+    eng, farid = dealer(db, w, name="ZZT New Eng"), dealer(db, w, name="ZZT New Farid")
+    people = [devi, eng, farid]
+    rows = [_unsaid(c, n, companies=()) for n, c in enumerate(people, 1)]
+    first, _ = screenshot_turn(db, w, [_batch(rows), answer_("Done.")], text_="Please grant them access to the chatbot")
+    assert first.reply_text.strip() == (
+        f"Sorento or Mocha for {devi.name}? Sorento or Mocha, and owner or employee, for {eng.name}, {farid.name}?"
+    ), first.reply_text
+    mocha = [{**r, "companies": ["MCH"], "role": "employee", "access_as_written": "employee"} for r in rows]
+    second, _ = screenshot_turn(db, w, [_batch(mocha, "b2"), answer_("Done.")], text_="Mocha", images=False)
+    assert second.reply_text.strip() == f"Owner or employee for {eng.name}, {farid.name}?", second.reply_text
+    answered = [{**r, "access_as_written": "employee"} for r in mocha]
+    third, _ = screenshot_turn(db, w, [_batch(answered, "b3"), answer_("Done.")], text_="employee", images=False)
+    assert third.pending_action is not None, third.reply_text
+    assert all(c.name in third.reply_text for c in people), third.reply_text
+
+
+def test_a_single_grant_question_also_ends_the_turn(db):
+    """The single-grant path: the question is a result and no further round runs after it."""
+    w = make_world(db)
+    c = dealer(db, w, name="ZZT Single Ends")
+    args = {k: v for k, v in _unsaid(c, 1, companies=()).items() if k != "row"}
+    other = dealer(db, w, name="ZZT Single Retry")
+    retry = {k: v for k, v in _unsaid(other, 1, companies=()).items() if k != "row"}
+    script = [round_of(tc(GRANT, args, "g1")), round_of(tc(GRANT, retry, "g2")), answer_("Done.")]
+    result, provider = screenshot_turn(db, w, script, text_=f"give {local(c.phone_number)} chatbot access", images=False)
+    assert result.reply_text.strip() == f"Sorento or Mocha, and owner or employee, for {c.name}?", result.reply_text
+    assert len(provider.seen) == 1, f"{len(provider.seen)} model rounds after the question"
+    assert [x["status"] for x in result.tool_calls if x["name"] == GRANT] == ["ok"], result.tool_calls

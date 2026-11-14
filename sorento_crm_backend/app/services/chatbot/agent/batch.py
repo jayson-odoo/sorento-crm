@@ -634,9 +634,11 @@ def propose(
         data["left_out"] = left
     if asked:
         data["asked"] = [{"row": a["row"], "needs": a["needs"]} for a in asked if not a.get("held")]
+        # A result, not a failure: an "invalid" status made the model re-call this tool with varied rows until the
+        # token limit, and its last variant decided the reply (crew re-pass 54185b35). The loop ends the turn here.
         return ToolResult(
-            "invalid", data=data,
-            message="Nothing is proposed yet. The user is asked the missing company or role; do not ask it again.",
+            "ok", data=data,
+            message="Done: the user is asked for the missing company or role. Nothing else to do this turn.",
         )
     if not new_steps:
         if waiting:
