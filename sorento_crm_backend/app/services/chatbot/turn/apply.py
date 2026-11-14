@@ -2682,12 +2682,14 @@ def _one_number_for_every_line(
     by position. The user typed no product in that message, so the number names no part:
     it fills every line still owed (`StockQtyTask.fill`, owner ruling 26 Sep F2), written
     as the parser's own fill items so `_open_question_answer` places them. A number bound
-    to no line spreads the same way.
+    to no line spreads the same way, and so does a number the parser bound to one listed
+    line by copying back that line's own position and code (14 Nov: the question shows
+    both, so the copy names no part).
 
     A product the user typed in this message (a verdict entity with a product hint, "8 for
     QWCY604") keeps the binding to that line alone (STOCK-QTY-PARTIAL-FILL R1), as do a
-    number the parser bound by CODE (the user named that part),
-    quantities bound to two or more lines, a `demand_qty` that is a different number, a
+    number the parser bound by CODE alone or by a code that names a different line than its
+    position (the user named that part), quantities bound to two or more lines, a `demand_qty` that is a different number, a
     line already answered (a revision), and lines that are not the parts of one set (R1:
     "5 for the 2nd one" answers that line). Reads the open question's lines, the focus rows
     and the parser's fields only.
@@ -2716,8 +2718,14 @@ def _one_number_for_every_line(
         if not isinstance(item, dict) or item.get("qty") is None:
             continue
         code = item.get("code")
-        if isinstance(code, str) and code.strip():
-            # Bound by CODE ("QWCY604 4", "8 for QWCY604"): the user named that part (R1).
+        if isinstance(code, str) and code.strip() and (
+            item.get("position") is None
+            or _placed_line({"code": code}, slots)
+            != _placed_line({"position": item.get("position")}, slots)
+        ):
+            # Bound by CODE alone ("QWCY604 4", "8 for QWCY604"), or a code naming another
+            # line than the position: the user named that part (R1). An item that only
+            # repeats the shown line's own position and code is a bind by position.
             return
         qty = _positive(item.get("qty"))
         if qty is None:
