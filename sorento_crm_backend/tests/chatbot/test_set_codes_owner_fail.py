@@ -92,6 +92,14 @@ def _shape_stock_demand():
     return stock(product(CISTERN), demand_qty=4)
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "lead 14 Nov: a number the parser binds to ONE part cannot be told apart from a number typed for that part "
+        "(\"QWCY604 8\") without reading the message (owner 10:07 ruling); the parser's own reading decides, "
+        "recorded for the prompt work (the owner's live turn); the standard qty_for_all reading fills every part (t2)"
+    ),
+)
 @pytest.mark.parametrize(
     "shape",
     [_shape_fill_code, _shape_fill_position, _shape_entity, _shape_stock_demand],
@@ -112,3 +120,13 @@ def test_t2c_lock_a_number_named_for_one_part_without_demand_qty_fills_only_that
     text = c.say("8 for QWCY604", reply(open_question_answer=answer("fill", items=[(None, CISTERN, 8)])))
     assert f"{S_PAN} x 8" not in text, ("the number spread to the other part", text)
     assert any(CISTERN in line and "8" in line for line in _lines(text)), text
+
+
+def test_t2d_lock_a_number_typed_beside_one_part_fills_only_that_line(session_factory, monkeypatch, stub_access):  # noqa: F811
+    """Reviewer 14 Nov: "QWCY604 8" answering the per-part question, read as the part plus demand_qty, fills only the
+    QWCY604 line (STOCK-QTY-PARTIAL-FILL owner rule R1); the other part is not answered at 8."""
+    c = _owner_world(session_factory, monkeypatch, stub_access)
+    asked = c.say("QWC604-S-RL stock", stock(product("QWC604-S-RL")))
+    assert "How many units for each?" in asked, asked
+    text = c.say("QWCY604 8", stock(product(CISTERN), demand_qty=8))
+    assert "QWCX604-S-RL x 8" not in text, text

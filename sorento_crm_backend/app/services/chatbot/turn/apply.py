@@ -2652,75 +2652,6 @@ def _asked_quantity_placed(
     trace.rules_fired.append("asked_quantity_placed")
 
 
-def _one_number_for_every_line(
-    state: State, verdict: dict[str, Any], trace: Trace, asked: int | None
-) -> None:
-    """CHATBOT-SET-CODES, owner hand test 14 Nov 2026: "4" after "How many units for
-    each?" answered only the last line, because the parser bound the one number to that
-    line as well as stating it as `demand_qty`. `demand_qty` is the parser's own "one
-    quantity with no product beside it" (R-P2-05), so a binding of that same number to
-    ONE line of the list (an answer item or an entity quantity) names no line: the
-    binding is dropped and the bare number fills every line still owed
-    (`StockQtyTask.fill`, owner ruling 26 Sep F2). Quantities bound to two or more lines,
-    a different number on a line, or a product off the list leave the verdict as the
-    parser wrote it. Reads the open question's lines and the parser's fields only.
-    """
-    if asked is not None or state.pending is not None:
-        return
-    task = _open_point_form_task(state.focus)
-    if task is None:
-        return
-    bare = _positive(verdict.get("demand_qty"))
-    if bare is None:
-        return
-    slots = list(task.slots)
-    bound: set[int] = set()
-    answer = verdict.get(OPEN_QUESTION_ANSWER)
-    if isinstance(answer, dict):
-        if answer.get("mode") not in (None, "fill"):
-            return
-        for item in answer.get("items") or []:
-            if not isinstance(item, dict) or item.get("qty") is None:
-                continue
-            index = _placed_line(item, slots)
-            if index is None or _positive(item.get("qty")) != bare:
-                return
-            bound.add(index)
-    known = {
-        value.strip().casefold()
-        for slot in slots
-        for value in (slot.key, slot.label)
-        if isinstance(value, str) and value.strip()
-    }
-    others: list[Any] = []
-    for entity in verdict.get("entities") or []:
-        named = _codes_named(entity) & known if isinstance(entity, dict) else set()
-        if not named:
-            if (
-                isinstance(entity, dict)
-                and entity.get("hint") in (None, "product")
-                and entity.get("current_message") is True
-            ):
-                # A product off the list: a new stock ask, read by the ordinary path.
-                return
-            others.append(entity)
-            continue
-        quantity = _stated_quantity(entity.get("quantity"))
-        if quantity is not None and quantity != bare:
-            return
-        bound |= {
-            index
-            for index, slot in enumerate(slots)
-            if {str(slot.key).strip().casefold(), str(slot.label).strip().casefold()} & named
-        }
-    if len(bound) != 1:
-        return
-    verdict["entities"] = others
-    if isinstance(answer, dict):
-        verdict[OPEN_QUESTION_ANSWER] = {**answer, "mode": None, "items": []}
-    trace.rules_fired.append("one_number_for_every_line")
-
-
 def _open_question_answer(
     state: State, verdict: dict[str, Any], trace: Trace, asked: int | None = None
 ) -> bool:
@@ -3373,7 +3304,6 @@ def _apply(
     state, picked = _open_pick_answer(state, verdict, trace)
     if not picked:
         state = _stock_pick_takes_position_and_quantity(state, verdict, trace)
-    _one_number_for_every_line(state, verdict, trace, asked_qty)
     if not _open_question_answer(state, verdict, trace, asked_qty):
         _asked_quantity_placed(state, verdict, trace, asked_qty)
         # Owner hand test 26 Sep, round 3, and the round 5 ruling ("make the picker not
