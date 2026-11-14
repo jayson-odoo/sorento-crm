@@ -1,7 +1,8 @@
 # PLAN: Give the AI agent the right tools, and feed it only what it needs (AGENT-CONTEXT-BUDGET)
 
-Status: Plan v1, 14/11/2026. Waiting for the owner's decisions (section 8). No code until approved.
-Track: plan first; each slice in section 7 is its own small lane (S or M), the tool menu slice is M.
+Status: Plan v2, 14/11/2026. Owner decisions taken 14/11/2026 19:27 (section 8). Slice 1 is built by lane
+TARGET-ACHIEVED-PERF; slice 2 (short tool menu, size M) is next in this lane on its own branch and PR.
+Track: each slice in section 7 is its own lane (S or M); the tool menu slice is M.
 Read from `main` eefbcc3c. Paths: BE = `sorento_crm_backend/app/`. Every figure below is from stored
 agent turns or from the code; nothing real (names, prices, phones) is in this doc (public repo).
 
@@ -17,7 +18,8 @@ question the owner tried ("sales for my dealers this year vs targets") is slow b
 figures are filtered after the whole table is loaded. The plan: **(1)** give it a short, well-described core
 toolset plus a "find more tools" step, the way Claude Code itself works; **(2)** add the missing lookup
 tools, each giving a short answer and each built on the function the screens already use; **(3)** pre-feed
-only the record in focus plus a short summary; **(4)** then put a budget on every step.
+only the record in focus plus a short summary; **(4)** then watch every question against time and size
+targets (no hard cut-off that ends an answer early, owner 14/11).
 
 ---
 
@@ -120,8 +122,8 @@ screens already use (one function, reused), and checks the asker's permission in
 
 | Tool (working name) | Answers | Returns (short) | Built on (reuse) | Surfaces | Permission |
 |---|---|---|---|---|---|
-| Product lookup | spec, list price, cost (if allowed), active, brand, category, by code or name | one compact card per product, up to 10 | ONE product reader replacing four (`tools.py:1198-1232`, `assistant_registry/products.py`, catalogue `crm_master_products_list`, `crm_find`) | panel, console, WhatsApp | cost only with `products.cost.view` (`products.py:12,44`); WhatsApp per decision D3 |
-| Stock lookup | available, on hand, next arrival, per code, optionally per location | one line per code (+ per location on ask) | existing stock balance + incoming stock services (`api/v1/inventory/stock.py:241`) | all | `inventory.stock.view`; WhatsApp per the existing stock switch (`tools.py:171`) |
+| Product lookup | spec, list price, cost (if allowed), active, brand, category, by code or name | one compact card per product, up to 10 | ONE product reader replacing four (`tools.py:1198-1232`, `assistant_registry/products.py`, catalogue `crm_master_products_list`, `crm_find`) | panel, console, WhatsApp | cost only with `products.cost.view` (`products.py:12,44`); WhatsApp customers get spec + list price, never cost (D3) |
+| Stock lookup | available, on hand, next arrival, per code, optionally per location | one line per code (+ per location on ask) | existing stock balance + incoming stock services (`api/v1/inventory/stock.py:241`) | panel, console (staff) only | `inventory.stock.view`. WhatsApp customers keep the existing chatbot stock route, which controls stock visibility (owner 14/11) |
 | Document by number | any number: sales order, delivery order, invoice, quotation, order inquiry, purchase request, complaint | type, status, delivery progress, customer, dates, link | `so_status.py` (progress), the list services of each document | all (WhatsApp: own documents only, as today) | the document's own view / view-own slug |
 | Record history | "who changed what, when" on one record | the History tab's entries, newest first, capped with "more" | the backend behind the shared History tab | panel, console | same as the record |
 | Sales vs target | target, achieved, gap, % per agent or dealer | one row per owner, gap and % computed by the server | target achievement service (`services/sales/...achievement_service.py:641-762`) over `invoiced_sales`, filters pushed into SQL | panel, console, linked user | `sales.targets.view` / `view_own` |
@@ -148,8 +150,8 @@ scope here; it should later move onto the same loop (a separate decision, not in
 |---|---|---|---|---|---|
 | Core menu + find-more-tools | 54 tools, ~24,800 tokens every step | ~12 core tools, ~6,000 tokens; others loaded on demand | ~17,000 per step (measured on the projects-list pair) ; median question 39,700 -> ~20,000 (estimated) | ~2 s median (measured pair), more on long questions | Medium: the model must ask for a tool it does not see. Guard: the find step matches by meaning; eval set below |
 | Sales vs target: filters in SQL, gap and % from the server, instruction conflicts removed | 100-140k tokens, ~50 s, 3/4 timed out | 2 model calls | ~100,000 per question (estimated) | ~35 s (estimated; tool time 10-20 s measured) | Low: same figures from the same function |
-| Steps per question | up to 8 | 4 for questions, 6 for bulk changes and comparisons, then a final answer | p90 6 -> 4 calls (estimated) | ~7 s per step avoided (median 3.4 s per call measured, longer on big steps) | Medium on hard questions; the final answer says what is left open |
-| Input budget | 150,000 per question, counted over all steps (`loop.py:2487`) | 12,000 per step, 40,000 per question | caps the worst case (173k -> 40k) | - | Low with the core menu; a capped turn answers with what it has |
+| Steps per question | up to 8, then a forced final answer | Design goal 4 for questions, 6 for bulk changes and comparisons, reached by better tools, never by cutting off. Only a runaway-loop safety stop stays, at today's 8 steps | p90 6 -> 4 calls (estimated) | ~7 s per step avoided (median 3.4 s per call measured) | None from a cut-off: the stop is far above normal use and still gives a full best answer from what was found, never a "limit" message |
+| Input size | 150,000 per question, counted over all steps (`loop.py:2487`) | Targets 12,000 per step and 40,000 per question, logged and alerted when exceeded; the 150,000 safety stop stays | from the core menu, not from a cap | - | None: nothing is cut |
 | Tool answers | up to 16,000 chars each | new lookup tools return compact cards (~1,000-2,000 chars); 16,000 stays for comparison | small (results are small today) | - | Low |
 | Retries that cannot help | the query cap counts "describe" and refused calls (`loop.py:2292`); 5th call in a step refused | count only real queries; describe free | one step on some questions (3 of 60 had refused calls) | ~4-7 s on those | None |
 | Thinking effort per step | medium on every step | low for single lookups, medium kept for comparisons and multi-part (owner 14/11 set medium for comparisons) | output tokens on lookups (estimated -30 %) | 2-5 s on lookups (estimated) | Low-medium; checked on the eval set before it ships |
@@ -157,7 +159,9 @@ scope here; it should later move onto the same loop (a separate decision, not in
 | Keep the start of each step identical | menu changes after step 1, breaking the cache | core menu fixed, loaded tools appended at the end | keeps 56 % cache hit, likely higher (estimated) | small | None |
 
 Targets after all slices (to check with the same extract): **median 10 s / p90 25 s; median 20,000 /
-p90 40,000 input tokens per question; no question over 4 steps unless it changes data.**
+p90 40,000 input tokens per question; 4 steps or fewer unless it changes data.** These are targets and
+alarms, not cut-offs (owner 14/11: "I would rather wait if it is within reason than you say hit limit").
+A question over a target still gets its full answer; it is logged and shows in the weekly readout.
 
 ---
 
@@ -179,47 +183,30 @@ p90 40,000 input tokens per question; no question over 4 steps unless it changes
 
 | # | Slice | Size | Hand test | Target |
 |---|---|---|---|---|
-| 1 | **Sales vs target, fast and right**: filters in SQL, gap and % from the server, instruction conflicts fixed, query cap counts real queries only | S-M | Panel: ask "how are my dealers' sales this year against their targets?", then "and last year?", then a typo version | answer in 2 model calls, under 35,000 tokens, under 15 s, no timeout; figures equal the targets screen |
+| 1 | **Sales vs target, fast and right** (built by lane TARGET-ACHIEVED-PERF, not this lane): filters in SQL, gap and % from the server, instruction conflicts fixed, query cap counts real queries only | S-M | Panel: ask "how are my dealers' sales this year against their targets?", then "and last year?", then a typo version | answer in 2 model calls, under 35,000 tokens, under 15 s, no timeout; figures equal the targets screen |
 | 2 | **Short tool menu + find more tools** | M | Panel: ask a stock question, a complaint question, a contact change; each still works | first step under 10,000 tokens; p90 question under 45,000 tokens; frozen set not worse |
 | 3 | **Product lookup and stock lookup**, panel incl. proposal comparison; one product reader | M | On a project page: "compare the two quotations", then "what is the size of the first item?", "what is its list price?", "how many are in stock?" | each follow-up 1 tool call, under 8 s; cost shown only to cost holders |
 | 4 | **Document by number + record history** (SO progress, order inquiry, quotation number, invoice) | M | Panel: type a quotation number, an order inquiry number, "who changed this SO and when?" | 1 tool call each, under 8 s; history equals the History tab |
 | 5 | **Pre-feed minimum**: record facts for project, SO, quotation and product pages; guide rules moved; file text not resent | S-M | Open a sales order, ask "what's the status?" then change page and ask about the new record | instructions + page facts under 4,000 tokens per step |
-| 6 | **Budgets on**: steps 4/6, 12,000 per step, 40,000 per question, effort per step, summary on a lighter model | S | Any long question still ends in an answer that says what is left | p90 under 25 s on the eval set |
-| 7 | **WhatsApp customer toolset** per decision D3 (product lookup without cost, stock per switch, own documents' status) | M | From a test contact: spec of a product, "is it in stock?", status of own order by number | 1 tool call each; nothing beyond the contact's switches |
+| 6 | **Targets and monitoring, no cut-offs**: each question's steps, tokens and seconds checked against the targets; over-target questions logged with their cause and alerted; the runaway-loop safety stop (8 steps / 150,000) answers with a full best answer from what was found and never says "limit"; thinking effort per step; summary of older chats on a lighter model | S | Ask a long multi-part question: it answers in full (no "limit" words), and it shows in the over-target log | p90 under 25 s on the eval set; zero replies containing a limit message |
+| 7 | **WhatsApp customer toolset** per D3: product lookup with spec + list price (no cost), own documents' status; stock stays on the existing chatbot stock route | M | From a test contact: spec of a product, its list price, "is it in stock?" (answered by the existing stock route, same as today), status of own order by number | 1 tool call each; stock answers unchanged; nothing beyond the contact's switches |
 
 Each slice is one lane, one PR, its own UAC written after this plan is approved.
 
-## 8. Decisions for the owner (5)
+## 8. Decisions taken (owner, 14/11/2026 19:27)
 
-**D1. How does the agent see its tools?**
-(a) Every tool on every step (today). (b) A fixed short set per page. (c) A short core set always, plus a
-"find more tools" step that loads the rest when needed.
-Recommendation: **(c)**, because it is how Claude Code itself stays fast with many tools, it cuts ~17,000
-tokens per step (measured on a comparable pair), and (b) guesses the need from the page and misses
-questions about other things.
+Owner's words: "D1 ok, D2 b yeap, D3 hmm i think stock check all those still is chatbot route, cause we
+need to control the visibility of stock, list price is fine, D4 hmm i think limiting quite bad la, I would
+rather wait if it is within reason than you say hit limit, imagine if I ask you and you say hit limit I
+also angry".
 
-**D2. In the agent, does a salesperson see only their own dealers' sales?**
-(a) As today: anyone with the sales report permission sees every agent's sales. (b) Only their own
-dealers', unless they hold the "see all" permission, the same as the targets screen (`view_own`).
-Recommendation: **(b)**, because it matches the targets screen and your brief ("salesperson sees only
-their dealers"). Today the customer and invoice data areas have no own-only rule.
-
-**D3. On WhatsApp, which product facts may the bot give a customer?**
-(a) As today (no spec, no price). (b) Spec and stock availability, no price. (c) Spec, stock and list price.
-Recommendation: **(b)**, because spec and availability are what dealers ask most and are safe; list price
-to customers is a commercial call, so it stays off unless you say otherwise.
-
-**D4. How strict are the budgets?**
-(a) Strict: 4 steps, 40,000 tokens, 30 s per question (6 steps for bulk changes and comparisons).
-(b) Loose: 6 steps, 80,000 tokens, 45 s. (c) None (today: 8 steps, 150,000 tokens, 45 s).
-Recommendation: **(a)**, because the measured median question already fits it, and only the slow cases
-(the ones that time out today) would be cut short, with an answer saying what is left.
-
-**D5. Which slice first?**
-(a) Slice 1 (sales vs target). (b) Slice 2 (short tool menu). (c) Slice 3 (product facts in proposal
-comparison).
-Recommendation: **(a) then (b) then (c)**: slice 1 fixes the question that failed today and is small;
-slice 2 makes every later tool cheap to add; slice 3 is the first new tool on top of it.
+| # | Question | Decision |
+|---|---|---|
+| D1 | How the agent sees its tools | **(c)** short core set always, plus a "find more tools" step |
+| D2 | Salesperson sees only own dealers' sales | **(b)** own dealers only unless the "see all" permission, same as the targets screen |
+| D3 | WhatsApp product facts for customers | **New option**: spec + list price yes. Stock stays on the existing chatbot stock route (it controls stock visibility); no new agent stock tool on WhatsApp |
+| D4 | Budgets | **No hard cut-offs** that end an answer with "hit limit". Budgets are targets + monitoring (log and alert when exceeded) and design goals for slices. Only a runaway-loop safety stop remains, far above normal use (today's 8 steps / 150,000 tokens), and it still gives a full best answer |
+| D5 | Order | No answer; crew takes the recommended order: 1, 2, 3, then 4, 5, 6, 7. Slice 1 goes to lane TARGET-ACHIEVED-PERF |
 
 ---
 
