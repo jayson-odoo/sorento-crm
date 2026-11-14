@@ -6,7 +6,7 @@
  *     Kind = { id, code, name, sort_order, is_active, rule_count, term_count, created_at, updated_at }
  *   useKindRuleCounts() -> { data: { without: number, total: number } | undefined }   (the pill's N and M)
  *   useCreateKind() / useUpdateKind() -> { mutateAsync, isPending }
- * Columns: Kind, Code, Rules, Terms, Active. The amber pill reads "N of M kinds have no rule"; clicking it re-queries
+ * Columns: Kind, Rules, Terms, Active (no Code column: owner standing rule, no raw codes in place of names). The amber pill reads "N of M kinds have no rule"; clicking it re-queries
  * useKinds with has_no_rule: true (click again to clear). Right-click: Edit, Archive, Delete; Archive and Delete are
  * deferred countdowns (actionKeys matching /archive/ and /delete/); Delete is offered only for an unused kind
  * (rule_count 0 and term_count 0). One "Create" button; it opens `./KindFormDialog`.
@@ -78,10 +78,10 @@ const menuLabels = async () => within(await screen.findByRole('menu')).getAllByR
 beforeEach(() => { vi.clearAllMocks(); Object.keys(runs).forEach((k) => delete runs[k]); list([kind({}), kind({ id: 'k-2', name: 'Mirror Cabinet', code: 'MIRROR_CABINET', rule_count: 1, term_count: 0 })]); });
 
 describe('KindsTab', () => {
-  it('has the five columns and one Create button', () => {
+  it('has the four columns (no raw Code) and one Create button', () => {
     renderTab();
     const heads = screen.getAllByRole('columnheader').map((h) => (h.textContent || '').trim()).filter(Boolean);
-    expect(heads).toEqual(['Kind', 'Code', 'Rules', 'Terms', 'Active']);
+    expect(heads).toEqual(['Kind', 'Rules', 'Terms', 'Active']);
     expect(screen.getAllByRole('button', { name: /^Create/ })).toHaveLength(1);
   });
 
@@ -99,10 +99,10 @@ describe('KindsTab', () => {
     expect(useKinds).toHaveBeenLastCalledWith(expect.not.objectContaining({ has_no_rule: true }));
   });
 
-  it('shows the kind, its code and counts, with an Active pill', () => {
+  it('shows the kind name and counts with an Active pill, never the raw code', () => {
     renderTab();
     const row = screen.getByText('Water Closet').closest('tr')!;
-    expect(within(row).getByText('WATER_CLOSET')).toBeInTheDocument();
+    expect(within(row).queryByText('WATER_CLOSET')).toBeNull();
     expect(within(row).getByText('Active').closest('[data-slot="badge"]')).not.toBeNull();
   });
 
