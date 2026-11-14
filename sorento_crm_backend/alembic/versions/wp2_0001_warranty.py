@@ -9,7 +9,7 @@ touched.
 - The v15 policy seed (kinds, defect set, rules) and each company's v15 policy, idempotent.
 
 Revision ID: wp2_0001_warranty
-Revises: spr_0001_spare_part_request
+Revises: spr_0002_or_b_oi_no
 Create Date: 2026-11-13
 """
 import sqlalchemy as sa
@@ -17,7 +17,7 @@ from alembic import op
 from sqlalchemy.orm import Session
 
 revision = "wp2_0001_warranty"
-down_revision = "spr_0001_spare_part_request"
+down_revision = "spr_0002_or_b_oi_no"
 branch_labels = None
 depends_on = None
 
