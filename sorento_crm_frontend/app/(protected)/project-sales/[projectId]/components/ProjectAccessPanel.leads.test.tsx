@@ -356,6 +356,44 @@ describe('B1, B2: one leads list on the Access card', () => {
   });
 });
 
+describe('B4: the leads grid fits a phone', () => {
+  const setWidth = (px: number) =>
+    Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: px });
+  const original = window.innerWidth;
+
+  it('below the phone breakpoint Date and How they found it are hidden; the other four stay', async () => {
+    setWidth(375);
+    try {
+      wrap(<ProjectAccessPanel project={project()} />);
+      const { table } = await leadsTable();
+      await waitFor(() =>
+        expect(headers(table).filter(Boolean)).toEqual(['Salesperson', 'Lead', 'Owner', 'Status']),
+      );
+    } finally {
+      setWidth(original);
+    }
+  });
+
+  it('at a wide screen all six columns show', async () => {
+    setWidth(1280);
+    try {
+      wrap(<ProjectAccessPanel project={project()} />);
+      const { table } = await leadsTable();
+      expect(headers(table).filter(Boolean)).toEqual(COLUMNS);
+    } finally {
+      setWidth(original);
+    }
+  });
+
+  it('C secondary leads follow the primary earliest find first, whatever order they arrive in', async () => {
+    wrap(<ProjectAccessPanel project={project()} />);
+    const { table } = await leadsTable();
+    const names = dataRows(table).map((r) => cellsOf(table, r).Salesperson);
+    // Requests arrive C (20 Oct), B (10 Oct), D (12 Oct).
+    expect(names).toEqual(['Sales A', 'Sales B', 'Sales D', 'Sales C']);
+  });
+});
+
 describe('B5: right-click a row to reassign or dismiss', () => {
   const openMenu = async (name: string) => {
     const { table } = await leadsTable();
