@@ -41,26 +41,22 @@ CANDIDATE_PATH = _PLANS / "prompt-wa-issue-ideate.txt"
 BASE_MD5 = "d29c19830b22aa47403a88ddcb8e817d"  # production v72 (crew, 5 Nov)
 # The lead fills this in once the coder has committed prompt-wa-issue-ideate.txt (md5 of that exact file).
 # Until then this test is red on purpose.
-CANDIDATE_MD5 = "90f2b6eac520010f2e8e15f1e70918e3"
+CANDIDATE_MD5 = "TBD"
 
 PROMPT_NAME = "chatbot_semantic_parser"
 MIGRATION_FILE = "wa_0002_parser_issue_ideate.py"
 MARKER_KEY = "wa_0002_parser_issue_ideate"
 SHARED_PHRASE = "a problem with the CRM system or the assistant itself"
 
-# The doc's two edits, verbatim.
+# The doc's three edits (Round 11), verbatim. All three change a line in place: no line is added.
 EDIT1_OLD = "a complaint about existing behaviour (stays portal_link/complaint);"
 EDIT1_NEW = "a complaint about a product or an order (stays portal_link/complaint);"
-INSERTED_LINE = (
-    "    → ALSO ideate: the user REPORTS a problem with the CRM system or the assistant itself (an error, a "
-    "screen or page that does not load or does not work, an answer from the assistant that is wrong). That is "
-    "an issue to log: domain_hint \"ideate\", intent_hint \"submit_idea\", message_type \"business_query\", no "
-    "routing (null / null). It is never request_for_help, never an IT or support team, and never the domain of "
-    "the screen it is about; only an explicit ask for a person to take it over is request_for_help. Asking "
-    "about or disputing a record's own data (an order's status, a stock figure, a price) is not a problem with "
-    "the system: it stays in its own domain."
+HUMAN_OLD = "asking for a human (stays request_for_help)."
+HUMAN_NEW = (
+    "asking for a human (stays request_for_help). ALSO ideate: the user reports a problem with the CRM system "
+    "or the assistant itself (it errors, does not work or answers wrongly), or says they want to report one "
+    "before saying what it is: an issue to log, no routing, never request_for_help or an IT or support team."
 )
-RECORD_DATA_PHRASE = "Asking about or disputing a record's own data"
 EDIT2_OLD = "  - ideate (an idea is never escalated), or none of these this turn -> NO routing: null / null"
 EDIT2_NEW = (
     "  - ideate (an idea or an issue report is never escalated), or none of these this turn -> NO routing: "
@@ -81,10 +77,10 @@ def _expected_from_doc(text: str) -> str:
     """The doc's edits, derived here independently of the code under test."""
     lines = text.split("\n")
     (i,) = [n for n, line in enumerate(lines) if EDIT1_OLD in line]
+    assert lines[i].count(HUMAN_OLD) == 1, "edit 2's anchor sits on the ideate bullet's own line"
     (j,) = [n for n, line in enumerate(lines) if line == EDIT2_OLD]
     lines[j] = EDIT2_NEW
-    lines[i] = lines[i].replace(EDIT1_OLD, EDIT1_NEW)
-    lines.insert(i + 1, INSERTED_LINE)
+    lines[i] = lines[i].replace(EDIT1_OLD, EDIT1_NEW).replace(HUMAN_OLD, HUMAN_NEW)
     return "\n".join(lines)
 
 
@@ -98,10 +94,11 @@ def _apply():
 # 1. The candidate file is v72 plus exactly the two edits                     #
 # --------------------------------------------------------------------------- #
 def test_R9_the_candidate_is_pinned_and_is_v72_plus_the_two_edits():
+    """Round 11 (F3): the three edits change two lines in place and add none."""
     v72 = _v72()
     assert CANDIDATE_PATH.is_file(), f"missing committed candidate {CANDIDATE_PATH.name}"
     candidate = CANDIDATE_PATH.read_text(encoding="utf-8")
-    assert RECORD_DATA_PHRASE in candidate, "record-data disputes stay in their own domain (review N5)"
+    assert len(candidate.split("\n")) == len(v72.split("\n")), "the candidate adds a line (F3)"
     assert candidate == _expected_from_doc(v72)
 
     removed, added = [], []
@@ -110,8 +107,9 @@ def test_R9_the_candidate_is_pinned_and_is_v72_plus_the_two_edits():
             continue
         (removed if line.startswith("-") else added).append(line[1:])
     old_bullet = next(line for line in v72.split("\n") if EDIT1_OLD in line)
+    new_bullet = old_bullet.replace(EDIT1_OLD, EDIT1_NEW).replace(HUMAN_OLD, HUMAN_NEW)
     assert sorted(removed) == sorted([old_bullet, EDIT2_OLD])
-    assert sorted(added) == sorted([old_bullet.replace(EDIT1_OLD, EDIT1_NEW), INSERTED_LINE, EDIT2_NEW])
+    assert sorted(added) == sorted([new_bullet, EDIT2_NEW])
     assert _md5(CANDIDATE_PATH) == CANDIDATE_MD5, "pin the candidate's md5 (CANDIDATE_MD5)"
 
 
@@ -125,7 +123,9 @@ def test_R9_apply_issue_rule_on_v72_returns_the_committed_candidate():
 # --------------------------------------------------------------------------- #
 # 2. Missing anchor raises; a text that already carries the rule is a no-op    #
 # --------------------------------------------------------------------------- #
-@pytest.mark.parametrize("anchor", [EDIT1_OLD, EDIT2_OLD], ids=["ideate_bullet", "routing_line"])
+@pytest.mark.parametrize(
+    "anchor", [EDIT1_OLD, HUMAN_OLD, EDIT2_OLD], ids=["complaint_clause", "human_clause", "routing_line"]
+)
 def test_R9_apply_issue_rule_raises_when_an_anchor_is_missing(anchor):
     text = _v72().replace(anchor, "zzt anchor gone")
     with pytest.raises(ValueError):

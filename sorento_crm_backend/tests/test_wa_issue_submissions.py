@@ -418,6 +418,27 @@ def test_I2_the_issue_ask_back_exists_in_malay_and_chinese(env, language):  # no
     assert reply != IDEATION_CAPTURE_ASK_IDEA[language]
 
 
+# --------------------------------------------------------------------------- #
+# Round 11 F1: "I want to report a problem" reads as an issue before its words #
+# --------------------------------------------------------------------------- #
+def test_R11_F1_the_type_description_counts_an_intent_to_report_as_an_issue():
+    from app.services.ideation_extractor import IDEATE_EXTRACTION_JSON_SCHEMA as schema
+
+    description = schema["properties"]["type"]["description"]
+    assert "says they want to report one" in description, description
+
+
+def test_R11_F1_a_dealers_intent_only_report_asks_what_went_wrong_and_creates_nothing(env):  # noqa: F811
+    from tests.test_wa_dealer_submitter import _dealer, _linked_users
+
+    contact = _dealer(env)
+    out = env.turn(_empty_issue(env, "I want to report a problem", "en"))
+    assert out["status"] == "ask_idea", out["status"]
+    assert out["reply_text"] == ISSUE_ASK_EN
+    assert env.create_calls == []
+    assert _linked_users(env.db, contact.id) == []
+
+
 def test_I2_a_second_empty_answer_gives_up(env):  # noqa: F811
     env.ready()
     out = env.turn_ask(_empty_issue(env, "something is wrong", "en"))
