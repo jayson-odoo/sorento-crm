@@ -2,9 +2,10 @@
 
 /**
  * Shared verification-code field: "Verification code" label, the 6-digit
- * input, and the outline resend button - lifted out of `PortalVerifyCard`
- * (PLAN-unified-identity-26sep.md S1, AC-25) so `/signin`'s phone step reuses
- * the exact same look instead of a second copy. Both `PortalVerifyCard` and
+ * input, and the send / resend button (filled until a code has gone, then
+ * outline) - lifted out of `PortalVerifyCard` (PLAN-unified-identity-26sep.md
+ * S1, AC-25) so `/signin`'s phone step reuses the exact same look instead of a
+ * second copy. Both `PortalVerifyCard` and
  * `/signin` import this one component.
  *
  * `onComplete` fires once per distinct 6-digit value, the same guard
@@ -104,7 +105,8 @@ export function OtpCodeField({
       {status ?? (
         <Button
           type="button"
-          variant="outline"
+          // Before any code goes, Send code is the one filled main button; Resend stays outline.
+          variant={sent || cooldown > 0 ? 'outline' : 'primary'}
           onClick={onResend}
           disabled={pending || disabled || cooldown > 0}
           className="h-11 w-full"

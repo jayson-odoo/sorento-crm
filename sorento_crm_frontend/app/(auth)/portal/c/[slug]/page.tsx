@@ -15,7 +15,6 @@ import { Suspense, use, useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Skeleton } from '@/components/ui/skeleton';
 import { PortalLanding } from '../../components/PortalLanding';
-import { getSession } from 'next-auth/react';
 import {
   clearPortalToken,
   openPortalFromCrm,
@@ -55,13 +54,10 @@ function SlugEntry({ slug }: { slug: string }) {
       return;
     }
 
-    void (async () => {
-      let bridged: { token: string } | null = null;
-      try {
-        if (await getSession()) bridged = await openPortalFromCrm(slug);
-      } catch {
-        bridged = null;
-      }
+    // No CRM session, a refusal or a failure all answer null: the verify card, as before.
+    void openPortalFromCrm(slug)
+      .catch(() => null)
+      .then((bridged) => {
       if (bridged) {
         writePortalToken(bridged.token);
         writePortalSlug(slug);
@@ -69,7 +65,7 @@ function SlugEntry({ slug }: { slug: string }) {
         return;
       }
       router.replace(portalVerifyPath({ slug, type }));
-    })();
+    });
     // Intentional: only on first mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

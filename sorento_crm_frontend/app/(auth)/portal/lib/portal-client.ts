@@ -1009,17 +1009,21 @@ export async function endCrmSession(): Promise<void> {
 
 /**
  * POST /api/v1/public/portal/session-from-crm (SIGNIN-2FA-NOT-ROLE): a signed-in CRM user opening
- * their OWN contact's portal gets a verified portal token with no code. Null on any refusal or
- * failure (the caller shows the verify card instead). A plain fetch, not apiFetch: a refused or
- * dead CRM session here must never trigger the app-wide sign-out redirect.
+ * their OWN contact's portal gets a verified portal token with no code. Null on no CRM session, any
+ * refusal or failure, or no answer within the token-read budget (the caller shows the verify card
+ * instead). A plain fetch, not apiFetch: a refused or dead CRM session here must never trigger the
+ * app-wide sign-out redirect.
  */
 export async function openPortalFromCrm(
   slug: string,
 ): Promise<{ token: string; expires_at: string } | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const { getAuthToken } = await import('@/lib/api');
+    const { getAuthToken, TOKEN_FETCH_TIMEOUT_MS } = await import('@/lib/api');
     const bearer = await getAuthToken();
     if (!bearer) return null;
+    const abort = new AbortController();
+    timer = setTimeout(() => abort.abort(), TOKEN_FETCH_TIMEOUT_MS);
     const res = await fetch('/api/v1/public/portal/session-from-crm', {
       method: 'POST',
       headers: {
@@ -1027,6 +1031,7 @@ export async function openPortalFromCrm(
         Authorization: `Bearer ${bearer}`,
       },
       body: JSON.stringify({ slug }),
+      signal: abort.signal,
     });
     if (!res.ok) return null;
     const data = (await res.json()) as { token?: unknown; expires_at?: unknown };
@@ -1034,6 +1039,8 @@ export async function openPortalFromCrm(
     return { token: data.token, expires_at: String(data.expires_at ?? '') };
   } catch {
     return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 

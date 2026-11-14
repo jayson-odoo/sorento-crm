@@ -647,14 +647,18 @@ class PortalService:
         The portal's own ``request_otp`` runs inside an HTTP request, not a
         job, so it keeps the default (queue it).
         """
+        # A row stamped in the future was written before created_at came from this clock (the DB
+        # session's zone, e.g. +9h): it must not hold the cooldown, count toward the cap or
+        # shadow a newer code. Every read of the window below ignores it.
+        now = _utcnow()
         # Rate-limit: at most one outstanding OTP per contact within cooldown.
         recent = (
             self.db.query(PortalOtpCode)
-            .filter(PortalOtpCode.contact_id == contact.id)
+            .filter(PortalOtpCode.contact_id == contact.id, PortalOtpCode.created_at <= now)
             .order_by(PortalOtpCode.created_at.desc())
             .first()
         )
-        if recent is not None and (_utcnow() - recent.created_at) < OTP_REQUEST_COOLDOWN:
+        if recent is not None and (now - recent.created_at) < OTP_REQUEST_COOLDOWN:
             raise handle_validation_error("Please wait before requesting another verification code.")
 
         # Daily cap: the slug URL is shareable, so cap sends per contact per
@@ -663,7 +667,8 @@ class PortalService:
             self.db.query(PortalOtpCode)
             .filter(
                 PortalOtpCode.contact_id == contact.id,
-                PortalOtpCode.created_at >= _utcnow() - timedelta(hours=24),
+                PortalOtpCode.created_at >= now - timedelta(hours=24),
+                PortalOtpCode.created_at <= now,
             )
             .count()
         )
@@ -673,7 +678,6 @@ class PortalService:
             )
 
         code = f"{secrets.randbelow(1_000_000):06d}"
-        now = _utcnow()
         otp = PortalOtpCode(
             contact_id=contact.id,
             space_id=space_id,
@@ -824,6 +828,8 @@ class PortalService:
                 PortalOtpCode.consumed_at.is_(None),
                 # A passkey re-check code never opens the portal (PASSKEY-LOGIN AC-27).
                 PortalOtpCode.purpose == "sign_in",
+                # A future-stamped pre-fix row never shadows the newest real code.
+                PortalOtpCode.created_at <= _utcnow(),
             )
             .order_by(PortalOtpCode.created_at.desc())
             .first()
