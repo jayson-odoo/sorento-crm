@@ -1735,6 +1735,8 @@ def test_crew1_a_remembered_code_matches_its_spacing_and_dash_variants(seeded, m
 
     second_po, _same = _customer_po(db, project, owner, "ZZT-C1-2", customer=customer)
     second = _version(db, second_po)
+    # The first read rightly sent line 1 to the matcher; only the second read is in question.
+    matcher.calls.clear()
     service.persist_pages(second, [_page(1, lines=[_row(1, code=later)])])
 
     line = _lines(service, second)[1]
