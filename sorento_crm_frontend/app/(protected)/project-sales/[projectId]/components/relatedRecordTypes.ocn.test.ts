@@ -87,6 +87,8 @@ describe('the order change notice on the Related tab', () => {
     expect(row.textContent).toContain('Done');
     expect(row.textContent).not.toMatch(/processed_by_cs|processed by cs/i);
     fireEvent.click(cell);
-    expect(push).toHaveBeenCalledWith('/procurement-management/order-change-notices/ocn-1');
+    expect(push).toHaveBeenCalledWith(
+      `/procurement-management/order-change-notices/ocn-1?back=${encodeURIComponent('/project-sales/p1?tab=related')}`,
+    );
   });
 });

@@ -112,6 +112,8 @@ describe('relatedRecordTypes registry', () => {
     expect(offered).toContain('zzt_fake_kind');
 
     fireEvent.click(cell);
-    expect(push).toHaveBeenCalledWith('/zzt-fake/fake-1');
+    expect(push).toHaveBeenCalledWith(
+      `/zzt-fake/fake-1?back=${encodeURIComponent('/project-sales/p1?tab=related')}`,
+    );
   });
 });
