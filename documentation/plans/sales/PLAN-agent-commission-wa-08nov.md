@@ -1,7 +1,7 @@
 # PLAN: distance to the next tier and what it would pay (AGENT-COMMISSION-WA)
 
-Status: Re-pass pending after the owner 14 Nov ruling (agent reply = model text only): the code-built next-tier reply is removed, the tool returns each row's next-tier lines with an instruction, capped lists page on "more" (offset). Reviewer READY on 35e99316, fe74c008, e7a07f0e (the #2420 merge) and 5f651cfb (paging); crew re-pass and owner hand test to run.
-permission). Size S.
+Status: Re-pass pending after the owner 14 Nov ruling (agent reply = model text only): the code-built next-tier reply is removed, the tool returns each row's next-tier lines with an instruction, capped lists page on "more" (offset). Reviewer READY on 35e99316, fe74c008, e7a07f0e (the #2420 merge) and 5f651cfb (paging); crew re-pass and owner hand test to run. Track: small fix by
+kind (registry + agent query helpers, no migration, no new permission). Size M after the paging and model-reply rounds.
 
 Wave W-A of `PLAN-agent-commission-all-08nov.md` "Next waves". Stacks on #2242
 (branch `claude/agent-commission-dealers-teams-tvf434`); retarget to main after #2242 merges.
