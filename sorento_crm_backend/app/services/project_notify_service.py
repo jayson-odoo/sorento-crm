@@ -278,20 +278,30 @@ def drop_queued_reassigned(db: Session) -> None:
 
 
 def send_queued_reassigned(db: Session) -> int:
-    """Send every reassignment queued on this session. Call only after the commit."""
+    """Send every reassignment queued on this session. Call only after the commit.
+
+    Best-effort per notice: the reassignment has already saved, so a notice that fails to build
+    or send is logged and never turns that saved change into a 500."""
     pending = db.info.pop(_PENDING_REASSIGNED_KEY, None) or []
     sent = 0
     for item in pending:
-        project = db.get(Project, item["project_id"])
-        if project is None:
-            continue
-        sent += notify_reassigned(
-            db,
-            project=project,
-            previous_owner_id=item["previous_owner_id"],
-            new_owner_id=item["new_owner_id"],
-            dedup_key=item["dedup_key"],
-        )
+        try:
+            project = db.get(Project, item["project_id"])
+            if project is None:
+                continue
+            sent += notify_reassigned(
+                db,
+                project=project,
+                previous_owner_id=item["previous_owner_id"],
+                new_owner_id=item["new_owner_id"],
+                dedup_key=item["dedup_key"],
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "project reassigned notice not sent: project=%s (%s)", item.get("project_id"), exc
+            )
+            if not db.is_active:
+                db.rollback()
     return sent
 
 

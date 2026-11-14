@@ -176,9 +176,15 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
     const id = (target as Element).closest?.('[data-lead-row-id]')?.getAttribute('data-lead-row-id');
     return id ? leads.find((row) => row.id === id) : undefined;
   };
-  const canReassignTo = (row: ProjectLeadRow) => !row.isOwner && !row.inactive;
-  const hasMenu = (row: ProjectLeadRow) =>
-    canManage && (canReassignTo(row) || row.status === 'pending');
+  // By person, not by row: the owner can also hold a secondary-lead row that is not the one
+  // marked Owner, and it must not offer "Reassign to <owner>".
+  const canReassignTo = (row: ProjectLeadRow) =>
+    row.userId !== project.owner_user_id && !row.inactive;
+  /** The row under the pointer, when it has anything to offer this user; else undefined. */
+  const menuRowAt = (target: EventTarget) => {
+    const hit = rowAt(target);
+    return hit && canManage && (canReassignTo(hit) || hit.status === 'pending') ? hit : undefined;
+  };
 
   return (
     <>
@@ -236,15 +242,15 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
                 // Capture phase: a right-click with nothing to offer stops here, so the
                 // browser's own menu shows instead of an empty one.
                 onContextMenuCapture={(event) => {
-                  const hit = rowAt(event.target);
-                  if (!hit || !hasMenu(hit)) {
+                  const hit = menuRowAt(event.target);
+                  if (!hit) {
                     event.stopPropagation();
                     return;
                   }
                   setMenuRow(hit);
                 }}
                 onPointerDownCapture={(event) => {
-                  if (event.pointerType !== 'mouse') setMenuRow(rowAt(event.target) ?? null);
+                  if (event.pointerType !== 'mouse') setMenuRow(menuRowAt(event.target) ?? null);
                 }}
               >
                 <PanelDataGrid<ProjectLeadRow>
