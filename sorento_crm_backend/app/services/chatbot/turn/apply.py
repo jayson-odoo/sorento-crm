@@ -2689,10 +2689,10 @@ def _one_number_for_every_line(
     A product the user typed in this message (a verdict entity with a product hint, "8 for
     QWCY604") keeps the binding to that line alone (STOCK-QTY-PARTIAL-FILL R1), as do a
     number the parser bound by CODE alone or by a code that names a different line than its
-    position (the user named that part), quantities bound to two or more lines, a `demand_qty` that is a different number, a
-    line already answered (a revision), and lines that are not the parts of one set (R1:
-    "5 for the 2nd one" answers that line). Reads the open question's lines, the focus rows
-    and the parser's fields only.
+    position (the user named that part), quantities bound to two or more lines, a
+    `demand_qty` that is a different number, a line already answered (a revision), and lines
+    that are not the parts of one set (R1: "5 for the 2nd one" answers that line). Reads the
+    open question's lines, the focus rows and the parser's fields only.
     """
     if asked is not None or state.pending is not None:
         return
@@ -3751,8 +3751,10 @@ def _apply(
     # when a fresh answer is too long again.
     named_count = _named_count(verdict)
     carried_set = dict(focus.set_page) if isinstance(focus.set_page, dict) else None
-    if task_locked:
-        # A turn whose stock task took the value never pages or narrows a carried browse.
+    answer = verdict.get(OPEN_QUESTION_ANSWER)
+    if task_locked and isinstance(answer, dict) and answer.get("mode") in ("fill", "all", "done"):
+        # A number the parser declared as the answer to the stock task's question never pages
+        # the carried browse, and skips the brand narrowing below; "another 10" still pages it.
         carried_set = None
     new_state.focus.set_page = None
     # Round 4 R5: a clarify is answered on the very next turn or not at all; the engine
