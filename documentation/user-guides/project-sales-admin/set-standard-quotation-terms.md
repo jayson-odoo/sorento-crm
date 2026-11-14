@@ -1,9 +1,9 @@
 # Set the standard terms and conditions for quotations
 
-Use this when every new quotation should start with the same terms and conditions, payment terms
-and validity.
+Use this when every new quotation should start with the same terms and conditions, payment terms and validity.
 
 ## Steps
+
 
 1. Open **Project Sales**, then **Configuration**, then **Quotation Templates**. You need the project setup permission to see the page; editing needs the edit permission.
 2. Select **Add template** and type a **Name**.
@@ -28,6 +28,7 @@ and validity.
 ## Design the cover page
 
 Use this to set how page 1 of every quotation looks (the cover page), for the PDF and the customer's sign link.
+
 
 1. Open **Project Sales**, then **Configuration**, then **Quotation Templates**, and click the **Cover page** tab.
 2. Select **Add**, type a **Name**, and set the **Title** (for example *QUOTATION*).

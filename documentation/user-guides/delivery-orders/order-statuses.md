@@ -4,14 +4,14 @@ Use this flow to maintain the set of statuses a delivery order can move through 
 
 ## Where to go
 
-Open **[Delivery Order Management → Delivery Order Statuses](/order-management/order-statuses)** (URL: `/order-management/order-statuses`). The page is titled **Delivery Order Statuses**.
+Open [**Delivery Order Management → Delivery Order Statuses**](/order-management/order-statuses) (URL: `/order-management/order-statuses`). The page is titled **Delivery Order Statuses**.
 
 ## The list
 
 Each row is one status. Default sort is by **Sequence**, ascending.
 
 | Column | Meaning |
-|----|----|
+|--------|---------|
 | **Status Code** | Unique status identifier (alphanumeric, dashes, underscores only). |
 | **Status Name** | The label shown on orders and in dropdowns. |
 | **Sequence** | Display order - lower numbers appear first. |
@@ -32,12 +32,12 @@ Click a row to open the status detail page.
 Fields:
 
 | Field | Required | Notes |
-|----|----|----|
-| **Status Code** | Yes | Unique identifier (alphanumeric, dashes, underscores only). Not editable after creation. |
-| **Status Name** | Yes | The display label. |
-| **Description** | No | Free text. |
-| **Sequence** | Yes | Position in the list - lower numbers appear first. |
-| **Final Status** | - | Toggle to mark this status as a final / terminal status. |
+|-------|----------|-------|
+| **Status Code** | Yes      | Unique identifier (alphanumeric, dashes, underscores only). Not editable after creation. |
+| **Status Name** | Yes      | The display label. |
+| **Description** | No       | Free text. |
+| **Sequence** | Yes      | Position in the list - lower numbers appear first. |
+| **Final Status** | \-       | Toggle to mark this status as a final / terminal status. |
 
 Save with **Create Delivery Order Status** / **Update Delivery Order Status**.
 

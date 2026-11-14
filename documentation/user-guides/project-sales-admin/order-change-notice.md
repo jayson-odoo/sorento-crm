@@ -17,15 +17,16 @@ You see all notices of your company, or only the ones you raised or are named on
 Pick one **Type of change**. Each type shows its risk and a short guide text on the form.
 
 | Type | Risk | Use it for |
-|------|------|-----------|
+|------|------|------------|
 | **Cancellation** | Highest | Cancelling an item or the order. A cut in quantity is also filed as a Cancellation. |
 | **Exchange** | High | Swapping an item for another, including stock already delivered. |
-| **Advance** | Low | Delivery wanted earlier. |
-| **Delay** | Low | Delivery wanted later. |
+| **Advance** | Low  | Delivery wanted earlier. |
+| **Delay** | Low  | Delivery wanted later. |
 
 The risk is shown for information. It does not change who approves or how long each step takes.
 
 ## Steps - raise a notice (salesperson)
+
 
 1. Open **Project Sales Admin > Order Change Notices** (a salesperson: **My requests > Order Change Notice**) and click **Create**.
 2. Fill in the header:
@@ -93,13 +94,13 @@ Open the notice, check it and **Submit**. A rejected notice keeps the amendment 
 
 | Permission | Lets you |
 |------------|----------|
-| View all | See every notice of the company |
-| View own | See notices you raised or are named on |
-| Create | Raise a notice |
-| Edit | Send for approval, send back |
-| Mark done | Mark done as Customer Service |
-| Approve | Approve or reject |
-| Report | Use the notice in reports |
+| View all   | See every notice of the company |
+| View own   | See notices you raised or are named on |
+| Create     | Raise a notice |
+| Edit       | Send for approval, send back |
+| Mark done  | Mark done as Customer Service |
+| Approve    | Approve or reject |
+| Report     | Use the notice in reports |
 
 If a button is missing, check the status and your role. Ask an admin to change the role.
 

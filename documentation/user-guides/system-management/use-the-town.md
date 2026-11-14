@@ -1,34 +1,28 @@
 # Use the Town
 
-Use this to see the day's business at a glance as a small 3D map of Malaysia: today's sales split into dealers,
-projects and the rest, which dealers bought today, the open projects and their trading houses, stock that is low,
-orders to deliver, approvals waiting, and shipments on the way. The Town is for admins (a role can be granted it on
-the Roles screen). Amounts show only to users who may see the sales reports; everyone else sees counts.
+Use this to see the day's business at a glance as a small 3D map of Malaysia: today's sales split into dealers, projects and the rest, which dealers bought today, the open projects and their trading houses, stock that is low, orders to deliver, approvals waiting, and shipments on the way. The Town is for admins (a role can be granted it on the Roles screen). Amounts show only to users who may see the sales reports; everyone else sees counts.
 
 ## Steps
 
 ### Open the Town
 
+
 1. In the sidebar, click **Town**. The page opens on **Town** with the map on the left and the cards on the right.
-2. The map starts over **Selangor**, where Sorento's HQ is: the scoreboard, the approvals office, the warehouses,
-   the depot, and the port (Port Klang) on the left with its ships. North is up.
-3. Every other state is an island of its own, joined by bridges. Each state carries a pill with its name and a small
-   pill per count, for example **Johor** *7 dealers* *3 lit* *2 sites* *1 trading house*.
+2. The map starts over **Selangor**, where Sorento's HQ is: the scoreboard, the approvals office, the warehouses, the depot, and the port (Port Klang) on the left with its ships. North is up.
+3. Every other state is an island of its own, joined by bridges. Each state carries a pill with its name and a small pill per count, for example **Johor** *7 dealers* *3 lit* *2 sites* *1 trading house*.
 
 ### Move around
 
+
 1. Drag sideways to turn, drag up and down to tilt, scroll (or pinch) to zoom.
-2. To go to a state, click its pill on the map, or its name in the row of states under the map (the states with
-   something on them come first). The camera flies there at street level.
-3. Click **Whole map** (the map icon, bottom right of the map) to see all of Malaysia at once: the peninsula,
-   the **State not set** islet off Port Klang, and Sarawak, Labuan and Sabah across the sea.
-4. Click **Reset view** (the round arrow) to fly back to Selangor. **Zoom in**, **Zoom out** and
-   **Pause motion** / **Play motion** sit beside it.
+2. To go to a state, click its pill on the map, or its name in the row of states under the map (the states with something on them come first). The camera flies there at street level.
+3. Click **Whole map** (the map icon, bottom right of the map) to see all of Malaysia at once: the peninsula, the **State not set** islet off Port Klang, and Sarawak, Labuan and Sabah across the sea.
+4. Click **Reset view** (the round arrow) to fly back to Selangor. **Zoom in**, **Zoom out** and **Pause motion** / **Play motion** sit beside it.
 
 ### Read the map
 
 | You see | It means |
-|---|---|
+|---------|----------|
 | A cream house with an amber roof and lit windows | A dealer that bought today (a plain roof: no invoice today). Taller houses rank higher over the last 90 days. |
 | A small stall | A dealer outside the top 30 that bought today. |
 | A slate-blue glass tower | A trading house: a customer that is a project's trading house. Its windows light up when it has a project invoice today. |
@@ -36,48 +30,34 @@ the Roles screen). Amounts show only to users who may see the sales reports; eve
 | The flag at a site | Our sales stage, in that stage's colour from the project funnel (the same name and colour the project page shows). A red pennant above it: final negotiation. The flag never changes the building. |
 | Lorries | Sales orders due today or overdue. A lorry drives to the dealer's shop; a project order's lorry drives to that state's project sites. A coaster ship carries Sabah, Sarawak and Labuan orders from Port Klang. |
 | The **State not set** islet | Dealers, sites and trading houses whose state is not known. |
-| Red | Low stock, late shipments, final negotiation. |
+| Red     | Low stock, late shipments, final negotiation. |
 
-A dealer stands in the state of its delivery address: the postcode that comes up most often on its last 20
-delivery orders. A dealer with no delivery address stands on **State not set**. A project stands in the state on
-its sales profile.
+A dealer stands in the state of its delivery address: the postcode that comes up most often on its last 20 delivery orders. A dealer with no delivery address stands on **State not set**. A project stands in the state on its sales profile.
 
 ### Open the details
 
 Hover anything for its name and its key numbers, one per line (for example *Stage: Quoted*). Click it for its details:
 
-1. **A project site**: its name as the title (a long name shows in full on hover or the eye), then **Code**, **Stage** (named as on the project page), **Final negotiation**, **State**, **Launch** and **Delivery** (for example
-   *Mar 2025* and *Mar 2028*, *Not set* when missing), **Progress** (for example *56% of the way*, when both dates
-   are set) and **Estimated value** (*-* when none). **Open project** opens the
-   project.
+
+1. **A project site**: its name as the title (a long name shows in full on hover or the eye), then **Code**, **Stage** (named as on the project page), **Final negotiation**, **State**, **Launch** and **Delivery** (for example *Mar 2025* and *Mar 2028*, *Not set* when missing), **Progress** (for example *56% of the way*, when both dates are set) and **Estimated value** (*-* when none). **Open project** opens the project.
 2. **A glass tower**: the customer, **State**, **Open projects** and **Project invoices today**.
-3. **The sign *+N more projects* *+N dormant*** near the Selangor sites: how many projects are open, then
-   **On the map**, **More** and **Dormant**, and the list of sites on the map with each one's stage and state.
-4. **The scoreboard** or the card **How much did we sell today?**: the day's total and, side by side,
-   *Dealers RM a*, *Projects RM b* and *Other RM c*, which add up to the total.
+3. **The sign *+N more projects +N dormant*** near the Selangor sites: how many projects are open, then **On the map**, **More** and **Dormant**, and the list of sites on the map with each one's stage and state.
+4. **The scoreboard** or the card **How much did we sell today?**: the day's total and, side by side, *Dealers RM a*, *Projects RM b* and *Other RM c*, which add up to the total.
 
 ### Show it on a screen
 
-Click **Wallboard** at the top right for a screen everyone can see: no dealer, project or trading-house names
-(shops read *Shop #n*); counts, flags and lights stay. Click **Exit wallboard** to go back.
+Click **Wallboard** at the top right for a screen everyone can see: no dealer, project or trading-house names (shops read *Shop #n*); counts, flags and lights stay. Click **Exit wallboard** to go back.
 
 ## What the Town shows
 
-* **Sold today**: posted invoices, cash sales, debit notes and credit notes of today, split by the sales order type
-  each was billed from: **Dealers**, **Projects**, and **Other** (other types, set-apart customers, mixed or unset
-  types, and documents with no sales order).
-* **Project sites**: up to 30 open projects, largest estimated value first; the rest are counted on the sign.
-  Lost and won projects never show; dormant projects are only counted. Portal registrations not yet approved do
-  not show.
-* **Trading houses**: up to 12 customers linked as a trading house on an open project, the ones on the most open
-  projects first.
-* Users who may not see the sales reports get no amounts and no dealer, project or trading-house names, and the
-  sites are not in value order.
+* **Sold today**: posted invoices, cash sales, debit notes and credit notes of today, split by the sales order type each was billed from: **Dealers**, **Projects**, and **Other** (other types, set-apart customers, mixed or unset types, and documents with no sales order).
+* **Project sites**: up to 30 open projects, largest estimated value first; the rest are counted on the sign. Lost and won projects never show; dormant projects are only counted. Portal registrations not yet approved do not show.
+* **Trading houses**: up to 12 customers linked as a trading house on an open project, the ones on the most open projects first.
+* Users who may not see the sales reports get no amounts and no dealer, project or trading-house names, and the sites are not in value order.
 
 ## How you'll be notified
 
-Nothing is sent. The Town refreshes itself every few minutes between 07:00 and 22:05 Malaysia time; the date and
-time under the title say when it was last built. After 22:00 the board reads *Closed for the day*.
+Nothing is sent. The Town refreshes itself every few minutes between 07:00 and 22:05 Malaysia time; the date and time under the title say when it was last built. After 22:00 the board reads *Closed for the day*.
 
 ## See also
 

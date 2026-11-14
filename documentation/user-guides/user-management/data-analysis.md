@@ -5,6 +5,7 @@ Reference for the **User Management** module: who can log in, what they're allow
 > **There are NO MCP tools for User Management.** The AI assistant cannot query users, roles, permissions, teams, agents or access types - those endpoints are deliberately **not** wrapped as MCP tools (the MCP catalog covers products, inventory, promotions, complaints, SLA, etc., never identity/RBAC). This page is therefore an **admin reference for power users** working directly from the list pages and their **Export** buttons, not a prompt-able data source. Treat every "example question" below as "filter the list / export and read it off", not "ask the assistant".
 
 > **Reading notes**
+>
 > * **Menu labels are deliberately non-obvious - quote them, don't infer the entity.** Three entries do not name their backing table:
 >   * **AI Agents** = `access_agents` (`AccessAgent`) - the access-control *agent* an n8n/Respond.io conversation runs as; owns MCP-tool grants and team routing. **Not** an "admin user".
 >   * **Internal Users** = `contact_agent_access` (`ContactAgentAccess`) - grants of a WhatsApp **contact** to an **AI Agent**, time-boxed. **Not** the `users` table.
@@ -13,8 +14,8 @@ Reference for the **User Management** module: who can log in, what they're allow
 > * **Dates are stored naive UTC** (`DateTime(timezone=False)`); the UI renders Malaysia time. Be explicit about timezone when quoting timestamps.
 > * **Backend table name ≠ class name** - every entity below names its real `__tablename__`.
 
-Menu group **User Management** (verbatim):
-[Administrative Users](/user-management/users) · [Roles](/user-management/roles) · [Permissions](/user-management/permissions) · [AI Agents](/user-management/access-agents) · [Teams](/user-management/teams) · [Internal Users](/user-management/contact-access-agents) · [Contact Access Types](/user-management/contact-access-types) · [Market Segments](/user-management/market-segments) · [Account](/user-management/account) · [Logs](/user-management/logs) · [Settings](/user-management/settings)
+Menu group **User Management** (verbatim): [Administrative Users](/user-management/users) · [Roles](/user-management/roles) · [Permissions](/user-management/permissions) · [AI Agents](/user-management/access-agents) · [Teams](/user-management/teams) · [Internal Users](/user-management/contact-access-agents) · [Contact Access Types](/user-management/contact-access-types) · [Market Segments](/user-management/market-segments) · [Account](/user-management/account) · [Logs](/user-management/logs) · [Settings](/user-management/settings)
+
 
 ---
 
@@ -44,11 +45,13 @@ Menu: **Administrative Users** (page title *Administrative Users*). The people w
 **Date columns:** `created_at` (list column **Joined**), `updated_at`, `last_sign_in_at` (list column **Last Sign In**), `email_verified_at`.
 
 **Status enum** (`UserStatus`, stored as the string value):
+
 * `ACTIVE` - UI label **Active**.
 * `INACTIVE` - UI label **Inactive** (default for a freshly invited user).
 * `BLOCKED` - UI label **Blocked**.
 
 **Available filters** (Administrative Users list / `GET /api/v1/user-management/users`):
+
 * free-text **search** (`query`, matches name or email; placeholder *Search users*).
 * **Role** (`roleId` - joins `user_role_assignments`; filter value **All roles** or a specific role).
 * **Status** (`status` - **Active** / **Inactive** / **Blocked**, or all).
@@ -60,6 +63,7 @@ Menu: **Administrative Users** (page title *Administrative Users*). The people w
 **Bulk actions** on the list: **Bulk activate**, **Bulk deactivate**, **Bulk send invitation**, **Trash**, **Permanently delete** (only for already-trashed users).
 
 **Example questions**
+
 * "List active users." (`status=ACTIVE`)
 * "Who has the *{role}* role?" (filter **Role**)
 * "Show users that have never signed in." (sort by **Last Sign In**, find blanks)
@@ -73,6 +77,7 @@ Menu: **Administrative Users** (page title *Administrative Users*). The people w
 
 > **Delete semantics differ from the rest of the product here.** Administrative Users use **Trash → Restore → Permanently delete** (soft `is_trashed`), not the standard hard-delete-with-confirm. "Trash" sets `is_trashed=true`; "Permanently delete" is only offered for rows already in trash. (Audit TODO: this is intentional for accounts but is an exception to the ADR hard-delete rule.)
 
+
 ---
 
 ## Notify toggles (on the User) - SLA notification gates
@@ -80,25 +85,27 @@ Menu: **Administrative Users** (page title *Administrative Users*). The people w
 Boolean columns on `users` gate **whether a user is reached** for SLA events, per channel. They live on the **Administrative Users** edit dialog (each is a checkbox; verbatim labels below).
 
 | Column | Form label | Default | Fires when… |
-|--------|-----------|---------|-------------|
+|--------|------------|---------|-------------|
 | `notify_email_on_assignment` | **Email on assignment** | on (`true`) | an SLA stage is assigned to the user |
 | `notify_email_on_escalation` | **Email on escalation** | on (`true`) | an SLA escalates to the user |
-| `notify_whatsapp_on_assignment` | **WhatsApp on assignment** | off | assignment (needs a linked WhatsApp contact) |
-| `notify_whatsapp_on_escalation` | **WhatsApp on escalation** | off | escalation (needs a linked WhatsApp contact) |
+| `notify_whatsapp_on_assignment` | **WhatsApp on assignment** | off     | assignment (needs a linked WhatsApp contact) |
+| `notify_whatsapp_on_escalation` | **WhatsApp on escalation** | off     | escalation (needs a linked WhatsApp contact) |
 | `notify_email_on_deadline_extended` | **Email on deadline extended** | on (`true`) | a lower tier extends a deadline and this user is the next escalation tier |
-| `notify_whatsapp_on_deadline_extended` | **WhatsApp on deadline extended** | off | deadline-extended (needs a linked WhatsApp contact) |
-| `notify_email_on_product_discontinued` | **Email on products discontinued** | off | products newly discontinued (batched) - **which** products is set by the user's `user_product_discontinued_scopes` rows (section below) |
-| `notify_whatsapp_on_product_discontinued` | **WhatsApp on products discontinued** | off | product-discontinued (needs a linked WhatsApp contact) |
+| `notify_whatsapp_on_deadline_extended` | **WhatsApp on deadline extended** | off     | deadline-extended (needs a linked WhatsApp contact) |
+| `notify_email_on_product_discontinued` | **Email on products discontinued** | off     | products newly discontinued (batched) - **which** products is set by the user's `user_product_discontinued_scopes` rows (section below) |
+| `notify_whatsapp_on_product_discontinued` | **WhatsApp on products discontinued** | off     | product-discontinued (needs a linked WhatsApp contact) |
 | `notify_email_on_mention` | **Email on mention in a note** | on (`true`) | a teammate mentions the user in an internal note (email only - this event has no WhatsApp toggle) |
 
 Two related but separate columns also exist: `notify_whatsapp` (legacy, superseded by the per-event toggles) and `notify_whatsapp_summary` (form label **WhatsApp daily SLA summary**), plus `daily_sla_summary_subscribed` (the **email** daily summary).
 
 **How the matrix works** (see [SLA - notification matrix](../sla/sla-policies.md) and [Form-SLA configuration](../sla/form-sla-configuration.md)):
+
 * **Stage-level booleans gate the event**: a stage's `notify_assignee` (assignment) and `notify_on_escalation` (escalation) decide whether the event is emitted at all.
 * **Per-user toggles gate the channel**: even when the stage allows the event, email fires only if the user's `notify_email_on_{assignment,escalation}` is on, and WhatsApp only if `notify_whatsapp_on_{assignment,escalation}` is on **and** the user has a linked `respond_contact_id`.
 * **In-app always fires** for the assignee when the stage allows the event - the toggles only govern email/WhatsApp.
 
-> **Code-accuracy note for maintainers.** `GET /users/{id}`, `GET /users/me`, and the update response each build a **manual `UserResponse(**user_dict)`** dict - they do **not** rely on `from_attributes` for these columns. A new User column (any future toggle) must be added to **all three** manual dict builders in `app/api/v1/user_management/users.py` or it silently renders its default and never reaches the FE. The eight toggles above are wired in all three today. The same applies to `product_discontinued_scopes`, which is not a column at all: each builder fills it via `serialize_scopes(db, user_id)`, and the `PUT` response attaches it after the save.
+> **Code-accuracy note for maintainers.** `GET /users/{id}`, `GET /users/me`, and the update response each build a **manual** `**UserResponse(\*\*user_dict)**` dict - they do **not** rely on `from_attributes` for these columns. A new User column (any future toggle) must be added to **all three** manual dict builders in `app/api/v1/user_management/users.py` or it silently renders its default and never reaches the FE. The eight toggles above are wired in all three today. The same applies to `product_discontinued_scopes`, which is not a column at all: each builder fills it via `serialize_scopes(db, user_id)`, and the `PUT` response attaches it after the save.
+
 
 ---
 
@@ -119,6 +126,7 @@ A product matches a scope when `(scope.company_id IS NULL OR = product.company_i
 * Each recipient's notice reports **only their subset** of a batch: count, wording and deep link. The link is the plain `?discontinued_batch_id=<batch>` when the subset is the whole batch, and gains `&brand_id=<ids>` (comma-separated) when it is narrower.
 * Deliberately **not** a company-scoped table: it is a user preference, and the scheduled task `product_discontinued_check` fans a batch out under a per-task company scope that would otherwise hide recipients.
 * Edited on the **Administrative Users** edit dialog under **Discontinued product scope** (see [Manage users & roles](manage-users-and-roles.md)). It rides the user `GET`/`PUT` as `product_discontinued_scopes`: sent = replace the whole set, omitted = leave untouched.
+
 
 ---
 
@@ -143,12 +151,14 @@ Menu: **Roles** (page title *Roles*). A named bundle of permissions; users get p
 **Available filters** (Roles list / `GET /api/v1/user-management/roles`): free-text **search** (`query`, placeholder *Search roles*) + pagination. (No status enum - roles are not active/inactive.) Trashed roles are excluded by default (`is_trashed=false`).
 
 **Example questions**
+
 * "Which roles grant the *{permission slug}* permission?" (open the role, read **Permissions**)
 * "What is the default role for new users?" (`is_default = true`)
 * "List protected (system) roles." (`is_protected = true`)
 * "How many permissions does the *{role}* role grant?"
 * "Which role owns the `orders:*` permissions?"
 * "List all roles and their slugs."
+
 
 ---
 
@@ -170,11 +180,13 @@ Menu: **Permissions** (page title *Permissions*). The atomic RBAC capabilities (
 **Available filters** (Permissions list / `GET /api/v1/user-management/permissions`): free-text **search** (`query`, placeholder *Search permissions*); the list also offers a **Filter by role** select (show only permissions granted by a chosen role) + pagination.
 
 **Example questions**
+
 * "List every permission slug for the order-management module." (search `order_management`)
 * "Which permissions does role *{X}* include?" (**Filter by role**)
 * "Is there a `delete` permission for complaints?" (search `complaints` + `delete`)
 * "What does the `*.view` permission control?" (read **Description**)
 * "How many permissions exist in total?"
+
 
 ---
 
@@ -182,7 +194,7 @@ Menu: **Permissions** (page title *Permissions*). The atomic RBAC capabilities (
 
 Menu: **Teams** (page title *Teams*). Groups of users used for **round-robin SLA assignment** and a **team hierarchy** (a parent-team member can see/act on all descendant teams). Teams are the routing target that **AI Agents** point at, per **tier**.
 
-**Key fields (`teams`)**
+**Key fields (**`**teams**`**)**
 
 | Field | Meaning |
 |-------|---------|
@@ -191,7 +203,7 @@ Menu: **Teams** (page title *Teams*). Groups of users used for **round-robin SLA
 | `parent_team_id` → team | Hierarchy parent (form label **Parent team (optional)**; **No parent team** = top-level). `SET NULL` on parent delete (children re-root, not cascade-deleted). |
 | `member_count`, `members` (preview) | Computed for the list; members shown as name only (no UUID). |
 
-**Key fields (`team_members`)** - the detail page (`/user-management/teams/{id}`, breadcrumb **Members**):
+**Key fields (**`**team_members**`**)** - the detail page (`/user-management/teams/{id}`, breadcrumb **Members**):
 
 | Field | Meaning |
 |-------|---------|
@@ -203,9 +215,10 @@ Menu: **Teams** (page title *Teams*). Groups of users used for **round-robin SLA
 
 **Available filters** (Teams list): free-text **search** (placeholder *Search teams…*). The list renders as a **tree** reflecting `parent_team_id`.
 
-> **Team tiers and the team-set code do NOT live on `teams`.** A team becomes "tier 1 / 2 / 3 of a team set" only through an **AI Agent's** `agent_teams` row (`code` = team-set code, `tier` = 1/2/3). The same team can be tier 1 in one set and tier 2 in another. So "what tier is this team?" is only answerable in the context of a specific agent - see **AI Agents** below.
+> **Team tiers and the team-set code do NOT live on** `**teams**`**.** A team becomes "tier 1 / 2 / 3 of a team set" only through an **AI Agent's** `agent_teams` row (`code` = team-set code, `tier` = 1/2/3). The same team can be tier 1 in one set and tier 2 in another. So "what tier is this team?" is only answerable in the context of a specific agent - see **AI Agents** below.
 
 **Example questions**
+
 * "Who is on the *{team}* team, and in what round-robin order?" (open team → **Order** column)
 * "Which members are excluded from auto-assignment on *{team}*?" (**Auto-assign (round robin)** off)
 * "What is the team hierarchy (which teams sit under *{parent}*)?" (tree view / `parent_team_id`)
@@ -215,13 +228,14 @@ Menu: **Teams** (page title *Teams*). Groups of users used for **round-robin SLA
 
 See [SLA - team-tier routing](../sla/form-sla-configuration.md) for how tier + team-set drives assignment (`resolve_team_with_tier_fallback`: pick the first existing team at-or-above the requested tier, so a missing intermediate tier is skipped, not fatal).
 
+
 ---
 
 ## AI Agents - `access_agents` (`AccessAgent`)
 
 Menu: **AI Agents** (page title *AI Agents*). **This is NOT an administrative login.** An "AI Agent" is the **access-control agent** that an n8n / Respond.io conversation runs *as*. It owns two things: a set of **MCP tool grants** (`agent_mcp_tools`) and a set of **team-set routing rows** (`agent_teams`). When a WhatsApp conversation is handled, n8n preflights `(contact_id, space_id, agent_code)` and the agent decides which tools are callable and which team/tier the work routes to.
 
-**Key fields (`access_agents`)**
+**Key fields (**`**access_agents**`**)**
 
 | Field | Meaning |
 |-------|---------|
@@ -232,7 +246,7 @@ Menu: **AI Agents** (page title *AI Agents*). **This is NOT an administrative lo
 | `assign_to_new_internal_contacts` | When `true`, every newly created internal contact is auto-granted this agent. |
 | `synced_to_excel`, `last_synced_to_excel` | Excel-sync bookkeeping. |
 
-**Team Assignments (`agent_teams`)** - detail page card **Team Assignments**:
+**Team Assignments (**`**agent_teams**`**)** - detail page card **Team Assignments**:
 
 | Field | Meaning |
 |-------|---------|
@@ -242,7 +256,7 @@ Menu: **AI Agents** (page title *AI Agents*). **This is NOT an administrative lo
 | `policy_id` → sla_policy | Conversation-SLA policy bound to this team set (one per `(agent, code)`, cast onto every tier row). |
 | `notify_on_extension` | Whether this tier's team is notified when a lower-tier deadline is extended (default `true`). |
 
-**Member brand tags (`team_member_brands`)** - on each member row under a Team Assignment, the **Brands** editor lists the brands that member serves (`brand_code`, lower-case, validated against `brands`). Empty = **All brands**. Routing draws from the members tagged with the conversation's brand plus the untagged ones, and falls back to the whole team when nobody carries it - the same rule as the member's market segments. See [Manage teams](manage-teams.md#how-teams-drive-sla-assignment-tiers).
+**Member brand tags (**`**team_member_brands**`**)** - on each member row under a Team Assignment, the **Brands** editor lists the brands that member serves (`brand_code`, lower-case, validated against `brands`). Empty = **All brands**. Routing draws from the members tagged with the conversation's brand plus the untagged ones, and falls back to the whole team when nobody carries it - the same rule as the member's market segments. See [Manage teams](manage-teams.md#how-teams-drive-sla-assignment-tiers).
 
 **MCP tool grants** - detail page card **MCP Tools**: many-to-many via `agent_mcp_tools` (agent × tool × optional team × tier). The catalog rows live in `mcp_tools`. Sync from the code catalog never touches ownership - only admins grant/revoke.
 
@@ -253,6 +267,7 @@ Menu: **AI Agents** (page title *AI Agents*). **This is NOT an administrative lo
 **Preflight decisions** (`evaluate_agent`, used by n8n before a run): `allow`, `deny_no_access`, `deny_unknown_agent`, `deny_unknown_contact`. The per-tool guard (`McpAccessCheckOut`) adds `deny_tool_unlinked`, `deny_unknown_tool`. Decisions are logged to `mcp_access_log`.
 
 **Example questions**
+
 * "Which MCP tools is the *{agent}* agent allowed to call?" (open agent → **MCP Tools**)
 * "Which agents auto-attach to new internal contacts?" (`assign_to_new_internal_contacts = true`)
 * "For agent *{X}*, which team is tier 1 vs tier 2 of team-set *{code}*?" (**Team Assignments**)
@@ -261,11 +276,12 @@ Menu: **AI Agents** (page title *AI Agents*). **This is NOT an administrative lo
 * "Which agents share the *{tool}* tool?" (the tool picker lists `current_agent_names`)
 * "What is the agent code n8n should pass for *{name}*?" (`code`)
 
+
 ---
 
 ## Internal Users - `contact_agent_access` (`ContactAgentAccess`)
 
-Menu: **Internal Users** (page title *Internal Users*). **This is NOT the `users` table.** "Internal Users" is the grant table joining a **WhatsApp contact** (`respond_contacts`) to an **AI Agent** (`access_agents`), optionally time-boxed. A grant here is what lets that contact's conversation run as that agent (and thus reach the agent's tools). The list is usually shown **grouped by contact**.
+Menu: **Internal Users** (page title *Internal Users*). **This is NOT the** `**users**` **table.** "Internal Users" is the grant table joining a **WhatsApp contact** (`respond_contacts`) to an **AI Agent** (`access_agents`), optionally time-boxed. A grant here is what lets that contact's conversation run as that agent (and thus reach the agent's tools). The list is usually shown **grouped by contact**.
 
 **Key fields**
 
@@ -284,6 +300,7 @@ Menu: **Internal Users** (page title *Internal Users*). **This is NOT the `users
 **Available filters** (Internal Users list / `GET /api/v1/user-management/access-agents/contact-access`): free-text **search** (`query`, placeholder *Search contact access agents...*), `agent_id`, `contact_id`, sort/dir. The grouped view also has a **Select access agent** picker for bulk grants.
 
 **Example questions**
+
 * "Which AI agents can *{contact phone/name}* run as right now?" (`is_allowed=true` and current time within window)
 * "List grants for the *{agent}* agent." (`agent_id`)
 * "Which grants have expired?" (`valid_to < now`)
@@ -292,6 +309,7 @@ Menu: **Internal Users** (page title *Internal Users*). **This is NOT the `users
 * "Which contacts have more than one agent grant?" (grouped view)
 
 > **Contact id ≠ Respond.io id.** `respond_contact_id` is the internal `respond_contacts.id` (UUID), not the Respond.io `respond_io_id` used for inbox URLs. Resolve via the contact before building any Respond.io link.
+
 
 ---
 
@@ -315,6 +333,7 @@ Menu: **Contact Access Types** (page title *Contact Access Types*). The configur
 **Available filters** (Contact Access Types admin list): client-side over `code` / `name` / `keywords`; sortable by **Code**, **Name**, **Sort order**, **Status**. Created/edited inline via a modal (this page does use standard hard-delete with confirmation).
 
 **Example questions**
+
 * "List all active contact access types and their codes."
 * "What synonyms map to the `end_user` code?" (**Keywords**)
 * "Which access type does *'homeowner'* resolve to?" (search **Keywords**)
@@ -323,6 +342,7 @@ Menu: **Contact Access Types** (page title *Contact Access Types*). The configur
 * "In what order do access types appear?" (`sort_order`)
 
 > A contact's **assigned** codes (the M2M) are managed on the contact record, **not** here - this page is the catalog of available types. Default fallback codes when no catalog exists yet: `dealer`, `end_user`.
+
 
 ---
 
@@ -349,9 +369,11 @@ Created/edited via **Add segment** / a row's **Edit** action (pencil icon). **De
 **How a contact's portal forms are worked out:** every contact sees **Complaint**, **Stock Inquiry**, **Purchase Request** and **Sponsorship Form** regardless of segment. A segment can only add to that base, never remove from it. A contact's resolved set is the base four, plus the union of **Additional portal forms** across every *active* segment the contact belongs to, and then the contact's own overrides (below) win outright in either direction.
 
 **Example questions**
+
 * "Which segments currently grant Price Tag Request?" (**Additional portal forms** column)
 * "Is the Project segment eligible as a purchase-request requester?" (**Requestor picker**)
 * "Which segments are inactive, and so grant no extra forms even though contacts are still tagged with them?" (**Active** = Inactive)
+
 
 ---
 
@@ -368,9 +390,11 @@ Not a menu entry of their own - both blocks sit on a WhatsApp contact's own reco
   Each row's choice is independent and takes effect immediately; there is no bulk action across rows or contacts. A kind that resolves to **Hidden** is not offered on that contact's portal landing page, and every one of that kind's portal pages (list, create, edit, submit, attachments) answers with a "not available" message rather than a blank screen. A contact whose every kind is hidden sees an empty portal landing with a "Chat with us on WhatsApp" button instead of a blank page.
 
 **Example questions**
+
 * "Does this contact see the Complaint form on the portal?" (Portal forms block, that row's badge)
 * "Which contacts have Price Tag Request always shown even though their segment doesn't grant it?" (Portal forms block, **Always show** on that row)
 * "What happens to a contact whose market segment is removed?" (their Portal forms badges recompute on the base four only, unless an override says otherwise)
+
 
 ---
 
@@ -389,6 +413,4 @@ Not a menu entry of their own - both blocks sit on a WhatsApp contact's own reco
 * [Manage teams and round-robin assignment](manage-teams.md)
 * [SLA - form-SLA configuration (team tiers)](../sla/form-sla-configuration.md)
 * [SLA - policies & notification matrix](../sla/sla-policies.md)
-* [SLA - conversation vs form SLA](../sla/conversation-vs-form-sla.md)
-</content>
-</invoke>
+* [SLA - conversation vs form SLA](../sla/conversation-vs-form-sla.md) </content> </invoke>

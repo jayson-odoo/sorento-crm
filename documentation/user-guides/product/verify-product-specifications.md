@@ -6,7 +6,7 @@ Verification is a person vouching that a product code's specification values are
 * **Needs re-verify** - the code was verified, but a value changed afterwards. The stamp is withdrawn automatically and the page shows exactly what moved.
 * **Unverified** - nobody has vouched for this code yet, or someone withdrew the stamp by hand.
 
-Open **[Product Management → Spec Verification](/master-data-management/spec-verification)** (URL: `/master-data-management/spec-verification`). The page is titled **Spec Verification**.
+Open [**Product Management → Spec Verification**](/master-data-management/spec-verification) (URL: `/master-data-management/spec-verification`). The page is titled **Spec Verification**.
 
 ## The worklist
 
@@ -34,6 +34,7 @@ A verify can come back **skipped**, reported in the result toast:
 * **no longer in the list** - the code is gone from the catalogue.
 
 ## Verify or unverify in bulk
+
 
 1. Select rows with the checkboxes. Selection is page-scoped: it clears when you change page, so a code you can no longer see is never carried into a bulk action.
 2. Click **Verify selected** or **Unverify selected** in the toolbar. Each opens a confirmation stating the count.

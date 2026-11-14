@@ -2,15 +2,14 @@
 
 Create, edit, view, and delete individual products from the product catalogue. For bulk create/update from Excel, use the [product master upload](../purchasing/upload-product-master.md) instead.
 
-Open **[Products → Products → All Products](/master-data-management/products)** (URL: `/master-data-management/products`). The page is titled **Products**.
+Open [**Products → Products → All Products**](/master-data-management/products) (URL: `/master-data-management/products`). The page is titled **Products**.
 
 ## Who can do what
 
-Each action needs its own permission (set on the role under **Manage users and roles**). If you
-do not have it, the button is simply not shown.
+Each action needs its own permission (set on the role under **Manage users and roles**). If you do not have it, the button is simply not shown.
 
 | Action | Permission |
-|---|---|
+|--------|------------|
 | See the list and open a product | **View Products** |
 | **Create product** | **Add Products** |
 | **Edit**, and the Variants tab actions (**Set parent** / **Change parent**, **Unlink**, **Reset to auto**, **Add variant**, remove a variant), **Import barcodes**, **Extract photos from catalogue**, bulk **Chat search** | **Edit Products** |
@@ -18,12 +17,9 @@ do not have it, the button is simply not shown.
 | Row **Delete product** | **Delete Products** |
 | Bulk **Delete** | **Delete Products** |
 
-Opening the edit or create page by its link without the permission shows *You don't have access
-to this page*. On a promotion line, changing a product's list price also needs **Edit
-Products**.
+Opening the edit or create page by its link without the permission shows *You don't have access to this page*. On a promotion line, changing a product's list price also needs **Edit Products**.
 
-A product (or product set) that is on any project quotation cannot be deleted: *This product is
-on quotation PRJQ-..., so it cannot be deleted.*
+A product (or product set) that is on any project quotation cannot be deleted: *This product is on quotation PRJQ-..., so it cannot be deleted.*
 
 ## The list
 
@@ -39,6 +35,7 @@ The list is a DataGrid with these columns: **Product Code**, **Product Name**, *
 
 ## Create a product
 
+
 1. Click **Create Product**. This opens the dedicated create page (`/master-data-management/products/new`) - products use a multi-tab form, not a modal.
 2. Fill the tabs. Fields marked **\*** are required.
 
@@ -50,8 +47,7 @@ The list is a DataGrid with these columns: **Product Code**, **Product Name**, *
    * **Brand** - optional, searchable picker.
    * **Item Type** - **None**, **Product**, **Bundle**, **Service**, or **Other**.
    * **Active Status** - switch; controls whether the product is active.
-   * **Exclude from reorder planning** - switch; see [Exclude a product from reorder
-     planning](#exclude-a-product-from-reorder-planning) below.
+   * **Exclude from reorder planning** - switch; see [Exclude a product from reorder planning](#exclude-a-product-from-reorder-planning) below.
 
    **Pricing**
    * **List Price \*** - required, ≥ 0.
@@ -100,24 +96,14 @@ Use the **Delete** row icon (single) or select rows and use the **Delete** bulk 
 
 * **Active Status** (`is_active`) is the toggle you control on the form. Inactive products are hidden from pickers and most pages.
 * **Discontinued** (`is_discontinued`) is a separate flag shown on the detail page's **Tracking Flags**. It is **not** editable on the product form - a description starting with `****` marks the product discontinued automatically, whether the product is created here, edited here, uploaded via the product master, or arrives through the AutoCount integration; a discontinued batch process can also fire a "products discontinued" notification that deep-links back into this list. Treat discontinued as a data-driven state, not a manual switch.
-* **Length / Width / Height** left blank are filled in automatically from text like
-  `880x450x220MM` in the description, on create and on any edit that changes the name or
-  description - the same rule the [product master upload](../purchasing/upload-product-master.md)
-  and the AutoCount integration follow. A value you type yourself is never overwritten.
-* A brand-new product is linked to the tenant's default supplier (see **Default supplier (new
-  products)** under **[User Management → Settings](/user-management/settings)**) - the same link
-  the product master upload creates.
+* **Length / Width / Height** left blank are filled in automatically from text like `880x450x220MM` in the description, on create and on any edit that changes the name or description - the same rule the [product master upload](../purchasing/upload-product-master.md) and the AutoCount integration follow. A value you type yourself is never overwritten.
+* A brand-new product is linked to the tenant's default supplier (see **Default supplier (new products)** under [**User Management → Settings**](/user-management/settings)) - the same link the product master upload creates.
 
 ## Exclude a product from reorder planning
 
-The **Exclude from reorder planning** switch (create/edit form and the product detail page)
-keeps a product out of every reorder plan, even when it is named directly at Start Plan.
-Nothing is excluded by default - every product plans until you switch it on by hand.
+The **Exclude from reorder planning** switch (create/edit form and the product detail page) keeps a product out of every reorder plan, even when it is named directly at Start Plan. Nothing is excluded by default - every product plans until you switch it on by hand.
 
-On the products list, an optional **Reorder Planning** column (hidden by default, reachable
-from **Columns**) shows **Included** or **Excluded** for each product, and the same field is
-available as a condition under **Advanced filters** so you can find every excluded product at
-once. See [Run a reorder plan](../supply-chain/run-a-reorder-plan.md).
+On the products list, an optional **Reorder Planning** column (hidden by default, reachable from **Columns**) shows **Included** or **Excluded** for each product, and the same field is available as a condition under **Advanced filters** so you can find every excluded product at once. See [Run a reorder plan](../supply-chain/run-a-reorder-plan.md).
 
 ## Bulk import
 
@@ -129,13 +115,10 @@ If your company is connected to AutoCount, you can pull the current items book s
 
 **Who can do this:** anyone holding the **Pull from AutoCount** permission (`master_data.products.autocount_pull`) - granted automatically to every role that already holds product **Import**, plus admin. You need exactly one company selected; with more than one company in scope Sorento refuses with "Select a single company before pulling from AutoCount." and starts nothing.
 
-**The AutoCount connection itself** is not configured here - an admin enters the gateway URL and
-API key on the **FoundryX ESB** record under **Integration Management → Integrations** and clicks
-**Test** to confirm it (**Connected**, or the reason it isn't). See [AutoCount integration
-(ESB)](../system-management/data-analysis.md#autocount-integration-esb---contract-version-21) for
-details, including why a wrong-company key can still show Connected there.
+**The AutoCount connection itself** is not configured here - an admin enters the gateway URL and API key on the **FoundryX ESB** record under **Integration Management → Integrations** and clicks **Test** to confirm it (**Connected**, or the reason it isn't). See [AutoCount integration (ESB)](../system-management/data-analysis.md#autocount-integration-esb---contract-version-21) for details, including why a wrong-company key can still show Connected there.
 
 ### Start a pull
+
 
 1. With one company selected, open **Products**.
 2. In the **Actions** menu, the same menu that holds **Import**, click **Pull from AutoCount**.

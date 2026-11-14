@@ -1,8 +1,9 @@
 # Searching for several orders at once
 
-Use this on the **[Project Sales Admin → Sales Orders](/scm/sales-orders)** list when you have several orders (up to 200) to find in one go, instead of searching them one at a time.
+Use this on the [**Project Sales Admin → Sales Orders**](/scm/sales-orders) list when you have several orders (up to 200) to find in one go, instead of searching them one at a time.
 
 ## Steps
+
 
 1. Type a value in the search box and press **Enter** (or type a comma). It turns into a chip inside the box, for example `SO100001`.
 2. Keep typing and pressing **Enter** to add more chips, for example `SO100002` or `Example Trading`.

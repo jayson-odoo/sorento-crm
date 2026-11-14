@@ -1,89 +1,46 @@
 # Supply Chain - Order inquiry handover email to purchasing
 
-During the parallel run, every time customer service raises, changes or cancels an order
-inquiry row in one write, purchasing gets an email shaped like the manual mail CS used to type
-by hand. This explains what's in it, what sends it, and how to manage it.
+During the parallel run, every time customer service raises, changes or cancels an order inquiry row in one write, purchasing gets an email shaped like the manual mail CS used to type by hand. This explains what's in it, what sends it, and how to manage it.
 
 ## What purchasing receives
 
-One email per customer-service write - one email per raise, per settle, or per cancel, not one
-per line inside it.
+One email per customer-service write - one email per raise, per settle, or per cancel, not one per line inside it.
 
-**Subject:** `OI: <stock location> @ <S/O list>` when every line shares one stock location, for
-example `OI: BRW-BB @ SO397450 , SO397460`. Across several locations the subject drops the
-location: `OI: SO397450 , SO397460`.
+**Subject:** `OI: <stock location> @ <S/O list>` when every line shares one stock location, for example `OI: BRW-BB @ SO397450 , SO397460`. Across several locations the subject drops the location: `OI: SO397450 , SO397460`.
 
 **Body**, top to bottom:
 
-1. A red headline naming the verb(s) in the mail: **ORDER**, **RESERVE & ORDER**, **ORDER
-   BACK**, **PRE-ORDERED**, **ALREADY INBOUND**, **ADVANCE**, **DELAY**, **CHANGE SO NO**,
-   **CANCEL BALANCE**.
-2. A sales-order table: **S/O NO**, **SO DATE**, **CUSTOMER**, **PROJECT**. This is the only
-   place **CUSTOMER** and **PROJECT** appear.
-3. A line table: **LOCATION**, **ITEM CODE**, **NEW ITEM CODE**, **QTY**, **NEW QTY**,
-   **DELIVERY**, **NEW DATE**. When the mail covers more than one sales order, a grey
-   **S/O NO** row opens each order's lines.
-4. When any line carries files, one **Attachments:** line under the table names them by item
-   code.
-5. "Raised by \<name\> (\<email\>) on \<date\>."
-6. A link, **Open in Order Inquiries**, that opens the order inquiry's own detail page - see
-   [Order inquiries: the Documents view and the OI detail
-   page](order-inquiry-documents.md). When the mail covers more than one sales order, the link
-   opens the first order inquiry named in it.
 
-**ITEM CODE with a description.** For a product whose **Show SO line description in OI
-email** switch is on (product form, **Specifications** tab), **ITEM CODE** reads
-`<code> - <description>`, where the description is the sales order line's own description from
-AutoCount. This applies to the email, the send/resend preview and the Excel copy. The bare code
-prints when the description is blank or the same as the code. On a product switch, each side
-follows its own product's switch.
+1. A red headline naming the verb(s) in the mail: **ORDER**, **RESERVE & ORDER**, **ORDER BACK**, **PRE-ORDERED**, **ALREADY INBOUND**, **ADVANCE**, **DELAY**, **CHANGE SO NO**, **CANCEL BALANCE**.
+2. A sales-order table: **S/O NO**, **SO DATE**, **CUSTOMER**, **PROJECT**. This is the only place **CUSTOMER** and **PROJECT** appear.
+3. A line table: **LOCATION**, **ITEM CODE**, **NEW ITEM CODE**, **QTY**, **NEW QTY**, **DELIVERY**, **NEW DATE**. When the mail covers more than one sales order, a grey **S/O NO** row opens each order's lines.
+4. When any line carries files, one **Attachments:** line under the table names them by item code.
+5. "Raised by <name> (<email>) on <date>."
+6. A link, **Open in Order Inquiries**, that opens the order inquiry's own detail page - see [Order inquiries: the Documents view and the OI detail page](order-inquiry-documents.md). When the mail covers more than one sales order, the link opens the first order inquiry named in it.
 
-There is no REMARK column. The numbers say what moved, and the red headline lists the
-actions in the mail.
+**ITEM CODE with a description.** For a product whose **Show SO line description in OI email** switch is on (product form, **Specifications** tab), **ITEM CODE** reads `<code> - <description>`, where the description is the sales order line's own description from AutoCount. This applies to the email, the send/resend preview and the Excel copy. The bare code prints when the description is blank or the same as the code. On a product switch, each side follows its own product's switch.
 
-**How a change reads.** **ITEM CODE**, **QTY** and **DELIVERY** always print what the line
-was. When one of them moved, the new value prints in the **NEW** column next to it. A
-**NEW** column only appears when some line in that mail moved that value, and its cell is
-filled only on the lines that moved. Every date in the mail reads `dd/mm/yyyy`.
+There is no REMARK column. The numbers say what moved, and the red headline lists the actions in the mail.
+
+**How a change reads.** **ITEM CODE**, **QTY** and **DELIVERY** always print what the line was. When one of them moved, the new value prints in the **NEW** column next to it. A **NEW** column only appears when some line in that mail moved that value, and its cell is filled only on the lines that moved. Every date in the mail reads `dd/mm/yyyy`.
 
 * A quantity that moved 182 to 214 reads **QTY 182**, **NEW QTY 214**.
-* A date that moved reads **DELIVERY 01/09/2026**, **NEW DATE 01/04/2027**. A later new date
-  is a delay, an earlier one an advance.
-* A cancelled line reads its old quantity in **QTY** and **0** in **NEW QTY**. A line cut
-  below what purchasing already placed reads the same way, for example **QTY 10**, **NEW QTY
-  6**.
+* A date that moved reads **DELIVERY 01/09/2026**, **NEW DATE 01/04/2027**. A later new date is a delay, an earlier one an advance.
+* A cancelled line reads its old quantity in **QTY** and **0** in **NEW QTY**. A line cut below what purchasing already placed reads the same way, for example **QTY 10**, **NEW QTY 6**.
 * A product change reads the old code in **ITEM CODE** and the new one in **NEW ITEM CODE**.
 * A plain new line prints **QTY** and **DELIVERY** only, with every **NEW** cell blank.
 
-The before values are the same ones the Order Inquiries Was/Now dialog shows for the row. A
-line whose received supply the change sends back to the pool (its fresh row carries
-"Replaces N used" in Order Inquiries) prints its own move the same way, for example
-**DELIVERY 01/10/2026**, **NEW DATE 02/11/2026**.
+The before values are the same ones the Order Inquiries Was/Now dialog shows for the row. A line whose received supply the change sends back to the pool (its fresh row carries "Replaces N used" in Order Inquiries) prints its own move the same way, for example **DELIVERY 01/10/2026**, **NEW DATE 02/11/2026**.
 
-**One line per sales order line, in line totals.** When a planning change moves a line whose
-existing order inquiry row purchasing already placed (or a line carrying two open rows), the row
-keeps its own quantity in Order Inquiries and the extra quantity is raised as its own ORDER
-row there. The mail still prints ONE line for it: **QTY** is what purchasing already held for
-the line (its open rows added up) and **NEW QTY** is the line's new Buy, for example **QTY
-172**, **NEW QTY 436** for a line that moved 172 to 436. No separate line is printed for
-that same line.
+**One line per sales order line, in line totals.** When a planning change moves a line whose existing order inquiry row purchasing already placed (or a line carrying two open rows), the row keeps its own quantity in Order Inquiries and the extra quantity is raised as its own ORDER row there. The mail still prints ONE line for it: **QTY** is what purchasing already held for the line (its open rows added up) and **NEW QTY** is the line's new Buy, for example **QTY 172**, **NEW QTY 436** for a line that moved 172 to 436. No separate line is printed for that same line.
 
-**Width.** The handover mail uses the print card (672px), sized to one A4 portrait page.
-Codes, quantities and dates never wrap. The width is a setting on the template in **System Management → Email
-Templates** (**Width**); every other mail stays on the standard 600px card.
+**Width.** The handover mail uses the print card (672px), sized to one A4 portrait page. Codes, quantities and dates never wrap. The width is a setting on the template in **System Management → Email Templates** (**Width**); every other mail stays on the standard 600px card.
 
-**How an item swap reads.** Swapping the product on a line that has no row to restate prints
-as two lines: the old item with **NEW QTY 0**, and the new item as a plain new line.
+**How an item swap reads.** Swapping the product on a line that has no row to restate prints as two lines: the old item with **NEW QTY 0**, and the new item as a plain new line.
 
-A line whose item code, quantity and delivery date are unchanged from the last mail never
-appears - only what actually moved or was cancelled is printed. Confirming a second time with
-nothing left to change sends no mail at all, not an empty one.
+A line whose item code, quantity and delivery date are unchanged from the last mail never appears - only what actually moved or was cancelled is printed. Confirming a second time with nothing left to change sends no mail at all, not an empty one.
 
-**Still-open amendment instructions.** If the order also carries amendment rows raised by an SO
-change (DELAY, ADVANCE, CANCEL BALANCE, CHANGE SO) that purchasing has not yet actioned, they're
-listed in the same line table, after this Confirm's own lines, so purchasing reads one page per
-Confirm instead of having to remember an earlier mail. An order with nothing still open there
-adds nothing.
+**Still-open amendment instructions.** If the order also carries amendment rows raised by an SO change (DELAY, ADVANCE, CANCEL BALANCE, CHANGE SO) that purchasing has not yet actioned, they're listed in the same line table, after this Confirm's own lines, so purchasing reads one page per Confirm instead of having to remember an earlier mail. An order with nothing still open there adds nothing.
 
 ## What sends it, and what doesn't
 
@@ -96,91 +53,58 @@ Sends one mail:
 
 Never sends anything:
 
-* Purchasing's own actions on **Order Inquiries** - **Acknowledge**, **Reject** / **Reject
-  selected**, **Link now** / **Auto-link**, **Unlink** / **Unlink selected**.
+* Purchasing's own actions on **Order Inquiries** - **Acknowledge**, **Reject** / **Reject selected**, **Link now** / **Auto-link**, **Unlink** / **Unlink selected**.
 * **Upload order inquiry sheet** on Reorder Planning (the migration importer).
 
 ## How to manage it
 
-Open **[System Management → Automation](/system-management/automation)** and edit the row
-named **Order inquiry to purchasing**.
+Open [**System Management → Automation**](/system-management/automation) and edit the row named **Order inquiry to purchasing**.
 
-* **To** and **Cc** - each has **Specific users**, **By role**, and **External emails** (type an
-  address and click **Add**). Everyone under **To** is on the mail's To line; everyone under
-  **Cc** is on its Cc line. A row saved before Cc existed shows all its recipients under
-  **To** but keeps sending as it always did (the first address on To, everyone else on Cc) until
-  you add, remove or move an address under **To** or **Cc** here and save. Saving any other
-  change (a condition, the name, a tick box) leaves it sending as before. Once you change an
-  address, To and Cc mean exactly what the boxes say, so check both boxes before you save.
-* **Cc the person who raised it** (in the **Cc** block) - keeps the CS admin who made the change
-  on the thread.
-* **One email, everyone on the thread** - sends a single mail to everyone, so a reply-all
-  reaches the whole thread. The person who raised it goes on Cc, even if they are also picked
-  under **To**; only when nobody else is on the mail are they on To. With this off, each person
-  gets a separate copy and To / Cc does not apply.
-* **Enabled** - untick this to stop the mail once the manual email is retired. Nothing else
-  needs to change.
+* **To** and **Cc** - each has **Specific users**, **By role**, and **External emails** (type an address and click **Add**). Everyone under **To** is on the mail's To line; everyone under **Cc** is on its Cc line. A row saved before Cc existed shows all its recipients under **To** but keeps sending as it always did (the first address on To, everyone else on Cc) until you add, remove or move an address under **To** or **Cc** here and save. Saving any other change (a condition, the name, a tick box) leaves it sending as before. Once you change an address, To and Cc mean exactly what the boxes say, so check both boxes before you save.
+* **Cc the person who raised it** (in the **Cc** block) - keeps the CS admin who made the change on the thread.
+* **One email, everyone on the thread** - sends a single mail to everyone, so a reply-all reaches the whole thread. The person who raised it goes on Cc, even if they are also picked under **To**; only when nobody else is on the mail are they on To. With this off, each person gets a separate copy and To / Cc does not apply.
+* **Enabled** - untick this to stop the mail once the manual email is retired. Nothing else needs to change.
 
 ## Retail and project orders go to different people
 
-The mail routes by the sales order's class. A **Retail** (dealer) order's lines can go to
-dealer purchasing while a **Project** order's lines keep going to project purchasing. A sales
-order whose class is **Other** counts as Retail; one with no class counts as Project.
+The mail routes by the sales order's class. A **Retail** (dealer) order's lines can go to dealer purchasing while a **Project** order's lines keep going to project purchasing. A sales order whose class is **Other** counts as Retail; one with no class counts as Project.
 
-When one Confirm touches both a retail and a project order, two mails go out: one with only the
-retail lines and one with only the project lines.
+When one Confirm touches both a retail and a project order, two mails go out: one with only the retail lines and one with only the project lines.
 
-Which row sends which class is set by the row's **Conditions** (the **Sales order class**
-field). A row with no condition sends for every class.
+Which row sends which class is set by the row's **Conditions** (the **Sales order class** field). A row with no condition sends for every class.
 
 **To set up dealer purchasing (once):**
 
-1. In **System Management → Automation**, open the existing **Order inquiry to purchasing**
-   row, click **Add condition**, pick **Sales order class**, **is**, **Project**, and save. From
-   now on it only sends project lines.
-2. Click **Add automation**, choose the trigger **Order inquiry handover to purchasing**, the same email
-   template, and give it a name such as **Order inquiry to dealer purchasing**.
-3. Under **To**, pick dealer purchasing. Under **Cc**, pick project purchasing and tick **Cc the
-   person who raised it**. Tick **One email, everyone on the thread**.
+
+1. In **System Management → Automation**, open the existing **Order inquiry to purchasing** row, click **Add condition**, pick **Sales order class**, **is**, **Project**, and save. From now on it only sends project lines.
+2. Click **Add automation**, choose the trigger **Order inquiry handover to purchasing**, the same email template, and give it a name such as **Order inquiry to dealer purchasing**.
+3. Under **To**, pick dealer purchasing. Under **Cc**, pick project purchasing and tick **Cc the person who raised it**. Tick **One email, everyone on the thread**.
 4. Add the condition **Sales order class**, **is**, **Retail**, and save.
 
-Do step 1 before or together with step 4. Until the old row has its **Project** condition, a
-retail mail goes to both rows' recipients.
+Do step 1 before or together with step 4. Until the old row has its **Project** condition, a retail mail goes to both rows' recipients.
 
-**Undo mails follow the same rule.** The **Order inquiry undone** row works the same way: give
-the existing row a **Project** condition and add a **Retail** row with the dealer recipients.
+**Undo mails follow the same rule.** The **Order inquiry undone** row works the same way: give the existing row a **Project** condition and add a **Retail** row with the dealer recipients.
 
 ## One person's orders go to their own people
 
-A row can also be set by who raised the order inquiry, with the condition **Raised by**: pick
-one or more people with **is any of** (only their order inquiries) or **is none of** (everyone
-else's). An order inquiry nobody is named as raising counts as "none of" anyone.
+A row can also be set by who raised the order inquiry, with the condition **Raised by**: pick one or more people with **is any of** (only their order inquiries) or **is none of** (everyone else's). An order inquiry nobody is named as raising counts as "none of" anyone.
 
 **Example: Agnes' project orders skip Eling.**
 
-1. Open the project row that sends to Eling. Click **Add condition**, pick **Raised by**,
-   **is none of**, **Agnes**, and save. It keeps its **Sales order class is Project** condition.
-2. Click **Add automation**, choose the trigger **Order inquiry handover to purchasing** and
-   the same email template, and name it, for example **Order inquiry - Agnes' project orders**.
+
+1. Open the project row that sends to Eling. Click **Add condition**, pick **Raised by**, **is none of**, **Agnes**, and save. It keeps its **Sales order class is Project** condition.
+2. Click **Add automation**, choose the trigger **Order inquiry handover to purchasing** and the same email template, and name it, for example **Order inquiry - Agnes' project orders**.
 3. Pick the people Agnes' orders should reach under **To** and **Cc**.
-4. Add the conditions **Sales order class**, **is**, **Project** and **Raised by**, **is any
-   of**, **Agnes**, and save.
+4. Add the conditions **Sales order class**, **is**, **Project** and **Raised by**, **is any of**, **Agnes**, and save.
 5. Do the same on the **Order inquiry undone** rows so undo mails follow the same people.
 
-When one Confirm covers order inquiries raised by different people, each line goes only to the
-rows it matches: Agnes' lines in one mail to her row, everyone else's lines together in one mail
-to Eling's row. A row with no **Raised by** condition gets every line, still once.
+When one Confirm covers order inquiries raised by different people, each line goes only to the rows it matches: Agnes' lines in one mail to her row, everyone else's lines together in one mail to Eling's row. A row with no **Raised by** condition gets every line, still once.
 
-**Send to purchasing (resend)** goes through every enabled row whose conditions match the order
-inquiry's sales order class and raiser, the same rows the automatic mail uses, one mail per
-row. When every row is switched off, it uses the oldest switched-off row that matches. If no
-row matches, the order inquiry is not sent and the preview lists it as skipped: it never goes
-to another class's or another raiser's people.
+**Send to purchasing (resend)** goes through every enabled row whose conditions match the order inquiry's sales order class and raiser, the same rows the automatic mail uses, one mail per row. When every row is switched off, it uses the oldest switched-off row that matches. If no row matches, the order inquiry is not sent and the preview lists it as skipped: it never goes to another class's or another raiser's people.
 
 ## Parallel run
 
-While the parallel run is on, CS keeps sending the manual mail as well. Compare the two on the
-same thread and report any mismatch between them.
+While the parallel run is on, CS keeps sending the manual mail as well. Compare the two on the same thread and report any mismatch between them.
 
 ## Not yet built
 
@@ -189,19 +113,14 @@ Two cases still print as separate cancel-and-order lines rather than one combine
 * Moving lines to a different sales order number (**CHANGE SO NO** across two sales orders).
 * Replacing one item for another on a single line.
 
-Both arrive as a cancelled line (**NEW QTY 0**) and a plain new line, the same as any other
-item swap, until a dedicated combined line is built.
+Both arrive as a cancelled line (**NEW QTY 0**) and a plain new line, the same as any other item swap, until a dedicated combined line is built.
 
 ## See also
 
-* [Order inquiries: the Documents view and the OI detail page](order-inquiry-documents.md) - what
-  the mail's link opens.
-* [Reserve request and reserved-stock emails](order-inquiry-reserve-email.md) - the separate
-  emails a "Request CS to reserve" exchange sends.
-* [Sales order changes after planning](sales-order-changes.md) - the in-app notification
-  purchasing gets once a change is confirmed or amended, separate from this email.
+* [Order inquiries: the Documents view and the OI detail page](order-inquiry-documents.md) - what the mail's link opens.
+* [Reserve request and reserved-stock emails](order-inquiry-reserve-email.md) - the separate emails a "Request CS to reserve" exchange sends.
+* [Sales order changes after planning](sales-order-changes.md) - the in-app notification purchasing gets once a change is confirmed or amended, separate from this email.
 * [Buy and borrow decisions on Fulfilment Planning](local-buy-and-borrow-source.md#undo-last-confirm)
-  - undoing a Confirm, which sends purchasing its own "Order inquiry undone" email instead of
-  this one.
+  * undoing a Confirm, which sends purchasing its own "Order inquiry undone" email instead of this one.
 * [Run a reorder plan](run-a-reorder-plan.md)
 * [Upload the data a reorder plan is built from](upload-plan-data.md)

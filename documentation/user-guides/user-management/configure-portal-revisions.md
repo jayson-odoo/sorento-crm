@@ -4,7 +4,7 @@ Use this when a dealer needs to change a submission after it's already been subm
 
 ## Where
 
-**[User Management → Settings → Portal Revisions](/user-management/settings/portal-revisions)**.
+[**User Management → Settings → Portal Revisions**](/user-management/settings/portal-revisions).
 
 ## Global switch and cap
 

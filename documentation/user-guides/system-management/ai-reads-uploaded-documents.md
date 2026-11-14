@@ -1,12 +1,11 @@
 # Let the AI answer from uploaded documents
 
-Use this when you want staff or WhatsApp contacts to ask the AI about a document you uploaded in
-Resources (an employee handbook, a warranty policy, a product guide, a technical specification).
-The AI answers only from the document and cites it, for example *(Warranty Policy, p.1)*.
+Use this when you want staff or WhatsApp contacts to ask the AI about a document you uploaded in Resources (an employee handbook, a warranty policy, a product guide, a technical specification). The AI answers only from the document and cites it, for example *(Warranty Policy, p.1)*.
 
 ## Steps
 
 ### Let the AI answer dealers from a document type
+
 
 1. Open **Resource Management > Document Access** (`/resource-management/document-access`). There is one row per document type.
 2. Find the type (use **Search types...**). On its row, tick **Staff** to let staff ask the AI about it, and tick one box under each access type whose WhatsApp contacts may read it (for example a dealer access type).
@@ -17,6 +16,7 @@ The AI answers only from the document and cites it, for example *(Warranty Polic
 Untick every box of a type to stop the AI reading it. The filter **AI reads** (On / Off) narrows the list to types that have a tick or none.
 
 ### Check what one contact can read
+
 
 1. On **Document Access**, pick the contact in **Preview as**.
 2. A strip shows **Runs as** (a staff user or the contact), **Agent on WhatsApp** (On or Off), the contact's **Access types** and **Companies**.
@@ -34,6 +34,7 @@ Untick every box of a type to stop the AI reading it. The filter **AI reads** (O
 
 ### Fix one document's access levels
 
+
 1. Click a row to open its side panel.
 2. The panel shows the same ticks under **Who can read**, then **Documents**: every readable document (PDF or DOCX) with its **Access levels** (editable there), **Company** or **Shared**, and, when you are previewing a contact, whether that contact reads it and why not.
 3. Change the access levels of the document. It saves at once.
@@ -46,8 +47,7 @@ On a phone the rows are cards. Tap a card to open the same panel.
 Each file shows a **Read by AI** row on its detail page and in the Files modal:
 
 * **Queued** or **Processing**: the read is running (the row refreshes by itself).
-* **Done**: with the number of pages read, and how many were scanned pages read by OCR with an
-  estimated cost.
+* **Done**: with the number of pages read, and how many were scanned pages read by OCR with an estimated cost.
 * **Failed**: with the reason. **Read again** appears for a failed file if you may upload files.
 * **Not supported**: the file type cannot be read (PDF and DOCX are read).
 
@@ -74,8 +74,7 @@ The AI never fills a gap from general knowledge.
 
 * Staff: the reply says the answer is not in the documents and names the **Escalate to** team.
 * WhatsApp contacts: the reply is *"I couldn't find that in our product documents."* followed by
-  * *"Would you like me to pass this to our marketing product team?"* when **Chatbot hands over to support teams** is
-    on for the contact. If they answer yes, the usual hand-off to the marketing product team runs.
+  * *"Would you like me to pass this to our marketing product team?"* when **Chatbot hands over to support teams** is on for the contact. If they answer yes, the usual hand-off to the marketing product team runs.
   * *"Please refer to your salesman."* when that switch is off for the contact.
 
 ## How you'll be notified

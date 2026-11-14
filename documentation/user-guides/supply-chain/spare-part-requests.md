@@ -13,15 +13,16 @@ Where you find it depends on your role, the same way as Purchase Requests:
 
 To raise a request you need **Create Order Requests**.
 
-1. Open **Order Requests** (under **Procurement > Supply Chain**, or under **MY REQUESTS**).
-2. Click **Create**. The page opens as **New Order Request**.
-3. In the **Request** section, choose the **Currency** (required). Optionally set **Needed by**, a **Default location** and a **Reason**.
-4. In the **Products** section, search for a product by code or name (for example ZZX-100). Only products from the catalogue can be added.
-5. The **Description** starts as the product's name; change it if purchasing needs more detail. Purchasing sees your description on the line.
-6. Check the **Location** on the line. It starts from the default location and can differ per line.
-7. Enter **Qty** and **Unit price**. The line **Total** and the request total are worked out for you, in the request currency.
-8. Click **Add product** for more lines. The bin icon removes a line.
-9. Click the arrow at the start of a line to see the stock for that product. It is information only and never limits the quantity you ask for.
+
+ 1. Open **Order Requests** (under **Procurement > Supply Chain**, or under **MY REQUESTS**).
+ 2. Click **Create**. The page opens as **New Order Request**.
+ 3. In the **Request** section, choose the **Currency** (required). Optionally set **Needed by**, a **Default location** and a **Reason**.
+ 4. In the **Products** section, search for a product by code or name (for example ZZX-100). Only products from the catalogue can be added.
+ 5. The **Description** starts as the product's name; change it if purchasing needs more detail. Purchasing sees your description on the line.
+ 6. Check the **Location** on the line. It starts from the default location and can differ per line.
+ 7. Enter **Qty** and **Unit price**. The line **Total** and the request total are worked out for you, in the request currency.
+ 8. Click **Add product** for more lines. The bin icon removes a line.
+ 9. Click the arrow at the start of a line to see the stock for that product. It is information only and never limits the quantity you ask for.
 10. Each line with a product has a paperclip for photos, also on a new request. Photos added before the first save are uploaded when you save.
 11. Click **Save as draft** to keep working later, or **Submit** to send it for approval. Either way you land on the request's own page. The request gets its own number, for example `OR-2611-0001`.
 
@@ -51,6 +52,7 @@ The requester and the approvers see this; other users do not.
 ## Approve or reject (approver)
 
 The approver team of the current level is notified; the notification opens the request. You can also open it from **Procurement > Supply Chain > Order Requests**, which lists the requests waiting for you and the ones you have decided on. The request page has **Lines**, **General**, **History** and **SLA Tracking** tabs and the previous / next arrows. Go to the **Lines** tab; it shows the **Product code** and the **Description** in separate columns.
+
 
 1. Where needed, change the **Qty** (0 drops the line), the **Unit price**, or add or remove photos. You cannot add or remove lines.
 2. A value you changed shows what the requester submitted, for example "was 10", under it.

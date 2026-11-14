@@ -28,11 +28,9 @@ The bot always names which one it is answering. It never prints the bare word "o
 
 If the message does not name a scope word ("sales order", "delivery order", or "both"), and the contact is allowed to see sales order figures, the bot asks one question before running anything. The question is prefaced by the same four header lines that appear on the report:
 
-> Product: SRTWT7445
-> Customer: all
-> Location: all
-> Order date: all
-> Outstanding for which document?
+> Product: SRTWT7445 Customer: all Location: all Order date: all Outstanding for which document?
+>
+> 
 > 1. Sales orders (not yet transferred to DO)
 > 2. Delivery orders (not yet delivered)
 > 3. Both
@@ -43,43 +41,19 @@ Answer with the number, or the word itself ("sales orders", "delivery orders", "
 
 Every reply opens with a four-line header echoing what was understood:
 
-> Product: SRTWT7445
-> Customer: all
-> Location: IB (BRW-IB, MWH-IB)
-> Order date: 01/01/2026 to 31/12/2026
+> Product: SRTWT7445 Customer: all Location: IB (BRW-IB, MWH-IB) Order date: 01/01/2026 to 31/12/2026
 
 `Product` reads `all` when no product was named. `Customer` reads `all` when no customer was named. `Location` reads `all` when no location word was given, an exact code alone when one was, or the token plus every code it resolved to in brackets when it was a suffix. `Order date` reads `all` when no date was given, or an exact range `dd/mm/yyyy to dd/mm/yyyy`.
 
 Then one or both blocks, depending on scope. Both blocks follow the same line order:
 
-> *Sales order outstanding*
-> Sales orders: 12
-> Ordered: 2,411
-> Transferred to DO: 0
-> Outstanding: 2,411
-> Order date range: 05/01/2026 to 28/08/2026
-> *_By location_*
-> BRW-IB: 1,200 (O/S: 1,200)
-> MWH-IB: 1,211 (O/S: 1,211)
-> *_By customer_*
-> Dealer A Sdn Bhd: 900 (O/S: 900)
-> Dealer B Trading: 811 (O/S: 811)
-> Dealer C Hardware: 700 (O/S: 700)
+> *Sales order outstanding* Sales orders: 12 Ordered: 2,411 Transferred to DO: 0 Outstanding: 2,411 Order date range: 05/01/2026 to 28/08/2026 *By location* BRW-IB: 1,200 (O/S: 1,200) MWH-IB: 1,211 (O/S: 1,211) *By customer* Dealer A Sdn Bhd: 900 (O/S: 900) Dealer B Trading: 811 (O/S: 811) Dealer C Hardware: 700 (O/S: 700)
 
 `Sales orders` is the count of open sales orders. `Ordered` is the total quantity on all the sales order lines; `Transferred to DO` is how much of that has already moved to a delivery order; `Outstanding` is the rest. **Ordered always equals Transferred to DO plus Outstanding** - the same three numbers, one population, so they always add up.
 
 The delivery order block follows the same line order:
 
-> *Delivery order outstanding*
-> Delivery orders: 3
-> DO qty: 640
-> Delivered: 0
-> Outstanding: 640
-> DO date range: 03/02/2026 to 30/08/2026
-> *_By location_*
-> BRW-IB: 640 (O/S: 640)
-> *_By customer_*
-> Dealer A Sdn Bhd: 640 (O/S: 640)
+> *Delivery order outstanding* Delivery orders: 3 DO qty: 640 Delivered: 0 Outstanding: 640 DO date range: 03/02/2026 to 30/08/2026 *By location* BRW-IB: 640 (O/S: 640) *By customer* Dealer A Sdn Bhd: 640 (O/S: 640)
 
 `Delivery orders` is the count of delivery orders still outstanding. `DO qty` is the total quantity on those delivery orders; `Delivered` is how much has already been delivered; `Outstanding` is the rest. **DO qty always equals Delivered plus Outstanding**.
 
@@ -96,31 +70,21 @@ After a report with at least one non-empty block, the bot offers a detail pick. 
 If both scopes have rows, the offer is numbered:
 
 > Reply with a number for detail:
+>
+> 
 > 1. Sales order list
 > 2. Delivery order list
 > 3. Both lists
 
 Reply "1" for the sales order list - one row per sales order (its lines rolled up into one), listed latest date first:
 
-> 1. *SO Number:* SO331785
-> *Customer:* Dealer A Sdn Bhd
-> *Product:* SRTWT7445
-> *Location:* BRW-BB
-> *Ordered:* 410
-> *Transferred to DO:* 0
-> *Outstanding:* 410
-> *Order Date:* 20/12/2024
+> 
+> 1. *SO Number:* SO331785 *Customer:* Dealer A Sdn Bhd *Product:* SRTWT7445 *Location:* BRW-BB *Ordered:* 410 *Transferred to DO:* 0 *Outstanding:* 410 *Order Date:* 20/12/2024
 
 Reply "2" for the delivery order list - one row per outstanding delivery order, listed latest date first:
 
-> 1. *DO Number:* DO220456
-> *Customer:* Dealer A Sdn Bhd
-> *Product:* SRTWT7445
-> *Location:* BRW-IB
-> *DO Qty:* 640
-> *Delivered:* 0
-> *Outstanding:* 640
-> *DO Date:* 03/02/2026
+> 
+> 1. *DO Number:* DO220456 *Customer:* Dealer A Sdn Bhd *Product:* SRTWT7445 *Location:* BRW-IB *DO Qty:* 640 *Delivered:* 0 *Outstanding:* 640 *DO Date:* 03/02/2026
 
 Reply "3" (or "both lists") to see both lists in one reply, sales order list first, then delivery order list.
 

@@ -4,9 +4,9 @@ Use this when a price tag lists what comes free with a product (a chopping board
 
 ## Where
 
-* Design the box: **[Dealer Kit → Room Designer → Tag Templates](/dealer-kit/tag-templates)** (URL: `/dealer-kit/tag-templates`), open a template and use the **Add Accessories** button in the toolbar.
-* Manage saved box designs: **[Dealer Kit → Accessory Templates](/dealer-kit/accessory-templates)** (URL: `/dealer-kit/accessory-templates`), beside **Tag Sizes**.
-* Record the accessories themselves (pictures, colours, spec lines, remark): **[Master Data → Products → Accessories](/master-data-management/accessories)**.
+* Design the box: [**Dealer Kit → Room Designer → Tag Templates**](/dealer-kit/tag-templates) (URL: `/dealer-kit/tag-templates`), open a template and use the **Add Accessories** button in the toolbar.
+* Manage saved box designs: [**Dealer Kit → Accessory Templates**](/dealer-kit/accessory-templates) (URL: `/dealer-kit/accessory-templates`), beside **Tag Sizes**.
+* Record the accessories themselves (pictures, colours, spec lines, remark): [**Master Data → Products → Accessories**](/master-data-management/accessories).
 * Choose which accessories a product or combo comes with: the **Accessories included** card on the product's **Overview** tab, and the combo's own list in the **Combos** card (see [Catalogue packages on price tags](price-tag-packages.md)).
 
 ## What the Accessories box is
@@ -19,6 +19,7 @@ The Accessories box is one layer on the tag. It prints every accessory in the li
 * The box takes 1, 2, 3 or more cards by itself, so the same design prints a tag with three accessories and a combo tag with two.
 
 ## Steps - design the card
+
 
 1. Open a tag template in **Tag Templates** and add a box with **Add Accessories** then **Default box**, or click an existing Accessories box.
 2. With the box selected, double-click it, or click **Edit card** in the Inspector. The toolbar changes to **Editing card:** with **Picture**, **Text**, **Colour dots**, **Shape** and **Done**. Card 1 is outlined; the other cards fade and follow every change you make.
@@ -52,6 +53,7 @@ If the cards do not fit even at 70%, only whole cards print. A card is never cut
 
 A footer is a strip under the cards for a note such as *\* Accessories Color Follow Kitchen Sink Color* with its own colour dots.
 
+
 1. With the box selected, tick **Footer note** in the Inspector.
 2. Click **Edit footer**. The toolbar offers **Text**, **Colour dots**, **Shape** and **Done** (no Picture).
 3. Add the text and type your note, add **Colour dots**, and drag the dots beside the text. Click **Done**.
@@ -59,6 +61,7 @@ A footer is a strip under the cards for a note such as *\* Accessories Color Fol
 The footer's dots show all the colours of the accessories in the box, each colour once, unless you pick the colours by hand on that element.
 
 ## Save the design and reuse it
+
 
 1. With the box selected, click **Save as accessories template**, type a name and save. A toast confirms *Accessories template saved*. The box design is stored: frame, header, footer, direction, card layout and fit settings. The box's position on the tag and which list it reads from stay with each tag template.
 2. In any other tag template, click **Add Accessories**. The menu offers **Default box** and your saved templates (use **Search templates** to find one). Pick one to add a box with that design, then move and size it as you like.
@@ -85,6 +88,7 @@ You cannot edit a design on this page. Designs are always edited in the Tag Temp
 ## Accessory pictures with colours, spec lines and remark
 
 Open **Master Data → Products → Accessories** and open an accessory (**Add accessory** for a new one).
+
 
 1. **Add picture** one per colour. Pick a jpg, png or webp. Up to 12 pictures per accessory.
 2. Set each picture's colour (for example Black or Grey). The first picture is the default one, and you can drag pictures to reorder them. The accessory's colour dots are the colours on its pictures, in order.

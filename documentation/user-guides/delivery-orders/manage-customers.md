@@ -4,14 +4,14 @@ Use this flow to maintain the customer master used by delivery orders: add a cus
 
 ## Where to go
 
-Open **[Delivery Order Management → Customers](/order-management/customers)** (URL: `/order-management/customers`). The page is titled **Customers**.
+Open [**Delivery Order Management → Customers**](/order-management/customers) (URL: `/order-management/customers`). The page is titled **Customers**.
 
 ## The list
 
 Each row is one customer. Default sort is newest first, 50 per page.
 
 | Column | Meaning |
-|----|----|
+|--------|---------|
 | **Customer Code** | The customer's code. A code can be shared across more than one customer name - uniqueness is enforced on the **code + name** pair, not the code alone. |
 | **Customer Name** | The customer / debtor name. |
 | **Email** | Contact email. |
@@ -44,12 +44,12 @@ From here you can **Edit** or **Delete** the customer.
 Fields:
 
 | Field | Required | Notes |
-|----|----|----|
-| **Customer Code** | Yes | Unique customer identifier (alphanumeric, dashes, underscores only). Not editable after creation. |
-| **Customer Name** | Yes | |
-| **Email** | No | |
-| **Phone Number** | No | |
-| **Active Status** | - | Toggle to enable / disable this customer. |
+|-------|----------|-------|
+| **Customer Code** | Yes      | Unique customer identifier (alphanumeric, dashes, underscores only). Not editable after creation. |
+| **Customer Name** | Yes      |       |
+| **Email** | No       |       |
+| **Phone Number** | No       |       |
+| **Active Status** | \-       | Toggle to enable / disable this customer. |
 
 Save with **Create Customer** / **Update Customer**.
 

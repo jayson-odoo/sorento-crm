@@ -4,7 +4,8 @@ Use this when you need to group users for **automatic SLA assignment**. A team i
 
 ## Create a team
 
-1. Go to **[User Management → Teams](/user-management/teams)**.
+
+1. Go to [**User Management → Teams**](/user-management/teams).
 2. Click the add control to open the **Create Team** dialog.
 3. Fill:
    * **Name**
@@ -17,6 +18,7 @@ Use this when you need to group users for **automatic SLA assignment**. A team i
 The list renders as a **tree** reflecting the hierarchy; use the **Search teams…** box to filter.
 
 ## Add members and set round-robin order
+
 
 1. From the Teams list, open a team to reach its **Members** page (`/user-management/teams/{id}`).
 2. Click **Add member** and pick users in the **Add members** dialog.
@@ -34,7 +36,7 @@ The list renders as a **tree** reflecting the hierarchy; use the **Search teams�
 
 A team only becomes "tier 1 / 2 / 3 of a team set" through an **AI Agent**, not on the team itself:
 
-* On **[User Management → AI Agents](/user-management/access-agents)**, an agent's **Team Assignments** bind a **team-set code** + a **tier** (1 = initial, 2 / 3 = escalation) to a team, optionally with an SLA **policy**.
+* On [**User Management → AI Agents**](/user-management/access-agents), an agent's **Team Assignments** bind a **team-set code** + a **tier** (1 = initial, 2 / 3 = escalation) to a team, optionally with an SLA **policy**.
 * When SLA work starts, the resolver picks the **first existing team at or above** the requested tier (`resolve_team_with_tier_fallback`) - a missing intermediate tier is skipped, not fatal - then assigns round-robin among that team's auto-assignable members.
 * **Brand tags narrow the round-robin pool.** On the AI Agent detail page, each member row of a team assignment carries a **Brands** editor (next to the market-segment one): tick the brands that member serves; **All brands** (untagged) means they serve every brand. When a conversation arrives with a brand, the pool is the members tagged with that brand plus the untagged ones; if nobody carries that brand, the whole team round-robins. Escalations reuse the brand the conversation was created with. Stored in `team_member_brands`; the tracker keeps it in `conversation_sla_tracking.brand_code`.
 * On escalation, the next-higher tier's team is used the same way; whether that tier's team is *notified* of a lower-tier deadline extension is the per-tier `notify_on_extension` flag.
@@ -52,5 +54,4 @@ Use the delete action on the Teams list (confirmation required). Removing a team
 * [User Management - Data reference for admins](data-analysis.md)
 * [Manage users and roles](manage-users-and-roles.md)
 * [SLA - form-SLA configuration (team tiers)](../sla/form-sla-configuration.md)
-* [SLA - policies & notification matrix](../sla/sla-policies.md)
-</content>
+* [SLA - policies & notification matrix](../sla/sla-policies.md) </content>

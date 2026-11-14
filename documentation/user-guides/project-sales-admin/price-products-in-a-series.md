@@ -4,6 +4,7 @@ Use this when a series needs a selling price, a maximum discount, or a product r
 
 ## Steps
 
+
 1. Open **Project Sales**, then **Configuration**, then **Series**, and open the series.
 2. In the products table, type a **Selling price** and, if a discount is allowed, a **Max discount %** on the product's row. The row saves when you move to another row or select the tick, and **Saved** confirms it. The **Minimum price** column shows the result.
 3. To add a product, select **Add a product**, pick it in the **Product** cell, then type its numbers. A new row with no product says **Pick a product to save this row** and is not saved until you pick one.

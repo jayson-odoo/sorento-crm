@@ -6,6 +6,7 @@ Passkeys are off by default. You only see the **Passkeys** card once an admin ha
 
 ## Sign in with a passkey
 
+
 1. Open the CRM on the **Sign In** page.
 2. Click the round **Passkey** button beside **Phone number**. Your phone or computer then asks for Face ID, Touch ID, your fingerprint or your screen lock.
 3. Confirm, and you land where a normal sign-in would take you.
@@ -17,6 +18,7 @@ If you close the prompt without confirming, nothing happens and you can sign in 
 The **Passkey** button only appears when your browser can use passkeys. If you do not see it, see "Browsers that cannot use passkeys" below.
 
 ## Add a passkey
+
 
 1. In the sidebar, open **User Management**, then **Account**, then the **Security** tab.
 2. In the **Passkeys** card, click **Add passkey**.
@@ -30,10 +32,12 @@ Each passkey is named after the device it was made on, for example "Safari on iP
 
 ## Rename a passkey
 
+
 1. In the **Passkeys** card, open the row's menu (the three dots) and choose **Rename**.
 2. Type the new name and click **Save**. Save stays disabled while the name is blank.
 
 ## Remove a passkey
+
 
 1. Open the row's menu and choose **Remove**.
 2. The button becomes a countdown labelled **Removing**. Click **Cancel** within the countdown to keep the passkey. There is no confirmation dialog.
@@ -57,6 +61,7 @@ A passkey is tied to the exact web address of the CRM where you made it. If you 
 
 ### Turn passkey sign-in on or off for a person
 
+
 1. Go to **User Management**, open the user, and find the **Sign-in** card.
 2. Switch **Passkey sign-in** on (or off). A message confirms **Passkey sign-in turned on** or **Passkey sign-in turned off**.
 
@@ -65,6 +70,7 @@ You need the permission to edit users. Without it the row reads **On** or **Off*
 It is **Off** by default. While it is off the person does not see the **Passkeys** card on their **Account** page, and cannot sign in with a passkey. Turning it off does not delete the passkeys they already made; they work again if you turn it back on.
 
 ### See and remove a person's passkeys
+
 
 1. In the same **Sign-in** card, the **Passkeys** row shows how many the person has (for example "2 passkeys") or **None**.
 2. Click the count to open a list showing each passkey's name, when it was added and when it was last used.

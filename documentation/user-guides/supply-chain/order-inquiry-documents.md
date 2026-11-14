@@ -1,384 +1,184 @@
 # Supply Chain - Order inquiries: the Documents view and the OI detail page
 
-Use this when you want to see order inquiries one document at a time - one row per sales order's
-whole set of instructions, its own number, its own raised date, and how much of it still waits on
-you - rather than the line-by-line worklist. This is what **Procurement → Supply Chain →
-[Order Inquiries](/project-sales/order-inquiries)** opens on now.
+Use this when you want to see order inquiries one document at a time - one row per sales order's whole set of instructions, its own number, its own raised date, and how much of it still waits on you - rather than the line-by-line worklist. This is what **Procurement → Supply Chain →** [**Order Inquiries**](/project-sales/order-inquiries) opens on now.
 
 ## Where
 
-Open **Procurement → Supply Chain → [Order Inquiries](/project-sales/order-inquiries)**. A
-**Documents** / **Lines** toggle sits top right of the page, **Documents** selected by default.
-**Lines** is today's worklist, unchanged - cards, month chips, filters, bulk actions, upload,
-export - described in full in [Upload the data a reorder plan is built
-from](upload-plan-data.md#the-order-inquiries-page). Your choice of view is kept in the URL, so a
-link you send someone opens on the same view you were on.
+Open **Procurement → Supply Chain →** [**Order Inquiries**](/project-sales/order-inquiries). A **Documents** / **Lines** toggle sits top right of the page, **Documents** selected by default. **Lines** is today's worklist, unchanged - cards, month chips, filters, bulk actions, upload, export - described in full in [Upload the data a reorder plan is built from](upload-plan-data.md#the-order-inquiries-page). Your choice of view is kept in the URL, so a link you send someone opens on the same view you were on.
 
 ## The Documents view
 
-The grid shows one row per order inquiry - one order inquiry per sales order. Rows are ordered
-oldest raised first by default.
+The grid shows one row per order inquiry - one order inquiry per sales order. Rows are ordered oldest raised first by default.
 
-An **All** / **Outstanding** / **Completed** toggle sits in the toolbar, **Outstanding** selected
-by default. **Completed** means every line of that order inquiry has been confirmed (a cancelled
-line does not count against it); when CS changes or adds a line later, the order inquiry returns
-to **Outstanding**.
+An **All** / **Outstanding** / **Completed** toggle sits in the toolbar, **Outstanding** selected by default. **Completed** means every line of that order inquiry has been confirmed (a cancelled line does not count against it); when CS changes or adds a line later, the order inquiry returns to **Outstanding**.
 
-Columns, in order: **Raised at**, **Doc no**, **S/O no**, **Raised by**, **Lines**, **Qty**,
-**Customer**, **Project**, **Agent**, **SO date**, **Status**.
+Columns, in order: **Raised at**, **Doc no**, **S/O no**, **Raised by**, **Lines**, **Qty**, **Customer**, **Project**, **Agent**, **SO date**, **Status**.
 
 * **Status** shows as a badge, **Outstanding** or **Completed**.
-* **Lines** shows the total line count; on an Outstanding row, hover it to read how many of those
-  lines still wait for a confirm against the total.
+* **Lines** shows the total line count; on an Outstanding row, hover it to read how many of those lines still wait for a confirm against the total.
 * **S/O no** is its own link, straight to that sales order.
 * Clicking anywhere else on the row opens the order inquiry itself.
 
-**Search** matches the OI number (an old-format number still finds it too, so a number already
-quoted in an email keeps working), the sales order number, the customer, the project, the agent,
-and the product code or location of any line inside that order inquiry.
+**Search** matches the OI number (an old-format number still finds it too, so a number already quoted in an email keeps working), the sales order number, the customer, the project, the agent, and the product code or location of any line inside that order inquiry.
 
 **Filters** narrows by **Raised by**, **Agent** and **Project**, each a clearable dropdown.
 
-An empty **Outstanding** view reads "Nothing to confirm" with a button to switch to **All**. An
-empty **All** view reads "No order inquiries yet". A search or filter with no matches reads "No
-order inquiry matches this search and filter."
+An empty **Outstanding** view reads "Nothing to confirm" with a button to switch to **All**. An empty **All** view reads "No order inquiries yet". A search or filter with no matches reads "No order inquiry matches this search and filter."
 
 ## The OI number
 
-Every order inquiry now carries a number of the shape **OI-YYMM-NNNN** - the year and month it was
-first raised in, then a running number that starts again at 0001 each month. The number is fixed
-for life: reconfirming an order inquiry in a later month never changes it. Every order inquiry
-that already existed when this shipped was given one of these numbers; its old number still finds
-it through search, so a number already quoted in an old email or conversation keeps working.
+Every order inquiry now carries a number of the shape **OI-YYMM-NNNN** - the year and month it was first raised in, then a running number that starts again at 0001 each month. The number is fixed for life: reconfirming an order inquiry in a later month never changes it. Every order inquiry that already existed when this shipped was given one of these numbers; its old number still finds it through search, so a number already quoted in an old email or conversation keeps working.
 
 ## Raised at / Raised by
 
-**Raised at** and **Raised by** are set once, the first time the order inquiry is raised, and
-never change afterwards - even when CS reconfirms the sales order later. Every reconfirm is
-recorded instead, on the **General** tab's **Raise history** (see below), so nothing about who
-raised it or when is lost.
+**Raised at** and **Raised by** are set once, the first time the order inquiry is raised, and never change afterwards - even when CS reconfirms the sales order later. Every reconfirm is recorded instead, on the **General** tab's **Raise history** (see below), so nothing about who raised it or when is lost.
 
 ## Opening an order inquiry
 
-Click a row to open the order inquiry. The header shows the OI number, its status badge, who
-raised it and when ("Raised by Eling on 08/09/2026, 1:17 pm"), a pager that walks the same list you
-came from (previous / next, "n / total"), a gear menu, and one primary button, **Confirm**. A
-**Back to order inquiries** button sits top right.
+Click a row to open the order inquiry. The header shows the OI number, its status badge, who raised it and when ("Raised by Eling on 08/09/2026, 1:17 pm"), a pager that walks the same list you came from (previous / next, "n / total"), a gear menu, and one primary button, **Confirm**. A **Back to order inquiries** button sits top right.
 
-If the order inquiry no longer exists (it was deleted, or you followed a stale link), the page
-reads "This order inquiry no longer exists" with a button back to the list.
+If the order inquiry no longer exists (it was deleted, or you followed a stale link), the page reads "This order inquiry no longer exists" with a button back to the list.
 
 ### Tabs
 
-Tabs, in order: **Lines**, **General**, **Related PO**, **Related SPO**. **Lines** is the tab the
-page opens on.
+Tabs, in order: **Lines**, **General**, **Related PO**, **Related SPO**. **Lines** is the tab the page opens on.
 
-**Lines** - one row per **sales order line**, the same way the sales order's own Lines grid
-reads, however many instructions that line has collected over time. Rows sit in the sales
-order's line order. Columns: **No.** (the sales order's own line number), **Product** (the
-product code, nothing else - in Sorento the code is the product name), a **Confirmed** mark (a
-green tick reading "Confirmed by <name> on <date>" once every live row of the line is confirmed,
-a dashed half-circle reading "n of m rows confirmed" while part of it still waits, nothing
-before anything is confirmed), **SO Qty** (the sales order line's own quantity), **Requested**,
-**Taken**, **Remaining**, **Delivery date**, **Supplier**, **PO**, **SPO**, **Suggested**,
-**Location**, **Instruction**, **State**. A **Raised via** column is there too, hidden by
-default. A checkbox column lets you tick lines; a search box narrows by product; a **State**
-filter beside it narrows by status, including **Request to reserve**, **Reserved** and **Not
-reserved**; when the order inquiry has a reserve request, a **Request** filter (**Request #1**,
-**Request #2**, ...) narrows to the lines that request asked about, whatever their state;
-**Columns** lets you show or hide columns, the four quantity columns included; the
-footer totals **SO Qty**, **Requested**, **Taken** and **Remaining**, cancelled lines left out.
-**PO** and **SPO** name the line's first document with a **+N** chip listing the rest; clicking
-a number opens the same **Backing documents** lightbox as the worklist.
+**Lines** - one row per **sales order line**, the same way the sales order's own Lines grid reads, however many instructions that line has collected over time. Rows sit in the sales order's line order. Columns: **No.** (the sales order's own line number), **Product** (the product code, nothing else - in Sorento the code is the product name), a **Confirmed** mark (a green tick reading "Confirmed by <name> on <date>" once every live row of the line is confirmed, a dashed half-circle reading "n of m rows confirmed" while part of it still waits, nothing before anything is confirmed), **SO Qty** (the sales order line's own quantity), **Requested**, **Taken**, **Remaining**, **Delivery date**, **Supplier**, **PO**, **SPO**, **Suggested**, **Location**, **Instruction**, **State**. A **Raised via** column is there too, hidden by default. A checkbox column lets you tick lines; a search box narrows by product; a **State** filter beside it narrows by status, including **Request to reserve**, **Reserved** and **Not reserved**; when the order inquiry has a reserve request, a **Request** filter (**Request #1**, **Request #2**, ...) narrows to the lines that request asked about, whatever their state; **Columns** lets you show or hide columns, the four quantity columns included; the footer totals **SO Qty**, **Requested**, **Taken** and **Remaining**, cancelled lines left out. **PO** and **SPO** name the line's first document with a **+N** chip listing the rest; clicking a number opens the same **Backing documents** lightbox as the worklist.
 
-A line on a **cancelled sales order line** stays in the grid as one greyed row reading **Line
-cancelled**, with **Requested** and **Remaining** at `0`. A line whose every instruction has
-since been used up or cancelled shows as one greyed row reading **Nothing to buy**. A line whose
-rows were all cancelled is not shown at all.
+A line on a **cancelled sales order line** stays in the grid as one greyed row reading **Line cancelled**, with **Requested** and **Remaining** at `0`. A line whose every instruction has since been used up or cancelled shows as one greyed row reading **Nothing to buy**. A line whose rows were all cancelled is not shown at all.
 
-Each row also carries a small chevron beside its checkbox: click it to expand a stock breakdown
-for that product without leaving the page. The breakdown stays inside the grid's own width, and
-its **Location** column can be dragged wider or narrower - the width you set is remembered on
-this browser. A line whose **Location** belongs to an ownership group (such as `BRW-BB`) shows
-every location of that group with the group's subtotal; a line at any other location (a site
-pool such as `BRW`, or a location outside every ownership group) shows that location's own
-stock.
+Each row also carries a small chevron beside its checkbox: click it to expand a stock breakdown for that product without leaving the page. The breakdown stays inside the grid's own width, and its **Location** column can be dragged wider or narrower - the width you set is remembered on this browser. A line whose **Location** belongs to an ownership group (such as `BRW-BB`) shows every location of that group with the group's subtotal; a line at any other location (a site pool such as `BRW`, or a location outside every ownership group) shows that location's own stock.
 
-**Requested** is what the line's live buy instructions ask for, added up. **Taken** is how much
-of that is already on a PO or SPO link or reserved by CS. **Remaining** is Requested minus Taken,
-minus anything already covered by an **Included with** companion (see [Upload the data a
-reorder plan is built from](upload-plan-data.md#the-order-inquiries-page)), never below `0`.
-**SO Qty** prints a dash on a line that names no sales order line.
+**Requested** is what the line's live buy instructions ask for, added up. **Taken** is how much of that is already on a PO or SPO link or reserved by CS. **Remaining** is Requested minus Taken, minus anything already covered by an **Included with** companion (see [Upload the data a reorder plan is built from](upload-plan-data.md#the-order-inquiries-page)), never below `0`. **SO Qty** prints a dash on a line that names no sales order line.
 
-When CS moves the date or quantity on a line you have already been asked to buy, the same line
-is restated in place - never a second row. You see a **Changed** tag beside the **Delivery
-date** and the line's **State** reads **To order** until its live links cover the new figures again (or you **Confirm** it by hand). What it was
-before ("Was 100.") is read in the line's **History** - the clock icon in the **State** cell -
-on its **Rows** tab, not on the line itself. Every PO/SPO link the line already carried stays
-exactly as it was.
+When CS moves the date or quantity on a line you have already been asked to buy, the same line is restated in place - never a second row. You see a **Changed** tag beside the **Delivery date** and the line's **State** reads **To order** until its live links cover the new figures again (or you **Confirm** it by hand). What it was before ("Was 100.") is read in the line's **History** - the clock icon in the **State** cell - on its **Rows** tab, not on the line itself. Every PO/SPO link the line already carried stays exactly as it was.
 
-**General** - an **Order** card (S/O no as a link, SO date, Agent, Project, Order type), a
-**Customer** card (Customer, Customer code), and a **Raise history** card: one entry per raise,
-newest first, each showing whether it was the original **Raised** or a later **Reconfirmed**, who,
-and when.
+**General** - an **Order** card (S/O no as a link, SO date, Agent, Project, Order type), a **Customer** card (Customer, Customer code), and a **Raise history** card: one entry per raise, newest first, each showing whether it was the original **Raised** or a later **Reconfirmed**, who, and when.
 
-**Related PO** - one row per purchase order any line of this order inquiry is linked to: **PO no**
-(a link to that purchase order), **Supplier**, **PO date**, **Lines linked**, **Qty linked**, with
-a footer total under **Qty linked**. Reads "No purchase orders linked yet" when there is nothing
-to show.
+**Related PO** - one row per purchase order any line of this order inquiry is linked to: **PO no** (a link to that purchase order), **Supplier**, **PO date**, **Lines linked**, **Qty linked**, with a footer total under **Qty linked**. Reads "No purchase orders linked yet" when there is nothing to show.
 
-**Related SPO** - the same, for shipping orders: **SPO no** (a link to that shipping order),
-**Supplier**, **Lines linked**, **Qty linked**, with a footer total. Reads "No SPOs linked yet"
-when there is nothing to show.
+**Related SPO** - the same, for shipping orders: **SPO no** (a link to that shipping order), **Supplier**, **Lines linked**, **Qty linked**, with a footer total. Reads "No SPOs linked yet" when there is nothing to show.
 
 ### What the State column means
 
-**State** reads what you still need to do with the line. A line with several live instructions
-reads the most urgent of them, in the same words the worklist and the board use:
+**State** reads what you still need to do with the line. A line with several live instructions reads the most urgent of them, in the same words the worklist and the board use:
 
 * **To buy** - nothing bought for it yet.
-* **Partly on PO/SPO** - part of the quantity is on a purchase order or shipping order, part
-  isn't yet.
+* **Partly on PO/SPO** - part of the quantity is on a purchase order or shipping order, part isn't yet.
 * **On PO/SPO** - the whole quantity is on a purchase order or shipping order.
 * **Done** - you've actioned the line; there's nothing left to do.
 
 Three more words belong to this tab alone:
 
-* **To order** - CS changed a line after it was taken on, or a used row is waiting; it turns
-  Done on its own once its live links cover it, or when you **Confirm** it by hand.
-* **Waiting for CS** - the sales order changed in AutoCount since CS last confirmed it (new date,
-  new quantity, a line removed, or the whole order cancelled or deleted). The line already shows
-  the sales order's new values, with the old one as **Was**, but you can't confirm it yet: CS
-  decides the change on Fulfilment Planning first, and their **Confirm** sends you the usual
-  email. It isn't counted under **To confirm** until then.
-* **SO cancelled** - the whole sales order was cancelled or deleted in AutoCount, and CS has
-  already decided it.
+* **To order** - CS changed a line after it was taken on, or a used row is waiting; it turns Done on its own once its live links cover it, or when you **Confirm** it by hand.
+* **Waiting for CS** - the sales order changed in AutoCount since CS last confirmed it (new date, new quantity, a line removed, or the whole order cancelled or deleted). The line already shows the sales order's new values, with the old one as **Was**, but you can't confirm it yet: CS decides the change on Fulfilment Planning first, and their **Confirm** sends you the usual email. It isn't counted under **To confirm** until then.
+* **SO cancelled** - the whole sales order was cancelled or deleted in AutoCount, and CS has already decided it.
 * **Line cancelled** - the sales order line itself was cancelled (greyed).
 * **Nothing to buy** - every instruction on the line has been used up or cancelled (greyed).
 
-On a line purchasing has asked CS to reserve stock for, this same column instead prints
-**Request to reserve \<qty\>** (amber) while the request is still open, **Reserved \<qty\>**
-(green, ticked) once CS has reserved some or all of it, or **Not reserved** (neutral) once CS has
-answered with nothing - see [Ask CS to reserve stock](#ask-cs-to-reserve-stock) and [Reserve for
-purchasing](#reserve-for-purchasing-cs) below for what each one lets you do next.
+On a line purchasing has asked CS to reserve stock for, this same column instead prints **Request to reserve <qty>** (amber) while the request is still open, **Reserved <qty>** (green, ticked) once CS has reserved some or all of it, or **Not reserved** (neutral) once CS has answered with nothing - see [Ask CS to reserve stock](#ask-cs-to-reserve-stock) and [Reserve for purchasing](#reserve-for-purchasing-cs) below for what each one lets you do next.
 
-Every line's **State** cell also carries a **History** icon (a clock), whatever your permissions:
-it opens one dialog for that sales order line, titled `History - <product> (<S/O no> L<n>)`,
-with a **Rows** tab (the line's live instruction as **Now**, then every earlier row - used,
-superseded, re-raised or cancelled - newest first, each with its date, quantity, document and
-why), a **Decisions** tab (the planning decisions taken on that sales order line), and, only on
-a line that has ever been reserved against, a **Reserve** tab (see [Reserve for
-purchasing](#reserve-for-purchasing-cs)). A line that names a sales order line shows a paperclip
-beside it too, for that line's clarification files.
+Every line's **State** cell also carries a **History** icon (a clock), whatever your permissions: it opens one dialog for that sales order line, titled `History - <product> (<S/O no> L<n>)`, with a **Rows** tab (the line's live instruction as **Now**, then every earlier row - used, superseded, re-raised or cancelled - newest first, each with its date, quantity, document and why), a **Decisions** tab (the planning decisions taken on that sales order line), and, only on a line that has ever been reserved against, a **Reserve** tab (see [Reserve for purchasing](#reserve-for-purchasing-cs)). A line that names a sales order line shows a paperclip beside it too, for that line's clarification files.
 
 ## Confirming
 
-Press **Confirm**. With nothing ticked, it confirms every line still waiting in the whole order
-inquiry; with lines ticked, it confirms only those. It reads **Confirm (n)** once lines are
-ticked, and is disabled when nothing in scope is waiting on a confirm. Once every line is
-confirmed, the order inquiry's status turns **Completed** and it drops off the **Outstanding**
-view.
+Press **Confirm**. With nothing ticked, it confirms every line still waiting in the whole order inquiry; with lines ticked, it confirms only those. It reads **Confirm (n)** once lines are ticked, and is disabled when nothing in scope is waiting on a confirm. Once every line is confirmed, the order inquiry's status turns **Completed** and it drops off the **Outstanding** view.
 
 ## Ask CS to reserve stock
 
-Use this when you want CS to cover part of a line from stock they already hold before you buy
-the balance.
+Use this when you want CS to cover part of a line from stock they already hold before you buy the balance.
 
-1. On the **Lines** tab, tick one or more lines still open for it - an **ORDER** or **ORDER
-   BACK** line reading **To buy** or **Partly on PO/SPO**, with something left in **Remaining**
-   and no reserve request already open on it. A line that doesn't qualify greys out **Request CS
-   to reserve** in the gear menu with a tooltip naming the product and why (for example
-   `<product>: already has an open reserve request`).
+
+1. On the **Lines** tab, tick one or more lines still open for it - an **ORDER** or **ORDER BACK** line reading **To buy** or **Partly on PO/SPO**, with something left in **Remaining** and no reserve request already open on it. A line that doesn't qualify greys out **Request CS to reserve** in the gear menu with a tooltip naming the product and why (for example `<product>: already has an open reserve request`).
 2. Open the gear menu and choose **Request CS to reserve**.
-3. The **Request CS to reserve** dialog lists one row per selected line in a table - **Product**,
-   **Delivery date**, **Remaining**, **Requested** (defaults to the remaining, never higher) and
-   **Location** (defaults to the configured pool - see [Default location for the Reserve
-   dialog](order-inquiry-reserve-email.md#default-location-for-the-reserve-dialog)). A **Note
-   (optional)** box sits below the table, for the whole request.
-   Each row has a tick box and every line opens ticked. Untick a line to leave it out of this
-   request: its **Requested** and **Location** grey out and never block sending. The header reads
-   **N of M lines**, and **Send request** (or **Park request**) is greyed out while nothing is
-   ticked. (Opened from a
-   Stock Debt snapshot, a line that the snapshot already shows as covered, Short 0, opens
-   unticked; tick it to send it anyway.)
+3. The **Request CS to reserve** dialog lists one row per selected line in a table - **Product**, **Delivery date**, **Remaining**, **Requested** (defaults to the remaining, never higher) and **Location** (defaults to the configured pool - see [Default location for the Reserve dialog](order-inquiry-reserve-email.md#default-location-for-the-reserve-dialog)). A **Note (optional)** box sits below the table, for the whole request. Each row has a tick box and every line opens ticked. Untick a line to leave it out of this request: its **Requested** and **Location** grey out and never block sending. The header reads **N of M lines**, and **Send request** (or **Park request**) is greyed out while nothing is ticked. (Opened from a Stock Debt snapshot, a line that the snapshot already shows as covered, Short 0, opens unticked; tick it to send it anyway.)
 4. Press **Send request**; only the ticked lines are sent. A toast reads `Request #<n> sent to <name>`.
 
-The lines now read an amber **Request to reserve \<qty\>** pill in the **State** column. One email
-leaves for CS - see [Reserve request and reserved-stock emails](order-inquiry-reserve-email.md).
+The lines now read an amber **Request to reserve <qty>** pill in the **State** column. One email leaves for CS - see [Reserve request and reserved-stock emails](order-inquiry-reserve-email.md).
 
-To pull a request back, open the gear menu and choose **Cancel request** - a short countdown with
-**Cancel**, no email either way.
+To pull a request back, open the gear menu and choose **Cancel request** - a short countdown with **Cancel**, no email either way.
 
-Once CS reserves against a line, its pill turns green and reads **Reserved \<qty\>**; **Taken**
-already counts it and **Remaining** is the balance still to buy by PO or SPO, the same as today.
-You can ask CS to reserve again on that balance the same way.
+Once CS reserves against a line, its pill turns green and reads **Reserved <qty>**; **Taken** already counts it and **Remaining** is the balance still to buy by PO or SPO, the same as today. You can ask CS to reserve again on that balance the same way.
 
 ## Reserve for purchasing (CS)
 
-Use this when purchasing has asked you to reserve stock against one or more order inquiry lines,
-and you hold the **Reserve Stock for Order Inquiries** permission.
+Use this when purchasing has asked you to reserve stock against one or more order inquiry lines, and you hold the **Reserve Stock for Order Inquiries** permission.
 
-1. Open the order inquiry from the request email's **Open in Order Inquiries** link (you'll need
-   to be logged in), or open it from the list yourself. The link lands on the **Lines** tab
-   with the **Request** filter set to that request, so you see exactly the lines purchasing
-   asked about. Lines you have already answered stay in view with their **Reserved** or
-   **Not reserved** pill; pick **Request to reserve** in the **State** filter to see only the
-   lines that still need you.
-2. On a line reading **Request to reserve \<qty\>**, two icons sit at the end of the **State**
-   cell, after the line's **History** icon and paperclip:
-   * The tick, **Reserve**, stages the full requested quantity at the pool the request named,
-     with no form.
-   * The pencil, **Edit reserve**, opens a small form for that line - **Location** (defaults to
-     the configured pool), **Reserved** (defaults to what's available there, up to what was
-     requested), and, if you lower **Reserved** below what was requested (0 included), a required
-     **Reason**. Press **Stage**.
-3. Either way, nothing is posted yet - the line now shows a dashed chip (for example `Reserve 20
-   @ DC1`) with an **Undo** button beside it. Stage as many lines as you like, and **Undo** any of
-   them before you commit. Reloading the page drops everything staged.
-4. Press **Reserve (\<n\>)** beside **Confirm** in the page header, \<n\> being how many lines
-   you've staged. This is the one commit - it reserves every staged line in a single click and
-   sends CS's own reserved mail to the requester (`Reserved, <requester> notified`), naming only
-   the lines this click reserved. Lines you left untouched stay **Request to reserve**, and the
-   requester's mail says how many lines are still to reserve.
-5. A committed line turns green - **Reserved \<qty\>** with a tick - or, if you staged 0 with a
-   reason, reads **Not reserved**.
 
-**Amend reserve** - the pencil that now sits at the end of a **Reserved** or **Not reserved**
-line - opens the same form with **Location** locked to where it's already reserved and
-**Reserved** prefilled with that line's current net reserved quantity. Change it, **Stage** (the
-chip reads `Amend to <qty>`), then **Reserve (\<n\>)** to commit the amendment; a **Reason** is
-required whenever the new amount is below what was requested.
+1. Open the order inquiry from the request email's **Open in Order Inquiries** link (you'll need to be logged in), or open it from the list yourself. The link lands on the **Lines** tab with the **Request** filter set to that request, so you see exactly the lines purchasing asked about. Lines you have already answered stay in view with their **Reserved** or **Not reserved** pill; pick **Request to reserve** in the **State** filter to see only the lines that still need you.
+2. On a line reading **Request to reserve <qty>**, two icons sit at the end of the **State** cell, after the line's **History** icon and paperclip:
+   * The tick, **Reserve**, stages the full requested quantity at the pool the request named, with no form.
+   * The pencil, **Edit reserve**, opens a small form for that line - **Location** (defaults to the configured pool), **Reserved** (defaults to what's available there, up to what was requested), and, if you lower **Reserved** below what was requested (0 included), a required **Reason**. Press **Stage**.
+3. Either way, nothing is posted yet - the line now shows a dashed chip (for example `Reserve 20 @ DC1`) with an **Undo** button beside it. Stage as many lines as you like, and **Undo** any of them before you commit. Reloading the page drops everything staged.
+4. Press **Reserve (<n>)** beside **Confirm** in the page header, <n> being how many lines you've staged. This is the one commit - it reserves every staged line in a single click and sends CS's own reserved mail to the requester (`Reserved, <requester> notified`), naming only the lines this click reserved. Lines you left untouched stay **Request to reserve**, and the requester's mail says how many lines are still to reserve.
+5. A committed line turns green - **Reserved <qty>** with a tick - or, if you staged 0 with a reason, reads **Not reserved**.
 
-**History** - the clock icon every line carries in its **State** cell - opens the line's one
-History dialog; on a line that has been reserved against, its **Reserve** tab lists every
-request, reserve, unreserve and cancelled request on that line, newest first, each with the
-quantity, the location, who did it, when, and the reason if one was given.
+**Amend reserve** - the pencil that now sits at the end of a **Reserved** or **Not reserved** line - opens the same form with **Location** locked to where it's already reserved and **Reserved** prefilled with that line's current net reserved quantity. Change it, **Stage** (the chip reads `Amend to <qty>`), then **Reserve (<n>)** to commit the amendment; a **Reason** is required whenever the new amount is below what was requested.
 
-The **State** filter beside the search box on the **Lines** tab offers exactly the words the
-**State** column shows (for example **To order**, **Waiting for CS**, **Done**), including **Request
-to reserve**, **Reserved** and **Not reserved**, so you can narrow to only what needs you.
+**History** - the clock icon every line carries in its **State** cell - opens the line's one History dialog; on a line that has been reserved against, its **Reserve** tab lists every request, reserve, unreserve and cancelled request on that line, newest first, each with the quantity, the location, who did it, when, and the reason if one was given.
 
-Without the **Reserve Stock for Order Inquiries** permission, none of this shows - lines display
-their plain state pill, the **History** icon and the paperclip only, and no **Reserve** button
-appears in the header.
+The **State** filter beside the search box on the **Lines** tab offers exactly the words the **State** column shows (for example **To order**, **Waiting for CS**, **Done**), including **Request to reserve**, **Reserved** and **Not reserved**, so you can narrow to only what needs you.
 
-**Unlink never touches a reserve.** Unlinking a row (per row, or **Unlink selected**) only takes
-off a PO or SPO link; a reserve link isn't offered there at all. To change what's reserved on a
-line, use **Amend reserve** on that line instead (see above).
+Without the **Reserve Stock for Order Inquiries** permission, none of this shows - lines display their plain state pill, the **History** icon and the paperclip only, and no **Reserve** button appears in the header.
+
+**Unlink never touches a reserve.** Unlinking a row (per row, or **Unlink selected**) only takes off a PO or SPO link; a reserve link isn't offered there at all. To change what's reserved on a line, use **Amend reserve** on that line instead (see above).
 
 ## Fixing a link without leaving the page
 
-The gear menu carries the same link fixes you already use on the worklist, scoped to this order
-inquiry:
+The gear menu carries the same link fixes you already use on the worklist, scoped to this order inquiry:
 
-* **Auto link** - runs the automatic link over the ticked lines, or over every line of this order
-  inquiry when nothing is ticked.
-* **Choose document** - needs exactly one line ticked; opens the same dialog the worklist uses to
-  pick a PO or SPO by hand.
-* **Recheck in AutoCount** (it used to be called **Link selected**) - re-runs the AutoCount step
-  on the ticked lines that still have something left to link.
-* **Remove link in CRM** (it used to be called **Unlink selected**) - takes the link off the
-  ticked lines in the CRM only. Nothing changes in AutoCount. This is a deferred action: the button
-  turns into a countdown with **Cancel**, and the unlink only happens once the countdown runs out
-  - there is no confirmation box. Cancelling leaves the ticked lines ticked; the selection only
-  clears once the unlink actually commits. It never touches a reserve link - see [Reserve for
-  purchasing](#reserve-for-purchasing-cs) above.
-* **Reject selected**, **Unconfirm**, **Export Excel** round out the menu, the same as on the
-  worklist.
+* **Auto link** - runs the automatic link over the ticked lines, or over every line of this order inquiry when nothing is ticked.
+* **Choose document** - needs exactly one line ticked; opens the same dialog the worklist uses to pick a PO or SPO by hand.
+* **Recheck in AutoCount** (it used to be called **Link selected**) - re-runs the AutoCount step on the ticked lines that still have something left to link.
+* **Remove link in CRM** (it used to be called **Unlink selected**) - takes the link off the ticked lines in the CRM only. Nothing changes in AutoCount. This is a deferred action: the button turns into a countdown with **Cancel**, and the unlink only happens once the countdown runs out
+  * there is no confirmation box. Cancelling leaves the ticked lines ticked; the selection only clears once the unlink actually commits. It never touches a reserve link - see [Reserve for purchasing](#reserve-for-purchasing-cs) above.
+* **Reject selected**, **Unconfirm**, **Export Excel** round out the menu, the same as on the worklist.
 
-The three AutoCount link items are described in [Link a PO in AutoCount from Order
-Inquiries](./order-inquiry-link-to-po.md).
+The three AutoCount link items are described in [Link a PO in AutoCount from Order Inquiries](./order-inquiry-link-to-po.md).
 
-**Export Excel** queues a workbook of this order inquiry rather than downloading one straight
-away: a toast reads "Preparing the order inquiry export - it will appear in My Downloads.", and
-the file lands in **My Downloads** once it is ready. Pressing **Export Excel** again while one is
-still being prepared does nothing but tell you it already is, with a toast reading "An order
-inquiry export is already being prepared - check My Downloads."
+**Export Excel** queues a workbook of this order inquiry rather than downloading one straight away: a toast reads "Preparing the order inquiry export - it will appear in My Downloads.", and the file lands in **My Downloads** once it is ready. Pressing **Export Excel** again while one is still being prepared does nothing but tell you it already is, with a toast reading "An order inquiry export is already being prepared - check My Downloads."
 
-**Download history** opens the list of every Excel export made from this order inquiry, newest
-first, so you can come back to it later and reopen a file you already made instead of exporting it
-again.
+**Download history** opens the list of every Excel export made from this order inquiry, newest first, so you can come back to it later and reopen a file you already made instead of exporting it again.
 
 ## Prev / next
 
-The pager beside the header walks the same filtered list you opened the order inquiry from - for
-example, if you opened it from **Outstanding**, previous and next step through the other
-Outstanding order inquiries in that same order.
+The pager beside the header walks the same filtered list you opened the order inquiry from - for example, if you opened it from **Outstanding**, previous and next step through the other Outstanding order inquiries in that same order.
 
-The **Lines** tab keeps its own view as you step: the **Search product...** text, the **State**
-filter and the column you sorted by stay in the address bar, so previous and next open the next
-order inquiry's lines searched, filtered and sorted the same way, and a reload keeps them too.
-Clear the search or untick the **State** values to see every line again. **Back** to the list
-leaves this view behind: the list opens with its own filters only.
+The **Lines** tab keeps its own view as you step: the **Search product...** text, the **State** filter and the column you sorted by stay in the address bar, so previous and next open the next order inquiry's lines searched, filtered and sorted the same way, and a reload keeps them too. Clear the search or untick the **State** values to see every line again. **Back** to the list leaves this view behind: the list opens with its own filters only.
 
 ## Customer and project beside every sales order
 
-Wherever a sales order number is shown (the **Stock Debt** drills and snapshots, **Request CS to
-reserve**, the Fulfilment Planning board, the reorder plan's drills, Stock Transfers, the loading
-plan, and the other screens that name an order), its customer and project are named with it:
+Wherever a sales order number is shown (the **Stock Debt** drills and snapshots, **Request CS to reserve**, the Fulfilment Planning board, the reorder plan's drills, Stock Transfers, the loading plan, and the other screens that name an order), its customer and project are named with it:
 
-* In a table, as two columns, **Customer** and **Project**, right after the sales order, the same
-  as on the **Sales Orders** list. On a list that pages (for example **Stock Transfers**), both
-  columns sort the whole list.
-* In a dialog title, a chip or a short list, as one line under the order number: `CUSTOMER /
-  project`.
+* In a table, as two columns, **Customer** and **Project**, right after the sales order, the same as on the **Sales Orders** list. On a list that pages (for example **Stock Transfers**), both columns sort the whole list.
+* In a dialog title, a chip or a short list, as one line under the order number: `CUSTOMER / project`.
 
-The customer is the debtor name the order was issued under (it often already ends with the
-project in brackets), else the customer's own name; the project is the order's project. A half
-the order does not have prints a dash, for example `ACME SDN BHD / -`.
+The customer is the debtor name the order was issued under (it often already ends with the project in brackets), else the customer's own name; the project is the order's project. A half the order does not have prints a dash, for example `ACME SDN BHD / -`.
 
 ## Emails and the sales order page
 
-The order inquiry handover, changed and undone emails, the reserve request and reserved emails,
-and the "Order inquiries" link on a sales order's own page, all now open straight to this order
-inquiry's detail page.
+The order inquiry handover, changed and undone emails, the reserve request and reserved emails, and the "Order inquiries" link on a sales order's own page, all now open straight to this order inquiry's detail page.
 
 ## Admin: folding old duplicate date-move notices
 
-Read this only if you administer the CRM directly. Before date moves settled in place (see "A
-date change on a line you already asked purchasing to buy restates the same row", above), some
-order inquiries were left with a duplicate: a live buy row sitting beside a separate notice row
-saying the same date had moved. `scripts/fold_oi_date_notices.py` (run from `sorento_crm_backend/`)
-finds and folds every one of those pairs, once.
+Read this only if you administer the CRM directly. Before date moves settled in place (see "A date change on a line you already asked purchasing to buy restates the same row", above), some order inquiries were left with a duplicate: a live buy row sitting beside a separate notice row saying the same date had moved. `scripts/fold_oi_date_notices.py` (run from `sorento_crm_backend/`) finds and folds every one of those pairs, once.
 
-1. Run it with no flags first - `venv/bin/python scripts/fold_oi_date_notices.py` - a dry run
-   (the default) that only prints what it would do: which order inquiry, which item, and which
-   buy row each notice would fold into. Nothing is written yet.
-2. Run it again with `--apply` to actually fold them: each notice's date moves onto its buy row
-   (with the old date kept as Was), and the notice itself is cancelled with a note saying it was
-   folded.
-3. Run the plain dry run one more time after `--apply`. A line that carried more than one
-   chained notice only shows its next one as fold-able once the one before it has actually been
-   folded, so a single dry-run-then-apply pass can still leave something to fold; a dry run
-   afterwards confirms there's nothing left (or shows what's next).
 
-The script is safe to re-run - a pair it already folded no longer matches, so running it again
-reports nothing for it.
+1. Run it with no flags first - `venv/bin/python scripts/fold_oi_date_notices.py` - a dry run (the default) that only prints what it would do: which order inquiry, which item, and which buy row each notice would fold into. Nothing is written yet.
+2. Run it again with `--apply` to actually fold them: each notice's date moves onto its buy row (with the old date kept as Was), and the notice itself is cancelled with a note saying it was folded.
+3. Run the plain dry run one more time after `--apply`. A line that carried more than one chained notice only shows its next one as fold-able once the one before it has actually been folded, so a single dry-run-then-apply pass can still leave something to fold; a dry run afterwards confirms there's nothing left (or shows what's next).
+
+The script is safe to re-run - a pair it already folded no longer matches, so running it again reports nothing for it.
 
 ## How you'll be notified
 
-The handover, changed and undone emails purchasing already receives (see [The order inquiry
-handover email](order-inquiry-handover-email.md) and [Sales order changes after
-planning](sales-order-changes.md)) keep going out the same way, their links now landing on this
-page. A **Request CS to reserve** and CS's own **Reserve** click each send their own email too -
-see [Reserve request and reserved-stock emails](order-inquiry-reserve-email.md), one mail per
-click naming only the lines that click reserved. Confirming, unconfirming, sending a reserve
-request, cancelling one, and reserving or amending a reservation all show an on-screen toast.
-**Export Excel** shows a toast too, then the workbook appears in **My Downloads** once it is
-ready, the same as the low stock report and the order summary sheet. Both the export and the
-reserve actions need the **Order Inquiries** view permission and a signed-in user.
+The handover, changed and undone emails purchasing already receives (see [The order inquiry handover email](order-inquiry-handover-email.md) and [Sales order changes after planning](sales-order-changes.md)) keep going out the same way, their links now landing on this page. A **Request CS to reserve** and CS's own **Reserve** click each send their own email too - see [Reserve request and reserved-stock emails](order-inquiry-reserve-email.md), one mail per click naming only the lines that click reserved. Confirming, unconfirming, sending a reserve request, cancelling one, and reserving or amending a reservation all show an on-screen toast. **Export Excel** shows a toast too, then the workbook appears in **My Downloads** once it is ready, the same as the low stock report and the order summary sheet. Both the export and the reserve actions need the **Order Inquiries** view permission and a signed-in user.
 
 ## See also
 
-* [Upload the data a reorder plan is built from](upload-plan-data.md#the-order-inquiries-page)
-  (the **Lines** worklist: stage cards, month tabs, filters, confirming and unconfirming a row,
-  Schedule view, and the order inquiry sheet upload)
+* [Upload the data a reorder plan is built from](upload-plan-data.md#the-order-inquiries-page) (the **Lines** worklist: stage cards, month tabs, filters, confirming and unconfirming a row, Schedule view, and the order inquiry sheet upload)
 * [Sales order changes after planning](sales-order-changes.md)
 * [The order inquiry handover email](order-inquiry-handover-email.md)
-* [Reserve request and reserved-stock emails](order-inquiry-reserve-email.md) - the automations
-  behind Ask CS to reserve stock / Reserve for purchasing, the default pool setting, and the
-  permission needed to reserve.
+* [Reserve request and reserved-stock emails](order-inquiry-reserve-email.md) - the automations behind Ask CS to reserve stock / Reserve for purchasing, the default pool setting, and the permission needed to reserve.
 * [Plan a sales order nobody decided](plan-undecided-lines.md)
-* [Print the order summary](print-the-order-summary.md#oi-worksheet-excel) (a reorder plan's
-  own "OI worksheet Excel", the order inquiry rows inside that plan's scope, in this page's own
-  ORDER INQUIRY layout)
+* [Print the order summary](print-the-order-summary.md#oi-worksheet-excel) (a reorder plan's own "OI worksheet Excel", the order inquiry rows inside that plan's scope, in this page's own ORDER INQUIRY layout)

@@ -4,7 +4,7 @@ Use this flow to find a delivery order, read its full record (header, lines, fin
 
 ## Where to go
 
-Open **[Delivery Order Management → Delivery Orders](/order-management/orders)** (URL: `/order-management/orders`). The page is titled **Delivery Orders**.
+Open [**Delivery Order Management → Delivery Orders**](/order-management/orders) (URL: `/order-management/orders`). The page is titled **Delivery Orders**.
 
 ## The list
 
@@ -13,7 +13,7 @@ Each row is one delivery order. Default sort is newest first (by created date), 
 Columns (left to right):
 
 | Column | Meaning |
-|----|----|
+|--------|---------|
 | **Delivery Order Number** | The order's unique number - the key you identify an order by. |
 | **Debtor Name** | The customer / debtor the order belongs to. |
 | **Delivery Order Date** | Date the order was placed. |
@@ -51,6 +51,7 @@ The header shows the **Delivery Order Number** and its status badge, plus the de
 
 Three tabs:
 
+
 1. **Delivery order information** - Delivery Order Number, Delivery Order Date, Debtor Code, Debtor Name, Agent, Delivery Order Type, Cancelled, Remarks CS, Delivery Order Status, Estimated Delivery Date, Actual Delivery Date, and Remarks. Below it sits the **Delivery Order Lines** card.
 2. **Financial summary** - Subtotal Amount, Discount Amount, Tax Amount, Total Amount (formatted in MYR), plus Created / Last Updated timestamps.
 3. **Delivery & tracking** - Debtor Code, Debtor Name, Agent, Delivery Order Type, Remarks CS, Customer (Ref), Cancelled, Delivery Time, Checker, Transporter, Driver Name, Lorry Plate, Warehouse, Salesman, Trips, Delivery Days (2), and delivery remarks.
@@ -70,10 +71,7 @@ Bulk-importing lines is usually faster - see [Upload Delivery Orders → Step 2]
 * **Create Delivery Order** (toolbar) → opens the create form. **Delivery Order Number**, **Delivery Order Date**, and **Delivery Order Status** are required; everything else is optional.
 * **Edit** (detail header) → same form, pre-filled.
 
-**Undated delivery orders.** A delivery order imported without a date opens with an empty
-**Delivery Order Date** (not marked required), and saving it leaves the date empty; the form never
-fills in today for you. Type the real date to bring it into the sales reports. On a delivery
-order that already has a date, clearing it is refused with *Order date is required.*
+**Undated delivery orders.** A delivery order imported without a date opens with an empty **Delivery Order Date** (not marked required), and saving it leaves the date empty; the form never fills in today for you. Type the real date to bring it into the sales reports. On a delivery order that already has a date, clearing it is refused with *Order date is required.*
 
 For more than a handful of orders, use the Excel import instead of typing each one - see the upload guide.
 

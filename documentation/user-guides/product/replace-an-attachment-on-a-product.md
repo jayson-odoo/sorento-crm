@@ -6,14 +6,16 @@ Use this flow when a file already linked to a product is out of date - a revised
 
 ## Steps
 
-1. Open **[Resource Management → Files](/resource-management/attachment-directories)** (URL: `/resource-management/attachment-directories`). The page is titled **Files**. This is where the actual file bytes live; the product's **Attachments** tab only shows the *links* to those files.
+
+1. Open [**Resource Management → Files**](/resource-management/attachment-directories) (URL: `/resource-management/attachment-directories`). The page is titled **Files**. This is where the actual file bytes live; the product's **Attachments** tab only shows the *links* to those files.
 2. Find the file you want to replace. Click into the same folder in the **Folders** sidebar where the file was originally uploaded, or use **Search** in the attachments table. (Tip: the file's folder is shown on the product's detail page under the **Attachments** tab, grouped by folder path.)
-3. Click **[Upload](/resource-management/attachment-directories#guide_target=resource-management.files.upload-button)** in the top toolbar of the attachments table. The **Create Attachment** dialog opens.
+3. Click [**Upload**](/resource-management/attachment-directories#guide_target=resource-management.files.upload-button) in the top toolbar of the attachments table. The **Create Attachment** dialog opens.
 4. Set **Attachment Type** to the **same type** the existing file uses (e.g. *Product Attachments*, *Certification*). Keeping the type consistent means the same downstream workflow re-processes the new file.
 5. Drag your new file into the **Files** drop zone, or click **Select Files** to browse. **The new file must have the same filename as the file you're replacing** - that is how the system recognises it as the same file. Make sure you're in the **same folder** as the original, too.
-6. Click **[Upload 1 Attachment](/resource-management/attachment-directories#guide_target=resource-management.files.upload-confirm-button)**.
+6. Click [**Upload 1 Attachment**](/resource-management/attachment-directories#guide_target=resource-management.files.upload-confirm-button).
 7. Because a file with that name already exists in the folder, a **File already exists in this folder** dialog appears:
-   > *An attachment named **&lt;filename&gt;** already exists. Replace the existing file (its links to packing lists, promotions, products and forms stay valid) or upload a renamed copy?*
+
+   > *An attachment named **<filename>** already exists. Replace the existing file (its links to packing lists, promotions, products and forms stay valid) or upload a renamed copy?*
 8. Click **Replace existing** (the red button). The new file's bytes, size, and upload date overwrite the existing attachment record.
    * **Create copy** instead uploads the new file under an auto-renamed name and leaves the old file untouched - use this only if you actually want two files.
    * **Cancel** aborts without changing anything.

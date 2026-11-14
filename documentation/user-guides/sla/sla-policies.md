@@ -20,11 +20,13 @@ Open [**SLA Management → SLA Policies**](/sla-management/sla-policies). The gr
 
 ## Create a policy
 
+
 1. From the list, start a new policy. You'll see **Create SLA Policy**.
 2. Fill in **Code \*** (e.g. `SLA-001`), **Name \***, and an optional **Description**.
 3. Save. Then add tiers (below).
 
 ## Add / edit tiers
+
 
 1. On the policy, click **Add Tier** (or edit an existing one).
 2. In the tier dialog fill in:

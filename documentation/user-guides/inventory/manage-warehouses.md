@@ -13,7 +13,7 @@ Requires the `inventory.warehouses.view` permission to open.
 The DataGrid shows one row per warehouse with these columns:
 
 | Column | What it shows |
-|--------|----------------|
+|--------|---------------|
 | **System Location** | The warehouse code (the unique system identifier). |
 | **System Location Description** | The warehouse's descriptive name. |
 | **Warehouse** | The physical location / address. |
@@ -28,6 +28,7 @@ Toolbar:
 
 ## Create or edit a warehouse
 
+
 1. Click **Create Warehouse** (or **Edit** on a warehouse detail page).
 2. Fill in the form:
    * **System Location \*** - the warehouse code. Placeholder `WH-001`. The form notes *"Must be unique."* Required.
@@ -36,12 +37,7 @@ Toolbar:
    * **Active Status** - a toggle. The form notes *"Inactive warehouses will not appear in dropdowns"*.
 3. Click **Create Warehouse** (new) or **Update Warehouse** (edit). **Cancel** discards.
 
-A **System Location** that differs from an existing one only by case or spacing (e.g. `wh-001`
-vs `WH-001`) is refused with *"Warehouse code already exists."* rather than silently creating a
-near-duplicate. The same check applies when creating a supplier, a product category, or a unit
-of measure. Bulk-**Import**ing a warehouse listing does not refuse this way - a code that only
-differs by case or spacing from one you already hold is adopted onto the existing row instead of
-being refused or duplicated.
+A **System Location** that differs from an existing one only by case or spacing (e.g. `wh-001` vs `WH-001`) is refused with *"Warehouse code already exists."* rather than silently creating a near-duplicate. The same check applies when creating a supplier, a product category, or a unit of measure. Bulk-**Import**ing a warehouse listing does not refuse this way - a code that only differs by case or spacing from one you already hold is adopted onto the existing row instead of being refused or duplicated.
 
 ## The detail page
 

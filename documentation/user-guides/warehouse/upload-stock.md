@@ -8,13 +8,14 @@ Open [**Inventory Management → Stock**](/inventory-management/stock). The page
 
 Toolbar (top right):
 
-* **[Export](/inventory-management/stock#guide_target=inventory-management.stock.export-button)** - download the current stock balances as `stock_balance_export.xlsx`. Use this as your starting template.
-* **[Import](/inventory-management/stock#guide_target=inventory-management.stock.import-button)** - opens the upload dialog.
+* [**Export**](/inventory-management/stock#guide_target=inventory-management.stock.export-button) - download the current stock balances as `stock_balance_export.xlsx`. Use this as your starting template.
+* [**Import**](/inventory-management/stock#guide_target=inventory-management.stock.import-button) - opens the upload dialog.
 * **Filters** / **Columns** - DataGrid tools.
 
 ## Step 1 - Export current balances as your template
 
-1. Click **[Export](/inventory-management/stock#guide_target=inventory-management.stock.export-button)** to download `stock_balance_export.xlsx`.
+
+1. Click [**Export**](/inventory-management/stock#guide_target=inventory-management.stock.export-button) to download `stock_balance_export.xlsx`.
 2. Open the file in Excel. The export contains every product × warehouse pair currently on the page, with the columns described below.
 
 ## Step 2 - Edit the Excel
@@ -22,16 +23,16 @@ Toolbar (top right):
 ### Columns
 
 | Column (any of these is accepted) | Required | Notes |
-|----|----|----|
-| **Product Code** / **Item Code** | Yes | Looked up case-insensitively against the product master. Rows with an unknown code are flagged as errors. |
+|-----------------------------------|----------|-------|
+| **Product Code** / **Item Code**  | Yes      | Looked up case-insensitively against the product master. Rows with an unknown code are flagged as errors. |
 | **Warehouse Code** / **Location** | Yes (or pass **Warehouse** / **Warehouse Name** as a fallback) | Looked up against the warehouse master. **Warehouse Code** wins if both are present. |
-| **Total Quantity** / **Quantity** / **On Hand** / **On hand qty** | Yes | Integer. Commas, currency, and dashes are tolerated; empty cell or `-` is treated as `0`. |
+| **Total Quantity** / **Quantity** / **On Hand** / **On hand qty** | Yes      | Integer. Commas, currency, and dashes are tolerated; empty cell or `-` is treated as `0`. |
 | **Reserved Quantity** / **Reserved** | Optional | Integer. Defaults to `0` on creates. |
-| **Quantity Damaged** | Optional | Integer. Defaults to `0`. |
-| **Reorder Point** | Optional | Integer, used by the low-stock alert. |
-| **Zone ID** | Optional | Storage zone UUID (only set this when you know the zone). |
-| **ID** | Optional | The stock record UUID. Set this only when you are updating a known row. New rows leave it blank. |
-| **Available** | Read-only | Derived (`Total - Reserved`). The system ignores any value you put here on import. |
+| **Quantity Damaged**              | Optional | Integer. Defaults to `0`. |
+| **Reorder Point**                 | Optional | Integer, used by the low-stock alert. |
+| **Zone ID**                       | Optional | Storage zone UUID (only set this when you know the zone). |
+| **ID**                            | Optional | The stock record UUID. Set this only when you are updating a known row. New rows leave it blank. |
+| **Available**                     | Read-only | Derived (`Total - Reserved`). The system ignores any value you put here on import. |
 
 Rules of thumb:
 
@@ -41,12 +42,13 @@ Rules of thumb:
 
 ## Step 3 - Import
 
-1. Click **[Import](/inventory-management/stock#guide_target=inventory-management.stock.import-button)** in the toolbar.
+
+1. Click [**Import**](/inventory-management/stock#guide_target=inventory-management.stock.import-button) in the toolbar.
 2. Drag in or browse to your stock Excel file.
 
 ## Step 4 - Test before committing
 
-Click **[Test](/inventory-management/stock#guide_target=template-upload.test-button)** in the upload dialog. The system runs server-side validation (`validate_only=true`) and shows you:
+Click [**Test**](/inventory-management/stock#guide_target=template-upload.test-button) in the upload dialog. The system runs server-side validation (`validate_only=true`) and shows you:
 
 * A summary: total rows, rows that would create / update / skip, error count.
 * Per-row errors (e.g. "Row 5: Product not found (code 'SRT-XYZ')").
@@ -56,7 +58,7 @@ Resolve every error before continuing. Warnings are advisory - they won't block 
 
 ## Step 5 - Upload
 
-Click **[Upload](/inventory-management/stock#guide_target=template-upload.confirm-button)**. The import is queued as an async job (`stock_import`). The dialog closes and the toolbar surfaces a status panel.
+Click [**Upload**](/inventory-management/stock#guide_target=template-upload.confirm-button). The import is queued as an async job (`stock_import`). The dialog closes and the toolbar surfaces a status panel.
 
 ## How you'll see progress
 
@@ -89,13 +91,10 @@ If your company is connected to AutoCount, you can pull the current stock book s
 
 **Who can do this:** anyone holding the **Pull from AutoCount** permission (`inventory.stock.autocount_pull`) - granted automatically to every role that already holds `inventory.stock.import`, plus admin. You need exactly one company selected; with more than one company in scope Sorento refuses with "Select a single company before pulling from AutoCount." and starts nothing.
 
-**The AutoCount connection itself** is not configured here - an admin enters the gateway URL and
-API key on the **FoundryX ESB** record under **Integration Management → Integrations** and clicks
-**Test** to confirm it (**Connected**, or the reason it isn't). See [AutoCount integration
-(ESB)](../system-management/data-analysis.md#autocount-integration-esb---contract-version-21) for
-details, including why a wrong-company key can still show Connected there.
+**The AutoCount connection itself** is not configured here - an admin enters the gateway URL and API key on the **FoundryX ESB** record under **Integration Management → Integrations** and clicks **Test** to confirm it (**Connected**, or the reason it isn't). See [AutoCount integration (ESB)](../system-management/data-analysis.md#autocount-integration-esb---contract-version-21) for details, including why a wrong-company key can still show Connected there.
 
 ### Start a pull
+
 
 1. With one company selected, open **Stock**.
 2. In the **Actions** menu, the same menu that holds **Import**, click **Pull from AutoCount**.

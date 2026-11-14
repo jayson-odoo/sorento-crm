@@ -11,6 +11,7 @@ This page documents the **System Management** operational logs and configuration
 > **No MCP tools.** Unlike commercial / inventory / procurement, System Management exposes **no MCP tools** to the AI assistant - there is no `system_*` read tool the assistant can call. This page is an **admin reference for power users** working the list pages directly (filter + sort + Export). The assistant cannot list these rows for you; it can only explain where to look and what the status codes mean. Every page below has an **Export** button (xlsx) for offline analysis.
 
 > **Reading notes**
+>
 > * **Timestamps are stored naive UTC; most list pages render Malaysia time (UTC+8).** Be explicit about the timezone when quoting a time, and remember a "today" window in the DB is UTC midnight-to-midnight, not local.
 > * **No UUIDs in answers.** Resolve `business_id`, `user_id`, `notification_id` etc. to a human-readable reference (entity number, email, person's name) before replying.
 > * **Three separate message-delivery logs exist** - Email Outbox, Outgoing Mails, and Respond Outbox. They are not the same table and answer different questions. The distinctions are spelled out below; getting them wrong sends an admin to the wrong page.
@@ -35,6 +36,7 @@ The pages and their menu paths:
 | Respond.io Workspaces | [Respond.io Workspaces](/system-management/respond-workspaces) | `respond_workspaces` |
 | Chat History (Turn trace) | [Chat History](/system-management/chat-history) | `chatbot.turns` |
 
+
 ---
 
 ## Import Jobs - `import_jobs`
@@ -42,6 +44,7 @@ The pages and their menu paths:
 The **lifecycle tracker for a background (RQ) import job**: progress counts and the job's run state. One row per upload that was enqueued to the worker (Excel imports, GRN/SPO/product/stock/order-tracking imports, attachment bulk import).
 
 > **Import Jobs vs Import Logs - read this first.** They are two different tables for two different moments.
+>
 > * **Import Jobs** (`import_jobs`) = the *RQ job* and its live progress (`status`, `processed_rows`, `started_at`/`completed_at`). Answers "is it still running / did the job finish / did it crash?".
 > * **Import Logs** (`import_logs`) = the *post-mortem record* of an import run - the row-level outcome (`successful` / `created` / `updated` / `failed` / `skipped`) plus the `errors` / `warnings` JSON. Answers "which rows failed and why?".
 > * They are linked: `import_logs.import_session_id` equals the job's `job_id`. Not every import_log has a job (services like stock/order import write a log directly), and a failed job may write a log with all-zero counts plus the error.
@@ -58,8 +61,7 @@ The **lifecycle tracker for a background (RQ) import job**: progress counts and 
 | `total_rows` / `processed_rows` / `successful_rows` / `failed_rows` / `skipped_rows` | Progress + outcome counts. |
 | `result` (JSON) / `error` (text) | Final result payload / failure message. |
 
-**Status values (exact - `JobStatus` enum):** `pending`, `queued`, `started`, `finished`, `failed`, `cancelled`.
-*A "succeeded" job's status is `finished`, not "success" or "completed".* A job can be cancelled while in `pending` / `queued` / `started`.
+**Status values (exact -** `**JobStatus**` **enum):** `pending`, `queued`, `started`, `finished`, `failed`, `cancelled`. *A "succeeded" job's status is* `*finished*`*, not "success" or "completed".* A job can be cancelled while in `pending` / `queued` / `started`.
 
 **Date columns:** `created_at` (enqueued), `started_at`, `completed_at`, `updated_at`. Columns shown: **Type, Status, Filename, Total Rows, Processed, Success, Failed, Skipped, Created At, Started At, Completed At, Updated At**.
 
@@ -76,6 +78,7 @@ The **lifecycle tracker for a background (RQ) import job**: progress counts and 
 * "Did the GRN lines upload error out - what's the message?" (`status` = `failed`, read `error`)
 * "List my queued imports waiting on the worker." (`status` = `queued` / `pending`)
 * "Which file did job X import?" (`filename`)
+
 
 ---
 
@@ -98,7 +101,7 @@ The **persisted outcome record of an import run** - written at the end of an imp
 | `imported_by` | Who ran it. |
 | `duration_ms` | How long it took. |
 
-**Status values:** **none** - there is no status enum. Outcome is read from the **counts** (`failed_rows > 0` = had failures) and the **`errors` JSON**. A fully-failed job writes a log with all-zero counts and the error in `errors`.
+**Status values:** **none** - there is no status enum. Outcome is read from the **counts** (`failed_rows > 0` = had failures) and the `**errors**` **JSON**. A fully-failed job writes a log with all-zero counts and the error in `errors`.
 
 **Date columns:** `imported_at` (**default sort, newest first**). Columns shown: **Entity, Filename, Type, Success, Skipped, Failed, Description, Imported By, Created At, Duration**.
 
@@ -114,6 +117,7 @@ The **persisted outcome record of an import run** - written at the end of an imp
 * "Who ran the order import that had failures, and how long did it take?" (`imported_by`, `duration_ms`)
 * "Find the import log for job X." (`import_session_id` = the job's `job_id`)
 
+
 ---
 
 ## Integration Logs - `integration_log`
@@ -125,7 +129,7 @@ The **system-wide integration audit trail**: every inbound/outbound call to an e
 | Field | Meaning |
 |-------|---------|
 | `integration_channel` | Which integration - e.g. `respond_io`, `n8n`, SLA channels, `integration_log_update`. |
-| `business_table` / `business_id` | The CRM record this call relates to. **`business_id` is a UUID** (resolve before quoting). |
+| `business_table` / `business_id` | The CRM record this call relates to. `**business_id**` **is a UUID** (resolve before quoting). |
 | `external_reference` | External id (for Respond sends this is the contact's `respond_io_id`). |
 | `direction` | `inbound` or `outbound`. |
 | `endpoint` / `http_method` | The URL + verb called. |
@@ -136,8 +140,7 @@ The **system-wide integration audit trail**: every inbound/outbound call to an e
 | `next_retry_at` | When an auto-retry is due. |
 | `correlation_id` / `created_by` | Tracing / actor. |
 
-**Status values (exact):** `pending`, `processing`, `success`, `failed` (column default `pending`).
-*(Some rows also carry an HTTP `status_code` - e.g. a `failed` row with `status_code = 401` is an auth failure on the integration.)*
+**Status values (exact):** `pending`, `processing`, `success`, `failed` (column default `pending`). *(Some rows also carry an HTTP* `*status_code*` *- e.g. a* `*failed*` *row with* `*status_code = 401*` *is an auth failure on the integration.)*
 
 **Date columns:** `created_at` (**default sort, newest first**), `processed_at`. Columns shown: **Channel, Business Table, Business ID, Status, Retries, Created, Processed**.
 
@@ -153,59 +156,31 @@ The **system-wide integration audit trail**: every inbound/outbound call to an e
 * "What's stuck in `processing`?" (`status` = `processing`)
 * "Show all SLA escalation callbacks this week." (`integration_channel` = SLA Escalation, by `created_at`)
 
+
 ---
 
 ## AutoCount integration (ESB) - contract version 2.1
 
-The AutoCount integration (the ESB) pushes masters and documents straight into Sorento on its
-own schedule, without a file ever being uploaded by hand. This section is a reference for what it
-sends and how that interacts with data entered any other way. Every inbound call from it is
-logged the same as any other integration, on
-**[Integration Logs](/integration-management/integration-logs)** (`integration_channel` for the
-AutoCount pushes).
+The AutoCount integration (the ESB) pushes masters and documents straight into Sorento on its own schedule, without a file ever being uploaded by hand. This section is a reference for what it sends and how that interacts with data entered any other way. Every inbound call from it is logged the same as any other integration, on [**Integration Logs**](/integration-management/integration-logs) (`integration_channel` for the AutoCount pushes).
 
-**The AutoCount connection** (used by the on-demand Pull below, not by the scheduled push above)
-is entered on the **FoundryX ESB** record under **[Integration Management →
-Integrations](/integration-management/integrations)**: an admin types the gateway's base URL and
-the API key FoundryX issued, then clicks **Test**. Test reports **Connected**, or names the
-reason it failed - a rejected key, AutoCount's own service turned off, too many attempts, or the
-address unreachable. Test does not check that the key covers this company: a key valid for a
-different company still shows Connected there, and is refused on the first Pull instead, with
-AutoCount's own message.
+**The AutoCount connection** (used by the on-demand Pull below, not by the scheduled push above) is entered on the **FoundryX ESB** record under [**Integration Management → Integrations**](/integration-management/integrations): an admin types the gateway's base URL and the API key FoundryX issued, then clicks **Test**. Test reports **Connected**, or names the reason it failed - a rejected key, AutoCount's own service turned off, too many attempts, or the address unreachable. Test does not check that the key covers this company: a key valid for a different company still shows Connected there, and is refused on the first Pull instead, with AutoCount's own message.
 
 **What version 2.1 sends that earlier versions did not:**
 
-* On a product: the **Discontinued** flag, a **remark** (kept separate from the description, not
-  merged into it), and a **brand**.
+* On a product: the **Discontinued** flag, a **remark** (kept separate from the description, not merged into it), and a **brand**.
 * On a customer: its **market segment** and **region**.
 * On a shipping order (SPO): the **container number**.
 
-**On a supplier, a `country` field is resolved, not just stored:** the integration can send a
-country as a full name (`Malaysia`) or a 2-letter code (`MY`), case-insensitively, and it is
-matched against **[Products → Reference Data → Countries](../product/countries.md)**. A value
-that does not match anything there is reported as a row warning and left blank - it does not
-stop the rest of the row from importing.
+**On a supplier, a** `**country**` **field is resolved, not just stored:** the integration can send a country as a full name (`Malaysia`) or a 2-letter code (`MY`), case-insensitively, and it is matched against [**Products → Reference Data → Countries**](../product/countries.md). A value that does not match anything there is reported as a row warning and left blank - it does not stop the rest of the row from importing.
 
-**Absent vs. null, on every field the integration can send:** a field the push simply does not
-mention leaves that column exactly as it was; a field sent as an explicit empty value (null, or a
-blank string) clears it, the same thing a blank cell means on the matching upload.
-A push never guesses at a value it was not given.
+**Absent vs. null, on every field the integration can send:** a field the push simply does not mention leaves that column exactly as it was; a field sent as an explicit empty value (null, or a blank string) clears it, the same thing a blank cell means on the matching upload. A push never guesses at a value it was not given.
 
-**Removed in 2.1:** a supplier or customer's payment-terms fields sent by the integration are no
-longer accepted at all (they were accepted-and-ignored in the versions leading up to 2.1, with a
-warning) - payment terms are managed in Sorento, not pushed in from AutoCount.
+**Removed in 2.1:** a supplier or customer's payment-terms fields sent by the integration are no longer accepted at all (they were accepted-and-ignored in the versions leading up to 2.1, with a warning) - payment terms are managed in Sorento, not pushed in from AutoCount.
 
-See also the rules stated once, for every channel, on [Upload the product master](../purchasing/upload-product-master.md)
-(discontinued, dimensions, default supplier) and [Upload SPO allocations](../purchasing/upload-spo.md)
-(container number, inbound-shipment linking) - the AutoCount integration follows the same rules
-as the matching upload and as a manual create/edit, not a separate set of its own.
+See also the rules stated once, for every channel, on [Upload the product master](../purchasing/upload-product-master.md) (discontinued, dimensions, default supplier) and [Upload SPO allocations](../purchasing/upload-spo.md) (container number, inbound-shipment linking) - the AutoCount integration follows the same rules as the matching upload and as a manual create/edit, not a separate set of its own.
 
-**A separate, on-demand action** - where a company has it switched on, a checker can also pull a
-fresh snapshot of the items book or the stock book from AutoCount whenever they want, review what
-it would change, and confirm it themselves, instead of waiting for the scheduled push or doing a
-manual upload. See [Pull from AutoCount](../product/manage-products.md#pull-from-autocount) on the
-Products page and [Pull from AutoCount](../warehouse/upload-stock.md#pull-from-autocount) on the
-Stock page.
+**A separate, on-demand action** - where a company has it switched on, a checker can also pull a fresh snapshot of the items book or the stock book from AutoCount whenever they want, review what it would change, and confirm it themselves, instead of waiting for the scheduled push or doing a manual upload. See [Pull from AutoCount](../product/manage-products.md#pull-from-autocount) on the Products page and [Pull from AutoCount](../warehouse/upload-stock.md#pull-from-autocount) on the Stock page.
+
 
 ---
 
@@ -227,17 +202,17 @@ Configurable background jobs driven by the in-process scheduler (e.g. the **emai
 | `last_run_at` | When it last ran. |
 | `last_status` / `last_error` | Outcome of the most recent run. |
 
-**Key fields (run - `scheduled_task_runs`):** `started_at`, `finished_at`, `status`, `duration_ms`, `summary` (JSON, e.g. `{"scanned": 10, "created": 2, "failed": 0}`), `error`.
+**Key fields (run -** `**scheduled_task_runs**`**):** `started_at`, `finished_at`, `status`, `duration_ms`, `summary` (JSON, e.g. `{"scanned": 10, "created": 2, "failed": 0}`), `error`.
 
-**Status values (exact - both `last_status` and run `status`):** `started`, `success`, `failed`, `skipped`. (`last_status` is null until the first run.)
+**Status values (exact - both** `**last_status**` **and run** `**status**`**):** `started`, `success`, `failed`, `skipped`. (`last_status` is null until the first run.)
 
 **Date columns:** `next_run_at`, `last_run_at` (task); `started_at`, `finished_at` (run). Columns shown: **Name, Key, Enabled, Frequency, Next Run, Last Run, Last Status**. The list returns **all** tasks (no status filter); drill into a task for its **runs**, and use **Run now** to trigger immediately.
 
 > **Stuck-task detection.** A task is suspect when:
+>
 > * `enabled = true` but `next_run_at` is well in the past and not advancing - the scheduler may be down (check the backend process / `ENABLE_SCHEDULER`).
 > * `last_status = started` with a `last_run_at` long ago and no newer run finishing - a run began and never completed (worker died mid-run).
-> * `last_status = failed` repeatedly - read `last_error` and the latest run's `error` / `summary`.
-> Related: the upload-activity drawer has its own sweeper that kills `sent` rows older than 10 minutes - that is a *different* mechanism from these scheduled tasks; don't conflate the two when chasing "stuck" items.
+> * `last_status = failed` repeatedly - read `last_error` and the latest run's `error` / `summary`. Related: the upload-activity drawer has its own sweeper that kills `sent` rows older than 10 minutes - that is a *different* mechanism from these scheduled tasks; don't conflate the two when chasing "stuck" items.
 
 **Example questions**
 
@@ -248,6 +223,7 @@ Configurable background jobs driven by the in-process scheduler (e.g. the **emai
 * "Run the integration-log retry task now." (Run now)
 * "How long does the drainer take per run, and what did it process?" (run `duration_ms`, `summary`)
 * "Which tasks are disabled?" (`enabled` = No)
+
 
 ---
 
@@ -268,7 +244,7 @@ The **email delivery record for in-app notifications**. Each row is the *email-c
 | `error_message` | Why it failed. |
 | `notification_type` / `source_entity_type` / `source_entity_id` / `event_type` | Linkage back to the originating notification, for deep links / troubleshooting. |
 
-**Status values (exact - `NotificationDelivery.status`):** `pending`, `sent`, `failed`.
+**Status values (exact -** `**NotificationDelivery.status**`**):** `pending`, `sent`, `failed`.
 
 **Date columns:** `created_at` (**default sort, newest first**), `sent_at`. Columns shown: **Queued At, To, Subject, Content, Status, Sent At, Error**.
 
@@ -281,6 +257,7 @@ The **email delivery record for in-app notifications**. Each row is the *email-c
 * "What's stuck pending delivery?" (`status` = `pending`)
 * "Show notification emails about complaint Y." (search subject / `source_entity_type`)
 * "When was the approval email to manager Z sent?" (search email, `sent_at`)
+
 
 ---
 
@@ -305,6 +282,7 @@ The **single chokepoint for all outbound email**. Every outgoing email - notific
 | `coalesce_key` | Dedup key - pending rows with the same key merge into one email. |
 
 **Status values (exact - drainer-driven):** `pending`, `sending`, `sent`, `failed`, `cancelled`.
+
 * `pending` → waiting to drain (also where a **rate-limited or backed-off** row sits, with `scheduled_for` pushed forward - it does *not* get a distinct status).
 * `sending` → mid-attempt. `sent` → delivered. `failed` → hit `max_attempts` (`cancel_reason = max_attempts_exceeded`). `cancelled` → killed (event disabled, or by admin).
 
@@ -312,7 +290,7 @@ The **single chokepoint for all outbound email**. Every outgoing email - notific
 
 **Date columns:** `created_at` (**default sort, newest first**), `scheduled_for`, `sent_at`. Columns shown: **Queued At, Event, To, Subject, Status, Priority, Attempts, Scheduled, Sent At, Error, Actions**.
 
-**Available filters:** **Status**, **`event_key`**, **search** (recipient or subject). Per-row actions: **View**, **Retry** (re-queues a failed/cancelled row → back to `pending`), **Cancel** (`cancel_reason = cancelled_by_admin`).
+**Available filters:** **Status**, `**event_key**`, **search** (recipient or subject). Per-row actions: **View**, **Retry** (re-queues a failed/cancelled row → back to `pending`), **Cancel** (`cancel_reason = cancelled_by_admin`).
 
 **Example questions**
 
@@ -324,6 +302,7 @@ The **single chokepoint for all outbound email**. Every outgoing email - notific
 * "List all emails for event `sla_assignment` this week." (`event_key` filter)
 * "Were two identical reminders collapsed into one?" (`coalesce_key`)
 * "Which emails are mid-send right now?" (`status` = `sending`)
+
 
 ---
 
@@ -350,7 +329,7 @@ A **read-only, prettified view of the Respond.io / WhatsApp messages the system 
 
 **Date columns:** `created_at` (**default sort, newest first**). Columns shown: **Sent At, Contact, Type, Message / Template, Linked, Status**.
 
-**Available filters:** **Status** (All statuses / Success / Failed / Pending / Processing), **`business_table`**, **search** (message text or contact). Per-row action: **View**.
+**Available filters:** **Status** (All statuses / Success / Failed / Pending / Processing), `**business_table**`, **search** (message text or contact). Per-row action: **View**.
 
 > **Memory rule - Respond sends use the workspace key.** A `401` here almost always means a bad/placeholder **workspace** API key (`respond_workspaces.api_key_ciphertext`), not the deprecated env `RESPOND_API_KEY`. Check the workspace on the [Respond.io Workspaces](/system-management/respond-workspaces) page.
 
@@ -363,11 +342,12 @@ A **read-only, prettified view of the Respond.io / WhatsApp messages the system 
 * "List all 401'd Respond sends." (`status` = `failed`, rows with `status_code` = `401`)
 * "Who sent the message to contact X?" (`created_by`, resolve to a name)
 
+
 ---
 
 ## Email Event Configs - `email_event_configs`
 
-Per-event **kill switches + rate/priority overrides** for the email pipeline. Rows are **seeded from `EMAIL_EVENT_REGISTRY` at startup**; admins toggle/override without a redeploy. These gate the Email Outbox: disabling an event makes the drainer **cancel** matching rows (`cancel_reason = event_disabled`).
+Per-event **kill switches + rate/priority overrides** for the email pipeline. Rows are **seeded from** `**EMAIL_EVENT_REGISTRY**` **at startup**; admins toggle/override without a redeploy. These gate the Email Outbox: disabling an event makes the drainer **cancel** matching rows (`cancel_reason = event_disabled`).
 
 **Key fields:** `event_key` (PK), `display_name`, `description`, `enabled` (the kill switch), `rate_per_window_override`, `window_seconds_override`, `priority_override`, `coalesce_window_seconds_override`.
 
@@ -383,6 +363,7 @@ Per-event **kill switches + rate/priority overrides** for the email pipeline. Ro
 * "Which email events are currently disabled?" (`enabled` = off - explains `event_disabled` cancels in Email Outbox)
 * "Has anyone overridden the rate limit on event X?" (`rate_per_window_override` / `window_seconds_override`)
 * "Why are emails for event Y being cancelled?" (event disabled here)
+
 
 ---
 
@@ -403,6 +384,7 @@ Designable HTML emails with Jinja2 placeholders, referenced by automations and n
 * "Which template does automation X use?" (cross-reference Automation → Template)
 * "When was template Y last edited?" (`updated_at`)
 
+
 ---
 
 ## Automation - `automations` (+ `automation_runs`)
@@ -411,9 +393,9 @@ Rule-driven scheduled email sends - a **trigger** + a **template** + a **recipie
 
 **Key fields (automation):** `name`, `description`, `enabled`, `trigger_type`, `trigger_config` (JSON), `action_type` (default `send_email`), `email_template_id`, `recipient_config` (JSON), `group_matches`, `schedule_type` (`manual` / `daily`), `run_time`, `timezone` (default `Asia/Kuala_Lumpur`), `last_run_at`, `last_status`, `last_error`, `next_run_at`.
 
-**Key fields (run - `automation_runs`):** `run_mode` (`manual` / `scheduled`), `started_at`, `finished_at`, `status`, `duration_ms`, `recipients_attempted`, `recipients_delivered`, `summary`, `error`.
+**Key fields (run -** `**automation_runs**`**):** `run_mode` (`manual` / `scheduled`), `started_at`, `finished_at`, `status`, `duration_ms`, `recipients_attempted`, `recipients_delivered`, `summary`, `error`.
 
-**Status values (exact - run `status`):** `running`, `success`, `partial`, `failed`. (`partial` = some recipients delivered, some failed.) The automation's `last_status` mirrors the latest run.
+**Status values (exact - run** `**status**`**):** `running`, `success`, `partial`, `failed`. (`partial` = some recipients delivered, some failed.) The automation's `last_status` mirrors the latest run.
 
 **Date columns:** `last_run_at`, `next_run_at` (automation); `started_at`, `finished_at` (run). Columns shown: **Name, Trigger, Schedule, Template, Enabled, Last status, Next run**. Per-row **Run** (shows "Run queued: X recipient(s) attempted"), Edit, Delete; **Add automation** via modal.
 
@@ -425,6 +407,7 @@ Rule-driven scheduled email sends - a **trigger** + a **template** + a **recipie
 * "Which automations are disabled?" (`enabled` = No)
 * "Run automation Y now." (Run action)
 * "Read the error from the last failed automation run." (run `error` / `summary`)
+
 
 ---
 
@@ -444,6 +427,7 @@ Configurable running-number rules per document type (e.g. purchase request, spon
 * "Does the sponsorship-form numbering reset yearly?" (`reset_policy`)
 * "Is numbering enabled for doc type X?" (`enabled`)
 * "When did this counter last reset?" (`last_reset_key`)
+
 
 ---
 
@@ -472,6 +456,7 @@ Generic master-data dropdown sets. A **set** holds **options** (the choices) and
 * "Which option values exist for set Z?" (its `lookup_options.value` / `label`)
 * "Which sets aren't bound to any column yet?" (Bindings count = 0)
 
+
 ---
 
 ## Respond.io Workspaces - `respond_workspaces`
@@ -491,16 +476,12 @@ Respond.io workspace configuration (multi-workspace per deployment). **The per-w
 * "What's the WhatsApp number behind this workspace?" (`whatsapp_number`)
 * "A Respond send 401'd - is the workspace key wrong?" (this page holds the key the send path actually uses)
 
+
 ---
 
 ## Chat History (Turn trace) - `chatbot.turns`
 
-The **per-message record of what the WhatsApp bot did** for one incoming message ("turn"):
-which step it reached, whether that step succeeded, and what it eventually replied. One row per
-turn; a retried message is a *new* row (a higher `attempt`), and the original failed row is left
-untouched as history. Surfaces inside the **[Chat History](/system-management/chat-history)**
-thread drawer, under each incoming message, as the **Turn** line - there is no separate list page
-for this table.
+The **per-message record of what the WhatsApp bot did** for one incoming message ("turn"): which step it reached, whether that step succeeded, and what it eventually replied. One row per turn; a retried message is a *new* row (a higher `attempt`), and the original failed row is left untouched as history. Surfaces inside the [**Chat History**](/system-management/chat-history) thread drawer, under each incoming message, as the **Turn** line - there is no separate list page for this table.
 
 **Key fields**
 
@@ -518,41 +499,22 @@ for this table.
 | `retry_requested_at` | Set while a requested retry is on its way back in; cleared once the retried message arrives as its own new row. |
 | `created_at` / `started_at` / `finished_at` | Lifecycle timestamps. |
 
-**Status values (exact):** `queued`, `processing`, `delegated` (handed to the WhatsApp automation
-side and waiting for it to finish), `done`, `failed`.
-*A `delegated` row that never gets a reply back is automatically flipped to `failed` (`stage =
-delegated`) after a time limit, so the list never fills up with rows stuck looking like work in
-progress.*
+**Status values (exact):** `queued`, `processing`, `delegated` (handed to the WhatsApp automation side and waiting for it to finish), `done`, `failed`. *A* `*delegated*` *row that never gets a reply back is automatically flipped to* `*failed*` *(*`*stage = delegated*`*) after a time limit, so the list never fills up with rows stuck looking like work in progress.*
 
-**Date columns:** `created_at` (**default sort, newest first**), `finished_at`. Shown on the Turn
-line as elapsed time, not raw timestamps.
+**Date columns:** `created_at` (**default sort, newest first**), `finished_at`. Shown on the Turn line as elapsed time, not raw timestamps.
 
-**Available filters (on the Chat History list, not a separate page):** date range (one field, whole days in Malaysia time, yesterday to today by default; emptying the field puts it back to that default), and **Failed
-turns only** - narrows the list to contacts with at least one failed turn in that range. Inside a
-thread, the drawer has its own **Failed turns only** toggle scoped to that one conversation.
+**Available filters (on the Chat History list, not a separate page):** date range (one field, whole days in Malaysia time, yesterday to today by default; emptying the field puts it back to that default), and **Failed turns only** - narrows the list to contacts with at least one failed turn in that range. Inside a thread, the drawer has its own **Failed turns only** toggle scoped to that one conversation.
 
-> **Which topics the CRM answers itself is decided by the turn engine now, not a standalone
-> `system_settings` switch.** `system_settings.chatbot_completed_lanes` is no longer read - the
-> engine decides for itself, per turn, what it can finish. `system_settings.chatbot_stock_denial_enabled`
-> (**Stock denial lanes** on **[Settings > Chatbot](/user-management/settings)**) still gates
-> whether the bot may ever tell a customer their stock question is refused. The list of domains
-> the bot refuses entirely used to be free text here (`chatbot_unsupported_domains`); that is
-> retired - each domain's own **Supported** switch on
-> **[Chatbot Domains](/system-management/chatbot-domains)** controls it now (see the
-> troubleshooting guide below for both).
+> **Which topics the CRM answers itself is decided by the turn engine now, not a standalone** `**system_settings**` **switch.** `system_settings.chatbot_completed_lanes` is no longer read - the engine decides for itself, per turn, what it can finish. `system_settings.chatbot_stock_denial_enabled` (**Stock denial lanes** on [**Settings > Chatbot**](/user-management/settings)) still gates whether the bot may ever tell a customer their stock question is refused. The list of domains the bot refuses entirely used to be free text here (`chatbot_unsupported_domains`); that is retired - each domain's own **Supported** switch on [**Chatbot Domains**](/system-management/chatbot-domains) controls it now (see the troubleshooting guide below for both).
 
 **Example questions**
 
-* "What did the bot do for this customer's last message?" (open the thread, the Turn line under
-  that message)
-* "Which of today's WhatsApp conversations had a failed turn?" (**Failed turns only** filter,
-  today's date range)
-* "Has this failed message already been retried?" (`attempt` > 1 on a later row for the same
-  contact, or `retry_requested_at` set on the failed one)
-* "Is a turn actually stuck, or just slow?" (`status = delegated` for a long time means it is
-  waiting on the WhatsApp automation side, not the CRM)
-* "Did this test run actually message the customer?" (`is_test = true` means no - nothing was
-  written or sent)
+* "What did the bot do for this customer's last message?" (open the thread, the Turn line under that message)
+* "Which of today's WhatsApp conversations had a failed turn?" (**Failed turns only** filter, today's date range)
+* "Has this failed message already been retried?" (`attempt` > 1 on a later row for the same contact, or `retry_requested_at` set on the failed one)
+* "Is a turn actually stuck, or just slow?" (`status = delegated` for a long time means it is waiting on the WhatsApp automation side, not the CRM)
+* "Did this test run actually message the customer?" (`is_test = true` means no - nothing was written or sent)
+
 
 ---
 
@@ -562,15 +524,14 @@ thread, the drawer has its own **Failed turns only** toggle scoped to that one c
 * **Tracing one WhatsApp send:** **Respond Outbox** (readable view) sits on top of **Integration Logs** (`integration_log`, raw request/response). A `401` → check **Respond.io Workspaces** (the workspace key).
 * **Tracing one import:** **Import Jobs** for the run state (per-user), **Import Logs** for the row-level errors (tenant-wide), linked by `job_id` = `import_session_id`.
 * **The drainers/syncs themselves** are **Scheduled Tasks** - if emails/WhatsApp/imports are globally not moving, check that the relevant scheduled task is `enabled` and its `last_run_at` is recent.
-* **`business_id` is always a UUID** on Integration Logs / Respond Outbox - resolve to the entity number before quoting; for notification-driven Respond sends it equals `notification.id`.
+* `**business_id**` **is always a UUID** on Integration Logs / Respond Outbox - resolve to the entity number before quoting; for notification-driven Respond sends it equals `notification.id`.
 * **Times are naive UTC, rendered Malaysia time** on the pages - state the timezone when quoting a timestamp.
 
 ## See also
 
 * [Troubleshoot a failed notification (email or WhatsApp)](troubleshoot-failed-notifications.md)
 * [Read a chatbot turn trace, and retry a failed one](troubleshoot-chatbot-turn-failures.md)
-* [Chatbot Domains](chatbot-domains.md), [Entity kinds](chatbot-entity-kinds.md) and
-  [Chatbot settings](../user-management/chatbot-settings.md)
+* [Chatbot Domains](chatbot-domains.md), [Entity kinds](chatbot-entity-kinds.md) and [Chatbot settings](../user-management/chatbot-settings.md)
 * [Supply Chain - Upload the data a reorder plan is built from](../supply-chain/upload-plan-data.md)
 * [Upload the product master](../purchasing/upload-product-master.md)
 * [Upload SPO allocations](../purchasing/upload-spo.md)

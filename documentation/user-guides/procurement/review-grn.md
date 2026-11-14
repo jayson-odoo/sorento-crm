@@ -12,6 +12,7 @@ On the detail page you'll see the GRN header (GRN number, SPO number, picking da
 
 ## Change the status
 
+
 1. On the GRN detail page, click **Change status** (the icon button next to the status badge).
 2. Pick one of **Draft**, **Approved**, or **Rejected** from the menu. The current status is disabled. The change saves immediately and the status badge updates.
 
@@ -19,9 +20,10 @@ A new GRN starts as **Draft**. Move it to **Approved** once the received goods a
 
 ## Create a GRN by hand
 
+
 1. On the GRN list, click **Create GRN** (opens a full create page).
-2. Fill the header: **GRN Number** *, **SPO Number**, **Picking Date** *, **Status**, **Notes**.
-3. In **Picking Lines**, click **Add Line** for each received line and set **Product** *, **Qty Expected**, **Qty Received**, and **Location** *. Use **Select All** / **Bulk Remove** to manage lines.
+2. Fill the header: **GRN Number** \*, **SPO Number**, **Picking Date** \*, **Status**, **Notes**.
+3. In **Picking Lines**, click **Add Line** for each received line and set **Product** \*, **Qty Expected**, **Qty Received**, and **Location** \*. Use **Select All** / **Bulk Remove** to manage lines.
 4. Save. To edit later, open the GRN and click **Edit**.
 
 ## Delete a GRN
