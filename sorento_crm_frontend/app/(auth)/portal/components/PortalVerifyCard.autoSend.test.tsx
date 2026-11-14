@@ -112,24 +112,20 @@ beforeEach(() => {
   });
 });
 
-describe('PortalVerifyCard autoSend (PORTAL-P3-ROLE-MENU round 3, T6)', () => {
-  it('default: requests a code on mount, as today', async () => {
+// SIGNIN-2FA-NOT-ROLE AC-10 / AC-11 (owner rule, 14 Nov 2026): nothing sends on mount any more and
+// the `autoSend` prop is gone; the code goes only when the user presses Send code.
+describe('PortalVerifyCard send on press (was autoSend, PORTAL-P3-ROLE-MENU round 3, T6)', () => {
+  it('default: no code is requested on mount', async () => {
     render(<PortalVerifyCard slug="SLUG123456" />);
-    await screen.findByLabelText(/verification code/i);
-    await waitFor(() => expect(mockRequestOtp).toHaveBeenCalledTimes(1));
-  });
-
-  it('autoSend={false}: no code is requested on mount', async () => {
-    render(<PortalVerifyCard slug="SLUG123456" {...({ autoSend: false } as object)} />);
-    await screen.findByLabelText(/verification code/i);
+    await screen.findByRole('button', { name: /^send code$/i });
     await new Promise((r) => setTimeout(r, 100));
     expect(mockRequestOtp).not.toHaveBeenCalled();
   });
 
-  it('autoSend={false}: the Send button still sends one', async () => {
-    render(<PortalVerifyCard slug="SLUG123456" {...({ autoSend: false } as object)} />);
-    await screen.findByLabelText(/verification code/i);
-    fireEvent.click(await screen.findByRole('button', { name: /send|resend/i }));
+  it('the Send button sends exactly one', async () => {
+    render(<PortalVerifyCard slug="SLUG123456" />);
+    fireEvent.click(await screen.findByRole('button', { name: /^send code$/i }));
     await waitFor(() => expect(mockRequestOtp).toHaveBeenCalledTimes(1));
+    await screen.findByLabelText(/verification code/i);
   });
 });
