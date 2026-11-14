@@ -127,14 +127,12 @@ function writeStoredContact(contact: StoredContact): void {
   }
 }
 
-/** Item 6: the version the console pins when the operator has not chosen one - the NEWEST
- * `full` body, never the newest overall and never the production label (which locally
- * sits on the compact lineage: the owner's turns ran the compact base twice unnoticed).
- * Null when no full version exists. */
+/** CONSOLE-DEFAULT-PROMPT: the version the console pins when the operator has not chosen
+ * one - the version production serves (`serving`, read by the backend through the live
+ * parser's own lookup). Null when none is labelled: the turn then runs the code prompt, the
+ * same as production. */
 export function defaultPromptVersionId(versions: ConsolePromptVersion[]): string | null {
-  const full = versions.filter((v) => v.base === 'full');
-  if (full.length === 0) return null;
-  return full.reduce((best, v) => (v.version > best.version ? v : best)).id;
+  return versions.find((v) => v.serving)?.id ?? null;
 }
 
 /** A contact row's display label, the same "no UUIDs in the UI" rule every other picker

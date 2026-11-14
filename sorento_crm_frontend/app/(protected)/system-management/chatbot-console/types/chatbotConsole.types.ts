@@ -138,8 +138,10 @@ export interface ConsolePromptVersion {
   version: number;
   label: string | null;
   chars: number;
-  /** Item 6: the lineage of the body. The console defaults to the newest `full`. */
+  /** Item 6: the lineage of the body, shown in the picker. */
   base: ConsolePromptBase;
+  /** The version production serves; the console defaults to it. */
+  serving: boolean;
 }
 
 export interface ConsoleMediaStatusResponse {
