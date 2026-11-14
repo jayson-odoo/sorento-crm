@@ -1092,7 +1092,10 @@ def _latest_link_change(db, contact_id: str, customer_id: str):
                 continue
             if str(customer_id) in (args.get("link_customer_ids") or []):
                 return str(user_id), False
-            if str(customer_id) in (args.get("unlink_customer_ids") or []):
+            if str(customer_id) in (args.get("unlink_customer_ids") or []) or str(customer_id) in (
+                step.get("unlinked_customer_ids") or []
+            ):
+                # The unlinks of a company removal (`remove_companies`) are only in what the step unlinked (review 6).
                 return str(user_id), str(customer_id) in (step.get("unlinked_customer_ids") or [])
     return None
 
@@ -1217,7 +1220,7 @@ def _contact_plan(db, user: dict, args: dict) -> dict:
             raise AppException(
                 status_code=422, message="Name the company as SRT (Sorento) or MCH (Mocha).", code="VALIDATION_ERROR"
             )
-        removed_words = ", ".join({"SRT": "Sorento", "MCH": "Mocha"}.get(c, c) for c in remove_codes)
+        removed_words = ", ".join(_company_label(c) for c in remove_codes)
         from app.models.base import company_scope as _scope
         from app.services.company_scope_resolver import resolve_user_grant_ids
 
@@ -1227,7 +1230,7 @@ def _contact_plan(db, user: dict, args: dict) -> dict:
         outside = [c for c in remove_codes if ids_of.get(c) not in granted]
         if outside:
             # Only a company the user is granted, as the grant adds one (security review B1).
-            words = ", ".join({"SRT": "Sorento", "MCH": "Mocha"}.get(c, c) for c in outside)
+            words = ", ".join(_company_label(c) for c in outside)
             raise AppException(status_code=403, message=f"{words} is not one of your companies.", code="FORBIDDEN")
         if facts.get("other_links"):
             raise AppException(
@@ -1249,7 +1252,8 @@ def _contact_plan(db, user: dict, args: dict) -> dict:
                 status_code=422, message=f"{contact.phone_number} has no {removed_words} access.", code="VALIDATION_ERROR"
             )
         unlink_ids = list(dict.fromkeys([*unlink_ids, *company_links]))
-        owned = [c for c in remove_codes if c in facts["owner_codes"]]
+        # A legacy owner (owner types without the tag) loses them too, as the screen does (review 3).
+        owned = [c for c in remove_codes if c in facts["owner_codes"] or facts["types"] & _owner_types([c])]
         if owned and role is None:
             role, role_companies = "employee", owned  # that company's owner tag and owner types go
     codes = _own_customer_codes(db, uid, [*link_ids, *unlink_ids])
@@ -1328,7 +1332,10 @@ def _contact_plan(db, user: dict, args: dict) -> dict:
                             message=f"The \"{tag.name}\" tag is not the standard one; ask the office.",
                         )
                 add, remove = {TEMPLATE["base_type"]}, _owner_types(template_codes)
-                new_label = _role_label("employee", [])
+                # Narrowed to some companies (`role_companies`): an owner level elsewhere stays and the card says so
+                # (review blocker 1: 'Business owner (Mocha, Sorento) -> Employee' while Sorento stayed).
+                still = [c for c in facts["owner_codes"] if c not in template_codes]
+                new_label = _role_label("owner", still) if still else _role_label("employee", [])
             was = _role_label(facts["role"], facts["owner_codes"]) if facts["owner_codes"] else (
                 "Employee with dealer prices" if legacy_types else _role_label(facts["role"], [])
             )
@@ -1341,7 +1348,9 @@ def _contact_plan(db, user: dict, args: dict) -> dict:
     if ai is None and unlink_ids and not (_all_links(db, contact.id) - set(unlink_ids)) and not link:
         # The person's last link anywhere goes: AI replies go off in the same change (C4).
         ai = False
-    if ai is True and role is None and not link and facts["role"] == "none" and not _all_links(db, contact.id):
+    if ai is True and role is None and not link and (facts["role"] == "none" or not facts["codes"]) and not _all_links(
+        db, contact.id
+    ):
         # A person with no dealer access at all (no level, no account): AI replies on is giving access, which is the
         # grant's job (company, role, template). Answered to the model, never the user (crew pass 4, 14 Nov).
         # The message is the user's (a confirm that re-plans after the last link went shows it); `guidance` is the
@@ -1429,9 +1438,7 @@ def _contact_words(state: dict, codes: dict) -> dict:
         "Role": _role_label(state["role"], state["owner_companies"]),
         "AI replies": _on_off(state["chatbot_allowed"]),
         "Customer links": _link_words(state["links"], codes, int(state.get("other_links") or 0)),
-        "Companies": ", ".join(
-            {"SRT": "Sorento", "MCH": "Mocha"}.get(c, c) for c in state.get("companies") or []
-        ) or "none",
+        "Companies": ", ".join(_company_label(c) for c in state.get("companies") or []) or "none",
     }
 
 

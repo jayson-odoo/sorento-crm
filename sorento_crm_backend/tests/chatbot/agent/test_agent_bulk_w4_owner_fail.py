@@ -827,3 +827,92 @@ def test_removing_a_company_is_audited(db):
     actions.confirm(db, w.respond_id, result.pending_action["id"], via="console")
     rows = db.query(AuditLog).filter(AuditLog.entity_id == str(c.id), AuditLog.event == "contact.access_agent").all()
     assert any("Companies" in (r.old_values or {}) for r in rows), [(r.old_values, r.new_values) for r in rows]
+
+
+# ------------------------------------------------------------------ code review of the revoke change
+
+
+def _remove_mocha(db, w, c, text_="remove their mocha access"):
+    script = _find_then(lambda r: {"contact_id": r["contact_id"], "remove_companies": ["MCH"]}, [local(c.phone_number)])
+    result, _ = screenshot_turn(db, w, [*script, answer_("Done."), answer_("Done.")], text_=text_, images=False)
+    return result
+
+
+def test_an_owner_of_both_companies_losing_mocha_reads_as_still_owner_of_sorento(db):
+    """Review blocker 1: the card said 'Business owner (Mocha, Sorento) -> Employee' while Sorento ownership stays."""
+    w = make_world(db)
+    c = dealer(db, w, name="ZZT Owns Both", companies=(w.srt, w.mch), customers=[w.cust_a, w.cust_b])
+    _tag_owner(db, c, "SRT")
+    _tag_owner(db, c, "MCH")
+    result = _remove_mocha(db, w, c)
+    assert result.pending_action is not None, result.reply_text
+    lines = " | ".join(result.pending_action["lines"])
+    assert "-> Business owner (Sorento)" in lines and "-> Employee" not in lines, lines
+
+
+def test_a_person_left_with_no_company_cannot_get_ai_replies_on_alone(db):
+    """Review 2: after Mocha (their only company) is removed, AI replies on alone goes to the grant's question."""
+    from app.services.chatbot.agent import actions
+
+    w = make_world(db)
+    c = dealer(db, w, name="ZZT Left Bare", companies=(w.mch,), customers=[w.cust_b])
+    c.chatbot_allowed = True
+    db.commit()
+    result = _remove_mocha(db, w, c)
+    assert actions.confirm(db, w.respond_id, result.pending_action["id"], via="console").status == "executed"
+    script = _find_then(lambda r: {"contact_id": r["contact_id"], "chatbot_allowed": True}, [local(c.phone_number)])
+    again, _ = screenshot_turn(db, w, [*script, answer_("Done."), answer_("Done.")], text_="turn their AI on", images=False)
+    assert again.pending_action is None, again.reply_text
+    assert "AI replies off -> on" not in again.reply_text
+
+
+def test_removing_mocha_takes_off_legacy_mocha_owner_types_too(db):
+    """Review 3: a legacy contact (owner types, no tag) loses the Mocha owner types with the company."""
+    from app.services.chatbot.agent import actions
+    from tests.chatbot.agent.test_agent_bulk_grant import state
+
+    w = make_world(db)
+    c = dealer(db, w, name="ZZT Legacy Owner", types=("end_user", "mocha_dealer"), companies=(w.srt, w.mch),
+               customers=[w.cust_a, w.cust_b])
+    result = _remove_mocha(db, w, c)
+    assert result.pending_action is not None, result.reply_text
+    assert actions.confirm(db, w.respond_id, result.pending_action["id"], via="console").status == "executed"
+    assert "mocha_dealer" not in state(db, c.phone_number)["types"]
+
+
+def test_an_own_scope_user_can_restore_a_link_their_company_removal_took(db):
+    """Review 6: the unlinks of a company removal count as the user's own, so they may restore them."""
+    from app.services.chatbot.agent import actions
+
+    from tests.chatbot.agent.test_dealer_access_agent import own_world
+
+    o = own_world(db)
+    c = dealer(db, o.w, name="ZZT Restore Me", companies=(o.w.mch,), customers=[o.w.cust_b])
+    result = _remove_mocha(db, o.w, c)
+    assert result.pending_action is not None, result.reply_text
+    assert actions.confirm(db, o.w.respond_id, result.pending_action["id"], via="console").status == "executed"
+    relink = [round_of(tc(UPDATE, {"contact_id": str(c.id), "link_customer_ids": [str(o.w.cust_b.id)]}, "r1")),
+              answer_("Done."), answer_("Done.")]
+    from app.services.chatbot.agent.loop import run_agent_turn
+
+    # The ids come from the page the user has open (the panel's seen ids): the contact is out of scope for a lookup now.
+    again = run_agent_turn(
+        db, contact_respond_id=o.w.respond_id, text=f"restore {local(c.phone_number)}",
+        provider=Provider(relink, dealer_access=True), mcp_call=_no_mcp, catalog={},
+        seed_ids=[str(c.id), str(o.w.cust_b.id)],
+    )
+    assert "only restore a link you removed" not in again.reply_text, again.reply_text
+    assert again.pending_action is not None, again.reply_text
+
+
+def test_an_own_scope_user_cannot_remove_a_company_another_account_reaches(db):
+    """Review 7: the own-scope refusal when another account also reaches the person."""
+    from tests.chatbot.agent.test_agent_bulk_grant import state
+    from tests.chatbot.agent.test_dealer_access_agent import own_world
+
+    o = own_world(db)
+    c = dealer(db, o.w, name="ZZT Shared Mocha", companies=(o.w.mch,), customers=[o.w.cust_b, o.theirs_m])
+    result = _remove_mocha(db, o.w, c)
+    assert result.pending_action is None, result.reply_text
+    assert "another account" in result.reply_text, result.reply_text
+    assert str(o.w.mch) in state(db, c.phone_number)["companies"]
