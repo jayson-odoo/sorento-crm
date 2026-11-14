@@ -14,6 +14,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Project } from '../../_shared/types/project.types';
+import { TooltipProvider } from '@/components/ui/tooltip';
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
@@ -169,7 +170,12 @@ function wrap(node: React.ReactNode) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  return render(<QueryClientProvider client={client}>{node}</QueryClientProvider>);
+  // The app mounts one TooltipProvider (ClientProviders.tsx); the leads role icons may use it.
+  return render(
+    <QueryClientProvider client={client}>
+      <TooltipProvider>{node}</TooltipProvider>
+    </QueryClientProvider>,
+  );
 }
 const interestedBox = async () => {
   // PROJECT-LEADS-REASSIGN B1: the secondary leads are rows of the Access card's one leads grid
@@ -286,13 +292,18 @@ describe('AC-R6 secondary leads table', () => {
     expect(within(row).getByText('Pending')).toBeInTheDocument();
   });
 
-  it('AC-R6 a rejected dispute row reads Dismissed, with no actions', async () => {
+  it('AC-R6 a rejected dispute row reads Dismissed; its ... offers Reassign but no Dismiss (hand-test round)', async () => {
     granted = new Set(['projects.projects.manage']);
     wrap(<ProjectAccessPanel project={project()} />);
     const row = await rowOf('Manager M');
     expect(within(row).getByText('Dismissed')).toBeInTheDocument();
     expect(within(row).queryByRole('button', { name: 'Dismiss' })).toBeNull();
     expect(within(row).queryByRole('button', { name: /Reassign to/ })).toBeNull();
+    // The owner's hand-test round: every manageable row gets the shared "..." (RowActionsMenu).
+    const trigger = within(row).getByRole('button', { name: 'Manager M actions' });
+    fireEvent.pointerDown(trigger, new MouseEvent('pointerdown', { bubbles: true, button: 0 }));
+    const items = (await screen.findAllByRole('menuitem')).map((i) => (i.textContent ?? '').trim());
+    expect(items).toEqual(['Reassign to Manager M']);
   });
 
   it('AC-R6 an approved dispute row has a blank Status (PROJECT-LEADS-REASSIGN B2)', async () => {

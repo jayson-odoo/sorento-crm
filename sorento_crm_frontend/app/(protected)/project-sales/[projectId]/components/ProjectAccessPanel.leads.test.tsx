@@ -15,8 +15,10 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { computeAccessibleName } from 'dom-accessibility-api';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { TooltipProvider } from '@/components/ui/tooltip';
 import type { Project } from '../../_shared/types/project.types';
 
 if (!window.matchMedia) {
@@ -202,10 +204,16 @@ function wrap(node: React.ReactNode) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  return render(<QueryClientProvider client={client}>{node}</QueryClientProvider>);
+  // The app mounts one TooltipProvider (ClientProviders.tsx); the role icons may use it.
+  return render(
+    <QueryClientProvider client={client}>
+      <TooltipProvider>{node}</TooltipProvider>
+    </QueryClientProvider>,
+  );
 }
 
-const COLUMNS = ['Salesperson', 'Lead', 'Date', 'How they found it', 'Owner', 'Status'];
+// Hand-test round (owner, 14 Nov): the Lead and Owner columns became icons beside the name.
+const COLUMNS = ['Salesperson', 'Date', 'How they found it', 'Status'];
 
 const accessCard = async () =>
   (await screen.findByText('Access')).closest('[data-slot="card"]') as HTMLElement;
@@ -231,16 +239,34 @@ function dataRows(table: HTMLElement): HTMLElement[] {
     .filter((r) => within(r).queryAllByRole('cell').length > 0);
 }
 
-/** One row as { column title: cell text }, aligned on the header row's positions. */
+/** What a cell shows as words: icon names and tooltips (an svg <title>, sr-only text) do not count. */
+function visibleText(cell: Element | undefined): string {
+  if (!cell) return '';
+  const copy = cell.cloneNode(true) as Element;
+  copy.querySelectorAll('[role="img"], .sr-only, title, [role="tooltip"]').forEach((n) => n.remove());
+  return (copy.textContent ?? '').trim();
+}
+
+/** One row as { column title: visible cell text }, aligned on the header row's positions. */
 function cellsOf(table: HTMLElement, row: HTMLElement): Record<string, string> {
   const names = headers(table);
   const cells = within(row).getAllByRole('cell');
   const out: Record<string, string> = {};
   names.forEach((name, i) => {
-    if (name) out[name] = (cells[i]?.textContent ?? '').trim();
+    if (name) out[name] = visibleText(cells[i]);
   });
   return out;
 }
+
+/** The Salesperson cell of a row (always the first column). */
+const nameCell = (row: HTMLElement) => within(row).getAllByRole('cell')[0];
+
+/** The accessible names of the role icons in a row's Salesperson cell, sorted. */
+const iconsOf = (row: HTMLElement) =>
+  within(nameCell(row))
+    .queryAllByRole('img')
+    .map((icon) => computeAccessibleName(icon))
+    .sort();
 
 function rowFor(table: HTMLElement, name: string): HTMLElement {
   const row = dataRows(table).find((r) => cellsOf(table, r).Salesperson?.startsWith(name));
@@ -265,7 +291,7 @@ describe('B1, B2: one leads list on the Access card', () => {
     expect(screen.queryByText('Secondary leads')).toBeNull();
   });
 
-  it('B2 columns are Salesperson, Lead, Date, How they found it, Owner, Status (no actions column)', async () => {
+  it('B2 titled columns are Salesperson, Date, How they found it, Status (hand-test: no Lead, no Owner)', async () => {
     wrap(<ProjectAccessPanel project={project()} />);
     const { table } = await leadsTable();
     expect(headers(table).filter(Boolean)).toEqual(COLUMNS);
@@ -274,12 +300,16 @@ describe('B1, B2: one leads list on the Access card', () => {
   it('B1 the primary is the first row, then every secondary lead; a join request is not a lead', async () => {
     wrap(<ProjectAccessPanel project={project()} />);
     const { table } = await leadsTable();
-    const rows = dataRows(table).map((r) => cellsOf(table, r));
+    const trs = dataRows(table);
+    const rows = trs.map((r) => cellsOf(table, r));
     expect(rows[0].Salesperson).toBe('Sales A');
-    expect(rows[0].Lead).toBe('Primary');
+    // Hand-test round: the lead kind is an icon beside the name, not a Lead column.
+    expect(within(nameCell(trs[0])).getByRole('img', { name: 'Primary' })).toBeInTheDocument();
     const secondaries = rows.slice(1);
     expect(secondaries.map((r) => r.Salesperson).sort()).toEqual(['Sales B', 'Sales C', 'Sales D']);
-    for (const r of secondaries) expect(r.Lead).toBe('Secondary');
+    for (const tr of trs.slice(1)) {
+      expect(within(nameCell(tr)).getByRole('img', { name: 'Secondary' })).toBeInTheDocument();
+    }
     expect(rows.some((r) => r.Salesperson === 'Sales E')).toBe(false);
   });
 
@@ -309,16 +339,16 @@ describe('B1, B2: one leads list on the Access card', () => {
     expect(c['How they found it']).toBe('Met the architect at the March launch.');
   });
 
-  it('B2 Owner reads Yes only on the current owner row', async () => {
+  it('B2 the Owner icon sits only on the current owner row (hand-test: an icon, not Yes)', async () => {
     wrap(<ProjectAccessPanel project={project()} />);
     const { table } = await leadsTable();
     const owners = Object.fromEntries(
-      dataRows(table).map((r) => {
-        const c = cellsOf(table, r);
-        return [c.Salesperson, c.Owner];
-      }),
+      dataRows(table).map((r) => [
+        cellsOf(table, r).Salesperson,
+        within(nameCell(r)).queryAllByRole('img', { name: 'Owner' }).length,
+      ]),
     );
-    expect(owners).toEqual({ 'Sales A': '', 'Sales B': 'Yes', 'Sales C': '', 'Sales D': '' });
+    expect(owners).toEqual({ 'Sales A': 0, 'Sales B': 1, 'Sales C': 0, 'Sales D': 0 });
   });
 
   it('B2 Status: Pending for a pending lead, Dismissed for a dismissed one, blank when approved and on the primary', async () => {
@@ -330,26 +360,22 @@ describe('B1, B2: one leads list on the Access card', () => {
     expect(cellsOf(table, rowFor(table, 'Sales A')).Status).toBe('');
   });
 
-  it('B1 a current owner who is neither the primary nor a secondary lead gets a row with a blank Lead', async () => {
+  it('B1 a current owner who is neither the primary nor a secondary lead gets a row with only the Owner icon', async () => {
     wrap(<ProjectAccessPanel project={project({ owner_user_id: 'u-z', owner_name: 'Sales Z' })} />);
     const { table } = await leadsTable();
-    const z = cellsOf(table, rowFor(table, 'Sales Z'));
-    expect(z.Lead).toBe('');
-    expect(z.Owner).toBe('Yes');
-    expect(cellsOf(table, rowFor(table, 'Sales B')).Owner).toBe('');
+    expect(iconsOf(rowFor(table, 'Sales Z'))).toEqual(['Owner']);
+    expect(iconsOf(rowFor(table, 'Sales B'))).toEqual(['Secondary']);
   });
 
-  it('B6 reassigned back to the primary: the primary row reads Owner Yes, still Lead Primary', async () => {
+  it('B6 reassigned back to the primary: the primary row carries the Owner icon and still the Primary icon', async () => {
     wrap(<ProjectAccessPanel project={project({ owner_user_id: 'u-a', owner_name: 'Sales A' })} />);
     const { table } = await leadsTable();
-    const a = cellsOf(table, rowFor(table, 'Sales A'));
-    expect(a.Lead).toBe('Primary');
-    expect(a.Owner).toBe('Yes');
-    expect(cellsOf(table, rowFor(table, 'Sales B')).Owner).toBe('');
+    expect(iconsOf(rowFor(table, 'Sales A'))).toEqual(['Owner', 'Primary']);
+    expect(iconsOf(rowFor(table, 'Sales B'))).toEqual(['Secondary']);
   });
 
-  it('B5 no row carries an action button, even for a manager', async () => {
-    granted = new Set(['projects.projects.manage']);
+  it('B5 a non-manager gets no action button on any row (hand-test: managers get a ... button)', async () => {
+    granted = new Set(['projects.projects.edit']);
     wrap(<ProjectAccessPanel project={project()} />);
     const { table } = await leadsTable();
     for (const row of dataRows(table)) expect(within(row).queryAllByRole('button')).toHaveLength(0);
@@ -361,20 +387,20 @@ describe('B4: the leads grid fits a phone', () => {
     Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: px });
   const original = window.innerWidth;
 
-  it('below the phone breakpoint Date, How they found it and Status are hidden; the other three stay', async () => {
+  it('below the phone breakpoint Date, How they found it and Status are hidden; Salesperson stays', async () => {
     setWidth(375);
     try {
       wrap(<ProjectAccessPanel project={project()} />);
       const { table } = await leadsTable();
       await waitFor(() =>
-        expect(headers(table).filter(Boolean)).toEqual(['Salesperson', 'Lead', 'Owner']),
+        expect(headers(table).filter(Boolean)).toEqual(['Salesperson']),
       );
     } finally {
       setWidth(original);
     }
   });
 
-  it('at a wide screen all six columns show', async () => {
+  it('at a wide screen all four titled columns show', async () => {
     setWidth(1280);
     try {
       wrap(<ProjectAccessPanel project={project()} />);
@@ -485,8 +511,13 @@ describe('B5: right-click a row to reassign or dismiss', () => {
       wrap(<ProjectAccessPanel project={project({ owner_user_id: 'u-a', owner_name: 'Sales A' })} />);
       const { table } = await leadsTable();
       const secondRow = dataRows(table).find(
-        (r) => cellsOf(table, r).Salesperson === 'Sales A' && cellsOf(table, r).Lead === 'Secondary',
+        (r) =>
+          cellsOf(table, r).Salesperson === 'Sales A' &&
+          within(nameCell(r)).queryAllByRole('img', { name: 'Secondary' }).length === 1,
       )!;
+      expect(secondRow).toBeDefined();
+      // Hand-test round: nothing to offer, so no ... button on it either.
+      expect(within(secondRow).queryAllByRole('button')).toHaveLength(0);
       fireEvent.contextMenu(within(secondRow).getAllByRole('cell')[0]);
       await new Promise((r) => setTimeout(r, 50));
       expect(screen.queryByRole('menuitem', { name: /Reassign to/ })).toBeNull();
@@ -521,5 +552,252 @@ describe('B5: right-click a row to reassign or dismiss', () => {
     await waitFor(() => expect(posts('/takeover-requests/r-c/decide')).toHaveLength(1));
     expect(posts('/takeover-requests/r-c/decide')[0].body).toMatchObject({ approve: true });
     expect(puts()).toHaveLength(0);
+  });
+});
+
+/**
+ * Hand-test round (owner, 14 Nov): "we also need a ... button that have this reassign option, and
+ * I prefer the primary / secondary and also the owner to be icon next to the salesperson name".
+ *
+ * Contract: ONE row-actions builder feeds the right-click menu and the shared RowActionsMenu
+ * ("..."), ariaLabel = the salesperson's name, so its trigger is "<Name> actions". It sits in a
+ * last, header-less, non-sortable column. The Lead and Owner columns become icons in the
+ * Salesperson cell: role img named Primary / Secondary / Owner, each with a tooltip of that word.
+ */
+describe('hand-test round: ... button and icons', () => {
+  const MANAGER = ['projects.projects.manage'];
+  const dots = (row: HTMLElement, name: string) =>
+    within(row).queryByRole('button', { name: `${name} actions` });
+
+  /** Opens a RowActionsMenu the way DetailActions.test.tsx does (Radix opens on pointerdown). */
+  const openDots = (trigger: HTMLElement) =>
+    fireEvent.pointerDown(trigger, new MouseEvent('pointerdown', { bubbles: true, button: 0 }));
+
+  const menuLabels = async () =>
+    (await screen.findAllByRole('menuitem')).map((item) => (item.textContent ?? '').trim());
+
+  /** The word a hover shows: a title attribute, an svg <title>, or a Radix tooltip on focus/hover. */
+  async function tooltipOf(icon: HTMLElement, cell: HTMLElement): Promise<string> {
+    const titled = icon.closest('[title]');
+    if (titled && cell.contains(titled)) return titled.getAttribute('title') ?? '';
+    const svgTitle = icon.querySelector('title');
+    if (svgTitle) return (svgTitle.textContent ?? '').trim();
+    const trigger = (icon.closest('[data-slot="tooltip-trigger"]') as HTMLElement | null) ?? icon;
+    fireEvent.pointerMove(trigger, { pointerType: 'mouse' });
+    fireEvent.focus(trigger);
+    const tip = await screen.findAllByRole('tooltip', {}, { timeout: 1500 }).catch(() => []);
+    const text = tip.map((t) => (t.textContent ?? '').trim()).join(' ');
+    fireEvent.blur(trigger);
+    fireEvent.pointerLeave(trigger, { pointerType: 'mouse' });
+    return text;
+  }
+
+  it('A a manager gets a ... button on a pending row with Reassign to <name> then Dismiss', async () => {
+    granted = new Set(MANAGER);
+    wrap(<ProjectAccessPanel project={project()} />);
+    const { table } = await leadsTable();
+    const trigger = dots(rowFor(table, 'Sales C'), 'Sales C');
+    expect(trigger).not.toBeNull();
+    openDots(trigger!);
+    expect(await menuLabels()).toEqual(['Reassign to Sales C', 'Dismiss']);
+  });
+
+  it('A a manager gets a ... button on a dismissed row with Reassign only', async () => {
+    granted = new Set(MANAGER);
+    wrap(<ProjectAccessPanel project={project()} />);
+    const { table } = await leadsTable();
+    const trigger = dots(rowFor(table, 'Sales D'), 'Sales D');
+    expect(trigger).not.toBeNull();
+    openDots(trigger!);
+    expect(await menuLabels()).toEqual(['Reassign to Sales D']);
+  });
+
+  it('A the primary row (not the owner) gets a ... button with Reassign to the primary', async () => {
+    granted = new Set(MANAGER);
+    wrap(<ProjectAccessPanel project={project()} />);
+    const { table } = await leadsTable();
+    const trigger = dots(rowFor(table, 'Sales A'), 'Sales A');
+    expect(trigger).not.toBeNull();
+    openDots(trigger!);
+    expect(await menuLabels()).toEqual(['Reassign to Sales A']);
+  });
+
+  it('A the owner row has no ... button, even for a manager', async () => {
+    granted = new Set(MANAGER);
+    wrap(<ProjectAccessPanel project={project()} />);
+    const { table } = await leadsTable();
+    // Sanity: the manager's other rows do have one, so this is not a missing column.
+    expect(dots(rowFor(table, 'Sales C'), 'Sales C')).not.toBeNull();
+    const owner = rowFor(table, 'Sales B');
+    expect(dots(owner, 'Sales B')).toBeNull();
+    expect(within(owner).queryAllByRole('button')).toHaveLength(0);
+  });
+
+  it('A a non-manager gets no ... button on any row', async () => {
+    granted = new Set(['projects.projects.edit']);
+    wrap(<ProjectAccessPanel project={project()} />);
+    const { table } = await leadsTable();
+    for (const name of ['Sales A', 'Sales B', 'Sales C', 'Sales D']) {
+      expect(dots(rowFor(table, name), name)).toBeNull();
+    }
+    expect(within(table).queryAllByRole('button', { name: / actions$/ })).toHaveLength(0);
+  });
+
+  it('A parity: the ... items on a pending row equal its right-click items, in the same order', async () => {
+    granted = new Set(MANAGER);
+    const first = wrap(<ProjectAccessPanel project={project()} />);
+    let { table } = await leadsTable();
+    const trigger = dots(rowFor(table, 'Sales C'), 'Sales C');
+    expect(trigger).not.toBeNull();
+    openDots(trigger!);
+    const fromDots = await menuLabels();
+    first.unmount();
+    cleanup();
+
+    wrap(<ProjectAccessPanel project={project()} />);
+    ({ table } = await leadsTable());
+    fireEvent.contextMenu(nameCell(rowFor(table, 'Sales C')));
+    const fromRightClick = await menuLabels();
+
+    expect(fromDots).toEqual(fromRightClick);
+    expect(fromDots).toEqual(['Reassign to Sales C', 'Dismiss']);
+  });
+
+  it('A Reassign to <name> from the ... opens the reassign dialog preselected; submitting moves the owner', async () => {
+    granted = new Set(MANAGER);
+    wrap(<ProjectAccessPanel project={project()} />);
+    const { table } = await leadsTable();
+    const trigger = dots(rowFor(table, 'Sales A'), 'Sales A');
+    expect(trigger).not.toBeNull();
+    openDots(trigger!);
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Reassign to Sales A' }));
+    const dialog = await screen.findByRole('dialog');
+    const select = within(dialog).getByLabelText('Salesperson') as HTMLSelectElement;
+    await waitFor(() => expect(select.value).toBe('u-a'));
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Reassign$/ }));
+    await waitFor(() => expect(puts()).toHaveLength(1));
+    expect(puts()[0].body).toMatchObject({ owner_user_id: 'u-a' });
+    expect(posts('/decide')).toHaveLength(0);
+  });
+
+  it('A Reassign to a pending secondary lead from the ... preselects them and approves that request', async () => {
+    granted = new Set(MANAGER);
+    wrap(<ProjectAccessPanel project={project()} />);
+    const { table } = await leadsTable();
+    const trigger = dots(rowFor(table, 'Sales C'), 'Sales C');
+    expect(trigger).not.toBeNull();
+    openDots(trigger!);
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Reassign to Sales C' }));
+    const dialog = await screen.findByRole('dialog');
+    const select = within(dialog).getByLabelText('Salesperson') as HTMLSelectElement;
+    await waitFor(() => expect(select.value).toBe('u-c'));
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Reassign$/ }));
+    await waitFor(() => expect(posts('/takeover-requests/r-c/decide')).toHaveLength(1));
+    expect(posts('/takeover-requests/r-c/decide')[0].body).toMatchObject({ approve: true });
+  });
+
+  it('A Dismiss from the ... decides that request with reject', async () => {
+    granted = new Set(MANAGER);
+    wrap(<ProjectAccessPanel project={project()} />);
+    const { table } = await leadsTable();
+    const trigger = dots(rowFor(table, 'Sales C'), 'Sales C');
+    expect(trigger).not.toBeNull();
+    openDots(trigger!);
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Dismiss' }));
+    await waitFor(() => expect(posts('/takeover-requests/r-c/decide')).toHaveLength(1));
+    expect(posts('/takeover-requests/r-c/decide')[0].body).toMatchObject({ approve: false });
+    expect(puts()).toHaveLength(0);
+  });
+
+  it('A the ... column is last, header-less and not sortable', async () => {
+    granted = new Set(MANAGER);
+    wrap(<ProjectAccessPanel project={project()} />);
+    const { table } = await leadsTable();
+    expect(headers(table)).toEqual([...COLUMNS, '']);
+    const header = within(table).getAllByRole('columnheader').at(-1)!;
+    expect(within(header).queryAllByRole('button')).toHaveLength(0);
+    expect(header.getAttribute('aria-sort')).toBeNull();
+    // The ... sits in that last cell of its row.
+    const cells = within(rowFor(table, 'Sales C')).getAllByRole('cell');
+    expect(within(cells.at(-1)!).getByRole('button', { name: 'Sales C actions' })).toBeInTheDocument();
+  });
+
+  it('B the Salesperson cell carries the role icons for every row', async () => {
+    wrap(<ProjectAccessPanel project={project()} />);
+    const { table } = await leadsTable();
+    const byName = Object.fromEntries(
+      dataRows(table).map((r) => [cellsOf(table, r).Salesperson, iconsOf(r)]),
+    );
+    expect(byName).toEqual({
+      'Sales A': ['Primary'],
+      'Sales B': ['Owner', 'Secondary'],
+      'Sales C': ['Secondary'],
+      'Sales D': ['Secondary'],
+    });
+  });
+
+  it('B the icons come right after the name, in the Salesperson cell', async () => {
+    wrap(<ProjectAccessPanel project={project()} />);
+    const { table } = await leadsTable();
+    const cell = nameCell(rowFor(table, 'Sales B'));
+    const text = (cell.textContent ?? '');
+    expect(visibleText(cell)).toBe('Sales B');
+    const icon = within(cell).getByRole('img', { name: 'Owner' });
+    // Document order: the name text precedes the icon.
+    const walker = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
+    let nameNode: Node | null = null;
+    while (walker.nextNode()) {
+      if ((walker.currentNode.textContent ?? '').includes('Sales B')) {
+        nameNode = walker.currentNode;
+        break;
+      }
+    }
+    expect(text).toContain('Sales B');
+    expect(nameNode).not.toBeNull();
+    expect(nameNode!.compareDocumentPosition(icon) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('B each icon has a tooltip with its word', async () => {
+    wrap(<ProjectAccessPanel project={project()} />);
+    const { table } = await leadsTable();
+    const checks: [string, string][] = [
+      ['Sales A', 'Primary'],
+      ['Sales B', 'Secondary'],
+      ['Sales B', 'Owner'],
+    ];
+    for (const [person, word] of checks) {
+      const cell = nameCell(rowFor(table, person));
+      const icon = within(cell).getByRole('img', { name: word });
+      expect(await tooltipOf(icon, cell)).toContain(word);
+    }
+  });
+
+  it('B no Lead or Owner header, and no Yes / Primary / Secondary as visible cell text', async () => {
+    wrap(<ProjectAccessPanel project={project()} />);
+    const { table } = await leadsTable();
+    const titles = headers(table);
+    expect(titles).not.toContain('Lead');
+    expect(titles).not.toContain('Owner');
+    for (const row of dataRows(table)) {
+      for (const cell of within(row).getAllByRole('cell')) {
+        expect(visibleText(cell)).not.toMatch(/\b(Yes|Primary|Secondary)\b/);
+      }
+    }
+  });
+
+  it('C on a phone Salesperson and the ... column stay; Date, How they found it and Status hide', async () => {
+    const original = window.innerWidth;
+    Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: 375 });
+    try {
+      granted = new Set(MANAGER);
+      wrap(<ProjectAccessPanel project={project()} />);
+      const { table } = await leadsTable();
+      await waitFor(() => expect(headers(table)).toEqual(['Salesperson', '']));
+      const row = rowFor(table, 'Sales C');
+      expect(iconsOf(row)).toEqual(['Secondary']);
+      expect(dots(row, 'Sales C')).not.toBeNull();
+    } finally {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: original });
+    }
   });
 });
