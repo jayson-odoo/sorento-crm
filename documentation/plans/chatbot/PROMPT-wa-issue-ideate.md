@@ -15,6 +15,9 @@
   an anchor is missing or the text already carries the rule. Only the owner moves the production label
   (Prompts page); rollback is the reverse move.
 - Owner rule kept: slot rules only, no word lists, no gold-message examples.
+- Not in this change (predates the lane): the seeded fallback prompt a fresh install gets
+  (`ai_prompt_registry` fallback, production v3 on an empty DB) does not carry the rule; on such a DB the migration
+  logs "not published" and publishes nothing. The code template (`parser_template.py`) carries it.
 - The shared phrase "a problem with the CRM system or the assistant itself" is in both this text and the code
   template's ideate line, so the two agree (pinned by the same test).
 
@@ -24,7 +27,7 @@
    `a complaint about existing behaviour (stays portal_link/complaint);` becomes
    `a complaint about a product or an order (stays portal_link/complaint);`
    and a new line is inserted directly after that bullet line:
-   `    → ALSO ideate: the user REPORTS a problem with the CRM system or the assistant itself (an error, a screen or page that does not load, does not work or shows wrong data, an answer from the assistant that is wrong). That is an issue to log: domain_hint "ideate", intent_hint "submit_idea", message_type "business_query", no routing (null / null). It is never request_for_help, never an IT or support team, and never the domain of the screen or data it is about; only an explicit ask for a person to take it over is request_for_help.`
+   `    → ALSO ideate: the user REPORTS a problem with the CRM system or the assistant itself (an error, a screen or page that does not load or does not work, an answer from the assistant that is wrong). That is an issue to log: domain_hint "ideate", intent_hint "submit_idea", message_type "business_query", no routing (null / null). It is never request_for_help, never an IT or support team, and never the domain of the screen it is about; only an explicit ask for a person to take it over is request_for_help. Asking about or disputing a record's own data (an order's status, a stock figure, a price) is not a problem with the system: it stays in its own domain.`
 2. In `== ROUTING ==`,
    `  - ideate (an idea is never escalated), or none of these this turn -> NO routing: null / null` becomes
    `  - ideate (an idea or an issue report is never escalated), or none of these this turn -> NO routing: null / null`
