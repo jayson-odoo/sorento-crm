@@ -68,20 +68,29 @@ export function validColour(value: string | undefined): string | null {
   return value && COLOUR.test(value) ? value : null;
 }
 
-/** One plain family name (optionally quoted), as the server sanitiser keeps it. */
-const FONT_FAMILY = /^["']?([A-Za-z0-9][A-Za-z0-9 -]*)["']?$/;
-const FONT_SIZE_PT = /^(\d+(?:\.\d+)?|\.\d+)pt$/i;
+/** The font rules, one copy for the parser and the shared editor; the server allow-list
+ * (`app/utils/tag_rich_text.py`) keeps the same. One plain family name, optionally quoted. */
+export const FONT_FAMILY_RE = /^["']?([A-Za-z0-9][A-Za-z0-9 -]*)["']?$/;
+/** A size in pt. */
+export const FONT_SIZE_PT_RE = /^([0-9]+(?:\.[0-9]+)?|\.[0-9]+)pt$/i;
+export const FONT_SIZE_MIN_PT = 4;
+export const FONT_SIZE_MAX_PT = 200;
 
-function fontFamilyOf(value: string | undefined): string | null {
-  const match = value ? FONT_FAMILY.exec(value.trim()) : null;
+export function fontSizeInRange(size: number): boolean {
+  return Number.isFinite(size) && size >= FONT_SIZE_MIN_PT && size <= FONT_SIZE_MAX_PT;
+}
+
+/** A `font-family` value as a plain family name, or null when it is anything else. */
+export function fontFamilyOf(value: string | null | undefined): string | null {
+  const match = value ? FONT_FAMILY_RE.exec(value.trim()) : null;
   return match ? match[1].trim() : null;
 }
 
-function fontSizeOf(value: string | undefined): number | null {
-  const match = value ? FONT_SIZE_PT.exec(value.trim()) : null;
-  if (!match) return null;
-  const size = Number(match[1]);
-  return size >= 4 && size <= 200 ? size : null;
+/** A `font-size` value in pt within the limits, or null when it is anything else. */
+export function fontSizeOf(value: string | null | undefined): number | null {
+  const match = value ? FONT_SIZE_PT_RE.exec(value.trim()) : null;
+  const size = match ? Number(match[1]) : NaN;
+  return fontSizeInRange(size) ? size : null;
 }
 
 function alignOf(el: Element): RichAlign | null {
@@ -103,6 +112,10 @@ function marksFor(el: Element, inherited: Marks): Marks {
     const background = validColour(css['background-color']);
     if (color) marks.color = color;
     if (background) marks.highlight = background;
+  }
+  if (tag === 'span') {
+    // A font is kept on a span only, as on the server.
+    const css = declarations(el);
     const family = fontFamilyOf(css['font-family']);
     const size = fontSizeOf(css['font-size']);
     if (family) marks.fontFamily = family;

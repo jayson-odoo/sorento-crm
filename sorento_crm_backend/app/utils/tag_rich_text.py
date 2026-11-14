@@ -34,7 +34,7 @@ _COLOUR_RE = re.compile(
 _FONT_TAGS = {"span"}
 #: One plain family name, optionally quoted: no comma list, escape, comment or function.
 _FONT_FAMILY_RE = re.compile(r"""^["']?([A-Za-z0-9][A-Za-z0-9 -]*)["']?$""")
-_FONT_SIZE_RE = re.compile(r"^(\d+(?:\.\d+)?)pt$", re.IGNORECASE)
+_FONT_SIZE_RE = re.compile(r"^([0-9]+(?:\.[0-9]+)?)pt$", re.IGNORECASE)
 _FONT_SIZE_MIN_PT = 4
 _FONT_SIZE_MAX_PT = 200
 _RICH_RE = re.compile(r"^\s*<(?:p|h1|h2|h3|ul|ol|blockquote)(?=[\s>])", re.IGNORECASE)

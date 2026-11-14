@@ -45,13 +45,19 @@ import {
   useState,
 } from 'react';
 import { ColorPicker } from '@/components/common/ColorPicker';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { LiveNumberInput } from '@/components/ui/number-input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Separator } from '@/components/ui/separator';
 import { Toggle } from '@/components/ui/toggle';
+import {
+  FONT_SIZE_MAX_PT,
+  FONT_SIZE_MIN_PT,
+  fontFamilyOf,
+  fontSizeOf,
+} from '@/lib/dealer-kit/rich-text';
 import { cn } from '@/lib/utils';
 import {
   MergeFieldNode,
@@ -108,10 +114,8 @@ export type RichTextEditorProps = {
   mergeFieldLabel?: (path: string) => string | null;
   /** With it, the inline and full toolbars carry a font picker and a size field (pt) that act
    *  on the selection. Without it the toolbar has neither. */
-  fontOptions?: FontOption[];
+  fontOptions?: SearchableSelectOption[];
 };
-
-export type FontOption = { value: string; label: string };
 
 /** Editors whose caret somebody has placed (a focus or a selection change). */
 const everFocused = new WeakSet<Editor>();
@@ -165,7 +169,7 @@ export function normaliseEditorHtml(html: string): string {
 
 /** Declarations a paste may not carry: colour, highlight, alignment and font come only from the
  * toolbar. */
-const PASTE_DROPPED = /^(color|background-color|background|text-align|font-family|font-size)$/i;
+const PASTE_DROPPED = /^(color|background-color|background|text-align|font|font-family|font-size)$/i;
 
 /** Pasted HTML loses those declarations; the rest (font-weight, font-style, text-decoration) stay
  * so a word-processor paste keeps its real bold / italic / underline. */
@@ -294,15 +298,6 @@ function LinkPopoverButton({ editor }: { editor: Editor }) {
   );
 }
 
-const FONT_FAMILY = /^["']?([A-Za-z0-9][A-Za-z0-9 -]*)["']?$/;
-const FONT_SIZE_PT = /^(\d+(?:\.\d+)?|\.\d+)pt$/i;
-export const FONT_SIZE_MIN_PT = 4;
-export const FONT_SIZE_MAX_PT = 200;
-
-function fontSizeInRange(size: number): boolean {
-  return Number.isFinite(size) && size >= FONT_SIZE_MIN_PT && size <= FONT_SIZE_MAX_PT;
-}
-
 /**
  * A run's own font family (one plain name) and size (pt) on the text style mark, written
  * family first: `font-family: Montserrat; font-size: 14pt`. Anything else in those
@@ -317,18 +312,13 @@ const FontStyle = Extension.create({
         attributes: {
           fontFamily: {
             default: null,
-            parseHTML: (element: HTMLElement) =>
-              FONT_FAMILY.exec(element.style.fontFamily.trim())?.[1].trim() ?? null,
+            parseHTML: (element: HTMLElement) => fontFamilyOf(element.style.fontFamily),
             renderHTML: (attributes: { fontFamily?: string | null }) =>
               attributes.fontFamily ? { style: `font-family: ${attributes.fontFamily}` } : {},
           },
           fontSize: {
             default: null,
-            parseHTML: (element: HTMLElement) => {
-              const match = FONT_SIZE_PT.exec(element.style.fontSize.trim());
-              const size = match ? Number(match[1]) : NaN;
-              return fontSizeInRange(size) ? size : null;
-            },
+            parseHTML: (element: HTMLElement) => fontSizeOf(element.style.fontSize),
             renderHTML: (attributes: { fontSize?: number | null }) =>
               attributes.fontSize ? { style: `font-size: ${attributes.fontSize}pt` } : {},
           },
@@ -339,7 +329,7 @@ const FontStyle = Extension.create({
 });
 
 /** Font picker and size field (pt) for the selection. */
-function FontControls({ editor, fontOptions }: { editor: Editor; fontOptions: FontOption[] }) {
+function FontControls({ editor, fontOptions }: { editor: Editor; fontOptions: SearchableSelectOption[] }) {
   // Follows the selection: the toolbar itself does not re-render on a selection change.
   const attrs = useEditorState({
     editor,
@@ -437,7 +427,7 @@ function ColorPopoverButton({
 
 /** The tag designer's Content box: its buttons act on the selection, beside the layer's own
  * whole-text Bold / Italic toggles, so they are named for the selection. */
-function InlineToolbar({ editor, fontOptions }: { editor: Editor; fontOptions?: FontOption[] }) {
+function InlineToolbar({ editor, fontOptions }: { editor: Editor; fontOptions?: SearchableSelectOption[] }) {
   return (
     <div className="flex flex-wrap items-center gap-1 border-b bg-muted/30 px-2 py-1">
       <ToolbarButton
@@ -474,7 +464,7 @@ function InlineToolbar({ editor, fontOptions }: { editor: Editor; fontOptions?: 
   );
 }
 
-function Toolbar({ editor, fontOptions }: { editor: Editor; fontOptions?: FontOption[] }) {
+function Toolbar({ editor, fontOptions }: { editor: Editor; fontOptions?: SearchableSelectOption[] }) {
   return (
     <div className="flex flex-wrap items-center gap-1 border-b bg-muted/30 px-2 py-1">
       <ToolbarButton
@@ -817,8 +807,10 @@ export function RichTextEditor({
               tag: 'span',
               getAttrs: (element) => {
                 const el = element as HTMLElement;
+                // A font counts only when it is one the server keeps; any other loads as bare text.
                 const { color, backgroundColor, fontFamily, fontSize } = el.style;
-                return color || backgroundColor || fontFamily || fontSize ? {} : false;
+                const font = fontFamilyOf(fontFamily) !== null || fontSizeOf(fontSize) !== null;
+                return color || backgroundColor || font ? {} : false;
               },
             },
           ];

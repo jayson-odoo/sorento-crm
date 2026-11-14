@@ -186,10 +186,9 @@ export function featureIconGrid(
 ): FeatureIconGrid {
   const total = Math.max(0, Math.floor(count));
   const gap = Math.max(0, props.gap_mm);
-  const wanted = props.iconSize_mm;
-  if (total === 0 || !(wanted > 0)) {
-    return { positions: [], iconSize_mm: wanted > 0 ? wanted : 0, height_mm: 0, overflow: false };
-  }
+  // A size that is not positive still hides nothing: it draws at the minimum.
+  const wanted = props.iconSize_mm > 0 ? props.iconSize_mm : FEATURE_ICON_MIN_MM;
+  if (total === 0) return { positions: [], iconSize_mm: wanted, height_mm: 0, overflow: false };
   // Tolerate float noise so an icon that exactly fills the row or the box is kept.
   const EPS = 1e-9;
   const columns = props.columns && props.columns > 0 ? Math.floor(props.columns) : null;
