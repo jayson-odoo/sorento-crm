@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Crown, Flag, UserCog, UserPlus, X, type LucideIcon } from 'lucide-react';
+import { Crown, Star, UserCog, UserPlus, X, type LucideIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -23,6 +23,7 @@ import {
   ContextMenuTrigger,
 } from '@/components/ui/context-menu';
 import { Label } from '@/components/ui/label';
+import { cn } from '@/lib/utils';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import type { RecordAction } from '@/components/common/recordActions';
 import { RowActionsMenu } from '@/components/common/RowActionsMenu';
@@ -149,7 +150,10 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
               <span className="truncate text-sm font-medium" title={name}>
                 {name}
               </span>
-              {lead.lead === 'Primary' && <RoleIcon icon={Flag} label="Primary" />}
+              {lead.lead === 'Primary' && (
+                // The Stakeholders tab's primary-contact star, same look.
+                <RoleIcon icon={Star} label="Primary" iconClassName="fill-amber-400 text-amber-500" />
+              )}
               {lead.lead === 'Secondary' && <RoleIcon icon={UserPlus} label="Secondary" />}
               {lead.isOwner && <RoleIcon icon={Crown} label="Owner" />}
             </div>
@@ -279,8 +283,8 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
             </div>
           )}
 
-          {/* The row actions are its right-click menu (long-press on touch), managers only:
-              no buttons on the rows (owner: right-click over icons). */}
+          {/* Managers only: the right-click menu (long-press on touch) and the row's "..."
+              (owner, 14 Nov hand test) both render leadRowActions, the one action list. */}
           <ContextMenu modal={false}>
             <ContextMenuTrigger asChild>
               <div
@@ -431,7 +435,15 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
 }
 
 /** A role next to a salesperson's name (Primary, Secondary, Owner): an icon named by its word. */
-function RoleIcon({ icon: Icon, label }: { icon: LucideIcon; label: string }) {
+function RoleIcon({
+  icon: Icon,
+  label,
+  iconClassName,
+}: {
+  icon: LucideIcon;
+  label: string;
+  iconClassName?: string;
+}) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -441,7 +453,7 @@ function RoleIcon({ icon: Icon, label }: { icon: LucideIcon; label: string }) {
           tabIndex={0}
           className="inline-flex shrink-0 text-muted-foreground"
         >
-          <Icon className="size-3.5" aria-hidden />
+          <Icon className={cn('size-3.5', iconClassName)} aria-hidden />
         </span>
       </TooltipTrigger>
       <TooltipContent>{label}</TooltipContent>
