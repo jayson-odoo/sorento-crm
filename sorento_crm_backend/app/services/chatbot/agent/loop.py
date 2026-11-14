@@ -888,6 +888,8 @@ def _propose(
         # The dealer name and company are the user's own words, never the model's re-search (UAC A17, A18), as in a
         # table row: what the immediately preceding pick verified for this person counts (review round S7).
         key = contact_grant._batch_key(args)
+        if key is not None and key in ((previous or {}).get("asked") or ()):
+            args = batch.role_in_users_words(args, user_text)  # the answer to its question (crew re-pass b549042d)
         # The same guard as a table row (crew short live check, round 6): a closed pick's codes are refused here too.
         args, problem = batch.grant_row_guard(
             args, key, 1, current=(previous or {}).get("waiting"), earlier_typed=(previous or {}).get("typed"),
@@ -1738,6 +1740,10 @@ def _previous_waiting(db, conv, turn_id: str, *, immediate: bool = True) -> dict
             a["key"]: a.get("role") for a in got.get("batch_asked") or []
             if isinstance(a, dict) and a.get("held") and a.get("key")
         },
+        # The rows that question asked about: on the answer their role must be in the user's words (crew re-pass).
+        "asked": [
+            a["key"] for a in got.get("batch_asked") or [] if isinstance(a, dict) and a.get("key") and not a.get("held")
+        ],
         # The rows of that question's turn read from a picture: the answer's card names them by the record (B2).
         "picture": [
             a["key"] for a in got.get("batch_asked") or [] if isinstance(a, dict) and a.get("key")

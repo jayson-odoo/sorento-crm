@@ -742,7 +742,12 @@ writes.WRITES[GRANT] = writes.WriteDef(
                         ),
                     },
                     "access_as_written": {
-                        "type": "string", "description": "The row's access cell exactly as written in the table.",
+                        "type": "string",
+                        "description": (
+                            "The row's access cell exactly as written in the table; when the user answers an Owner "
+                            "or employee question, the user's own word for it, copied from their message. Empty when "
+                            "the user gave none: a role without the user's word is not taken."
+                        ),
                     },
                     "companies": {
                         "type": "array", "items": {"type": "string"}, "maxItems": 2,

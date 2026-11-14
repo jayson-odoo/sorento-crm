@@ -122,7 +122,10 @@ def test_a_contact_with_no_role_yet_gets_one_question_then_one_card(db):
     assert first.pending_action is None, first.reply_text
     assert first.reply_text.strip() == f"Owner or employee for {fresh[0].name}, {fresh[1].name}?", first.reply_text
 
-    answered = [{**r, "role": "employee"} if r["name"].startswith("ZZT Fresh") else r for r in rows]
+    answered = [
+        {**r, "role": "employee", "access_as_written": "employee"} if r["name"].startswith("ZZT Fresh") else r
+        for r in rows
+    ]
     second, _ = screenshot_turn(db, w, [_batch(answered, "b2"), answer_("Done.")], text_="employee", images=False)
     assert_plain(second.reply_text)
     assert second.pending_action is not None, second.reply_text
@@ -414,7 +417,7 @@ def test_answering_a_single_grant_question_gives_the_card(db):
     )
     assert first.reply_text.strip() == f"Owner or employee for {c.name}?", first.reply_text
     second, _ = screenshot_turn(
-        db, w, [round_of(tc(GRANT, {**args, "role": "employee"}, "g2")), answer_("Done.")], text_="employee",
+        db, w, [round_of(tc(GRANT, {**args, "role": "employee", "access_as_written": "employee"}, "g2")), answer_("Done.")], text_="employee",
         images=False,
     )
     assert second.pending_action is not None, second.reply_text
@@ -584,7 +587,7 @@ def test_the_answer_to_the_role_question_applies_only_to_the_people_it_named(db)
     first, _ = screenshot_turn(db, w, [_batch(rows), answer_("Done.")])
     assert first.reply_text.strip() == f"Owner or employee for {fresh.name}?", first.reply_text
 
-    everyone_employee = [{**r, "role": "employee"} for r in rows]
+    everyone_employee = [{**r, "role": "employee", "access_as_written": "employee"} for r in rows]
     second, _ = screenshot_turn(db, w, [_batch(everyone_employee, "b2"), answer_("Done.")], text_="employee", images=False)
     assert second.pending_action is not None, second.reply_text
     text = " | ".join(second.pending_action["lines"])
@@ -663,7 +666,7 @@ def test_a_misread_name_from_the_picture_never_reaches_the_answer_turns_card(db)
     rows = [{**_unsaid(kept, 1), "name": "ZZT Misread Kept"}, {**_unsaid(fresh, 2), "name": "ZZT Misread Fresh"}]
     first, _ = screenshot_turn(db, w, [_batch(rows), answer_("Done.")])
     assert first.reply_text.strip() == f"Owner or employee for {fresh.name}?", first.reply_text
-    again = [{**r, "role": "employee"} for r in rows]
+    again = [{**r, "role": "employee", "access_as_written": "employee"} for r in rows]
     second, _ = screenshot_turn(db, w, [_batch(again, "b2"), answer_("Done.")], text_="employee", images=False)
     assert second.pending_action is not None, second.reply_text
     assert "Misread" not in second.reply_text, second.reply_text
@@ -916,3 +919,96 @@ def test_an_own_scope_user_cannot_remove_a_company_another_account_reaches(db):
     assert result.pending_action is None, result.reply_text
     assert "another account" in result.reply_text, result.reply_text
     assert str(o.w.mch) in state(db, c.phone_number)["companies"]
+
+
+# ------------------------------------------------------------------ crew re-pass on b549042d (F14c regression)
+
+
+def _f14c_people(db, w):
+    """Group 1: hold a role (Sorento employees by account) and need only the company; group 2: new, need both."""
+    g1 = [dealer(db, w, name=f"ZZT Group One {i}", customers=[w.cust_a]) for i in range(2)]
+    g2 = [dealer(db, w, name=f"ZZT Group Two {i}") for i in range(2)]
+    return g1, g2
+
+
+def test_f14c_answering_only_the_company_leaves_the_role_question_open(db):
+    """Crew re-pass b549042d: 'Mocha' answered only the company; the model filled employee for the people still
+    without a role and the card defaulted them. A role counts only when the user's own words give it (the model's
+    copy in access_as_written must be in the message), as the dealer name and company already must be."""
+    w = make_world(db)
+    g1, g2 = _f14c_people(db, w)
+    people = [*g1, *g2]
+    rows = [_unsaid(c, n, companies=()) for n, c in enumerate(people, 1)]
+    first, _ = screenshot_turn(db, w, [_batch(rows), answer_("Done.")], text_="Please grant them access to the chatbot")
+    assert "Sorento or Mocha, and owner or employee, for" in first.reply_text, first.reply_text
+    assert first.pending_action is None
+
+    guessed = [
+        {**r, "companies": ["MCH"], **({"role": "employee", "access_as_written": "employee"} if n > 2 else {})}
+        for n, r in enumerate(rows, 1)
+    ]
+    second, _ = screenshot_turn(db, w, [_batch(guessed, "b2"), answer_("Done.")], text_="Mocha", images=False)
+    assert second.pending_action is None, second.reply_text
+    assert second.reply_text.strip() == f"Owner or employee for {g2[0].name}, {g2[1].name}?", second.reply_text
+
+    answered = [{**r, "role": "employee", "access_as_written": "employee"} if n > 2 else r for n, r in enumerate(guessed, 1)]
+    third, _ = screenshot_turn(db, w, [_batch(answered, "b3"), answer_("Done.")], text_="employee", images=False)
+    assert third.pending_action is not None, third.reply_text
+    for c in people:
+        assert c.name in third.reply_text, third.reply_text
+
+
+def test_f14c_a_role_the_model_sends_without_any_words_is_not_taken(db):
+    """The same answer turn with the role sent and no access word at all: still asked, never defaulted."""
+    w = make_world(db)
+    _, g2 = _f14c_people(db, w)
+    rows = [_unsaid(c, n, companies=()) for n, c in enumerate(g2, 1)]
+    screenshot_turn(db, w, [_batch(rows), answer_("Done.")], text_="Please grant them access to the chatbot")
+    guessed = [{**r, "companies": ["MCH"], "role": "employee"} for r in rows]
+    second, _ = screenshot_turn(db, w, [_batch(guessed, "b2"), answer_("Done.")], text_="Mocha", images=False)
+    assert second.pending_action is None, second.reply_text
+    assert second.reply_text.strip() == f"Owner or employee for {g2[0].name}, {g2[1].name}?", second.reply_text
+
+
+def test_f14c_then_revoke_in_one_conversation(db):
+    """Crew: the revoke fix must not break F14c. Grant through the questions, confirm, then remove Mocha access."""
+    from app.services.chatbot.agent import actions
+    from tests.chatbot.agent.test_agent_bulk_grant import state
+
+    w = make_world(db)
+    g1, g2 = _f14c_people(db, w)
+    people = [*g1, *g2]
+    rows = [_unsaid(c, n, companies=()) for n, c in enumerate(people, 1)]
+    screenshot_turn(db, w, [_batch(rows), answer_("Done.")], text_="Please grant them access to the chatbot")
+    mocha = [{**r, "companies": ["MCH"]} for r in rows]
+    screenshot_turn(db, w, [_batch(mocha, "b2"), answer_("Done.")], text_="Mocha", images=False)
+    answered = [{**r, "role": "employee", "access_as_written": "employee"} if n > 2 else r for n, r in enumerate(mocha, 1)]
+    card, _ = screenshot_turn(db, w, [_batch(answered, "b3"), answer_("Done.")], text_="employee", images=False)
+    assert card.pending_action is not None, card.reply_text
+    assert actions.confirm(db, w.respond_id, card.pending_action["id"], via="console").status in ("executed", "partial")
+
+    phones = [local(c.phone_number) for c in people]
+    revoke = _find_then(lambda r: {"contact_id": r["contact_id"], "remove_companies": ["MCH"]}, phones)
+    result, _ = screenshot_turn(db, w, [*revoke, answer_("Done.")], text_="Please remove their mocha access to the chatbot")
+    assert result.pending_action is not None, result.reply_text
+    lines = " | ".join(result.pending_action["lines"])
+    assert "Mocha access removed" in lines and "AI replies on -> off\n" not in lines, lines
+    assert actions.confirm(db, w.respond_id, result.pending_action["id"], via="console").status in ("executed", "partial")
+    for c in people:
+        assert str(w.mch) not in state(db, c.phone_number)["companies"], c.name
+
+
+def test_f14c_a_business_owner_asked_only_the_company_stays_owner(db):
+    """Crew re-pass b549042d: the Mocha Business owner was offered as Employee after 'Mocha'. Asked only the company,
+    the record decides the role."""
+    w = make_world(db)
+    owner = dealer(db, w, name="ZZT Owner Asked Co", customers=[w.cust_b])
+    _tag_owner(db, owner, "MCH")
+    row = _unsaid(owner, 1, companies=())
+    first, _ = screenshot_turn(db, w, [_batch([row]), answer_("Done.")], text_="Please grant them access to the chatbot")
+    # No company named yet: Business owner is never carried, so both are asked (as crew's live turn 1 showed).
+    assert first.reply_text.strip() == f"Sorento or Mocha, and owner or employee, for {owner.name}?", first.reply_text
+    guessed = {**row, "companies": ["MCH"], "role": "employee", "access_as_written": "employee"}
+    second, _ = screenshot_turn(db, w, [_batch([guessed], "b2"), answer_("Done.")], text_="Mocha", images=False)
+    assert second.pending_action is not None, second.reply_text
+    assert "Business owner (Mocha), their current role" in " | ".join(second.pending_action["lines"]), second.pending_action
