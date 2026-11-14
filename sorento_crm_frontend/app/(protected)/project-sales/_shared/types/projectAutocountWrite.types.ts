@@ -67,3 +67,14 @@ export interface AutocountWriteCapabilities {
   /** The book SS names; an adopted order waits until it equals its own. */
   book?: string | null;
 }
+
+/** AC-PROJECT-REGISTER: whether a project can be registered in AutoCount now. */
+export interface ProjectAutocountRegisterStatus {
+  registered: boolean;
+  project_no: string | null;
+  registered_at: string | null;
+  eligible: boolean;
+  can_register: boolean;
+  /** Why it cannot be registered now; null when registered or not eligible. */
+  reason: string | null;
+}

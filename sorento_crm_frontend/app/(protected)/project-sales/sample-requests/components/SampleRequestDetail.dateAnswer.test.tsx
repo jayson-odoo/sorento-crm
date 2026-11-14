@@ -177,11 +177,15 @@ describe('SampleRequestDetail date answer', () => {
     const confirm = screen.getAllByRole('button', { name: 'Change to processing' }).at(-1)!;
     fireEvent.click(screen.getByLabelText('No, propose a new date'));
     expect(confirm).toBeDisabled();
-    const date = screen.getByLabelText('Proposed date *');
-    fireEvent.change(date, { target: { value: '2026-11-01' } });
+    // The shared DD/MM/YYYY picker (standing rule), never a native date input.
+    expect(document.querySelector('input[type="date"]')).toBeNull();
+    const date = screen.getByLabelText('Proposed date');
+    fireEvent.change(date, { target: { value: '01/11/2026' } });
+    fireEvent.blur(date);
     expect(screen.getByText('The proposed date cannot be in the past.')).toBeInTheDocument();
     expect(confirm).toBeDisabled();
-    fireEvent.change(date, { target: { value: '2026-12-09' } });
+    fireEvent.change(date, { target: { value: '09/12/2026' } });
+    fireEvent.blur(date);
     fireEvent.change(screen.getByLabelText('Note'), { target: { value: 'Stock from KL' } });
     fireEvent.click(confirm);
     expect(state.moveAsync).toHaveBeenCalledWith({
@@ -232,9 +236,9 @@ describe('SampleRequestDetail date answer', () => {
     expect(screen.getByText('Can meet the requested date')).toBeInTheDocument();
     fireEvent.click(screen.getByText('Change date answer'));
     fireEvent.click(screen.getByLabelText('No, propose a new date'));
-    fireEvent.change(screen.getByLabelText('Proposed date *'), {
-      target: { value: '2026-12-20' },
-    });
+    const picker = screen.getByLabelText('Proposed date');
+    fireEvent.change(picker, { target: { value: '20/12/2026' } });
+    fireEvent.blur(picker);
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     expect(state.answerMutate).toHaveBeenCalledWith(
       { id: 'r-1', body: { date_feasible: false, proposed_delivery_date: '2026-12-20' } },

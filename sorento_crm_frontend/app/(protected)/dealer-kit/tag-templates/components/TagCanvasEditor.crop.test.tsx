@@ -14,7 +14,7 @@
  * drag is built out of these three events either way.
  */
 
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { TagLayer, TagTemplateDoc } from '@/lib/dealer-kit/tag-template-types';
@@ -178,6 +178,7 @@ vi.mock('react-konva', async () => {
     width?: number;
     height?: number;
     opacity?: number;
+    image?: { src?: string } | null;
   }) {
     return (
       <div
@@ -187,6 +188,8 @@ vi.mock('react-konva', async () => {
         data-w={props.width}
         data-h={props.height}
         data-opacity={props.opacity}
+        // PRICETAG-DESIGNER-FEEDBACK AC-9.3: which picture the crop view loaded.
+        data-src={props.image?.src ?? ''}
       />
     );
   }
@@ -235,8 +238,26 @@ vi.mock('react-konva', async () => {
   };
 });
 
+// PRICETAG-DESIGNER-FEEDBACK AC-9.3 to AC-9.6: the REAL image layer's own props (what it draws,
+// whether it takes clicks or drags, its opacity) are read off this stand-in.
 vi.mock('./KonvaTagLayer', () => ({
-  KonvaTagLayer: () => null,
+  KonvaTagLayer: (props: {
+    layer?: { id?: string; props?: { cropRect?: unknown } };
+    display?: { imageUrl?: string | null };
+    opacity?: number;
+    listening?: boolean;
+    draggable?: boolean;
+  }) => (
+    <div
+      data-konva="tag-layer"
+      data-layer-id={props.layer?.id}
+      data-opacity={String(props.opacity)}
+      data-listening={String(props.listening)}
+      data-draggable={String(props.draggable)}
+      data-image-url={props.display?.imageUrl ?? ''}
+      data-crop={JSON.stringify(props.layer?.props?.cropRect ?? null)}
+    />
+  ),
 }));
 
 vi.mock('@/lib/dealer-kit/fonts', () => ({
@@ -265,6 +286,17 @@ vi.mock('../../services/assetService', () => ({
 }));
 
 vi.mock('../../services/tagDataService', () => ({
+  // AC-9.3: an icon library image (a feature icon used as a picture) resolves through
+  // `library.assetUrls` like any asset.
+  listFeatureIcons: vi.fn(async () => [
+    {
+      id: 'icon1',
+      name: 'Overflow icon',
+      spec_key: 'overflow',
+      values: ['Yes'],
+      url: 'https://cdn.test/icon-library/overflow.png',
+    },
+  ]),
   productOptions: vi.fn(async () => []),
   productSetOptions: vi.fn(async () => []),
   listSpecKeys: vi.fn(async () => []),
@@ -309,7 +341,12 @@ beforeEach(() => {
 // in this file simple.
 function imageLayer(
   cropRect?: { x: number; y: number; width: number; height: number },
-  options: { width_mm?: number; height_mm?: number; fit?: 'cover' | 'contain' | 'stretch' } = {},
+  options: {
+    width_mm?: number;
+    height_mm?: number;
+    fit?: 'cover' | 'contain' | 'stretch';
+    assetId?: string;
+  } = {},
 ): TagLayer {
   return {
     id: 'img1',
@@ -326,7 +363,7 @@ function imageLayer(
     text_override: null,
     props: {
       kind: 'image',
-      source: { type: 'asset', assetId: 'a1' },
+      source: { type: 'asset', assetId: options.assetId ?? 'a1' },
       fit: options.fit ?? 'contain',
       maskShape: 'none',
       cropRect,
@@ -725,5 +762,189 @@ describe('TagCanvasEditor crop mode - Reset crop (S8, AC-S8-5)', () => {
 
     const reset = latest.find((l) => l.id === 'img1')!;
     expect(reset.props.kind === 'image' ? reset.props.cropRect : 'missing').toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PRICETAG-DESIGNER-FEEDBACK slice 1, AC-9 (UAC:
+// documentation/plans/dealer-kit/pricetag-designer-feedback-acceptance-criteria.md). Written
+// test-FIRST. Fixture: a 2:1 source (300x150) in a 2:1 box (20x10 mm = 60x30 px), fit contain.
+// ---------------------------------------------------------------------------
+
+function realLayer(container: HTMLElement, id = 'img1') {
+  const el = container.querySelector(`[data-konva="tag-layer"][data-layer-id="${id}"]`);
+  if (!el) throw new Error(`no real layer ${id}`);
+  return el as HTMLElement;
+}
+
+/** The dimmed whole-source picture of the crop overlay: x/y/w/h as numbers. */
+function sourcePicture(container: HTMLElement) {
+  const images = Array.from(container.querySelectorAll('[data-konva="image"]')) as HTMLElement[];
+  expect(images.length).toBeGreaterThanOrEqual(1);
+  const d = images[0].dataset;
+  return { x: Number(d.x), y: Number(d.y), w: Number(d.w), h: Number(d.h) };
+}
+
+function windowRectOf(container: HTMLElement) {
+  const d = cropHandle(container, 'crop-window').dataset;
+  return { x: Number(d.x), y: Number(d.y), w: Number(d.w), h: Number(d.h) };
+}
+
+describe('AC-9.1: dragging a crop handle leaves the picture where it is', () => {
+  it('AC-9.1: every move of the bottom-right handle keeps the source picture at the same position and scale', async () => {
+    const { container } = await renderReady(docWith(imageLayer()));
+    await enterCropMode(container);
+
+    const before = sourcePicture(container);
+    expect(before).toEqual({ x: 0, y: 0, w: 60, h: 30 });
+
+    const handle = cropHandle(container, 'crop-handle-bottom-right');
+    fireEvent.mouseDown(handle, { clientX: 60, clientY: 30 });
+    fireEvent.mouseMove(handle, { clientX: 45, clientY: 22.5 });
+    expect(sourcePicture(container)).toEqual(before);
+    fireEvent.mouseMove(handle, { clientX: 30, clientY: 15 });
+    expect(sourcePicture(container)).toEqual(before);
+
+    // Only the window changed: it is now the top-left quarter of the fixed picture.
+    expect(windowRectOf(container)).toEqual({ x: 0, y: 0, w: 30, h: 15 });
+    fireEvent.mouseUp(handle);
+    expect(sourcePicture(container)).toEqual(before);
+  });
+
+  it('AC-9.1: the dragged handle stays under the pointer', async () => {
+    const { container } = await renderReady(docWith(imageLayer()));
+    await enterCropMode(container);
+
+    const handle = cropHandle(container, 'crop-handle-bottom-right');
+    fireEvent.mouseDown(handle, { clientX: 60, clientY: 30 });
+    fireEvent.mouseMove(handle, { clientX: 30, clientY: 15 });
+    const node = crop.nodes.get('crop-handle-bottom-right')!;
+    expect(node.x()).toBeCloseTo(30, 6);
+    expect(node.y()).toBeCloseTo(15, 6);
+    fireEvent.mouseUp(handle);
+  });
+});
+
+describe('AC-9.2: dragging the crop window right moves the crop right, the picture stays', () => {
+  it('AC-9.2: a 6 px pan right raises cropRect.x, moves the window 6 px right, and the picture does not move', async () => {
+    let latest: TagLayer[] = [];
+    const { container } = await renderReady(
+      docWith(imageLayer({ x: 0, y: 0, width: 0.5, height: 0.5 })),
+      {
+        onLayersChange: (layers: TagLayer[]) => {
+          latest = layers;
+        },
+      },
+    );
+    await enterCropMode(container);
+
+    const before = sourcePicture(container);
+    const windowBefore = windowRectOf(container);
+    const window_ = cropHandle(container, 'crop-window');
+    fireEvent.mouseDown(window_, { clientX: 0, clientY: 0 });
+    fireEvent.mouseMove(window_, { clientX: 6, clientY: 0 });
+
+    expect(sourcePicture(container)).toEqual(before);
+    expect(windowRectOf(container).x).toBeCloseTo(windowBefore.x + 6, 6);
+    expect(windowRectOf(container).y).toBeCloseTo(windowBefore.y, 6);
+
+    fireEvent.mouseUp(window_);
+    fireEvent.keyDown(window, { key: 'Enter' });
+    const committed = latest.find((l) => l.id === 'img1')!;
+    const cropRect = committed.props.kind === 'image' ? committed.props.cropRect : null;
+    expect(cropRect!.x).toBeGreaterThan(0);
+    expect(cropRect!.x).toBeCloseTo(0.05, 6);
+  });
+});
+
+describe('AC-9.3: the crop view loads the same image the layer draws', () => {
+  for (const [label, assetId] of [
+    ['an uploaded asset', 'a1'],
+    ['an icon library image', 'icon1'],
+  ] as const) {
+    it(`AC-9.3: ${label}`, async () => {
+      const { container } = await renderReady(docWith(imageLayer(undefined, { assetId })));
+      await waitFor(() => expect(realLayer(container).dataset.imageUrl).not.toBe(''));
+      const shown = realLayer(container).dataset.imageUrl;
+
+      await enterCropMode(container);
+
+      const images = Array.from(container.querySelectorAll('[data-konva="image"]')) as HTMLElement[];
+      expect(images.length).toBeGreaterThanOrEqual(1);
+      for (const image of images) expect(image.dataset.src).toBe(shown);
+    });
+  }
+});
+
+describe('AC-9.4: during crop the real image layer takes no clicks or drags', () => {
+  it('AC-9.4: listening off and not draggable while cropping, back on after', async () => {
+    const { container } = await renderReady(docWith(imageLayer()));
+    expect(realLayer(container).dataset.listening).toBe('true');
+    expect(realLayer(container).dataset.draggable).toBe('true');
+
+    await enterCropMode(container);
+    expect(realLayer(container).dataset.listening).toBe('false');
+    expect(realLayer(container).dataset.draggable).toBe('false');
+
+    fireEvent.keyDown(window, { key: 'Enter' });
+    expect(realLayer(container).dataset.listening).toBe('true');
+    expect(realLayer(container).dataset.draggable).toBe('true');
+  });
+});
+
+describe('AC-9.5: after Done the layer is fully visible and draws the new crop', () => {
+  it('AC-9.5: opacity is explicitly 1 after Enter, and the layer carries the new cropRect', async () => {
+    const { container } = await renderReady(docWith(imageLayer()));
+    await enterCropMode(container);
+    expect(realLayer(container).dataset.opacity).toBe('0');
+
+    const handle = cropHandle(container, 'crop-handle-top-center');
+    fireEvent.mouseDown(handle, { clientX: 30, clientY: 0 });
+    fireEvent.mouseMove(handle, { clientX: 30, clientY: 20 });
+    fireEvent.mouseUp(handle);
+    fireEvent.keyDown(window, { key: 'Enter' });
+
+    expect(container.querySelector('[data-name="crop-window"]')).toBeNull();
+    expect(realLayer(container).dataset.opacity).toBe('1');
+    const drawn = JSON.parse(realLayer(container).dataset.crop ?? 'null');
+    expect(drawn).not.toBeNull();
+    expect(drawn.y).toBeCloseTo(2 / 3, 4);
+  });
+
+  it('AC-9.5: a click outside the window commits and leaves opacity 1 too', async () => {
+    const { container } = await renderReady(docWith(imageLayer()));
+    await enterCropMode(container);
+    fireEvent.mouseDown(container.querySelector('[data-konva="stage"]')!);
+    expect(container.querySelector('[data-name="crop-window"]')).toBeNull();
+    expect(realLayer(container).dataset.opacity).toBe('1');
+  });
+});
+
+describe('AC-9.6: Esc restores the previous crop', () => {
+  it('AC-9.6: after a drag, Esc keeps the old cropRect on the layer and re-entering shows the old window', async () => {
+    const original = { x: 0, y: 0, width: 0.5, height: 0.5 };
+    const { container } = await renderReady(docWith(imageLayer(original)));
+    await enterCropMode(container);
+    const windowBefore = windowRectOf(container);
+
+    const handle = cropHandle(container, 'crop-handle-bottom-right');
+    fireEvent.mouseDown(handle, { clientX: windowBefore.w, clientY: windowBefore.h });
+    fireEvent.mouseMove(handle, { clientX: windowBefore.w / 2, clientY: windowBefore.h / 2 });
+    fireEvent.mouseUp(handle);
+    fireEvent.keyDown(window, { key: 'Escape' });
+
+    expect(container.querySelector('[data-name="crop-window"]')).toBeNull();
+    expect(JSON.parse(realLayer(container).dataset.crop ?? 'null')).toEqual(original);
+
+    await enterCropMode(container);
+    expect(windowRectOf(container)).toEqual(windowBefore);
+  });
+
+  it('AC-9.6 (with AC-9.5): after Esc the layer is fully visible again, opacity explicitly 1', async () => {
+    const { container } = await renderReady(docWith(imageLayer({ x: 0, y: 0, width: 0.5, height: 0.5 })));
+    await enterCropMode(container);
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(container.querySelector('[data-name="crop-window"]')).toBeNull();
+    expect(realLayer(container).dataset.opacity).toBe('1');
   });
 });

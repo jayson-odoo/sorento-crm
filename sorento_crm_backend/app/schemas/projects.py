@@ -449,6 +449,9 @@ class ProjectResponse(BaseModel):
     reject_reason: Optional[str] = None
     submitted_at: Optional[datetime] = None
     decided_at: Optional[datetime] = None
+    # AC-PROJECT-REGISTER: the AutoCount project number once registered (R10, R17).
+    autocount_project_no: Optional[str] = None
+    autocount_registered_at: Optional[datetime] = None
     registration: Optional[ProjectRegistrationInfo] = None
     possible_duplicates: List[ProjectPossibleDuplicate] = Field(default_factory=list)
 

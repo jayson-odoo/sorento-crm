@@ -111,3 +111,32 @@ def test_ac_sr_03_request_delivery_date_prints_dd_mm_yyyy():
     assert "05/11/2026" in html
     assert "2026-11-05" not in html
     assert "Immediate" not in html
+
+
+def test_sample_request_v2_the_for_row_prints_only_when_an_old_request_has_it():
+    """SAMPLE-REQUEST-V2 rule 3 (crew pass 11 Nov): "For" is gone from the form; the PDF, like the
+    screen, prints it only for an old request that had it, never as an empty row."""
+    old = build_html(DETAIL)
+    assert "<th>For</th>" in old
+    new = build_html({**DETAIL, "scope_note": None})
+    assert "<th>For</th>" not in new
+
+
+def test_sample_request_v2_every_contact_phone_prints():
+    """Owner hand test 12 Nov ~15:45 (F4): two contacts chosen, both phones on the printed copy."""
+    html = _cells(build_html({
+        **DETAIL,
+        "site_contact_name": "Mei Ling Tan & Ravi Kumar",
+        "site_contact_phone": "012-345 6789 & 011-1111 1111",
+    }))
+    assert "Mei Ling Tan &amp; Ravi Kumar" in html or "Mei Ling Tan & Ravi Kumar" in html
+    assert "012-345 6789" in html and "011-1111 1111" in html
+
+
+def test_sample_request_v2_the_header_has_no_dot_delimiter():
+    """Standing rule (owner 12 Nov, crew pass round 3): status and print date are separate, with no
+    " · " between them."""
+    html = build_html(DETAIL)
+    assert "&middot;" not in html and "·" not in html
+    cells = _cells(html)
+    assert "Submitted" in cells and "Printed " in cells

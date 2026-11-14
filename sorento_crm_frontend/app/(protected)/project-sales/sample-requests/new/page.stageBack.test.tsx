@@ -2,6 +2,18 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+
+// SAMPLE-REQUEST-V2: the header is the client SampleRequestPageHeader; no `?from=` here, so the
+// `project_id` alone must still lead back to the project.
+vi.mock('next/navigation', () => ({
+  useSearchParams: () => new URLSearchParams(''),
+  usePathname: () => '/project-sales/sample-requests/new',
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }),
+}));
+vi.mock('../../_shared/hooks/useProjects', () => ({
+  useProject: () => ({ data: undefined, isLoading: false }),
+}));
 
 vi.mock('../components/SampleRequestForm', () => ({ __esModule: true, default: () => null }));
 
@@ -13,7 +25,12 @@ vi.mock('@/components/common/container', () => ({
 import NewSampleRequestPage from './page';
 
 async function renderPage(searchParams: { project_id?: string }) {
-  render(await NewSampleRequestPage({ searchParams: Promise.resolve(searchParams) }));
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={client}>
+      {await NewSampleRequestPage({ searchParams: Promise.resolve(searchParams) })}
+    </QueryClientProvider>,
+  );
 }
 
 describe('New sample request header Cancel', () => {
