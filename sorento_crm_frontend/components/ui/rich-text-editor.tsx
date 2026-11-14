@@ -24,6 +24,8 @@ import {
 } from 'lucide-react';
 import {
   EditorContent,
+  getTextBetween,
+  getTextSerializersFromSchema,
   ReactRenderer,
   useEditor,
   type Editor,
@@ -115,6 +117,19 @@ export function insertMergeFieldText(editor: Editor, text: string) {
   // the text there, not in front of it.
   const at = everFocused.has(editor) ? undefined : 'end';
   editor.chain().focus(at).insertContent({ type: 'text', text }).run();
+}
+
+/** The plain text before and after the caret `insertMergeFieldText` would use: blocks joined by
+ * "\n", each field as its `{{path}}`. */
+export function textAroundMergeFieldCaret(editor: Editor): { before: string; after: string } {
+  const { doc, selection } = editor.state;
+  const end = doc.content.size;
+  const [from, to] = everFocused.has(editor) ? [selection.from, selection.to] : [end, end];
+  const options = { blockSeparator: '\n', textSerializers: getTextSerializersFromSchema(editor.schema) };
+  return {
+    before: getTextBetween(doc, { from: 0, to: from }, options),
+    after: getTextBetween(doc, { from: to, to: end }, options),
+  };
 }
 
 /** One serialisation for comparing a stored value with the editor's (entities, quotes). */

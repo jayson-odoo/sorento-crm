@@ -31,7 +31,7 @@ import {
   shortcutLabel,
   useIsMac,
 } from '@/lib/dealer-kit/canvas-input';
-import { insertMergeFieldText } from '@/components/ui/rich-text-editor';
+import { insertMergeFieldText, textAroundMergeFieldCaret } from '@/components/ui/rich-text-editor';
 import type { Editor } from '@tiptap/react';
 import {
   useCallback,
@@ -738,6 +738,8 @@ export function TagCanvasEditor({
   );
   const [fontUploadOpen, setFontUploadOpen] = useState(false);
   const [insertFieldOpen, setInsertFieldOpen] = useState(false);
+  /** The rich Content box's text around its caret, read when Insert field opens (AC-4.2). */
+  const [insertFieldContext, setInsertFieldContext] = useState<{ before: string; after: string } | undefined>();
   /** True while the middle button is held: the hand tool, borrowed (D44). */
   const [wheelPanning, setWheelPanning] = useState(false);
   /**
@@ -5726,7 +5728,11 @@ export function TagCanvasEditor({
               bindingLabel={selectedBindingLabel}
               fontOptions={library.fontOptions}
               onUploadFont={() => setFontUploadOpen(true)}
-              onInsertField={() => setInsertFieldOpen(true)}
+              onInsertField={() => {
+                const editor = contentEditor();
+                setInsertFieldContext(editor ? textAroundMergeFieldCaret(editor) : undefined);
+                setInsertFieldOpen(true);
+              }}
               onContentEditorReady={(editor) => {
                 contentEditorRef.current = editor;
               }}
@@ -5868,6 +5874,7 @@ export function TagCanvasEditor({
         // With the Content box open, the dialog hands back only the field and it goes in at that
         // box's caret, inside whatever formatting is there (DESIGNER-RICH-TEXT).
         value={insertFieldOpen && contentEditor() ? '' : selectedContent}
+        context={insertFieldOpen && contentEditor() ? insertFieldContext : undefined}
         data={selectedData ?? null}
         specKeys={library.specKeys}
         // PS-SPEC-SHEET: the spec sheet's own fields are offered on its templates only.
