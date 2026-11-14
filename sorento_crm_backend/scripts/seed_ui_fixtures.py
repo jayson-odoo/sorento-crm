@@ -57,7 +57,7 @@ with company_scope(db, frozenset({cid})):
                        ("UIV2-300-O004", "O**** Trading"), ("UIV2-300-K210", "K******* Interior Sdn Bhd")]:
         c = Customer(id=U(), company_id=cid, customer_code=code, customer_name=name); db.add(c); custs.append(c)
     agents = []
-    for a in ["JASON", "KOKLEONG", "AISYAH", "BENNY"]:
+    for a in ["J****", "K*******", "A*****", "B****"]  # masked look-alikes, no real agent codes:
         s = SalesAgent(id=U(), company_id=cid, sales_agent=a); db.add(s); agents.append(s)
     db.flush()
 
