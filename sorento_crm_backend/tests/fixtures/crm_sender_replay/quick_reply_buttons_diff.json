@@ -1,0 +1,36 @@
+{
+  "id": "zzt-exec-qr",
+  "sender_input": {
+    "turn_id": "zzt-turn-qr",
+    "contact_id": "zzt-replay-1",
+    "actions": [
+      {
+        "kind": "send_message",
+        "text": "zzt pick one",
+        "quick_replies": [
+          "zzt Alpha",
+          "zzt Beta",
+          "zzt Gamma"
+        ]
+      }
+    ],
+    "ctx": {},
+    "is_test": false
+  },
+  "respond_requests": [
+    {
+      "method": "POST",
+      "url": "https://api.respond.io/v2/contact/id:zzt-replay-1/message",
+      "body": {
+        "message": {
+          "type": "quick_reply",
+          "title": "zzt pick one",
+          "replies": [
+            "zzt Alpha",
+            "zzt Beta"
+          ]
+        }
+      }
+    }
+  ]
+}
