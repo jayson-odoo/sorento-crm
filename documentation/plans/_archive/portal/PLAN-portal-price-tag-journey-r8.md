@@ -1,6 +1,6 @@
 # PLAN - Portal journey round 8: verify card, landing toolbar, price tag request sections
 
-Status: PR #861 open; round 3 implemented + reviewed 13 Sep 2026, awaiting owner test on :3082
+Status: Merged in #861 (13 Sep 2026)
 UAC: `documentation/plans/portal/portal-price-tag-journey-r8-acceptance-criteria.md`
 Predecessor: `documentation/plans/dealer-kit/PLAN-price-tag-r7-request-ux.md` (merged #758)
 Branch: `feat/portal-journey-r8`, worktree `.claude/worktrees/portal-journey-r8`
