@@ -1331,3 +1331,28 @@ describe('POIntakeLinesGrid bulk cancel', () => {
   });
 });
 
+/** PO-UPLOAD-MATCHING B review item 3: a view switch clears the ticks, so the bulk button
+ * never acts on lines the reader can no longer see. */
+describe('POIntakeLinesGrid bulk cancel and the view switch', () => {
+  it('clears the ticks when the view switch changes', async () => {
+    renderGrid([
+      line({ id: 'l1', line_no: 1 }),
+      line({ id: 'l2', line_no: 2, amount: '1.00', arithmetic_ok: false }),
+      line({ id: 'l3', line_no: 3 }),
+    ]);
+
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Select line 1' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select line 3' }));
+    expect(screen.getByRole('button', { name: 'Cancel lines (2)' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('radio', { name: /Need attention/ }));
+    expect(screen.queryByRole('button', { name: /^Cancel lines/ })).toBeNull();
+
+    fireEvent.click(screen.getByRole('radio', { name: /All lines/ }));
+    expect(screen.getByRole('checkbox', { name: 'Select line 1' })).not.toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'Select line 3' })).not.toBeChecked();
+    expect(screen.queryByRole('button', { name: /^Cancel lines/ })).toBeNull();
+    expect(onUpdateLine).not.toHaveBeenCalled();
+  });
+});
+

@@ -2699,3 +2699,88 @@ def test_b_a_sibling_whose_suffix_the_description_does_not_name_keeps_the_exact_
     assert line.resolution_source == "code"
     assert line.resolved_product_id == ids["SRTWB248"]
     assert 1 not in matcher.sent_line_nos()
+
+
+# ======================================================== PO-UPLOAD-MATCHING B review items
+
+
+def _held_back_options(version, ids) -> None:
+    assert list(_match(version, 1).get("options") or []) == [
+        ids["SRTWB243"],
+        ids["SRTWB243-35MM"],
+    ], "the picker lists the bare code and the named variant first"
+
+
+@pytest.mark.parametrize("model", ["raises", "answers-nothing"])
+def test_b_review_a_held_back_code_offers_both_even_when_the_model_gives_nothing(
+    seeded, matcher, model
+):
+    db, project, owner = seeded
+    ids = _products(db, project.company_id, "SRTWB243", "SRTWB243-35MM")
+    if model == "raises":
+        matcher.fail = lambda batch: RuntimeError("model unavailable")
+    else:
+        matcher.answers[1] = {"product_code": None, "confidence": "low", "options": []}
+
+    service, version, line = _variant_read(
+        db, project, owner, matcher, "ZZT-BR1",
+        code="SRTWB243", description="WALL HUNG BASIN 35MM",
+    )
+
+    assert version.extraction_state == STATE_DONE
+    assert line.resolved_product_id is None
+    assert line.resolution_source is None
+    _held_back_options(version, ids)
+    assert [o["product_code"] for o in _serialized(service, version)[1]["match_options"]] == [
+        "SRTWB243",
+        "SRTWB243-35MM",
+    ]
+
+
+def test_b_review_a_description_edit_that_names_the_variant_unsettles_the_exact_code(
+    seeded, matcher
+):
+    db, project, owner = seeded
+    ids = _products(db, project.company_id, "SRTWB243", "SRTWB243-35MM")
+    service, version, line = _variant_read(
+        db, project, owner, matcher, "ZZT-BR2",
+        code="SRTWB243", description="WALL HUNG BASIN",
+    )
+    assert line.resolution_source == "code"
+    calls_before = len(matcher.calls)
+
+    service.update_line(
+        version=version,
+        line=line,
+        payload={"description_raw": "WALL HUNG BASIN 35MM"},
+        actor_user_id=owner,
+    )
+
+    assert len(matcher.calls) == calls_before, "a line edit never calls the model"
+    assert line.resolution_source != "code"
+    assert line.resolved_product_id is None
+    _held_back_options(version, ids)
+
+
+@pytest.mark.parametrize(
+    "codes, code, description",
+    [
+        (("SRTWC8518", "SRTWC8518-S"), "SRTWC8518", "ONE PIECE WC S TRAP"),
+        (("CB310", "CB310-W"), "CB310", "PAPER HOLDER W/O COVER"),
+    ],
+    ids=["s-trap", "w-slash-o"],
+)
+def test_b_review_a_one_character_suffix_never_holds_back_an_exact_code(
+    seeded, matcher, codes, code, description
+):
+    db, project, owner = seeded
+    ids = _products(db, project.company_id, *codes)
+
+    _service, _version_row, line = _variant_read(
+        db, project, owner, matcher, f"ZZT-BR3-{code}",
+        code=code, description=description,
+    )
+
+    assert line.resolution_source == "code"
+    assert line.resolved_product_id == ids[code]
+    assert 1 not in matcher.sent_line_nos()
