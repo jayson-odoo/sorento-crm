@@ -10,14 +10,17 @@ The repo copy is kept in sync so that:
 
 ## How it runs (automatic, both directions)
 
-Nobody runs the sync by hand any more. `.github/workflows/outline-user-guides-sync.yml`:
+Nobody runs the sync by hand any more. Crew's scheduler runs `scripts/sync_user_guides_outline.py`
+on the owner's machine (CI-ZERO-MINUTES, 14 Nov 2026: no GitHub Actions minutes for it);
+`.github/workflows/outline-user-guides-sync.yml` is a manual `workflow_dispatch` fallback with the
+same modes:
 
 | Direction | When | What it does |
 |---|---|---|
-| **push** (repo -> Outline) | every push to `main` that changes `documentation/user-guides/**` (the state file alone does not count) or the sync script | `dry-run` first (validates, no token, no network), then `push` |
+| **push** (repo -> Outline) | after a merge to `main` that changes `documentation/user-guides/**` (the state file alone does not count) or the sync script | `dry-run` first (validates, no token, no network), then `push` |
 | **pull** (Outline -> repo) | every 6 hours | `pull`, then opens or refreshes ONE PR on `bot/outline-user-guides-sync`, labelled `docs-sync` |
 
-Both share one concurrency group (`outline-user-guides-sync`), so two pushes never overlap and a
+In the fallback workflow both share one concurrency group (`outline-user-guides-sync`), so two pushes never overlap and a
 pull never runs while a push is writing. A running sync is never cancelled, but GitHub keeps only
 ONE queued run per group: a newer queued run (push or pull) replaces the older one. A push replaced
 by a push loses nothing (every run checks out `main`'s current head). A push replaced by the

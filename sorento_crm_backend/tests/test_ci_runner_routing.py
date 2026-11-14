@@ -25,7 +25,7 @@ WORKFLOW = ROOT / ".github" / "workflows" / "deploy.yml"
 GH = "ubuntu-latest"
 
 TEST_JOBS = ["lean-gate", "test-backend", "test-backend-scm", "validate-frontend", "typecheck-frontend"]
-FAST_JOBS = ["check-migration-heads", "pii-guard", "changes", "refuse-ci-full", "ci-gate"]
+FAST_JOBS = ["check-migration-heads", "pii-guard", "changes", "ci-gate"]
 IMAGE_JOBS = ["build-images", "build-and-deploy", "validate-backend", "validate-mcp"]
 
 pytestmark = pytest.mark.skipif(not WORKFLOW.is_file(), reason="workflow not present (backend-only checkout)")
@@ -60,10 +60,8 @@ def test_every_job_is_routed_on_purpose():
 
 
 # --- what a test or gate job can hold -------------------------------------------
-# Read-only contents plus the writes it states (the two label-removing jobs), and no secret
+# Read-only scopes only (the label-removing PR jobs went with CI-ZERO-MINUTES), and no secret
 # but the job token. Deploy, registry, SSH and SMTP secrets never.
-
-WRITES_ALLOWED = {"lean-gate": {"pull-requests"}, "refuse-ci-full": {"pull-requests"}}
 
 
 @pytest.mark.parametrize("job", TEST_JOBS + FAST_JOBS)
@@ -71,7 +69,7 @@ def test_test_and_gate_jobs_hold_a_least_privilege_token(job):
     perms = _jobs()[job].get("permissions")
     assert isinstance(perms, dict), f"{job}: no permissions block (the repo default is write-all)"
     writes = {scope for scope, level in perms.items() if level == "write"}
-    assert writes == WRITES_ALLOWED.get(job, set()), (job, perms)
+    assert writes == set(), (job, perms)
 
 
 @pytest.mark.parametrize("job", TEST_JOBS + FAST_JOBS)

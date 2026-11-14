@@ -101,7 +101,7 @@ For a lane that goes to a Claude Code cloud environment instead of a local workt
 - **Dev auto-login (crew test copies only):** `DEV_AUTO_LOGIN` signs a local copy in without a password. It is mutually exclusive with remote testing: the FE answers only when `next dev -H 127.0.0.1`, and both sides need the same `DEV_AUTO_LOGIN_SECRET`. Setup and every guard: `documentation/plans/identity/PLAN-dev-login-bypass-03oct.md`. Never set it in any committed or deployed env file (a test fails).
 - FE edits hot-reload - no action needed, and no rebuild (see "Frontend dev loop" for the build rule).
 - Backend changes need no action beyond confirming uvicorn's reload log line - **except** edits to `app/tasks/*` (RQ tasks), which require restarting the Worker session.
-- **Tests run in the lane's sandbox, not on GitHub** (CI-CLOUD-GATE, 4 Nov 2026): the `ci` PR gate is fast checks only (alembic head, PII, gitleaks, imports + `pytest --collect-only`, `tsc`, ESLint on changed files). Before `crew-done` a lane runs `scripts/crew-tests.sh` on its exact head and posts the `crew-tests:` line; a release first passes a full-suite cloud sweep. Contract: `documentation/agents/cloud-lanes.md`.
+- **Tests and the PR gate run in the lane's sandbox, not on GitHub** (CI-CLOUD-GATE, 4 Nov 2026; CI-ZERO-MINUTES, 14 Nov 2026): GitHub Actions only builds, deploys and rolls back, and no `ci` label exists. The PR gate is `scripts/pr-gate.sh` (fast checks: alembic head, PII, AI coverage, Outline guides, gitleaks, imports + `pytest --collect-only`, `tsc`, ESLint on changed files), run by crew on the exact head, which posts the `PR gate` commit status. Before `crew-done` a lane runs `scripts/crew-tests.sh` on its exact head and posts the `crew-tests:` line; a release first passes a full-suite cloud sweep. Contract: `documentation/agents/cloud-lanes.md`.
 - **Pre-push hook mirrors CI's fast gates (alembic heads, py3.12 compile, touched vitest, dash guard) locally.** Install once per clone: `git config core.hooksPath scripts/git-hooks` (see `scripts/git-hooks/README.md`; bypass with `SKIP_PREPUSH=1 git push`).
 
 ## Architecture
@@ -249,7 +249,7 @@ changed screen. Name the track in the plan's Status line.
 - **One lane = one branch = one PR.** A feature lane's slices land as commits on the lane branch,
   folded by the captain; slices are never opened as separate GitHub PRs. The user tests the lane
   once on its stack, then one merge. A merge does NOT deploy (owner decision 29 Sep 2026): a push
-  to main runs only the alembic head gate; the release is a `workflow_dispatch` of `deploy.yml` on
+  to main runs nothing on GitHub; the release is a `workflow_dispatch` of `deploy.yml` on
   main that the orchestrator triggers after a batch has merged, and its deploy job waits for the
   owner's approval in the GitHub `production` environment (see
   `documentation/plans/ci/PLAN-ci-fast-gate-29sep.md`). Exception: genuinely independent work in a
@@ -260,8 +260,8 @@ changed screen. Name the track in the plan's Status line.
   2. `./scripts/alembic-reparent.sh` re-parents the lane's first new migration onto main's
      current alembic head (manual down_revision flips are retired).
   3. Confirm CI's fast gate logic locally: single alembic head.
-- CI enforcement already in place: `check-migration-heads` job fails any PR/merge-queue entry
-  with two heads; `build-and-deploy` runs in the `deploy-production` concurrency group so
+- CI enforcement already in place: `scripts/pr-gate.sh` (`alembic-heads`) fails any PR, and the
+  `check-migration-heads` job any merge-queue entry or release, with two heads; `build-and-deploy` runs in the `deploy-production` concurrency group so
   two releases dispatched close together deploy serially instead of overlapping.
 
 ## Browser verification (agent-browser)

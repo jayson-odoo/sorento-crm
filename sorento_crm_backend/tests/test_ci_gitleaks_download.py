@@ -6,7 +6,7 @@ URLs flapped while the API asset endpoint stayed up. So the script now:
 
 1. retries both curls (`--retry 5 --retry-all-errors --retry-delay 15 --connect-timeout 20`);
 2. falls back to `gh release download` (the API path) ONLY when the direct download failed;
-3. uses a tarball restored by `actions/cache` when present;
+3. uses a cached tarball (GITLEAKS_CACHE_DIR) when present;
 4. checks the tarball's sha256 against the release checksums file on EVERY path (direct,
    fallback, cache) and runs nothing when it does not match.
 
@@ -18,17 +18,15 @@ from __future__ import annotations
 import hashlib
 import io
 import os
-import re
 import subprocess
 import tarfile
 from pathlib import Path
 
 import pytest
-import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "ci_gitleaks.sh"
-WORKFLOW = ROOT / ".github" / "workflows" / "deploy.yml"
+PR_GATE = ROOT / "scripts" / "pr-gate.sh"
 VERSION = "8.30.1"
 TARBALL = f"gitleaks_{VERSION}_linux_x64.tar.gz"
 SUMS = f"gitleaks_{VERSION}_checksums.txt"
@@ -177,7 +175,7 @@ def test_a_tampered_cache_is_rejected_and_redownloaded(tmp_path):
 
 
 def test_the_workflow_tilde_cache_path_resolves_to_home(tmp_path):
-    # deploy.yml writes `~/.cache/gitleaks`; the shell never expands ~ inside an env value.
+    # A caller may write `~/.cache/gitleaks`; the shell never expands ~ inside an env value.
     rc, out, calls, cache_dir = _run(tmp_path, cache=GOOD, cache_env="~/cache")
     assert rc == 0, out
     assert calls == [], calls
@@ -189,20 +187,10 @@ def test_the_token_is_never_printed(tmp_path):
     assert "ghs_dummy" not in out
 
 
-def _steps() -> list[dict]:
-    return yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))["jobs"]["lean-gate"]["steps"]
-
-
-@pytest.mark.skipif(not WORKFLOW.is_file(), reason="workflow not present")
-def test_the_pr_gate_caches_the_cli_and_hands_gh_the_job_token():
-    steps = _steps()
-    names = [s.get("name") for s in steps]
-    scan = steps[names.index("Secret scan (gitleaks)")]
-    cache_i = next(i for i, s in enumerate(steps) if str(s.get("uses", "")).startswith("actions/cache@"))
-    cache = steps[cache_i]
-    assert cache_i < names.index("Secret scan (gitleaks)")
-    assert cache.get("if") == scan.get("if") == "github.event_name == 'pull_request'"
-    script_ver = re.search(r'GITLEAKS_VERSION="\$\{GITLEAKS_VERSION:-([^}]*)\}"', SCRIPT.read_text()).group(1)
-    assert cache["with"]["key"] == f"gitleaks-{script_ver}-${{{{ runner.arch }}}}", cache["with"]["key"]
-    assert scan["env"]["GITLEAKS_CACHE_DIR"] == cache["with"]["path"]
-    assert scan["env"]["GH_TOKEN"] == "${{ github.token }}"
+@pytest.mark.skipif(not PR_GATE.is_file(), reason="scripts/pr-gate.sh not present")
+def test_the_pr_gate_caches_the_cli_and_scans_base_to_head():
+    """The PR gate runs in the lane sandbox (scripts/pr-gate.sh, CI-ZERO-MINUTES): the scan
+    covers the lane's commits and keeps the verified tarball in a cache dir across runs."""
+    script = PR_GATE.read_text(encoding="utf-8")
+    assert 'RANGE="$BASE_SHA..$HEAD_SHA"' in script
+    assert "GITLEAKS_CACHE_DIR=" in script and "bash scripts/ci_gitleaks.sh" in script

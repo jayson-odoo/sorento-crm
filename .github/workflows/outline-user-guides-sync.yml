@@ -1,24 +1,13 @@
 name: Outline user-guides sync
 
-# Both directions run on their own (DOCS-SYNC-AUTO, owner 31 Oct 2026,
-# documentation/user-guides/SYNC.md):
-#   push  repo -> Outline, on every push to main that changes a guide.
-#   pull  Outline -> repo, every 6 hours; opens or refreshes ONE bot PR
-#         (bot/outline-user-guides-sync, label `docs-sync`).
-# The PR gate (deploy.yml `lean-gate`) runs `sync_user_guides_outline.py check`
-# so an unmapped folder or an over-long title fails the PR, not this push.
+# Manual fallback only (CI-ZERO-MINUTES, owner 14 Nov 2026: no Actions minutes
+# outside build, deploy and rollback). Crew's scheduler runs the same script
+# on the owner's machine (documentation/user-guides/SYNC.md):
+#   pull  Outline -> repo, every 6 hours.
+#   push  repo -> Outline, after a merge that changes a guide.
+# scripts/pr-gate.sh runs `sync_user_guides_outline.py check` on every PR, so
+# an unmapped folder or an over-long title fails the PR, not the push.
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'documentation/user-guides/**'
-      # The state file alone (a merged pull PR that only learnt doc ids)
-      # changes no page, so it does not need a push.
-      - '!documentation/user-guides/.outline-sync.json'
-      - 'scripts/sync_user_guides_outline.py'
-  schedule:
-    - cron: '0 */6 * * *'
   workflow_dispatch:
     inputs:
       mode:
@@ -40,7 +29,7 @@ on:
 # One sync at a time, push and pull alike: a pull reading Outline while a push
 # is writing it would PR a half-pushed state. Never cancel the running one; a
 # newer queued run replaces an older queued one, which is safe because every
-# push checks out main's CURRENT head, not the commit that queued it.
+# run checks out main's CURRENT head.
 concurrency:
   group: outline-user-guides-sync
   cancel-in-progress: false
@@ -54,12 +43,12 @@ jobs:
       pull-requests: write
       issues: write
     env:
-      MODE: ${{ github.event_name == 'push' && 'push' || inputs.mode || 'pull' }}
+      MODE: ${{ inputs.mode || 'pull' }}
     steps:
       - uses: actions/checkout@v4
         with:
-          # main's head, not the triggering SHA: a queued push that runs after
-          # a later merge must not publish the older tree.
+          # main's head, not the dispatching SHA: a queued push that runs
+          # after a later merge must not publish the older tree.
           ref: main
           # Full history: pull keeps a repo page committed after its Outline
           # copy (repo_is_newer) and push keeps an Outline edit made after the

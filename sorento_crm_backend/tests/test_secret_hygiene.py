@@ -172,65 +172,21 @@ def test_gitignore_keeps_env_example_tracked(path):
 # AC-20 ---------------------------------------------------------------------
 
 GITLEAKS_SCRIPT = ROOT / "scripts" / "ci_gitleaks.sh"
-
-
-def _workflow() -> dict:
-    return yaml.safe_load(_text(ROOT / ".github" / "workflows" / "deploy.yml"))
-
-
-def _gitleaks_job():
-    """The job carrying the secret scan and its scan step.
-
-    Since CI-COST round 2 (#1577) the scan is a step of the PR gate that runs
-    `scripts/ci_gitleaks.sh`; a workflow step still running `gitleaks git` inline
-    counts too. The `gitleaks` job itself is gone."""
-    jobs = _workflow()["jobs"]
-    for name, job in jobs.items():
-        for step in job.get("steps", []) or []:
-            run = str(step.get("run", ""))
-            if re.search(r"^\s*gitleaks git\b", run, re.M) or re.search(
-                r"^\s*bash scripts/ci_gitleaks\.sh\s*$", run, re.M
-            ):
-                return name, job, step
-    return None, None, None
+PR_GATE = ROOT / "scripts" / "pr-gate.sh"
 
 
 def _gitleaks_source() -> str:
-    """The text that installs and runs gitleaks: the script the step calls."""
-    _, _, step = _gitleaks_job()
-    assert step, "no gitleaks job or step in deploy.yml"
-    run = str(step.get("run", ""))
-    if "scripts/ci_gitleaks.sh" in run:
-        assert GITLEAKS_SCRIPT.is_file(), "deploy.yml calls scripts/ci_gitleaks.sh, which is missing"
-        return _text(GITLEAKS_SCRIPT)
-    return run
+    """The text that installs and runs gitleaks: scripts/ci_gitleaks.sh.
+
+    Since CI-ZERO-MINUTES (14 Nov 2026) the scan is a check of scripts/pr-gate.sh, run in the
+    lane sandbox; before that it was a step of the hosted PR gate (CI-COST round 2, #1577)."""
+    assert GITLEAKS_SCRIPT.is_file(), "scripts/ci_gitleaks.sh is missing"
+    return _text(GITLEAKS_SCRIPT)
 
 
-def _expr(text: str, event: str, label: str = "", lean: str = "true"):
-    """Evaluate a GitHub Actions expression for one event (the subset deploy.yml uses)."""
-    expr = text.replace("${{", "").replace("}}", "").strip()
-    expr = re.sub(r"always\(\)", "True", expr)
-    expr = re.sub(r"github\.event\.label\.name", repr(label), expr)
-    expr = re.sub(r"github\.event_name", repr(event), expr)
-    expr = re.sub(r"needs\.changes\.outputs\.lean", repr(lean), expr)
-    expr = expr.replace("&&", " and ").replace("||", " or ").replace("!=", " != ")
-    expr = re.sub(r"(?<![=!<>])!(?!=)", " not ", expr)
-    return eval(expr, {"__builtins__": {}}, {"True": True})
-
-
-def test_deploy_workflow_has_gitleaks_step():
-    name, _, _ = _gitleaks_job()
-    assert name, "no gitleaks job or step in deploy.yml"
-    assert "gitleaks" in _gitleaks_source(), "the gitleaks step runs no gitleaks"
-
-
-def test_gitleaks_job_keeps_its_check_name():
-    # The CI gate and the ruleset key on job names: the scan rides in the required
-    # `PR gate` check (CI-COST round 2, #1577), as its step "Secret scan (gitleaks)".
-    _, job, step = _gitleaks_job()
-    assert job and step, "no gitleaks job or step"
-    assert _expr(str(job.get("name", "")), "pull_request", "ci") == "PR gate"
-    assert step.get("name") == "Secret scan (gitleaks)"
+def test_pr_gate_runs_the_gitleaks_scan():
+    assert "bash scripts/ci_gitleaks.sh" in _text(PR_GATE), "scripts/pr-gate.sh runs no secret scan"
+    assert "gitleaks" in _gitleaks_source(), "scripts/ci_gitleaks.sh runs no gitleaks"
 
 
 def test_no_workflow_uses_gitleaks_action():
@@ -243,38 +199,17 @@ def test_no_workflow_uses_gitleaks_action():
                 assert "gitleaks-action" not in uses, f"{wf.name}:{name} uses {uses!r}"
 
 
-def test_gitleaks_skips_merge_group_dispatch_and_push_but_runs_on_labelled_pr():
-    # AC-21: gitleaks must NOT run on merge_group or workflow_dispatch. CI-COST round 2
-    # (#1577, owner priority CI minutes): a push to main runs the alembic head gate only,
-    # because the same commits passed the scan in their PR gate. The job's `if` and the
-    # step's `if` both have to pass.
-    name, job, step = _gitleaks_job()
-    assert name, "no gitleaks job or step"
-    conditions = [str(c) for c in (job.get("if"), step.get("if")) if c]
-    assert conditions, "gitleaks has no if"
-
-    def run(event: str, label: str = "") -> bool:
-        return all(bool(_expr(c, event, label)) for c in conditions)
-
-    assert not run("merge_group")
-    assert not run("workflow_dispatch")
-    assert run("pull_request", "ci")
-    assert not run("pull_request", "other")
-    assert not run("push")
-    # The scan reads the PR's own commits.
-    rng = str((step.get("env") or {}).get("RANGE", ""))
-    assert "pull_request.base.sha" in rng and "pull_request.head.sha" in rng, rng
+def test_gitleaks_skips_merge_group_and_dispatch_but_runs_on_every_pr():
+    # AC-21: gitleaks must NOT run on merge_group or workflow_dispatch: a release carries only
+    # commits that passed the scan in their PR gate, which is scripts/pr-gate.sh in the lane
+    # sandbox (CI-ZERO-MINUTES). No workflow runs it; the PR gate scans the lane's own commits.
+    for wf in sorted((ROOT / ".github" / "workflows").glob("*.y*ml")):
+        assert "ci_gitleaks.sh" not in _text(wf), f"{wf.name} runs the secret scan"
+    assert 'RANGE="$BASE_SHA..$HEAD_SHA"' in _text(PR_GATE)
 
 
 def test_gitleaks_version_env_is_exact():
-    _, job, step = _gitleaks_job()
-    assert job, "no gitleaks job"
-    pinned = [
-        str(env["GITLEAKS_VERSION"])
-        for env in (job.get("env") or {}, step.get("env") or {})
-        if "GITLEAKS_VERSION" in env
-    ]
-    pinned += re.findall(r'GITLEAKS_VERSION="\$\{GITLEAKS_VERSION:-([^}]*)\}"', _gitleaks_source())
+    pinned = re.findall(r'GITLEAKS_VERSION="\$\{GITLEAKS_VERSION:-([^}]*)\}"', _gitleaks_source())
     assert pinned, "GITLEAKS_VERSION is not pinned"
     for ver in pinned:
         assert re.fullmatch(r"\d+\.\d+\.\d+", ver), f"GITLEAKS_VERSION={ver!r}"

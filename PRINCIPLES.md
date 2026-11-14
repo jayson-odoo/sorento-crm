@@ -237,7 +237,7 @@ the same axis as the module decision - not a separate schema axis.
    `sorento_crm_backend/app/services/assistant_registry/<module>.py` (fields = what the screen shows, with
    the screen's slugs, and its list route in `routes`), or its list route carries
    `# ai: not-for-assistant <reason>` on the comment line directly above its decorators. The PR gate
-   enforces this for every added GET route that takes `page` or `limit` (`scripts/ci_ai_coverage.py`).
+   (`scripts/pr-gate.sh`) enforces this for every added GET route that takes `page` or `limit` (`scripts/ci_ai_coverage.py`).
 7. **The assistant can do it.** Each new button that changes a record and that a user would ask for in
    words gets an `ActionDef` calling the same route function, or the plan says why not.
 8. **Two eval prompts** per feature in

@@ -1,31 +1,27 @@
 """The gating logic in .github/workflows/deploy.yml, executed as it ships.
 
-Three rules live in that workflow and are pinned here:
+The workflow runs on `merge_group` and `workflow_dispatch` only (CI-ZERO-MINUTES,
+14 Nov 2026: a PR's checks run in the lane sandbox, scripts/pr-gate.sh). The rules
+pinned here:
 
-1. Docs-only (job `changes`, step "Detect changed areas"): a change whose every
-   path is documentation skips image build, every test suite and the deploy
-   (owner ruling 29 Sep 2026). `DOCS_RE` names what counts as documentation,
-   `NOT_DOCS_RE` names the documentation/ paths that tests READ as live
-   inputs, both ends of a rename count, and `SCM_RE` decides whether the SCM
-   shards run on a PR.
-2. Release by dispatch (the jobs' `if` lines): a push to main runs the alembic
-   gate and nothing else; a `workflow_dispatch` on main runs the full suite
-   (or, with `skip_tests`, nothing) then build-images and build-and-deploy,
-   which carries `environment: production` so the owner approves each deploy.
-3. Cheap gate + merge gate (the jobs' `if` lines and the workflow
-   `concurrency`): a `ci`-labelled PR runs the fast gates, the changed
-   tests and the SCM shards only when SCM paths changed, never the six
-   backend shards; a merge-queue entry and a release run the full suite;
-   a `ci-full` label on a PR is refused (owner, 9 Oct 2026: no full suite
-   per PR) and there is no nightly (owner, 10 Oct 2026, CI-LEAN); only a
-   `ci` label run joins the per-PR concurrency group; every test job carries a
-   timeout; the `CI gate` job reports the run as one check (CI-MINUTES-CUT).
-4. Changed tests on a PR (`backend_tests` output of `changes`, and job
-   `lean-gate` (the `PR gate` check) with its "Select the changed test files to run"
-   step): the backend test files a `ci`-labelled PR changes run on the PR
-   itself, serially, minus tests/scm (the SCM shards' job), minus what the
-   checkout no longer holds and minus tests/ci_excluded.txt. #1387 changed
-   one test file and its `ci` run executed no test at all (CI-TESTS-ONLY).
+1. Docs-only (job `changes`, step "Detect changed areas"): a merge-queue entry
+   whose every path is documentation skips image build, every test suite and
+   the deploy (owner ruling 29 Sep 2026). `DOCS_RE` names what counts as
+   documentation, `NOT_DOCS_RE` names the documentation/ paths that tests READ
+   as live inputs, and both ends of a rename count.
+2. Release by dispatch (the jobs' `if` lines): a `workflow_dispatch` on main
+   runs the full suite, the lean release tests or (with `skip_tests`) nothing,
+   then build-images and build-and-deploy, which carries
+   `environment: production` so the owner approves each deploy.
+3. Merge gate (the jobs' `if` lines and the workflow `concurrency`): a
+   merge-queue entry runs the full suite; there is no nightly (owner, 10 Oct
+   2026, CI-LEAN); every run is its own concurrency group; every test job
+   carries a timeout; the `CI gate (full)` job reports the queue run as one
+   check (CI-MINUTES-CUT).
+4. Changed tests on a lean release (`backend_tests` output of `changes`, and
+   job `lean-gate` (`Release tests`) with its "Select the changed test files to
+   run" step): the backend test files the batch changes run, minus what the
+   checkout no longer holds and minus tests/ci_excluded.txt (CI-TESTS-ONLY).
 
 The shell steps are extracted from the workflow file and executed under the
 same bash flags GitHub uses, with a stub `gh` that answers every API call from
@@ -64,9 +60,7 @@ PY_ENV = {k: os.environ[k] for k in ("LD_LIBRARY_PATH",) if k in os.environ}
 REPO = Path(__file__).resolve().parents[2]
 WORKFLOW = REPO / ".github" / "workflows" / "deploy.yml"
 TEST_TREES = [REPO / "sorento_crm_backend" / "tests", REPO / "sorento_crm_mcp" / "tests"]
-ZERO_SHA = "0" * 40
 SHA = "b" * 40
-BEFORE = "a" * 40
 
 # Stub `gh api`: answers from $GH_STUB_DIR/<key>.json, where <key> is the
 # endpoint after `repos/<owner>/<repo>/` with every `/ ? & =` replaced by `_`,
@@ -158,15 +152,8 @@ def _run_shell(tmp_path: Path, script: str, env: dict, fixtures: dict, *, gh_fai
 AREA_KEYS = {"docs_only", "backend", "frontend", "mcp", "scm", "backend_tests", "backend_code"}
 # Written by a lean release only (CI-LEAN): the diff base and the lean flag.
 LEAN_KEYS = {"lean", "base_sha"}
-# Written on a PR whose merge tree already passed a PR gate (CI-COST round 2).
-PR_KEYS = {"validated"}
 LAST_RELEASE = "e" * 40
 TREE = "f" * 40
-# A pull_request: the PR head, main's head when GitHub built its merge commit
-# (`SHA`), and a later main (CI-STALE-MERGE-REF).
-PR_HEAD = "3" * 40
-MAIN = "4" * 40
-NEWER_MAIN = "5" * 40
 RELEASE_RUNS = "repos/jayson-odoo/sorento-crm/actions/workflows/deploy.yml/runs?branch=main&event=workflow_dispatch&status=success&per_page=1"
 
 
@@ -176,27 +163,19 @@ def run_step(
     files: list,
     *,
     gh_fails: bool = False,
-    before: str = BEFORE,
     skip_tests: str = "",
-    label: str = "ci",
     full_suite: str = "",
     last_release: str | None = None,
     validated: bool = False,
-    pr_validated: bool = False,
-    main_now: str | None = MAIN,
-    merge_head: str = PR_HEAD,
 ) -> dict[str, str]:
     """Run the real step with `files` as the API answer; return $GITHUB_OUTPUT.
 
     Each entry of `files` is a path, or a (new_path, previous_path) pair for a
-    rename, shaped into the PR-files array or the compare object exactly as the
-    GitHub API returns them. `label` is the label just added on a
-    pull_request event. On a dispatch, `last_release` is the head of the
-    last successful release (None: the lookup finds none) and `files` is the
-    compare from it to the head; `validated` says a validated-tree artifact
-    exists for the head's tree. On a pull_request, GitHub's merge commit (`SHA`)
-    has parents (MAIN, `merge_head`) and `main_now` is main's head when the step
-    runs (None: the lookup fails); the defaults are a fresh merge of the head.
+    rename, shaped into the compare object exactly as the GitHub API returns
+    it. On a dispatch, `last_release` is the head of the last successful
+    release (None: the lookup finds none) and `files` is the compare from it
+    to the head; `validated` says a validated-tree artifact exists for the
+    head's tree.
     """
     entries = []
     for f in files:
@@ -205,42 +184,36 @@ def run_step(
         else:
             entries.append({"filename": f, "status": "modified"})
     fixtures = {
-        "repos/jayson-odoo/sorento-crm/pulls/1/files": entries,
-        f"repos/jayson-odoo/sorento-crm/compare/{before}...{SHA}": {"files": entries},
         f"repos/jayson-odoo/sorento-crm/compare/{'c' * 40}...{'d' * 40}": {"files": entries},
         RELEASE_RUNS: {"workflow_runs": [{"head_sha": last_release}] if last_release else []},
-        f"repos/jayson-odoo/sorento-crm/git/commits/{SHA}": {
-            "sha": SHA, "tree": {"sha": TREE}, "parents": [{"sha": MAIN}, {"sha": merge_head}],
-        },
+        f"repos/jayson-odoo/sorento-crm/git/commits/{SHA}": {"sha": SHA, "tree": {"sha": TREE}},
         f"repos/jayson-odoo/sorento-crm/actions/artifacts?name=validated-tree-{TREE}&per_page=5": {
             "artifacts": [{"name": f"validated-tree-{TREE}", "expired": False}] if validated else []
-        },
-        f"repos/jayson-odoo/sorento-crm/actions/artifacts?name=pr-validated-tree-{TREE}&per_page=5": {
-            "artifacts": [{"name": f"pr-validated-tree-{TREE}", "expired": False}] if pr_validated else []
         },
     }
     if last_release:
         fixtures[f"repos/jayson-odoo/sorento-crm/compare/{last_release}...{SHA}"] = {"files": entries}
-    if main_now:
-        fixtures["repos/jayson-odoo/sorento-crm/git/ref/heads/main"] = {"ref": "refs/heads/main", "object": {"sha": main_now}}
     env = {
-        "EVENT": event, "LABEL": label if event == "pull_request" else "", "PR": "1",
-        "HEAD_SHA": PR_HEAD if event == "pull_request" else "",
-        "PUSH_BEFORE": before, "PUSH_AFTER": SHA,
+        "EVENT": event, "PUSH_AFTER": SHA,
         "MG_BASE": "c" * 40, "MG_HEAD": "d" * 40, "SKIP_TESTS": skip_tests, "FULL_SUITE": full_suite,
     }
     outputs = _run_shell(tmp_path, _step_script("Detect changed areas"), env, fixtures, gh_fails=gh_fails)
-    assert AREA_KEYS <= set(outputs) <= AREA_KEYS | LEAN_KEYS | PR_KEYS, outputs
+    assert AREA_KEYS <= set(outputs) <= AREA_KEYS | LEAN_KEYS, outputs
     return outputs
+
+
+def run_lean(tmp_path: Path, files: list) -> dict[str, str]:
+    """A lean release (skip_tests=false) whose batch since the last release is `files`."""
+    return run_step(tmp_path, "workflow_dispatch", files, last_release=LAST_RELEASE)
 
 
 DOCS_ONLY = [
     "documentation/plans/ci/PLAN-ci-docs-skip-29sep.md",
     "documentation/plans/_archive/scm/evidence/AC-19b-filters-panel.png",
     "documentation/plans/scm/mockups/so-change-management-grill-v4.html",
-    # A guide-only change stays docs-only: the PR gate's
-    # `sync_user_guides_outline.py check` step gates the guide tree, and no
-    # test reads it (DOCS-SYNC-AUTO).
+    # A guide-only change stays docs-only: scripts/pr-gate.sh's
+    # `outline-guides` check gates the guide tree, and no test reads it
+    # (DOCS-SYNC-AUTO).
     "documentation/user-guides/README.md",
     "documentation/adr/0001-example.md",
     "CLAUDE.md",
@@ -254,16 +227,15 @@ DOCS_ONLY = [
     ".github/PULL_REQUEST_TEMPLATE.md",
 ]
 
-# `backend_tests` is empty in all three: off a PR the full shards run every
-# file, and a docs-only or skip_tests run tests nothing.
+# `backend_tests` is empty in all three: off a lean release the full shards run
+# every file, and a docs-only or skip_tests run tests nothing.
 FULL_PIPELINE = {"docs_only": "false", "backend": "true", "frontend": "true", "mcp": "true", "scm": "true", "backend_tests": "", "backend_code": ""}
 DOCS_SKIP = {"docs_only": "true", "backend": "false", "frontend": "false", "mcp": "false", "scm": "false", "backend_tests": "", "backend_code": ""}
 NO_AREA = {"backend": "false", "frontend": "false", "mcp": "false", "scm": "false", "backend_tests": "", "backend_code": ""}
 
 
-@pytest.mark.parametrize("event", ["pull_request", "push", "merge_group"])
-def test_docs_only_change_skips_everything(tmp_path, event):
-    assert run_step(tmp_path, event, DOCS_ONLY) == DOCS_SKIP
+def test_docs_only_change_skips_everything(tmp_path):
+    assert run_step(tmp_path, "merge_group", DOCS_ONLY) == DOCS_SKIP
 
 
 def _triggers() -> str:
@@ -277,15 +249,6 @@ def test_there_is_no_nightly(tmp_path):
     assert not re.search(r"^  schedule:", _triggers(), re.M)
     assert "event=schedule" not in _step_script("Detect changed areas")
     assert "nightly_done" not in _step_script("Detect changed areas")
-
-
-def test_ci_full_is_never_a_label_the_area_step_honours(tmp_path):
-    """No full suite per PR (owner, 9 Oct 2026): the step has no ci-full branch,
-    so a stray ci-full label reads like any other PR (the job never runs then:
-    see test_ci_full_label_is_refused_on_a_pull_request)."""
-    assert "ci-full" not in _step_script("Detect changed areas")
-    out = run_step(tmp_path, "pull_request", ["sorento_crm_frontend/app/page.tsx"], label="ci-full")
-    assert out["backend"] == "false" and out["frontend"] == "true"
 
 
 NON_DOCS = [
@@ -341,73 +304,19 @@ NON_DOCS = [
 
 @pytest.mark.parametrize("path", NON_DOCS)
 def test_one_non_docs_path_keeps_the_full_pipeline(tmp_path, path):
-    """One non-docs path in an otherwise docs-only push keeps the full pipeline."""
-    assert run_step(tmp_path, "push", DOCS_ONLY + [path]) == FULL_PIPELINE
+    """One non-docs path in an otherwise docs-only queue entry keeps the full pipeline."""
+    assert run_step(tmp_path, "merge_group", DOCS_ONLY + [path]) == FULL_PIPELINE
 
 
-def test_pull_request_area_flags_still_follow_the_service_trees(tmp_path):
-    out = run_step(tmp_path, "pull_request", DOCS_ONLY + ["sorento_crm_backend/app/main.py"])
-    assert out == {
-        "docs_only": "false", "backend": "true", "frontend": "false", "mcp": "false", "scm": "false",
-        "backend_tests": "", "backend_code": "sorento_crm_backend/app/main.py",
-    }
-    out = run_step(tmp_path, "pull_request", ["sorento_crm_frontend/app/page.tsx"])
-    assert out == {"docs_only": "false", "backend": "false", "frontend": "true", "mcp": "false", "scm": "false", "backend_tests": "", "backend_code": ""}
-    out = run_step(tmp_path, "pull_request", ["sorento_crm_mcp/pyproject.toml"])
-    assert out == {"docs_only": "false", "backend": "false", "frontend": "false", "mcp": "true", "scm": "false", "backend_tests": "", "backend_code": ""}
 
 
-SCM_PATHS = [
-    "sorento_crm_backend/app/api/v1/scm/orders.py",
-    "sorento_crm_backend/app/services/scm/sales_order_service.py",
-    "sorento_crm_backend/app/modules/scm/bootstrap.py",
-    "sorento_crm_backend/app/models/scm.py",
-    "sorento_crm_backend/app/schemas/scm_orders.py",
-    "sorento_crm_backend/tests/scm/test_committed_v.py",
-    "sorento_crm_backend/alembic/versions/273_scm_schema.py",
-    # the harness every backend test depends on
-    "sorento_crm_backend/tests/conftest.py",
-    "sorento_crm_backend/tests/_pg_fixture.py",
-    "sorento_crm_backend/tests/ci_excluded.txt",
-    "sorento_crm_backend/.test_durations",
-    "sorento_crm_backend/scripts/bootstrap_env.py",
-    "sorento_crm_backend/requirements.txt",
-    ".github/workflows/deploy.yml",
-]
-
-
-@pytest.mark.parametrize("path", SCM_PATHS)
-def test_scm_path_on_a_pull_request_runs_the_scm_shards(tmp_path, path):
-    out = run_step(tmp_path, "pull_request", [path])
-    assert out["scm"] == "true", out
-    assert out["backend"] == "true", out
-
-
-@pytest.mark.parametrize(
-    "path",
-    [
-        "sorento_crm_backend/app/services/procurement_service.py",
-        "sorento_crm_backend/app/api/v1/master_data/products.py",
-        "sorento_crm_backend/tests/test_rbac.py",
-        "sorento_crm_backend/app/models/product.py",
-        "sorento_crm_backend/alembic/versions/900_products_x.py",
-        "sorento_crm_backend/app/schemas/user.py",
-        "sorento_crm_frontend/app/page.tsx",
-    ],
-)
-def test_non_scm_backend_path_on_a_pull_request_skips_the_scm_shards(tmp_path, path):
-    out = run_step(tmp_path, "pull_request", [path])
-    assert out["scm"] == "false", out
-
-
-@pytest.mark.parametrize("event", ["push", "merge_group"])
-def test_scm_follows_backend_off_a_pull_request(tmp_path, event):
-    """Off a PR the SCM shards run for any code change (the queue; a push's flags are unused)."""
-    out = run_step(tmp_path, event, ["sorento_crm_frontend/app/page.tsx"])
+def test_scm_follows_backend_on_a_merge_group(tmp_path):
+    """The queue runs the SCM shards for any code change."""
+    out = run_step(tmp_path, "merge_group", ["sorento_crm_frontend/app/page.tsx"])
     assert out == FULL_PIPELINE
 
 
-@pytest.mark.parametrize("event", ["push", "merge_group"])
+@pytest.mark.parametrize("event", ["merge_group"])
 def test_rename_out_of_a_service_tree_is_not_docs(tmp_path, event):
     """A rename reports the docs path as `filename`; the old path must count too."""
     moved_out = [("documentation/plans/scm/old-notes.md", "sorento_crm_backend/docs/old-notes.md")]
@@ -418,21 +327,7 @@ def test_rename_out_of_a_service_tree_is_not_docs(tmp_path, event):
     assert run_step(tmp_path, event, fixture_moved) == FULL_PIPELINE
 
 
-def test_rename_on_a_pull_request_flags_the_tree_it_left(tmp_path):
-    """On a PR the area flags follow the trees; the old path of a rename counts."""
-    moved_out = [("documentation/plans/scm/old-notes.md", "sorento_crm_backend/docs/old-notes.md")]
-    assert run_step(tmp_path, "pull_request", moved_out) == {
-        "docs_only": "false", "backend": "true", "frontend": "false", "mcp": "false", "scm": "false", "backend_tests": "", "backend_code": ""
-    }
-    moved_in = [("sorento_crm_mcp/tests/fixtures/x.md", "documentation/plans/scm/x.md")]
-    assert run_step(tmp_path, "pull_request", moved_in) == {
-        "docs_only": "false", "backend": "false", "frontend": "false", "mcp": "true", "scm": "false", "backend_tests": "", "backend_code": ""
-    }
-    fixture_moved = [("documentation/plans/scm/notes/x.xlsx", "documentation/plans/scm/fixtures/x.xlsx")]
-    assert run_step(tmp_path, "pull_request", fixture_moved)["docs_only"] == "false"
-
-
-@pytest.mark.parametrize("event", ["pull_request", "push", "merge_group"])
+@pytest.mark.parametrize("event", ["merge_group"])
 def test_rename_within_documentation_is_docs(tmp_path, event):
     archived = [
         ("documentation/plans/_archive/scm/PLAN-x.md", "documentation/plans/scm/PLAN-x.md"),
@@ -442,15 +337,13 @@ def test_rename_within_documentation_is_docs(tmp_path, event):
 
 
 def test_fail_safes_land_on_the_full_pipeline(tmp_path):
-    assert run_step(tmp_path, "push", DOCS_ONLY, before=ZERO_SHA) == FULL_PIPELINE
-    assert run_step(tmp_path, "push", DOCS_ONLY, gh_fails=True) == FULL_PIPELINE
     assert run_step(tmp_path, "merge_group", DOCS_ONLY, gh_fails=True) == FULL_PIPELINE
-    assert run_step(tmp_path, "pull_request", DOCS_ONLY, gh_fails=True) == FULL_PIPELINE
-    assert run_step(tmp_path, "push", []) == FULL_PIPELINE
+    assert run_step(tmp_path, "merge_group", []) == FULL_PIPELINE
     assert run_step(tmp_path, "workflow_dispatch", DOCS_ONLY) == FULL_PIPELINE
+    assert run_step(tmp_path, "some_other_event", DOCS_ONLY) == FULL_PIPELINE
     many = [f"documentation/plans/x/{i}.md" for i in range(300)]
-    assert run_step(tmp_path, "push", many) == FULL_PIPELINE, "300 files is the compare cap"
-    assert run_step(tmp_path, "push", many[:299]) == DOCS_SKIP
+    assert run_step(tmp_path, "merge_group", many) == FULL_PIPELINE, "300 files is the compare cap"
+    assert run_step(tmp_path, "merge_group", many[:299]) == DOCS_SKIP
 
 
 def test_release_with_no_release_to_diff_against_tests_the_whole_head(tmp_path):
@@ -522,8 +415,7 @@ def test_release_with_skip_tests_zeroes_every_area_but_is_not_docs_only(tmp_path
     out = run_step(tmp_path, "workflow_dispatch", [], skip_tests="true")
     assert out == {"docs_only": "false", **NO_AREA}
     # The input is honoured on a dispatch only: it is empty on every other
-    # event, and even a stray "true" must not silence a PR or queue run.
-    assert run_step(tmp_path, "pull_request", ["sorento_crm_frontend/x.ts"], skip_tests="true")["frontend"] == "true"
+    # event, and even a stray "true" must not silence a queue run.
     assert run_step(tmp_path, "merge_group", ["sorento_crm_backend/app/main.py"], skip_tests="true") == FULL_PIPELINE
 
 
@@ -537,28 +429,15 @@ def test_full_suite_wins_over_the_default_skip_tests(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Changed tests on a PR: the `backend_tests` output (CI-TESTS-ONLY, #1387).
+# Changed tests on a lean release: the `backend_tests` output (CI-TESTS-ONLY, #1387).
 # ---------------------------------------------------------------------------
 
 TESTS_ONLY_1387 = ["sorento_crm_backend/tests/test_media_job_lifecycle.py"]
 
 
-def test_tests_only_pull_request_is_not_docs_and_lists_the_changed_test(tmp_path):
-    """#1387 as the workflow classified it (run 36665697605), plus the new output.
-
-    The docs filter never treated tests/ as docs: docs_only was false and
-    backend true on that run. What was missing is the list, which is what
-    lets the changed file execute on the PR.
-    """
-    assert run_step(tmp_path, "pull_request", TESTS_ONLY_1387) == {
-        "docs_only": "false", "backend": "true", "frontend": "false", "mcp": "false", "scm": "false",
-        "backend_tests": "sorento_crm_backend/tests/test_media_job_lifecycle.py", "backend_code": ""
-    }
-
-
 def test_changed_test_files_are_listed_beside_code_changes(tmp_path):
-    """The list is the changed test files whatever else the PR touches, in sorted order, space-separated."""
-    out = run_step(tmp_path, "pull_request", [
+    """The list is the changed test files whatever else the batch touches, in sorted order, space-separated."""
+    out = run_lean(tmp_path, [
         "sorento_crm_backend/tests/test_rbac.py",
         "sorento_crm_backend/app/services/media_service.py",
         "sorento_crm_backend/tests/chatbot/test_attribute_asks_round5.py",
@@ -569,7 +448,7 @@ def test_changed_test_files_are_listed_beside_code_changes(tmp_path):
         "sorento_crm_backend/tests/chatbot/test_attribute_asks_round5.py "
         "sorento_crm_backend/tests/test_rbac.py"
     )
-    assert out["backend"] == "true" and out["frontend"] == "true" and out["scm"] == "false"
+    assert out["backend"] == "true" and out["frontend"] == "true" and out["lean"] == "true"
 
 
 @pytest.mark.parametrize(
@@ -594,18 +473,18 @@ def test_changed_test_files_are_listed_beside_code_changes(tmp_path):
     ],
 )
 def test_paths_that_are_not_a_runnable_backend_test_file_are_not_listed(tmp_path, path):
-    out = run_step(tmp_path, "pull_request", [path])
+    out = run_lean(tmp_path, [path])
     assert out["backend_tests"] == "", out
 
 
-def test_scm_test_change_runs_in_the_pr_gate(tmp_path):
-    """CI-LEAN: the SCM shards no longer run on a PR, so a changed tests/scm file
+def test_scm_test_change_runs_in_the_release_tests(tmp_path):
+    """CI-LEAN: the SCM shards do not run on a lean release, so a changed tests/scm file
     is listed like any other (the run step keeps tests/scm in its own session)."""
-    out = run_step(tmp_path, "pull_request", ["sorento_crm_backend/tests/scm/test_committed_v.py"])
+    out = run_lean(tmp_path, ["sorento_crm_backend/tests/scm/test_committed_v.py"])
     assert out["backend_tests"] == "sorento_crm_backend/tests/scm/test_committed_v.py"
-    nested = run_step(tmp_path, "pull_request", ["sorento_crm_backend/tests/scm/nested/test_x.py"])
+    nested = run_lean(tmp_path, ["sorento_crm_backend/tests/scm/nested/test_x.py"])
     assert nested["backend_tests"] == "sorento_crm_backend/tests/scm/nested/test_x.py"
-    both = run_step(tmp_path, "pull_request", [
+    both = run_lean(tmp_path, [
         "sorento_crm_backend/tests/scm/test_committed_v.py", "sorento_crm_backend/tests/test_rbac.py",
     ])
     assert both["backend_tests"] == "sorento_crm_backend/tests/scm/test_committed_v.py sorento_crm_backend/tests/test_rbac.py"
@@ -619,21 +498,13 @@ def test_the_import_selection_on_a_pr_keeps_tests_scm():
 
 
 # ---------------------------------------------------------------------------
-# CI-LEAN: the PR gate, one job doing all the PR's work.
+# CI-LEAN: `Release tests`, one job doing a lean release's testing.
 # ---------------------------------------------------------------------------
 
 
-def test_the_pr_gate_reports_as_pr_gate_on_a_pull_request():
-    """The one check the ruleset requires (owner Q3, 10 Oct 2026)."""
-    name = _expression(re.search(r"^    name: (.*)$", _job_block("lean-gate"), re.M).group(1))
-    assert _gh_eval(name, {"github": {"event_name": "pull_request", "event": {"label": {"name": "ci"}}}}) == "PR gate"
-
-
-def test_the_pr_gate_runs_whatever_the_fast_gates_did_and_fails_with_them(tmp_path):
-    """`always()` so a red root job never turns the required check into a
-    "skipped" (which a ruleset accepts); its first step fails on such a need.
-    CI-COST round 2: the PII guard, gitleaks and the alembic head check run as
-    steps of the PR gate on a PR, so `check-migration-heads` skips there."""
+def test_release_tests_run_whatever_the_fast_gates_did_and_fail_with_them(tmp_path):
+    """`always()` so a red root job never turns the check into a "skipped";
+    its first step fails on such a need."""
     jobs = _job_ifs()
     assert set(jobs["lean-gate"]["needs"]) == {"changes", "check-migration-heads"}
     for forced in ({"changes": "failure"}, {"check-migration-heads": "failure"}):
@@ -641,43 +512,19 @@ def test_the_pr_gate_runs_whatever_the_fast_gates_did_and_fails_with_them(tmp_pa
         assert results["lean-gate"] == "success", "the job runs (its step then fails)"
     script = _step_script("Fail when a fast gate did not pass")
     green = {"changes": "success", "check-migration-heads": "success"}
-    def run(needs, event):
+    def run(needs):
         return subprocess.run(
             ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", script],
-            env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), **PY_ENV, "EVENT": event,
+            env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), **PY_ENV,
                  "NEEDS": json.dumps({k: {"result": v, "outputs": {}} for k, v in needs.items()})},
             capture_output=True, text=True,
         )
-    assert run(green, "workflow_dispatch").returncode == 0
-    assert run({**green, "check-migration-heads": "skipped"}, "pull_request").returncode == 0, "folded on a PR"
-    skipped = run({**green, "check-migration-heads": "skipped"}, "workflow_dispatch")
+    assert run(green).returncode == 0
+    skipped = run({**green, "check-migration-heads": "skipped"})
     assert skipped.returncode != 0 and "check-migration-heads skipped" in skipped.stdout + skipped.stderr
-    for event in ("pull_request", "workflow_dispatch"):
-        for job in green:
-            bad = run({**green, job: "failure"}, event)
-            assert bad.returncode != 0 and f"{job} failure" in bad.stdout + bad.stderr, (event, job)
-
-
-def test_the_pr_gate_runs_the_fast_gates_as_its_first_steps():
-    """CI-COST round 2: four one-job fast gates billed a minute each for 16-54 s of
-    work (run 38122622280). On a PR they are steps of the PR gate, before the
-    dependency install, so a red gate still fails in about a minute."""
-    names = list(_lean_gate_steps())
-    steps = _lean_gate_steps()
-    for name, needle in (("Single alembic head", "python3 scripts/ci_alembic_heads.py"),
-                         ("No personal data in tracked files", "python3 scripts/pii_guard.py"),
-                         ("Secret scan (gitleaks)", "bash scripts/ci_gitleaks.sh"),
-                         # AI-GATE: diffs against the main the merge step merged in
-                         ("Assistant coverage of new list routes",
-                          'python3 scripts/ci_ai_coverage.py --base "${{ steps.merge.outputs.main }}"')):
-        assert name in steps, names
-        assert needle in steps[name], name
-        assert "github.event_name == 'pull_request'" in steps[name], name
-        assert names.index(name) < names.index("Install dependencies"), name
-    rng = re.search(r"^\s*RANGE: (.*)$", steps["Secret scan (gitleaks)"], re.M).group(1).strip()
-    assert rng == "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}", rng
-    checkout = _lean_gate_steps()["Checkout"]
-    assert "github.event_name == 'pull_request'" in checkout and "fetch-depth" in checkout, "gitleaks reads base..head"
+    for job in green:
+        bad = run({**green, job: "failure"})
+        assert bad.returncode != 0 and f"{job} failure" in bad.stdout + bad.stderr, job
 
 
 def test_the_gitleaks_script_pins_and_verifies_the_cli():
@@ -703,7 +550,7 @@ def test_the_alembic_head_script_passes_on_this_checkout_and_fails_on_two_heads(
     assert "python3 scripts/ci_alembic_heads.py" in _job_block("check-migration-heads")
 
 
-def test_the_pr_gate_collects_every_test_file():
+def test_the_release_tests_collect_every_test_file():
     """CI-CLOUD-GATE: no selected test runs on a PR any more, so the whole-suite
     collect-only (~1.8 min, 38074897990) is the PR's import check for every test file,
     as it is on a release."""
@@ -711,7 +558,7 @@ def test_the_pr_gate_collects_every_test_file():
     assert "pull_request" not in step and "--collect-only" in step
 
 
-def test_the_pr_gate_carries_the_frontend_and_mcp_checks():
+def test_the_release_tests_carry_the_frontend_and_mcp_checks():
     steps = _lean_gate_steps()
     joined = "\n".join(steps.values())
     # frontend: the type-check and the vitest files related to what changed
@@ -725,25 +572,24 @@ def test_the_pr_gate_carries_the_frontend_and_mcp_checks():
     assert "sorento_crm_mcp/tests" in joined and "needs.changes.outputs.mcp == 'true'" in joined
 
 
-def test_area_flags_do_not_race_grep_q_on_a_long_file_list(tmp_path):
+def test_area_flags_do_not_race_grep_q_on_a_long_file_list():
     """CI-SCM-FILTER-RACE: a flag that matches the first changed path stays true.
 
     bash's printf writes one line per write() into the pipe, and `grep -q`
     exits on its first match. Under `-o pipefail` a printf still writing
     when grep exits dies of SIGPIPE and the pipeline counts as false, so
-    `scm` came back false on run 37140058013 with just two paths. A list long
-    many times the pipe buffer makes that race certain.
+    `scm` came back false on run 37140058013 with just two paths. The area
+    matches read the list from a here-string, in the release's step and in
+    the PR gate (scripts/pr-gate.sh) alike.
     """
-    filler = [f"sorento_crm_frontend/app/page_{i:05d}.tsx" for i in range(20000)]
-    out = run_step(tmp_path, "pull_request", ["sorento_crm_backend/tests/scm/test_committed_v.py", *filler])
-    assert {k: out[k] for k in ("backend", "frontend", "mcp", "scm")} == {
-        "backend": "true", "frontend": "true", "mcp": "false", "scm": "true",
-    }, out
+    assert 'grep -Eq "$2" <<< "$files"' in _step_script("Detect changed areas")
+    pr_gate = (REPO / "scripts" / "pr-gate.sh").read_text(encoding="utf-8")
+    assert 'has() { grep -Eq "$1" <<< "$files"; }' in pr_gate
 
 
 def test_rename_of_a_test_file_lists_both_ends(tmp_path):
-    """The old path is in the PR's list too; the job drops it when it is not in the checkout."""
-    out = run_step(tmp_path, "pull_request", [
+    """The old path is in the batch's list too; the job drops it when it is not in the checkout."""
+    out = run_lean(tmp_path, [
         ("sorento_crm_backend/tests/test_media_jobs.py", "sorento_crm_backend/tests/test_media_job_lifecycle.py"),
     ])
     assert out["backend_tests"] == (
@@ -751,8 +597,8 @@ def test_rename_of_a_test_file_lists_both_ends(tmp_path):
     )
 
 
-@pytest.mark.parametrize("event", ["push", "merge_group", "workflow_dispatch"])
-def test_changed_tests_are_never_listed_off_a_pull_request(tmp_path, event):
+@pytest.mark.parametrize("event", ["merge_group", "workflow_dispatch"])
+def test_changed_tests_are_never_listed_off_a_lean_release(tmp_path, event):
     """The full shards run there; the list must not make the changed-files job run twice."""
     out = run_step(tmp_path, event, TESTS_ONLY_1387)
     assert out["backend_tests"] == ""
@@ -760,8 +606,9 @@ def test_changed_tests_are_never_listed_off_a_pull_request(tmp_path, event):
 
 
 def test_changed_tests_list_is_empty_on_every_early_exit(tmp_path):
-    assert run_step(tmp_path, "pull_request", DOCS_ONLY)["backend_tests"] == ""
-    assert run_step(tmp_path, "pull_request", TESTS_ONLY_1387, gh_fails=True) == FULL_PIPELINE
+    assert run_step(tmp_path, "merge_group", DOCS_ONLY)["backend_tests"] == ""
+    assert run_step(tmp_path, "workflow_dispatch", TESTS_ONLY_1387, last_release=LAST_RELEASE,
+                    gh_fails=True) == FULL_PIPELINE
     assert run_step(tmp_path, "workflow_dispatch", [], skip_tests="true")["backend_tests"] == ""
 
 
@@ -863,12 +710,11 @@ def _lean_gate_steps() -> dict[str, str]:
 
 
 def test_changed_tests_job_steps_after_select_gate_on_its_output():
-    """The database steps, pytest included, skip on an empty list, and never run on a
-    pull request (CI-CLOUD-GATE: the lane's sandbox runs them)."""
+    """The database steps, pytest included, skip on an empty list."""
     steps = _lean_gate_steps()
     for name in ("Relax Postgres durability for the test run", "Bootstrap the database",
                  "Run the changed test files (executing gate)"):
-        assert "        if: github.event_name != 'pull_request' && steps.select.outputs.files != ''" in steps[name], name
+        assert "        if: steps.select.outputs.files != ''" in steps[name], name
     run = steps["Run the changed test files (executing gate)"]
     assert "--dist loadfile" in run and "$FILES" in run, "runs the selected files via env, under xdist"
 
@@ -977,7 +823,7 @@ def _job_ifs() -> dict[str, dict]:
     return jobs
 
 
-def _simulate(event: str, *, label: str | None = None, outputs: dict | None = None,
+def _simulate(event: str, *, outputs: dict | None = None,
               forced: dict | None = None, ref: str = "refs/heads/main") -> dict[str, str]:
     """Result of every job (success/skipped/failure) for one run, in file order.
 
@@ -986,8 +832,6 @@ def _simulate(event: str, *, label: str | None = None, outputs: dict | None = No
     evaluated against the needs' results instead.
     """
     github = {"event_name": event, "event": {}, "run_id": 1, "workflow": "Build and Deploy Sorento", "ref": ref}
-    if event == "pull_request":
-        github["event"] = {"pull_request": {"number": 1370}, "label": {"name": label or "ci"}}
     results: dict[str, str] = {}
     forced = forced or {}
     for job_id, job in _job_ifs().items():
@@ -1007,99 +851,11 @@ def _ran(results: dict[str, str]) -> set[str]:
     return {job for job, r in results.items() if r != "skipped"}
 
 
-# CI-LEAN + CI-COST round 2: a `ci` PR runs `changes` and ONE job that does
-# everything else, fast gates first (`lean-gate`, check name `PR gate`): no image builds, no SCM
-# or main shards, no vitest shards, no separate label or gate job.
-GATES_ON_PR = {"changes", "lean-gate"}
 
 
-def test_pull_request_fast_gate_backend_with_scm_paths():
-    ran = _ran(_simulate("pull_request", outputs={"backend": "true", "scm": "true", "frontend": "false", "mcp": "false", "docs_only": "false"}))
-    assert ran == GATES_ON_PR
-    assert "test-backend" not in ran, "the six backend shards never run on a pull_request"
-
-
-def test_ci_label_never_runs_the_six_shards_whatever_changes_reports():
-    """CI-MINUTES-CUT: no output of `changes` can put the shards on a `ci` run."""
-    for outputs in (FULL_PIPELINE, {**FULL_PIPELINE, "backend_full": "true"}, {**TESTS_ONLY_OUTPUTS, "backend_full": "true"}):
-        results = _simulate("pull_request", label="ci", outputs=outputs)
-        assert results["test-backend"] == "skipped", outputs
-
-
-def test_ci_full_label_is_refused_on_a_pull_request():
-    """Owner, 9 Oct 2026: no ci-full per PR. The label runs ONE job, which
-    removes it and fails the run with the reason; nothing else runs, so no
-    suite, no build and no deploy, whatever `changes` would have said."""
-    for outputs in (FULL_PIPELINE, {**NO_AREA, "docs_only": "true"}):
-        results = _simulate("pull_request", label="ci-full", outputs=outputs)
-        assert _ran(results) == {"refuse-ci-full"}, results
-    for label in ("ci", "needs-hand-test", "lane-running"):
-        assert _simulate("pull_request", label=label)["refuse-ci-full"] == "skipped", label
-    for event in ("push", "merge_group", "workflow_dispatch"):
-        assert _simulate(event, outputs=FULL_PIPELINE)["refuse-ci-full"] == "skipped", event
-
-
-def test_refuse_ci_full_job_removes_the_label_and_fails_with_the_reason():
-    block = _job_block("refuse-ci-full")
-    assert "pull-requests: write" in block
-    assert "--remove-label ci-full" in block
-    assert "release-only" in block and "exit 1" in block
-    assert re.search(r"^    timeout-minutes: \d+$", block, re.M)
-
-
-def test_pull_request_fast_gate_backend_without_scm_paths():
-    ran = _ran(_simulate("pull_request", outputs={"backend": "true", "scm": "false", "frontend": "false", "mcp": "false", "docs_only": "false"}))
-    assert ran == GATES_ON_PR
-
-
-def test_pull_request_fast_gate_frontend_and_mcp():
-    ran = _ran(_simulate("pull_request", outputs={"backend": "false", "scm": "false", "frontend": "true", "mcp": "true", "docs_only": "false"}))
-    assert ran == GATES_ON_PR
-
-
-def test_pull_request_docs_only_runs_the_root_jobs_only():
-    ran = _ran(_simulate("pull_request", outputs={**NO_AREA, "docs_only": "true"}))
-    assert ran == GATES_ON_PR
-
-
-TESTS_ONLY_OUTPUTS = {
-    "backend": "true", "scm": "false", "frontend": "false", "mcp": "false", "docs_only": "false",
-    "backend_tests": "sorento_crm_backend/tests/test_media_job_lifecycle.py", "backend_code": ""
-}
-
-
-def test_pull_request_that_changes_a_test_file_runs_it(tmp_path):
-    """#1387: the light checks AND the changed test, never the six shards.
-
-    `outputs` here is what the real step produced for that PR's file list,
-    so the job set follows from the shell that ships, not from a hand-typed
-    flag set.
-    """
-    outputs = run_step(tmp_path, "pull_request", TESTS_ONLY_1387)
-    assert outputs == TESTS_ONLY_OUTPUTS
-    ran = _ran(_simulate("pull_request", outputs=outputs))
-    assert ran == GATES_ON_PR
-    assert "test-backend" not in ran
-
-
-def test_pull_request_with_code_and_a_test_file_runs_both_gates():
-    outputs = {**TESTS_ONLY_OUTPUTS, "scm": "true", "frontend": "true"}
-    ran = _ran(_simulate("pull_request", outputs=outputs))
-    assert ran == GATES_ON_PR
-
-
-def test_changed_tests_job_never_runs_off_a_pull_request_or_with_another_label():
-    for event in ("merge_group", "push"):
-        results = _simulate(event, outputs={**FULL_PIPELINE, "backend_tests": "sorento_crm_backend/tests/test_x.py", "backend_code": ""})
-        assert results["lean-gate"] == "skipped", (event, results)
-    for label in ("needs-hand-test", "lane-running", "ci-full"):
-        results = _simulate("pull_request", label=label, outputs=TESTS_ONLY_OUTPUTS)
-        assert results["lean-gate"] == "skipped", label
-
-
-def test_pull_request_with_another_label_runs_nothing():
-    for label in ["needs-hand-test", "lane-running", "needs-decision"]:
-        assert _ran(_simulate("pull_request", label=label)) == set(), label
+def test_changed_tests_job_never_runs_on_a_merge_group():
+    results = _simulate("merge_group", outputs={**FULL_PIPELINE, "backend_tests": "sorento_crm_backend/tests/test_x.py", "backend_code": ""})
+    assert results["lean-gate"] == "skipped", results
 
 
 def test_merge_group_runs_the_full_suite_and_never_deploys():
@@ -1110,8 +866,8 @@ def test_merge_group_runs_the_full_suite_and_never_deploys():
     }
 
 
-# CI-LEAN: a release runs neither the PII guard (the push to main already ran
-# it on the same tree) nor the CI gate (build-and-deploy judges every need
+# CI-LEAN: a release runs neither the PII guard (the PR gate already ran it on
+# the same commits) nor the CI gate (build-and-deploy judges every need
 # itself), and the owner mail is a step of build-and-deploy, not a job.
 RELEASE_ONLY = {"check-migration-heads", "changes", "build-images", "build-and-deploy"}
 FULL_SUITE = {
@@ -1119,18 +875,6 @@ FULL_SUITE = {
     "test-backend-scm", "test-backend", "validate-frontend", "typecheck-frontend", "ci-gate",
 }
 RELEASE_TESTS = FULL_SUITE - {"pii-guard", "ci-gate"}
-
-
-def test_push_to_main_runs_the_alembic_gate_and_nothing_else():
-    """Owner decision 29 Sep 2026: a merge does not test or deploy. CI-COST round 2:
-    the PII guard and gitleaks ran on the PR's commits in its PR gate, so a push
-    to main is the alembic head check alone (3 billed minutes -> 1)."""
-    for outputs in (FULL_PIPELINE, {**NO_AREA, "docs_only": "true"}):
-        results = _simulate("push", outputs=outputs)
-        assert _ran(results) == {"check-migration-heads"}, results
-        assert results["changes"] == "skipped"
-        assert results["build-images"] == "skipped"
-        assert results["build-and-deploy"] == "skipped"
 
 
 def test_release_runs_the_full_suite_then_builds_and_deploys():
@@ -1176,9 +920,7 @@ def test_release_runs_neither_the_pii_guard_nor_the_ci_gate():
         results = _simulate("workflow_dispatch", outputs=outputs)
         assert results["pii-guard"] == "skipped" and results["ci-gate"] == "skipped", results
     assert _simulate("merge_group", outputs=FULL_PIPELINE)["pii-guard"] == "success"
-    for event, label in (("push", None), ("pull_request", "ci")):
-        assert _simulate(event, label=label, outputs=FULL_PIPELINE)["pii-guard"] == "skipped", event
-    assert "gitleaks" not in _job_ifs(), "a step of the PR gate now, no job"
+    assert "gitleaks" not in _job_ifs(), "a check of scripts/pr-gate.sh, no job"
 
 
 # ---------------------------------------------------------------------------
@@ -1299,7 +1041,7 @@ def test_merge_group_never_deploys_whatever_the_flags():
 
 
 # ---------------------------------------------------------------------------
-# CI-MINUTES-CUT: the one-shot label release, the timeouts and the CI gate.
+# CI-MINUTES-CUT: the timeouts and the CI gate.
 # ---------------------------------------------------------------------------
 
 
@@ -1308,17 +1050,7 @@ def _job_block(job_id: str) -> str:
     return re.search(rf"\n  {job_id}:\n(.*?)(?=\n  [a-z][\w-]*:\n|\Z)", text, re.S).group(1)
 
 
-def test_the_pr_gate_removes_the_ci_label_that_fired_the_run():
-    """`ci` is one-shot: the PR gate's first steps remove it (it was its own job,
-    a billed minute per PR; `ci-full` has its own refusing job)."""
-    assert "release-ci-label" not in _job_ifs()
-    step = _lean_gate_steps()["Remove the ci label so a future add re-triggers CI"]
-    assert "--remove-label ci" in step and "github.event_name == 'pull_request'" in step
-    assert "pull-requests: write" in _job_block("lean-gate")
-
-
 DEPLOY_JOBS = {"build-images", "build-and-deploy"}
-LABEL_JOBS = {"refuse-ci-full"}
 
 
 def test_every_test_and_gate_job_carries_a_timeout():
@@ -1347,43 +1079,36 @@ def test_every_test_and_gate_job_carries_a_timeout():
         if job_id in DEPLOY_JOBS:
             continue
         assert minutes == (90 if job_id in shards else 20), (job_id, minutes)
-    assert "cancel-in-progress: ${{ github.event_name == 'pull_request'" in text
 
 
 def test_ci_gate_needs_every_test_and_validate_job():
     jobs = _job_ifs()
-    expected = set(jobs) - DEPLOY_JOBS - LABEL_JOBS - {"ci-gate"}
+    expected = set(jobs) - DEPLOY_JOBS - {"ci-gate"}
     assert set(jobs["ci-gate"]["needs"]) == expected, jobs["ci-gate"]["needs"]
 
 
-def test_ci_gate_reports_a_different_name_for_the_full_suite():
-    """A ruleset reads the latest check of a name on the head: a `ci` run must
-    not stand in for a full-suite run, so the full run reports as `CI gate (full)`."""
-    name = _expression(re.search(r"^    name: (.*)$", _job_block("ci-gate"), re.M).group(1))
-    github = lambda event, label=None: {"github": {"event_name": event, "event": {"label": {"name": label}} if label else {}}}
-    assert _gh_eval(name, github("pull_request", "ci")) == "CI gate"
-    for event in ("merge_group", "workflow_dispatch"):
-        assert _gh_eval(name, github(event)) == "CI gate (full)", event
+def test_ci_gate_reports_as_the_full_suite():
+    """The queue's full run reports as `CI gate (full)`: never the `PR gate` name,
+    which crew posts from the lane sandbox (CI-ZERO-MINUTES)."""
+    name = re.search(r"^    name: (.*)$", _job_block("ci-gate"), re.M).group(1).strip()
+    assert name == "CI gate (full)", name
 
 
-def test_changes_job_token_can_read_the_pr_files_and_the_actions_api():
-    """Private repo: a restricted default token would fail both `gh api` calls
-    and the fail-safe would turn every `ci` run into every area changed."""
+def test_changes_job_token_can_read_the_actions_api():
+    """Private repo: a restricted default token would fail the `gh api` calls and
+    the fail-safe would turn every release into every area changed. No PR file
+    list is read any more, so no pull-requests scope."""
     block = _job_block("changes")
     perms = re.search(r"^    permissions:\n((?:      .*\n)+)", block, re.M).group(1)
-    assert {"contents: read", "pull-requests: read", "actions: read"} <= {line.strip() for line in perms.splitlines()}
+    lines = {line.strip() for line in perms.splitlines()}
+    assert {"contents: read", "actions: read"} <= lines
+    assert not any(line.startswith("pull-requests:") for line in lines), lines
 
 
-def test_ci_gate_runs_on_every_gated_event_and_on_nothing_else():
-    """On a PR the `PR gate` job is the one check (CI-LEAN, Q3); `CI gate (full)`
-    stays for the merge queue."""
-    assert _simulate("pull_request", label="ci", outputs=TESTS_ONLY_OUTPUTS)["ci-gate"] == "skipped"
-    assert _simulate("pull_request", label="ci-full", outputs=FULL_PIPELINE)["ci-gate"] == "skipped"
+def test_ci_gate_runs_on_the_merge_queue_only():
+    """`CI gate (full)` stays for the merge queue; a release's build-and-deploy judges its needs."""
     assert _simulate("merge_group", outputs=FULL_PIPELINE)["ci-gate"] == "success"
     assert _simulate("workflow_dispatch", outputs=FULL_PIPELINE)["ci-gate"] == "skipped", "build-and-deploy judges the needs"
-    assert _simulate("push", outputs=FULL_PIPELINE)["ci-gate"] == "skipped", "a push to main is the alembic gate alone"
-    for label in ("needs-hand-test", "lane-running", "needs-decision"):
-        assert _simulate("pull_request", label=label)["ci-gate"] == "skipped", label
 
 
 def _run_gate(tmp_path: Path, needs: dict[str, str]) -> tuple[int, str]:
@@ -1443,13 +1168,8 @@ def _concurrency() -> tuple[str, str]:
     return group.group(1).strip(), cancel.group(1).strip()
 
 
-def _event(event: str, *, label: str | None = None, pr: int | None = None, run_id: int) -> dict:
-    ctx = {"workflow": "Build and Deploy Sorento", "event_name": event, "run_id": run_id, "event": {}}
-    if pr is not None:
-        ctx["event"]["pull_request"] = {"number": pr}
-    if label is not None:
-        ctx["event"]["label"] = {"name": label}
-    return {"github": ctx}
+def _event(event: str, *, run_id: int) -> dict:
+    return {"github": {"workflow": "Build and Deploy Sorento", "event_name": event, "run_id": run_id, "event": {}}}
 
 
 def _resolve(ctx: dict) -> tuple[str, bool]:
@@ -1457,26 +1177,8 @@ def _resolve(ctx: dict) -> tuple[str, bool]:
     return _gh_render(group, ctx), bool(_gh_eval(_expression(cancel), ctx))
 
 
-def test_concurrency_ci_label_runs_share_the_pr_group_and_cancel():
-    first = _resolve(_event("pull_request", label="ci", pr=1370, run_id=1))
-    second = _resolve(_event("pull_request", label="ci", pr=1370, run_id=2))
-    assert first == ("ci-Build and Deploy Sorento-1370", True)
-    assert second[0] == first[0], "a re-added ci label must supersede the older ci run"
-    other_pr = _resolve(_event("pull_request", label="ci", pr=1371, run_id=3))
-    assert other_pr[0] != first[0], "one PR's ci run must not cancel another PR's"
-
-
-@pytest.mark.parametrize("label", ["ci-full", "needs-hand-test", "lane-running", "needs-decision", "ready-for-agent"])
-def test_concurrency_other_label_events_join_no_group_and_cancel_nothing(label):
-    ci_group, _ = _resolve(_event("pull_request", label="ci", pr=1370, run_id=1))
-    group, cancel = _resolve(_event("pull_request", label=label, pr=1370, run_id=2))
-    assert group != ci_group, f"a {label} event must not join the PR's ci group"
-    assert group.endswith("-2"), "falls through to the run id, a group nothing else can join"
-    assert cancel is False
-
-
-@pytest.mark.parametrize("event", ["push", "merge_group", "workflow_dispatch"])
-def test_concurrency_non_pr_events_are_unique_and_never_cancel(event):
+@pytest.mark.parametrize("event", ["merge_group", "workflow_dispatch"])
+def test_concurrency_every_run_is_unique_and_never_cancels(event):
     group, cancel = _resolve(_event(event, run_id=77))
     assert group == "ci-Build and Deploy Sorento-77"
     assert cancel is False
@@ -1589,7 +1291,7 @@ def test_every_documentation_path_a_test_reads_keeps_the_full_pipeline(tmp_path)
     misclassified = {}
     for path, where in sorted(inputs.items()):
         probe = _probe(path)
-        out = run_step(tmp_path, "push", [probe])
+        out = run_step(tmp_path, "merge_group", [probe])
         if out["docs_only"] != "false":
             misclassified[probe] = where
     assert not misclassified, (
@@ -1600,7 +1302,7 @@ def test_every_documentation_path_a_test_reads_keeps_the_full_pipeline(tmp_path)
 
 
 # ---------------------------------------------------------------------------
-# Import-based selection on a PR (CI-SPEED, point 5 of the `changes` comment).
+# Import-based selection on a lean release (CI-SPEED, point 5 of the `changes` comment).
 # ---------------------------------------------------------------------------
 
 PR_1411_FILES = [
@@ -1619,7 +1321,7 @@ PR_1411_FILES = [
 
 
 def test_backend_code_lists_changed_modules_not_test_files(tmp_path):
-    out = run_step(tmp_path, "pull_request", PR_1411_FILES + [
+    out = run_lean(tmp_path, PR_1411_FILES + [
         "sorento_crm_backend/tests/_void_harness.py",
         "sorento_crm_backend/tests/scm/test_x.py",
         "sorento_crm_backend/app/templates/mail.html",
@@ -1635,13 +1337,13 @@ def test_backend_code_lists_changed_modules_not_test_files(tmp_path):
         "sorento_crm_backend/scripts/oneoff/dedupe_spo_standalone.py",
         "sorento_crm_backend/tests/_void_harness.py",
     ]
-    for event in ("merge_group", "workflow_dispatch", "push"):
+    for event in ("merge_group", "workflow_dispatch"):
         assert run_step(tmp_path, event, PR_1411_FILES)["backend_code"] == ""
 
 
 def test_select_step_on_pr_1411_runs_the_test_that_broke_the_release(tmp_path):
     """The step's shell as it ships, over this checkout, with #1411's outputs."""
-    filtered = run_step(tmp_path, "pull_request", PR_1411_FILES)
+    filtered = run_lean(tmp_path, PR_1411_FILES)
     output = tmp_path / "select.txt"
     output.write_text("")
     result = subprocess.run(
@@ -1681,12 +1383,6 @@ def test_changes_job_outputs_prefer_the_selection_and_fall_back_above_the_budget
     assert _gh_eval(tests_expr, ran) == "sorento_crm_backend/tests/test_a.py sorento_crm_backend/tests/test_b.py"
     assert _gh_eval(tests_expr, skipped) == "sorento_crm_backend/tests/test_a.py"
     assert _gh_eval(tests_expr, over) == "sorento_crm_backend/tests/test_a.py"
-
-
-def test_selection_runs_only_the_changed_files_job_on_a_ci_pr():
-    """Under or above the budget alike: the changed-files job, never the shards."""
-    ran = _ran(_simulate("pull_request", outputs=TESTS_ONLY_OUTPUTS))
-    assert ran == GATES_ON_PR
 
 
 STUB_PYTHON = """#!/usr/bin/env bash
@@ -1809,8 +1505,8 @@ def test_a_red_release_tests_job_blocks_the_deploy():
 
 
 def test_the_release_tests_job_reports_as_release_tests():
-    name = _expression(re.search(r"^    name: (.*)$", _job_block("lean-gate"), re.M).group(1))
-    assert _gh_eval(name, {"github": {"event_name": "workflow_dispatch", "event": {}}}) == "Release tests"
+    name = re.search(r"^    name: (.*)$", _job_block("lean-gate"), re.M).group(1).strip()
+    assert name == "Release tests", name
 
 
 def _changes_outputs() -> dict[str, str]:
@@ -1911,122 +1607,35 @@ def test_full_suite_is_a_release_input():
 
 
 # ---------------------------------------------------------------------------
-# CI-COST round 2 (crew decision (c)): a PR gate that passed marks its merge
-# tree; a re-label on the same tree (1.15 runs per head, 4-11 Oct) is a no-op.
+# The validated-tree marker and the release checkout.
 # ---------------------------------------------------------------------------
 
-def test_a_pr_whose_merge_tree_already_passed_tests_nothing(tmp_path):
-    out = run_step(tmp_path, "pull_request", ["sorento_crm_backend/app/services/inventory_service.py",
-                                              "sorento_crm_frontend/app/page.tsx"], pr_validated=True)
-    assert out == {**NO_AREA, "docs_only": "false", "validated": "true"}
 
-
-def test_a_pr_without_a_marker_is_tested_as_before(tmp_path):
-    out = run_step(tmp_path, "pull_request", ["sorento_crm_backend/app/services/inventory_service.py"])
-    assert out["backend"] == "true" and "validated" not in out
-    failed = run_step(tmp_path, "pull_request", ["sorento_crm_backend/app/services/inventory_service.py"], gh_fails=True)
-    assert failed["backend"] == "true" and "validated" not in failed, "a failed lookup tests"
-
-
-def test_a_pr_marker_never_skips_a_release(tmp_path):
-    """The release keeps its own tests: a PR marker has its own name prefix."""
-    out = run_step(tmp_path, "workflow_dispatch", RELEASE_BATCH, last_release=LAST_RELEASE, pr_validated=True)
-    assert out["lean"] == "true" and out["backend"] == "true" and "validated" not in out
-    upload = _lean_gate_steps()["Upload the validated-tree marker"]
-    assert "'pr-validated-tree-'" in upload and "'validated-tree-'" in upload
-    detect = _step_script("Detect changed areas")
-    assert "name=validated-tree-$tree" in detect and "name=pr-validated-tree-$tree" in detect
-
-
-def test_only_a_fully_green_pr_gate_marks_its_tree():
+def test_only_fully_green_release_tests_mark_their_tree():
     names = list(_lean_gate_steps())
     steps = _lean_gate_steps()
     for marker in ("Mark this tree as validated", "Upload the validated-tree marker"):
         cond = re.search(r"^\s*if: (.*)$", steps[marker], re.M).group(1)
-        assert cond.startswith("success() && "), cond
-        assert "github.event_name == 'pull_request'" in cond and "needs.changes.outputs.validated != 'true'" in cond
-        assert "github.event_name == 'workflow_dispatch'" in cond
+        assert cond == "success() && github.event_name == 'workflow_dispatch'", cond
     assert names[-2:] == ["Mark this tree as validated", "Upload the validated-tree marker"], "after every check"
 
 
-def test_a_validated_pr_skips_the_fast_gates_too():
-    block = re.search(r"\n  changes:\n(.*?)\n    steps:", _workflow_text(), re.S).group(1)
-    assert re.search(r"^      validated: \$\{\{ steps\.filter\.outputs\.validated \}\}$", block, re.M)
-    steps = _lean_gate_steps()
-    for name in ("Single alembic head", "No personal data in tracked files"):
-        assert "needs.changes.outputs.validated != 'true'" in steps[name], name
-
-
-def test_a_validated_pr_still_scans_its_commits_for_secrets():
-    """The marker is keyed on the merge TREE, gitleaks scans commit HISTORY: a commit
-    adding a secret and a second reverting it leave a tree that already passed, and a
-    merge-commit merge lands both (reviewer, CI-COST round 2). The scan always runs."""
-    steps = _lean_gate_steps()
-    cond = re.search(r"^\s*if: (.*)$", steps["Secret scan (gitleaks)"], re.M).group(1).strip()
-    assert cond == "github.event_name == 'pull_request'", cond
-    checkout = steps["Checkout"]
-    depth = re.search(r"fetch-depth: (.*)$", checkout, re.M).group(1)
-    assert "validated" not in depth, "full history on every PR, the scan needs base..head"
-
-
-def test_the_pr_gate_checkout_really_fetches_full_history_on_a_pr():
+def test_the_release_tests_checkout_really_fetches_full_history_for_vitest():
     """Run 38124709009: `cond && 0 || 1` is always 1 (0 is falsy in an Actions
     expression), so the checkout fetched depth 1 and gitleaks died on
     "fatal: Invalid revision range"; `vitest --changed` had the same blind spot."""
     checkout = _lean_gate_steps()["Checkout"]
     depth = _expression(re.search(r"fetch-depth: (.*)$", checkout, re.M).group(1))
     ctx = lambda event, fe: {"github": {"event_name": event}, "needs": {"changes": {"outputs": {"frontend": fe}}}}
-    assert str(_gh_eval(depth, ctx("pull_request", "false"))) == "0"
     assert str(_gh_eval(depth, ctx("workflow_dispatch", "true"))) == "0"
     assert str(_gh_eval(depth, ctx("workflow_dispatch", "false"))) == "1"
     assert not re.search(r"&& 0 \|\|", _workflow_text()), "a bare 0 is falsy: quote it"
 
 
-def test_the_pr_marker_name_is_never_the_release_marker():
-    upload = _lean_gate_steps()["Upload the validated-tree marker"]
-    name = re.search(r"^\s*name: (.*)$", upload, re.M).group(1).strip()
-    tree = "${{ steps.tree.outputs.tree }}"
-    assert name.endswith(tree), name
-    prefix = _expression(name[: -len(tree)])
-    assert _gh_eval(prefix, {"github": {"event_name": "pull_request"}}) == "pr-validated-tree-"
-    assert _gh_eval(prefix, {"github": {"event_name": "workflow_dispatch"}}) == "validated-tree-"
-
-
 # ---------------------------------------------------------------------------
-# CI-STALE-MERGE-REF: GitHub builds the PR's merge commit (`github.sha`) when
-# the head is pushed and does not rebuild it when main moves. Run 40354117904
-# (#1876) checked out `Merge 149c4b3d into 1aaeed54` while main was seven
-# merges on, and took the marker for that old tree: nothing was tested. The
-# PR gate now tests the head merged into main's head at job time, and the
-# marker counts only for a merge commit that is exactly that.
+# What a lean release diffs and selects against.
 # ---------------------------------------------------------------------------
 
-PR_BACKEND = ["sorento_crm_backend/app/services/inventory_service.py"]
-
-
-def test_a_merge_commit_built_on_an_older_main_never_takes_the_marker(tmp_path):
-    out = run_step(tmp_path, "pull_request", PR_BACKEND, pr_validated=True, main_now=NEWER_MAIN)
-    assert out["backend"] == "true" and "validated" not in out
-
-
-def test_a_merge_commit_of_an_older_head_never_takes_the_marker(tmp_path):
-    out = run_step(tmp_path, "pull_request", PR_BACKEND, pr_validated=True, merge_head="6" * 40)
-    assert out["backend"] == "true" and "validated" not in out
-
-
-def test_a_failed_main_lookup_tests(tmp_path):
-    out = run_step(tmp_path, "pull_request", PR_BACKEND, pr_validated=True, main_now=None)
-    assert out["backend"] == "true" and "validated" not in out
-
-
-def test_a_fresh_merge_commit_still_takes_the_marker(tmp_path):
-    """The CI-COST round 2 saving stays: main has not moved, the head is the same."""
-    out = run_step(tmp_path, "pull_request", PR_BACKEND, pr_validated=True, main_now=MAIN, merge_head=PR_HEAD)
-    assert out == {**NO_AREA, "docs_only": "false", "validated": "true"}
-    detect = _step_script("Detect changed areas")
-    assert "git/ref/heads/main" in detect and "$HEAD_SHA" in detect
-    env = re.search(r"- name: Detect changed areas\n(.*?)\n        run: \|", _workflow_text(), re.S).group(1)
-    assert re.search(r"^          HEAD_SHA: \$\{\{ github\.event\.pull_request\.head\.sha \}\}$", env, re.M)
 
 
 def _changes_steps() -> dict[str, str]:
@@ -2035,69 +1644,28 @@ def _changes_steps() -> dict[str, str]:
     return {s.splitlines()[0]: s for s in steps}
 
 
-def _with(step: str, key: str) -> str:
-    match = re.search(rf"^          {key}: (.*)$", step, re.M)
-    return _expression(match.group(1)) if match else ""
-
-
-PR_CTX = {"github": {"event_name": "pull_request", "event": {"pull_request": {"head": {"sha": PR_HEAD}}}},
-          "needs": {"changes": {"outputs": {"frontend": "false"}}}}
 RELEASE_CTX = {"github": {"event_name": "workflow_dispatch", "event": {}},
                "needs": {"changes": {"outputs": {"frontend": "true"}}}}
-MERGE_STEP = "Merge main's current head into the PR head"
 
 
-def test_the_pr_gate_tests_the_head_merged_into_main_now():
-    steps = _lean_gate_steps()
-    names = list(steps)
-    ref = _with(steps["Checkout"], "ref")
-    assert ref and _gh_eval(ref, PR_CTX) == PR_HEAD, "the PR head, not GitHub's merge commit"
-    assert _gh_eval(ref, RELEASE_CTX) == "", "a release checks out its own ref as before"
-    merge = steps[MERGE_STEP]
-    assert names.index(MERGE_STEP) == names.index("Checkout") + 1, "before every gate"
-    assert re.search(r"^        if: github\.event_name == 'pull_request'$", merge, re.M)
-    assert re.search(r"^        id: merge$", merge, re.M)
-    assert names.index(MERGE_STEP) < names.index("Single alembic head") < names.index("Mark this tree as validated")
-    assert "git rev-parse 'HEAD^{tree}'" in steps["Mark this tree as validated"], "the marker is the live merge's tree"
-
-
-def test_the_pr_gate_vitest_diffs_against_the_main_it_merged():
+def test_the_release_tests_vitest_diffs_against_the_last_release():
     step = _lean_gate_steps()["Run the vitest files related to the change (executing gate)"]
     base = _expression(re.search(r"^          BASE_SHA: (.*)$", step, re.M).group(1))
-    merged = {**PR_CTX, "steps": {"merge": {"outputs": {"main": NEWER_MAIN}}}}
-    merged["github"] = {**PR_CTX["github"], "event": {"pull_request": {"base": {"sha": MAIN}}}}
-    assert _gh_eval(base, merged) == NEWER_MAIN
     release = {**RELEASE_CTX, "needs": {"changes": {"outputs": {"base_sha": LAST_RELEASE}}}}
     assert _gh_eval(base, release) == LAST_RELEASE
 
 
 def test_the_selection_runs_on_a_lean_release_only():
-    """CI-CLOUD-GATE: a PR runs no test, so `changes` neither checks out nor selects on a
-    PR (the lane's scripts/crew-tests.sh selects in its sandbox), and it holds no merge
-    step of its own any more."""
+    """`changes` checks out and selects on a lean release only (a PR's selection happens
+    in the lane's sandbox, scripts/crew-tests.sh), and it holds no merge step."""
     steps = _changes_steps()
     for name in ("Checkout backend sources for test selection", "Select backend tests by import"):
         cond = re.search(r"^        if: (.*)$", steps[name], re.M).group(1)
         assert cond == "steps.filter.outputs.lean == 'true'", (name, cond)
-    assert MERGE_STEP not in steps
+    assert "Merge main's current head into the PR head" not in steps
 
 
-def test_the_merge_step_is_inline_shell():
-    """On a PR the workflow comes from GitHub's merge commit, but this step runs on
-    the PR head before main is in it: a head that branched before this change holds
-    no helper script, and `bash scripts/...` died with exit 127 on every such PR
-    (reviewer, CI-STALE-MERGE-REF). So the shell is inline and reads nothing from
-    the checkout."""
-    lines = []
-    for line in _lean_gate_steps()[MERGE_STEP].split("run: |\n", 1)[1].splitlines():
-        if line.strip() and not line.startswith(" " * 10):
-            break  # the next step's leading comments
-        lines.append(line)
-    body = "\n".join(lines)
-    assert "merge --no-edit origin/main" in body and not re.search(r"\bscripts/", body)
-
-
-# No user identity anywhere: the runner has none either.
+# No user identity anywhere: the sandbox has none either.
 GIT_ENV = {"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull, "GIT_TERMINAL_PROMPT": "0"}
 
 
@@ -2106,82 +1674,6 @@ def _git(cwd: Path, *args: str) -> str:
            "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid",
            "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.invalid"}
     return subprocess.run(["git", *args], cwd=cwd, env=env, check=True, capture_output=True, text=True).stdout.strip()
-
-
-def _commit(work: Path, path: str, text: str) -> str:
-    (work / path).write_text(text)
-    _git(work, "add", path)
-    _git(work, "commit", "-q", "-m", f"edit {path}")
-    return _git(work, "rev-parse", "HEAD")
-
-
-def _merge_repo(tmp_path: Path, *, conflict: bool = False, head_has_main: bool = False) -> tuple[Path, str, str]:
-    """An origin whose main moved after the PR branched; a runner checkout at the PR head.
-
-    The runner clones before main moves, so its origin/main is stale and only the
-    step's own fetch brings main's head (reviewer kill test K5)."""
-    origin = tmp_path / "origin.git"
-    work = tmp_path / "work"
-    runner = tmp_path / "runner"
-    _git(tmp_path, "init", "-q", "--bare", "-b", "main", str(origin))
-    _git(tmp_path, "clone", "-q", str(origin), str(work))
-    _git(work, "checkout", "-q", "-b", "main")
-    _commit(work, "shared.txt", "base\n")
-    _git(work, "push", "-q", "origin", "main")
-    _git(tmp_path, "clone", "-q", str(origin), str(runner))
-    _git(work, "checkout", "-q", "-b", "pr")
-    head = _commit(work, "shared.txt" if conflict else "pr.txt", "from the pr\n")
-    _git(work, "checkout", "-q", "main")
-    main = _commit(work, "shared.txt" if conflict else "main.txt", "from main\n")
-    _git(work, "push", "-q", "origin", "main")
-    if head_has_main:
-        _git(work, "checkout", "-q", "pr")
-        _git(work, "merge", "-q", "--no-edit", "main")
-        head = _git(work, "rev-parse", "HEAD")
-    _git(runner, "fetch", "-q", str(work), head)
-    _git(runner, "checkout", "-q", "--detach", head)
-    return runner, head, main
-
-
-def _run_merge_step(runner: Path, tmp_path: Path) -> tuple[subprocess.CompletedProcess, dict[str, str]]:
-    """The step's shell as it ships, in a checkout that holds no scripts/ at all."""
-    output = tmp_path / "merge-output.txt"
-    output.write_text("")
-    result = subprocess.run(
-        ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", _step_script(MERGE_STEP)],
-        cwd=runner,
-        env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(tmp_path), **GIT_ENV,
-             "GITHUB_OUTPUT": str(output)},
-        capture_output=True,
-        text=True,
-    )
-    return result, dict(line.split("=", 1) for line in output.read_text().splitlines() if "=" in line)
-
-
-def test_the_merge_step_tests_the_head_merged_into_mains_head(tmp_path):
-    runner, head, main = _merge_repo(tmp_path)
-    result, outputs = _run_merge_step(runner, tmp_path)
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert _git(runner, "rev-parse", "HEAD^1") == head and _git(runner, "rev-parse", "HEAD^2") == main
-    assert (runner / "pr.txt").exists() and (runner / "main.txt").exists()
-    assert outputs == {"main": main}
-    assert head in result.stdout and main in result.stdout
-
-
-def test_the_merge_step_fails_loudly_on_a_conflict(tmp_path):
-    runner, head, main = _merge_repo(tmp_path, conflict=True)
-    result, outputs = _run_merge_step(runner, tmp_path)
-    assert result.returncode != 0
-    assert "::error" in result.stdout and "shared.txt" in result.stdout and main in result.stdout
-    assert outputs == {}
-
-
-def test_the_merge_step_leaves_a_head_that_already_holds_main(tmp_path):
-    runner, head, main = _merge_repo(tmp_path, head_has_main=True)
-    result, outputs = _run_merge_step(runner, tmp_path)
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert _git(runner, "rev-parse", "HEAD") == head
-    assert outputs == {"main": main}
 
 
 # ---------------------------------------------------------------------------
@@ -2237,7 +1729,7 @@ def test_any_other_path_leaves_the_forms_chains_off(path):
     assert not _forms_detect(path)
 
 
-def test_crew_tests_lists_every_forms_chain_and_the_pr_gate_none():
+def test_crew_tests_lists_every_forms_chain_and_the_release_tests_job_none():
     script = CREW_TESTS.read_text(encoding="utf-8")
     assert "tests/test_forms_chain_*.py" in script
     for f in FORMS_CHAIN_FILES[-3:]:
@@ -2255,8 +1747,8 @@ def test_every_release_runs_the_forms_chains():
 
 
 # ---------------------------------------------------------------------------
-# CI-CLOUD-GATE: which lean-gate steps run on a release and which on a PR, from
-# each step's own `if`, evaluated as written (reviewer kill tests K5, K6).
+# CI-CLOUD-GATE: the lean-gate test steps run on a release, from each step's
+# own `if`, evaluated as written (reviewer kill tests K5, K6).
 # ---------------------------------------------------------------------------
 
 RELEASE_ONLY_STEPS = [
@@ -2272,49 +1764,47 @@ RELEASE_ONLY_STEPS = [
 
 
 def _step_if(name: str) -> str:
+    """The step's `if`; a step with none runs whenever the job does."""
     match = re.search(r"^        if: (.*)$", _lean_gate_steps()[name], re.M)
-    assert match, f"{name}: no if"
-    return _expression(match.group(1))
+    return _expression(match.group(1)) if match else "true"
 
 
 def _step_ctx(event: str) -> dict:
     return {
-        "github": {"event_name": event, "event": {"label": {"name": "ci"}} if event == "pull_request" else {}},
+        "github": {"event_name": event, "event": {}},
         "needs": {"changes": {"outputs": {"backend": "true", "frontend": "true", "mcp": "true", "lean": "true"}}},
-        "steps": {"select": {"outputs": {"files": "tests/test_x.py"}}, "merge": {"outputs": {"main": MAIN}}},
+        "steps": {"select": {"outputs": {"files": "tests/test_x.py"}}},
     }
 
 
 @pytest.mark.parametrize("name", RELEASE_ONLY_STEPS)
 def test_the_lean_release_still_runs_its_test_steps(name):
     """A lean release (skip_tests=false) whose selection step stopped running would test
-    nothing and still deploy: every test step runs on a release, none on a PR."""
+    nothing and still deploy: every test step runs on a release."""
+    assert _job_ifs()["lean-gate"]["if"].count("github.event_name == 'workflow_dispatch'") == 1
     cond = _step_if(name)
     assert _gh_eval(cond, _step_ctx("workflow_dispatch")), (name, cond)
-    assert not _gh_eval(cond, _step_ctx("pull_request")), (name, cond)
 
 
-def test_the_eslint_step_runs_on_a_frontend_pr_only():
-    cond = _step_if("Lint the changed frontend files")
-    assert _gh_eval(cond, _step_ctx("pull_request"))
-    no_frontend = _step_ctx("pull_request")
-    no_frontend["needs"]["changes"]["outputs"]["frontend"] = "false"
-    assert not _gh_eval(cond, no_frontend)
-    assert not _gh_eval(cond, _step_ctx("workflow_dispatch"))
-
-
-def test_the_eslint_step_lints_added_and_changed_frontend_files_only(tmp_path):
-    """Its shell against a real repo: added/modified/renamed .ts/.tsx files reach eslint,
-    a deleted file and a non-script file do not."""
+def test_the_pr_gate_lints_added_and_changed_frontend_files_only(tmp_path):
+    """scripts/pr-gate.sh's `frontend-eslint` against a real repo: added/modified/renamed
+    .ts/.tsx files reach eslint, a deleted file and a non-script file do not. The other
+    checks are stubbed to pass."""
     repo = tmp_path / "repo"
     fe = repo / "sorento_crm_frontend"
     (fe / "lib").mkdir(parents=True)
+    (repo / "scripts").mkdir()
+    shutil.copy(REPO / "scripts" / "pr-gate.sh", repo / "scripts" / "pr-gate.sh")
+    for stub in ("ci_alembic_heads.py", "pii_guard.py", "ci_ai_coverage.py", "sync_user_guides_outline.py"):
+        (repo / "scripts" / stub).write_text("")
+    (repo / "scripts" / "ci_gitleaks.sh").write_text("exit 0\n")
     _git(tmp_path, "init", "-q", "-b", "main", str(repo))
     for name in ("keep.ts", "gone.ts", "old.tsx"):
         (fe / "lib" / name).write_text("export const x = 1;\n")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", "main")
     main = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "update-ref", "refs/remotes/origin/main", main)
     (fe / "lib" / "keep.ts").write_text("export const x = 2;\n")
     (fe / "lib" / "gone.ts").unlink()
     _git(repo, "mv", "sorento_crm_frontend/lib/old.tsx", "sorento_crm_frontend/lib/new.tsx")
@@ -2322,18 +1812,22 @@ def test_the_eslint_step_lints_added_and_changed_frontend_files_only(tmp_path):
     (fe / "lib" / "notes.md").write_text("x\n")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", "pr")
+    (fe / "node_modules").mkdir()
     bindir = tmp_path / "bin"
     bindir.mkdir()
-    (bindir / "npx").write_text('#!/usr/bin/env bash\nprintf "%s\\n" "$@" > "$NPX_ARGS"\n')
-    (bindir / "npx").chmod(0o755)
+    (bindir / "npx").write_text('#!/usr/bin/env bash\n[ "$1" = eslint ] && printf "%s\\n" "$@" > "$NPX_ARGS"\nexit 0\n')
+    (bindir / "npm").write_text("#!/usr/bin/env bash\nexit 0\n")
+    for tool in ("npx", "npm"):
+        (bindir / tool).chmod(0o755)
     args = tmp_path / "args.txt"
-    script = re.search(r"run: \|\n((?:          .*\n|\s*\n)+)", _lean_gate_steps()["Lint the changed frontend files"]).group(1)
     result = subprocess.run(
-        ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", textwrap.dedent(script)],
-        cwd=fe, env={**GIT_ENV, "PATH": f"{bindir}:{os.environ.get('PATH', '/usr/bin:/bin')}", "MAIN": main, "NPX_ARGS": str(args)},
+        ["bash", "scripts/pr-gate.sh"],
+        cwd=repo, env={**GIT_ENV, "PATH": f"{bindir}:{os.environ.get('PATH', '/usr/bin:/bin')}", **PY_ENV,
+                       "HOME": str(tmp_path), "NPX_ARGS": str(args)},
         capture_output=True, text=True,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+    assert "frontend-eslint" in result.stdout.splitlines()[-1], result.stdout
     got = args.read_text().split("\n")
     assert got[:3] == ["eslint", "--no-warn-ignored", "--"], got
     assert sorted(a for a in got[3:] if a) == ["lib/added.ts", "lib/keep.ts", "lib/new.tsx"], got
