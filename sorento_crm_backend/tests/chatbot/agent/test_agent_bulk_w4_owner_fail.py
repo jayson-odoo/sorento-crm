@@ -1095,8 +1095,6 @@ def test_a_question_from_the_batch_tool_is_a_result_not_a_failure(db):
     result, provider = screenshot_turn(db, w, [_batch([_unsaid(c, 1, companies=())]), answer_("Done.")],
                                        text_="Please grant them access to the chatbot")
     assert result.reply_text.strip() == f"Sorento or Mocha, and owner or employee, for {c.name}?", result.reply_text
-    import json as _json
-
     # The turn's own record of the call (stored in the tool digest the next turn reads), not a second round's view.
     statuses = [c["status"] for c in result.tool_calls if c["name"] == BATCH]
     assert statuses == ["ok"], statuses
