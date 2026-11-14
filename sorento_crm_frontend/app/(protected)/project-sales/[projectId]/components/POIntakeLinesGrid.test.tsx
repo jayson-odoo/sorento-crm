@@ -767,3 +767,206 @@ describe('POIntakeLinesGrid suggested view after accept all', () => {
     expect(screen.queryByText('Nothing left to fix')).toBeNull();
   });
 });
+
+/**
+ * PO-UPLOAD-MATCHING owner report: "entering the quantity quite funky like i enter then i
+ * unfocus, the screen kind of jitter abit and the quantity come out". Typing "1" showed "1",
+ * then the box remounted on the server's Numeric(15,4) echo and read "1.0000", and the row
+ * jumped. Amount stayed empty while qty was typed on a line whose paper printed no amount.
+ *
+ * Pinned here: a numeric cell is one stable box (no remount on the server echo), it shows a
+ * figure without trailing zeros (money keeps two decimals), it keeps exactly what is typed,
+ * Amount and the Flag follow qty x unit price live, and the Flag cell never wraps.
+ *
+ * Values are read off `.value` rather than `toHaveValue`: a number box reports a number to
+ * `toHaveValue`, and these assertions are about the characters on screen.
+ */
+describe('POIntakeLinesGrid numeric cells: no remount, stable format, live amount (owner report)', () => {
+  const box = (label: string) => screen.getByLabelText(label) as HTMLInputElement;
+
+  it('keeps the typed "1" in the SAME box after the server echoes "1.0000"', async () => {
+    const { rerenderWith } = renderGrid([line({ id: 'l1', line_no: 1 })]);
+
+    const before = (await screen.findByLabelText('Quantity on line 1')) as HTMLInputElement;
+    fireEvent.change(before, { target: { value: '1' } });
+    fireEvent.blur(before);
+
+    expect(onUpdateLine).toHaveBeenCalledTimes(1);
+    expect(onUpdateLine).toHaveBeenCalledWith('l1', { qty: '1' });
+
+    // The parent applies the save and hands back the server's Numeric(15,4) reading.
+    rerenderWith([line({ id: 'l1', line_no: 1, qty: '1.0000', arithmetic_ok: false })]);
+
+    const after = box('Quantity on line 1');
+    expect(after).toBe(before);
+    expect(before.isConnected).toBe(true);
+    expect(after.value).toBe('1');
+  });
+
+  it('shows a server figure without trailing zeros, money keeping two decimals', async () => {
+    renderGrid([
+      line({ id: 'l1', line_no: 1, qty: '24.0000', unit_price: '86.90000', amount: '2085.60' }),
+      line({ id: 'l2', line_no: 2, qty: '0.5000', unit_price: '125.00000', amount: '62.50' }),
+    ]);
+
+    await screen.findByLabelText('Quantity on line 1');
+    expect(box('Quantity on line 1').value).toBe('24');
+    expect(box('Unit price on line 1').value).toBe('86.90');
+    expect(box('Amount on line 1').value).toBe('2085.60');
+    expect(box('Quantity on line 2').value).toBe('0.5');
+    expect(box('Unit price on line 2').value).toBe('125.00');
+    expect(box('Amount on line 2').value).toBe('62.50');
+  });
+
+  it('keeps exactly what is typed while typing, empty and partial drafts included', async () => {
+    const user = userEvent.setup();
+    const { rerenderWith } = renderGrid([line({ id: 'l1', line_no: 1 })]);
+
+    const qty = (await screen.findByLabelText('Quantity on line 1')) as HTMLInputElement;
+    await user.clear(qty);
+    expect(qty.value).toBe('');
+
+    // Another line's save re-renders the grid mid-edit: the emptied box stays empty.
+    rerenderWith([line({ id: 'l1', line_no: 1 })]);
+    expect(box('Quantity on line 1').value).toBe('');
+
+    await user.type(qty, '1.');
+    // jsdom's number box reads "1." as "1." or ""; either way it is not rewritten to a figure.
+    expect(['1.', '']).toContain(box('Quantity on line 1').value);
+    await user.type(qty, '5');
+    expect(box('Quantity on line 1').value).toBe('1.5');
+    expect(onUpdateLine).not.toHaveBeenCalled();
+  });
+
+  it('fills Amount live from qty x unit price when the paper printed none, and commits both on blur', async () => {
+    renderGrid([
+      line({
+        id: 'l1',
+        line_no: 1,
+        qty: '',
+        unit_price: '125.00000',
+        amount: null as unknown as string,
+        arithmetic_ok: false,
+      }),
+    ]);
+
+    const qty = (await screen.findByLabelText('Quantity on line 1')) as HTMLInputElement;
+    expect(screen.getByText('Does not multiply out')).toBeInTheDocument();
+
+    fireEvent.change(qty, { target: { value: '3' } });
+
+    expect(box('Amount on line 1').value).toBe('375.00');
+    expect(screen.queryByText('Does not multiply out')).toBeNull();
+    expect(screen.queryByText(/^Should be RM/)).toBeNull();
+    expect(onUpdateLine).not.toHaveBeenCalled();
+
+    fireEvent.blur(qty);
+    expect(onUpdateLine).toHaveBeenCalledTimes(1);
+    expect(onUpdateLine).toHaveBeenCalledWith('l1', { qty: '3', amount: '375.00' });
+  });
+
+  it('never touches a printed Amount, but clears the Flag live once the line multiplies out', async () => {
+    renderGrid([
+      line({
+        id: 'l1',
+        line_no: 1,
+        qty: '10.0000',
+        unit_price: '392.85000',
+        amount: '3535.65',
+        arithmetic_ok: false,
+      }),
+    ]);
+
+    const qty = (await screen.findByLabelText('Quantity on line 1')) as HTMLInputElement;
+    expect(screen.getByText('Should be RM 3,928.50')).toBeInTheDocument();
+
+    fireEvent.change(qty, { target: { value: '9' } });
+
+    expect(box('Amount on line 1').value).toBe('3535.65');
+    expect(screen.queryByText(/^Should be RM/)).toBeNull();
+    expect(screen.queryByText('Does not multiply out')).toBeNull();
+
+    fireEvent.blur(qty);
+    expect(onUpdateLine).toHaveBeenCalledTimes(1);
+    expect(onUpdateLine).toHaveBeenCalledWith('l1', { qty: '9' });
+  });
+
+  it('raises "Should be RM ..." live when a typed qty breaks a printed Amount, leaving the Amount alone', async () => {
+    renderGrid([
+      line({
+        id: 'l1',
+        line_no: 1,
+        qty: '927.0000',
+        unit_price: '392.85000',
+        amount: '364171.95',
+        arithmetic_ok: true,
+      }),
+    ]);
+
+    const qty = (await screen.findByLabelText('Quantity on line 1')) as HTMLInputElement;
+    expect(screen.queryByText(/^Should be RM/)).toBeNull();
+
+    fireEvent.change(qty, { target: { value: '920' } });
+
+    expect(screen.getByText('Should be RM 361,422.00')).toBeInTheDocument();
+    expect(box('Amount on line 1').value).toBe('364171.95');
+    expect(onUpdateLine).not.toHaveBeenCalled();
+
+    fireEvent.blur(qty);
+    expect(onUpdateLine).toHaveBeenCalledWith('l1', { qty: '920' });
+  });
+
+  it('fills Amount live from a typed Unit price when the paper printed none', async () => {
+    renderGrid([
+      line({
+        id: 'l1',
+        line_no: 1,
+        qty: '3.0000',
+        unit_price: '',
+        amount: null as unknown as string,
+        arithmetic_ok: false,
+      }),
+    ]);
+
+    const price = (await screen.findByLabelText('Unit price on line 1')) as HTMLInputElement;
+    fireEvent.change(price, { target: { value: '125' } });
+
+    expect(box('Amount on line 1').value).toBe('375.00');
+    expect(screen.queryByText('Does not multiply out')).toBeNull();
+
+    fireEvent.blur(price);
+    expect(onUpdateLine).toHaveBeenCalledTimes(1);
+    expect(onUpdateLine).toHaveBeenCalledWith('l1', { unit_price: '125', amount: '375.00' });
+  });
+
+  it('keeps the Flag cell on one line, so a badge change cannot change the row height', async () => {
+    renderGrid([
+      line({
+        id: 'l1',
+        line_no: 1,
+        amount: '3410.00',
+        arithmetic_ok: false,
+        resolved_product_id: null,
+        resolved_product_code: null,
+      }),
+    ]);
+
+    const badge = await screen.findByText('Should be RM 364,171.95');
+    const container = badge.parentElement as HTMLElement;
+    expect(container).toContainElement(screen.getByText('No product'));
+    expect(container.className.split(/\s+/)).not.toContain('flex-wrap');
+  });
+
+  it('renders qty, unit price and amount through the shared NumberInput', async () => {
+    // The NUMBER-FIELDS census (components/ui/number-input.census.test.ts) forbids a raw
+    // type="number" anywhere but components/ui/number-input.tsx, so a number box here that
+    // the census also passes IS the shared NumberInput.
+    renderGrid([line({ id: 'l1', line_no: 1 })]);
+
+    await screen.findByLabelText('Quantity on line 1');
+    expect(box('Quantity on line 1')).toHaveAttribute('type', 'number');
+    expect(box('Unit price on line 1')).toHaveAttribute('type', 'number');
+    expect(box('Amount on line 1')).toHaveAttribute('type', 'number');
+    expect(box('Code on line 1')).not.toHaveAttribute('type', 'number');
+  });
+});
