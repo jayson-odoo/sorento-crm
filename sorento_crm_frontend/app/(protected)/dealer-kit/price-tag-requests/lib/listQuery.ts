@@ -28,12 +28,15 @@ export function priceTagRequestsListParamsFromUrl(
   return {
     page: params.pageIndex + 1,
     limit: params.pageSize,
-    sort: sort?.id ?? 'created_at',
+    // The list's own default: newest activity first.
+    sort: sort?.id ?? 'last_activity_at',
     dir: sort ? (sort.desc ? 'desc' : 'asc') : 'desc',
     query: params.searchQuery || undefined,
     // The list's own filter. Absent means every status, which is what the
     // list's `All statuses` option asks for.
     status: params.filters.status || undefined,
+    last_activity_from: params.filters.last_activity_from || undefined,
+    last_activity_to: params.filters.last_activity_to || undefined,
   };
 }
 

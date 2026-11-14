@@ -2,6 +2,9 @@
 
 import * as React from 'react';
 import Link from 'next/link';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
+import { ocnStatusPillKey, ocnStatusWord } from '@/types/orderChangeNotice';
 import { GitCompareArrows } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -19,9 +22,21 @@ import {
   useProjectSalesOrder,
   useScheduleVersions,
 } from '../../../../../_shared/hooks/useProjectSalesOrders';
+import { useNonCancellableOverride } from '../../../../../_shared/hooks/useNonCancellableOverride';
 import { useProject, usePurchaseOrders } from '../../../../../_shared/hooks/useProjects';
 import type { AmendmentPreview } from '../../../../../_shared/types/projectSalesOrder.types';
-import { AmendmentAutocountChangeList } from '../../../../components/AmendmentAutocountChangeList';
+import {
+  AmendmentAutocountChangeList,
+  type AmendmentAutocountUpdate,
+} from '../../../../components/AmendmentAutocountChangeList';
+import { AutocountWriteDialog } from '../../../../../_shared/components/AutocountWriteDialog';
+import { updateInAutocountState } from '../../../../../_shared/lib/autocountWriteRules';
+import {
+  useAutocountWriteAccess,
+  useAutocountWriteCapabilities,
+  useUpdateSalesOrderInAutocount,
+} from '../../../../../_shared/hooks/useProjectAutocountWrite';
+import type { AutocountWriteResult } from '../../../../../_shared/types/projectAutocountWrite.types';
 import { AmendmentCreateDialog } from '../../../../components/AmendmentCreateDialog';
 import { AmendmentDeltaSummary } from '../../../../components/AmendmentDeltaSummary';
 import { AmendmentDeltaTable } from '../../../../components/AmendmentDeltaTable';
@@ -29,6 +44,8 @@ import { AmendmentUnmatchedSection } from '../../../../components/AmendmentUnmat
 import { SalesOrderStatusPill } from '../../../../components/SalesOrderStatusPill';
 
 const SCHEDULE_PREFIX = 'schedule:';
+/** `?amendment=<id>`: the amendment this review page shows (the notice's Linked amendment links here). */
+export const AMENDMENT_PARAM = 'amendment';
 const PO_PREFIX = 'po:';
 
 /**
@@ -67,21 +84,59 @@ export function AmendmentReviewClient({
     psoId,
   );
 
+  const publishAttempt = useNonCancellableOverride<string>((amendmentId, overrideReason) =>
+    publish.mutateAsync({ amendmentId, overrideReason }),
+  );
+
   const [selection, setSelection] = React.useState('');
   const [result, setResult] = React.useState<AmendmentPreview | null>(null);
   const [creating, setCreating] = React.useState(false);
 
   /**
    * The amendment CREATE writes something the preview did not: from here on, decisions and
-   * the change list address rows by `row_key`, which only exists once created. `create.data`
-   * (rather than local state) is the source of the id, so it survives whatever the create
-   * dialog does with its own "created" screen.
+   * the change list address rows by `row_key`, which only exists once created. The id comes
+   * from the create result in this tab, else from `?amendment=` (a reload, or the notice's
+   * Linked amendment link), so an existing amendment can always be opened again.
    */
-  const amendmentId = create.data?.amendment_id ?? null;
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const amendmentFromUrl = searchParams?.get(AMENDMENT_PARAM) ?? null;
+  const amendmentId = create.data?.amendment_id ?? amendmentFromUrl;
+  const createdId = create.data?.amendment_id ?? null;
+  // A created amendment goes into the URL, so a reload opens it rather than an empty compare.
+  React.useEffect(() => {
+    if (!createdId || createdId === amendmentFromUrl) return;
+    const next = new URLSearchParams(searchParams?.toString() ?? '');
+    next.set(AMENDMENT_PARAM, createdId);
+    router.replace(`${pathname}?${next.toString()}`);
+  }, [createdId, amendmentFromUrl, searchParams, pathname, router]);
   const amendment = useAmendment(amendmentId ?? undefined);
   const changeList = useAmendmentAutocountChangeList(amendmentId ?? undefined);
   const exportChangeList = useAmendmentAutocountChangeListExport(amendmentId ?? '');
   const published = amendment.data?.status === 'published';
+
+  // R3: only a published amendment of an order already in AutoCount updates the document.
+  const writeAccess = useAutocountWriteAccess();
+  const capabilities = useAutocountWriteCapabilities(writeAccess);
+  const updateInAutocount = useUpdateSalesOrderInAutocount();
+  const [updateResult, setUpdateResult] = React.useState<AutocountWriteResult | null>(null);
+  const updateState = updateInAutocountState({
+    caps: capabilities.data,
+    capsLoading: capabilities.isLoading,
+  });
+  const autocountUpdate =
+    writeAccess && published && so?.in_autocount && amendmentId
+      ? {
+          pending: updateInAutocount.isPending,
+          disabledReason: updateState.reason,
+          onUpdate: () =>
+            updateInAutocount
+              .mutateAsync(amendmentId)
+              .then(setUpdateResult)
+              .catch(() => undefined),
+        }
+      : undefined;
 
   const options = React.useMemo(
     () => [
@@ -166,6 +221,7 @@ export function AmendmentReviewClient({
 
   return (
     <div className="space-y-4">
+      {publishAttempt.dialog}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0 break-words">
           <div className="flex flex-wrap items-center gap-2">
@@ -200,7 +256,7 @@ export function AmendmentReviewClient({
               type="button"
               size="sm"
               disabled={publish.isPending}
-              onClick={() => publish.mutate(amendmentId)}
+              onClick={() => void publishAttempt.attempt(amendmentId)}
             >
               {publish.isPending ? 'Publishing…' : 'Publish the amendment'}
             </Button>
@@ -222,6 +278,7 @@ export function AmendmentReviewClient({
           changeList={changeList}
           exporting={exportChangeList.isPending}
           onExport={() => exportChangeList.mutate(reference)}
+          update={autocountUpdate}
         />
       ) : (
         <>
@@ -317,16 +374,29 @@ export function AmendmentReviewClient({
       {creating && result && (
         <AmendmentCreateDialog
           preview={result}
+          projectId={projectId}
           submitting={create.isPending}
           onDone={() => setCreating(false)}
-          onConfirm={(reason) => {
+          onConfirm={(reason, ocnId) => {
+            const linked = ocnId ? { ocn_id: ocnId } : {};
             const body = selection.startsWith(SCHEDULE_PREFIX)
-              ? { schedule_version_id: selection.slice(SCHEDULE_PREFIX.length), reason }
-              : { po_version_id: selection.slice(PO_PREFIX.length), reason };
+              ? { schedule_version_id: selection.slice(SCHEDULE_PREFIX.length), reason, ...linked }
+              : { po_version_id: selection.slice(PO_PREFIX.length), reason, ...linked };
             return create.mutateAsync(body);
           }}
         />
       )}
+
+      <AutocountWriteDialog
+        open={updateResult !== null}
+        onOpenChange={(open) => {
+          if (!open) setUpdateResult(null);
+        }}
+        title="Update in AutoCount"
+        result={updateResult}
+        onRetry={autocountUpdate?.onUpdate}
+        retrying={updateInAutocount.isPending}
+      />
     </div>
   );
 }
@@ -343,6 +413,7 @@ function AmendmentSection({
   changeList,
   exporting,
   onExport,
+  update,
 }: {
   amendment: ReturnType<typeof useAmendment>;
   canEdit: boolean;
@@ -351,6 +422,7 @@ function AmendmentSection({
   changeList: ReturnType<typeof useAmendmentAutocountChangeList>;
   exporting: boolean;
   onExport: () => void;
+  update?: AmendmentAutocountUpdate;
 }) {
   if (amendment.isLoading) {
     return (
@@ -375,41 +447,63 @@ function AmendmentSection({
   }
 
   const detail = amendment.data;
+  // The API keeps the rows and the unmatched list under `delta` (the stored envelope).
+  const rows = detail.delta?.rows ?? [];
+  const unmatched = detail.delta?.unmatched ?? [];
+  const from = detail.delta?.from;
+  const to = detail.delta?.to;
 
   return (
     <div className="space-y-4">
       <Card>
         <CardHeader className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-          <CardTitle className="text-sm">
-            {detail.ocn_number ? `Change notice ${detail.ocn_number}` : 'Amendment'}
+          <CardTitle className="flex flex-wrap items-center gap-2 text-sm">
+            {detail.ocn_number && detail.ocn_id ? (
+              <Link
+                href={`/procurement-management/order-change-notices/${detail.ocn_id}`}
+                className="text-primary hover:underline"
+              >
+                {`Change notice ${detail.ocn_number}`}
+              </Link>
+            ) : detail.ocn_number ? (
+              `Change notice ${detail.ocn_number}`
+            ) : (
+              'Amendment'
+            )}
+            {detail.ocn_status && (
+              <span className={`${STATUS_PILL_BASE} ${statusPillClass(ocnStatusPillKey({ status: detail.ocn_status, approval_status: detail.ocn_approval_status }))}`}>
+                {ocnStatusWord({ status: detail.ocn_status, approval_status: detail.ocn_approval_status })}
+              </span>
+            )}
           </CardTitle>
           <Badge variant={published ? 'success' : 'secondary'} appearance="light">
             {(detail.status ?? 'proposed').replace(/_/g, ' ')}
           </Badge>
         </CardHeader>
-        {detail.reason && (
+        {detail.ocn_reason && (
           <CardContent>
-            <p className="break-words text-sm text-muted-foreground">{detail.reason}</p>
+            <p className="break-words text-sm text-muted-foreground">{detail.ocn_reason}</p>
           </CardContent>
         )}
       </Card>
 
       <AmendmentDeltaSummary
-        rows={detail.rows}
+        rows={rows}
         verbSummary={detail.verb_summary ?? {}}
-        unmatchedCount={(detail.unmatched ?? []).length}
-        fromLabel={detail.from?.label || `version ${detail.from?.version_no ?? ''}`}
-        toLabel={detail.to?.label || `version ${detail.to?.version_no ?? ''}`}
+        unmatchedCount={unmatched.length}
+        fromLabel={detail.from_version_label || from?.label || `version ${from?.version_no ?? ''}`}
+        toLabel={detail.to_version_label || to?.label || `version ${to?.version_no ?? ''}`}
       />
-      <AmendmentDeltaTable rows={detail.rows} onDecide={onDecide} disabled={!canEdit || published} />
+      <AmendmentDeltaTable rows={rows} onDecide={onDecide} disabled={!canEdit || published} />
       <AmendmentAutocountChangeList
         rows={changeList.data?.rows ?? []}
         declinedCount={changeList.data?.declined_count ?? 0}
         isLoading={changeList.isLoading}
         exporting={exporting}
         onExport={onExport}
+        update={update}
       />
-      <AmendmentUnmatchedSection unmatched={detail.unmatched ?? []} />
+      <AmendmentUnmatchedSection unmatched={unmatched} />
     </div>
   );
 }

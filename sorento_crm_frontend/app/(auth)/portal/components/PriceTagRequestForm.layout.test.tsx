@@ -104,9 +104,7 @@ vi.mock('@/components/common/SearchableSelect', () => ({
   },
 }));
 
-vi.mock('@/components/common/SearchableMultiSelect', () => ({
-  SearchableMultiSelect: () => null,
-}));
+vi.mock('@/components/common/SearchableMultiSelect');
 
 vi.mock('@/components/dealer-kit/RequestCustomersSelect');
 
@@ -117,7 +115,7 @@ vi.mock('@/components/dealer-kit/PriceTagLivePreview', async () => {
     PriceTagLivePreview: (props: Record<string, unknown>) => {
       const popup = props.popup as { open: boolean; footer?: React.ReactNode } | undefined;
       React.useEffect(() => {
-        (props.onReadyChange as ((s: unknown) => void) | undefined)?.({ missing: [], drawn: true, failed: false });
+        (props.onReadyChange as ((s: unknown) => void) | undefined)?.({ missing: [], missingKeys: [], drawn: true, failed: false });
       }, [props.onReadyChange]);
       if (props.lineKey !== undefined) return null;
       return popup?.open ? <div data-testid="sheet-popup">{popup.footer}</div> : null;

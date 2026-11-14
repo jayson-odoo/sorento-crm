@@ -20,7 +20,7 @@ from __future__ import annotations
 import logging
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi import APIRouter, Body, Depends, Query, Response, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
@@ -36,6 +36,7 @@ from app.schemas.project_sales_order import (
     AmendmentDetail,
     AmendmentPreviewRequest,
     AmendmentPreviewResponse,
+    AmendmentPublishRequest,
     AmendmentPublishResponse,
     AmendmentRowDecisionsRequest,
     AutocountChangeListResponse,
@@ -860,21 +861,27 @@ def create_amendment(
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
 ):
-    """Persists the amendment and auto-drafts its order change notice from the same delta."""
+    """Persists the amendment and auto-drafts its order change notice from the same delta, or
+    links the existing notice the request picks (`ocn_id`, OCN-ORDER-CHANGE-NOTICE E2)."""
     try:
         _service, order = _order_for_edit(db, pso_id, current_user)
-        body = ProjectSODeltaService(db).create(
+        delta_service = ProjectSODeltaService(db)
+        body = delta_service.create(
             order.id,
             po_version_id=payload.po_version_id,
             schedule_version_id=payload.schedule_version_id,
             reason=payload.reason,
             actor_user_id=current_user["id"],
+            ocn_id=payload.ocn_id,
         )
         db.commit()
-        return body
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+    # Only once the amendment is durable: a picked approved notice's raiser and approver hear
+    # it went back for approval (security review M4). Best effort, never undoes the commit.
+    delta_service.run_after_commit()
+    return body
 
 
 @router.get("/amendments/{amendment_id}", response_model=AmendmentDetail)
@@ -895,6 +902,7 @@ def get_amendment(
 )
 def publish_amendment(
     amendment_id: str,
+    payload: Optional[AmendmentPublishRequest] = Body(None),
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
 ):
@@ -915,7 +923,13 @@ def publish_amendment(
         from app.services.project_order_inquiry_service import mark_purchasing_email_trigger
 
         mark_purchasing_email_trigger(db)
-        body = service.publish_amendment(amendment_id, actor_user_id=current_user["id"])
+        body = service.publish_amendment(
+            amendment_id,
+            actor_user_id=current_user["id"],
+            non_cancellable_override_reason=(
+                payload.non_cancellable_override_reason if payload else None
+            ),
+        )
         db.commit()
         return body
     except Exception as exc:

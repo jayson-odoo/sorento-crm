@@ -1,6 +1,7 @@
 """Audit logs API routes."""
 from datetime import datetime
 from fastapi import APIRouter, Depends, Query, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
@@ -26,11 +27,15 @@ router = APIRouter()
 # `getAuditLogs({ entity_type, entity_id })` needs its entity type here.
 _PER_RECORD_VIEW_PERMISSION: dict[str, str] = {
     "complaint": "complaint_management.complaints.view",
+    # Service job page, History tab (after-sales P1): the permission that opens the job page.
+    "service_jobs": "after_sales.service_jobs.view",
     "stock_inquiry": "procurement.stock_inquiries.view",
     "purchase_request": "procurement.purchase_requests.view",
     "product": "master_data.products.view",
     "project_sample_requests": "projects.sample_requests.view",
     "new_product_application": "procurement.new_product_applications.view",
+    # Order Change Notice detail, History tab (OCN-ORDER-CHANGE-NOTICE B11).
+    "order_change_notice": "procurement.order_change_notices.view",
     # Packing List detail, Timeline tab (usePackingLists.ts, R17).
     "inbound_shipments": "procurement.packing_lists.view",
     # Product Specifications record page, History tab.
@@ -39,6 +44,9 @@ _PER_RECORD_VIEW_PERMISSION: dict[str, str] = {
     # the permission that opens the PO detail page (`app/api/v1/scm/purchase_orders.py:36`,
     # the `GET /purchase-orders/{po_id}` route's `_READ`); plus `_authorize_po_history`.
     "purchase_orders": "scm.dashboard.view",
+    # Project import run page, History tab (PLAN-project-import-12nov.md). Its own entity type,
+    # written only by `project_import.service`, so this opens no other import job's history.
+    "project_import_run": "projects.import.view",
 }
 
 
@@ -79,9 +87,15 @@ def _authorize_log_read(
     user_id = str(current_user["id"])
     if _is_audit_admin(db, user_id):
         return True
-    slug = _PER_RECORD_VIEW_PERMISSION.get(entity_type or "")
-    if not (slug and entity_id and UserPermissionService(db).check_user_has_permission(user_id, slug)):
-        raise _forbidden()
+    if entity_type == "order_change_notice" and entity_id:
+        # The notice's own reader rule, the same check as its page, Conversation and SLA tab.
+        from app.services import order_change_notice_service as ocn
+
+        ocn.reader_for(db, entity_id, user_id)
+    else:
+        slug = _PER_RECORD_VIEW_PERMISSION.get(entity_type or "")
+        if not (slug and entity_id and UserPermissionService(db).check_user_has_permission(user_id, slug)):
+            raise _forbidden()
     # The only company check downstream is admin_listing_company_filter, which is not
     # fail-closed: UNSET or an empty set means "every company", safe only for an admin.
     # A non-admin with no active company (no grant left after offboarding, a deleted
@@ -179,28 +193,143 @@ def _integration_names(db: Session, integration_ids: list[str]) -> dict[str, str
 
 # Human-readable one-liner for a status transition, e.g. "status: pending → approved".
 # Derived at serialize time from the JSONB diff - no schema/storage change.
-def _status_labels(db: Session, items) -> dict[str, str]:
-    """Labels for every status-engine `status_id` an UPDATE row moved between, in one query,
-    so the trail reads "Status: Draft -> Submitted" instead of two raw ids."""
+def _id_labels(db: Session, items) -> dict[str, str]:
+    """Labels for every id an UPDATE row moved between, one query per kind of id, so the trail
+    reads "Status: Draft -> Submitted" (a status-engine `status_id`) and "Project: PS26-0001
+    Fake Tower -> PS26-0007 Fake Gardens" (a record's `project_id`, PROJECT-RELATED-RECORDS
+    AC-C6) instead of raw ids. Ids are UUIDs, so one map holds both kinds."""
+    from app.models.projects import Project
+    from app.models.status import Status
+
+    out: dict[str, str] = {}
+    for key, read in (
+        ("status_id", lambda ids: db.query(Status.id, Status.label).filter(Status.id.in_(ids))),
+        (
+            "project_id",
+            lambda ids: db.query(
+                Project.id, func.concat_ws(" ", Project.project_code, Project.title)
+            ).filter(Project.id.in_(ids)),
+        ),
+    ):
+        ids = set()
+        for it in items:
+            for values in (it.old_values or {}, it.new_values or {}):
+                value = values.get(key)
+                # Only real ids reach the query: one legacy or hand-written value must not turn
+                # the whole trail into a 500.
+                if value and _is_uuid(str(value)):
+                    ids.add(str(value))
+        if ids:
+            out.update({str(r[0]): r[1] for r in read(list(ids)).all()})
+    return out
+
+
+#: The name the status-label tests import (SR-CORE review): the same resolver.
+_status_labels = _id_labels
+
+
+def _project_description(it, labels: dict[str, str]) -> Optional[str]:
+    """ "Project: A -> B" for an UPDATE that moved the record's project link (D2), "∅" for none;
+    an old project that no longer exists reads "Project changed to B", like a status."""
+    old = (it.old_values or {}).get("project_id")
+    new = (it.new_values or {}).get("project_id")
+    if it.action != "UPDATE" or "project_id" not in (it.new_values or {}) or str(old or "") == str(new or ""):
+        return None
+    frm = labels.get(str(old)) if old else None
+    to = labels.get(str(new)) if new else None
+    if new and not to:
+        return None
+    if not old:
+        return f"Project: ∅ → {to}"
+    if not frm:
+        return f"Project changed to {to}" if to else None
+    return f"Project: {frm} → {to or '∅'}"
+
+
+#: A record's audited columns that hold a user id: the trail shows the person's name there, old
+#: and new (`_user_display_names`, the one the actor column reads), never the id.
+_USER_ID_FIELDS: dict[str, tuple[str, ...]] = {
+    "order_change_notice": (
+        "approver_id", "requested_approval_by_user_id",
+        "cs_in_charge_user_id", "rejected_by_id", "voided_by", "created_by",
+    ),
+}
+
+#: Audited id columns whose display label is audited beside them, so the trail drops the id and
+#: reads the label: an order change notice's Requested by contact (UAC I10) shows as
+#: "Requested by: A -> B" through its `requested_by` text, never the contact id.
+_LABELLED_ID_FIELDS: dict[str, tuple[str, ...]] = {
+    "order_change_notice": ("requested_by_contact_id",),
+}
+
+
+def _user_field_ids(items) -> set[str]:
+    out: set[str] = set()
+    for it in items:
+        for key in _USER_ID_FIELDS.get(getattr(it, "entity_type", None) or "", ()):
+            for values in (it.old_values or {}, it.new_values or {}):
+                value = values.get(key)
+                if value and _is_uuid(str(value)):
+                    out.add(str(value))
+    return out
+
+
+def _name_user_fields(entity_type: Optional[str], values: Optional[dict], names: dict[str, str]):
+    """``values`` with each user-id column replaced by the person's name; an empty side stays
+    empty, and an id with no user left reads "Unknown user", never the id."""
+    fields = _USER_ID_FIELDS.get(entity_type or "", ())
+    if not values or not fields:
+        return values
+    out = {k: v for k, v in values.items() if k not in _LABELLED_ID_FIELDS.get(entity_type or "", ())}
+    for key in fields:
+        value = out.get(key)
+        if value and _is_uuid(str(value)):
+            out[key] = names.get(str(value)) or "Unknown user"
+    return out
+
+
+def _record_words(entity_type: Optional[str]):
+    """(status words, action words) for a record whose status is a plain code rather than the
+    status engine's `status_id`, so its History reads "Status: Approved -> Done" and "Mark done
+    applied", never the stored code or the form action key. None for every other type."""
+    if entity_type == "order_change_notice":
+        from app.services import order_change_notice_service as ocn
+
+        return ocn.STATUS_LABELS, ocn.ACTION_WORDS
+    return None
+
+
+def _plain_action(description: str, action_words: dict[str, str]) -> str:
+    """"Action applied (ocn.finalize)" -> "Mark done applied" (form_action_service writes the key)."""
+    for key, word in action_words.items():
+        token = f" ({key})"
+        if description.startswith("Action ") and token in description:
+            return word + description[len("Action"):].replace(token, "", 1)
+    return description
+
+
+def _technician_names(db: Session, items) -> dict[str, str]:
+    """Names for every `technician_id` on a service job's rows, so History reads names, never ids."""
     ids = set()
     for it in items:
+        if it.entity_type != "service_jobs":
+            continue
         for values in (it.old_values or {}, it.new_values or {}):
-            value = values.get("status_id")
-            # Only real ids reach the query: one legacy or hand-written value must not turn
-            # the whole trail into a 500.
+            value = values.get("technician_id")
             if value and _is_uuid(str(value)):
                 ids.add(str(value))
     if not ids:
         return {}
-    from app.models.status import Status
+    from sqlalchemy import text
 
-    rows = db.query(Status.id, Status.label).filter(Status.id.in_(list(ids))).all()
-    return {str(r.id): r.label for r in rows}
+    rows = db.execute(text("select id::text, name from technicians where id::text = any(:ids)"), {"ids": list(ids)}).all()
+    return {r[0]: r[1] for r in rows}
 
 
 def _derive_description(it, status_labels: Optional[dict[str, str]] = None) -> Optional[str]:
+    words = _record_words(getattr(it, "entity_type", None))
     if it.description:
-        return it.description
+        return _plain_action(it.description, words[1]) if words else it.description
     old = it.old_values or {}
     new = it.new_values or {}
     if status_labels and new.get("status_id") and new.get("status_id") != old.get("status_id"):
@@ -211,6 +340,10 @@ def _derive_description(it, status_labels: Optional[dict[str, str]] = None) -> O
             frm = status_labels.get(str(old.get("status_id")))
             # An old status that no longer exists is not "no status".
             return f"Status: {frm} → {to}" if frm else f"Status changed to {to}"
+    if status_labels:
+        project = _project_description(it, status_labels)
+        if project:
+            return project
     # Attachment upload activity: surface the filename + what happened.
     if it.entity_type == "attachment":
         fname = new.get("original_filename") or old.get("original_filename")
@@ -224,6 +357,17 @@ def _derive_description(it, status_labels: Optional[dict[str, str]] = None) -> O
         if new.get("description") != old.get("description"):
             return f"Edited file details{f' - {fname}' if fname else ''}"
         return f"Updated {fname}" if fname else "Updated a file"
+    if words and "status" in new and new.get("status") != old.get("status"):
+        frm, to = old.get("status"), new.get("status")
+        said = words[0]
+        moved = f"Status: {said.get(frm, frm) if frm else '∅'} → {said.get(to, to)}"
+        # The move's reason, where the move carried one (an amendment reopening the notice).
+        why = (getattr(it, "reason", None) or "").strip()
+        return f"{moved}. {why}" if why else moved
+    if words:
+        # No summary for any other move: the field lines already say it in words
+        # ("Approval status: (empty) -> pending"), never "approval_status: ∅ -> pending".
+        return None
     for key in ("status", "approval_status", "order_status"):
         if key in new and new.get(key) != old.get(key):
             frm = old.get(key)
@@ -340,6 +484,7 @@ def get_audit_logs(
     user_ids = list(
         {str(it.user_id) for it in items if it.user_id is not None}
         | {str(it.real_user_id) for it in items if getattr(it, "real_user_id", None) is not None}
+        | _user_field_ids(items)
     )
     contact_ids = list({str(it.contact_id) for it in items if getattr(it, "contact_id", None) is not None})
     integration_ids = list(
@@ -355,7 +500,8 @@ def get_audit_logs(
     from app.services.activity_service import entity_labels
 
     record_labels = entity_labels(db, items)
-    status_labels = _status_labels(db, items)
+    status_labels = _id_labels(db, items)
+    technician_names = _technician_names(db, items)
     if include_children and entity_types and len(entity_types) == 1 and entity_id:
         record_labels.update(_child_labels(db, items, entity_types[0], entity_id))
     # SUPPLIER-COST-ACCESS: a product's History shows THAT cost changed, who and when, with
@@ -370,6 +516,8 @@ def get_audit_logs(
     data = []
     for it in items:
         payload = AuditLogResponse.model_validate(it).model_dump()
+        for side in ("old_values", "new_values"):
+            payload[side] = _name_user_fields(it.entity_type, payload.get(side), user_names)
         if mask_cost:
             old, new, masked = mask_audit_values(payload.get("old_values"), payload.get("new_values"))
             payload["old_values"], payload["new_values"] = old, new
@@ -388,6 +536,12 @@ def get_audit_logs(
             it, user_names, contact_names, integration_names, payload["user_display_name"],
             scheduled_names=scheduled_names,
         )
+        if technician_names:
+            for key in ("old_values", "new_values"):
+                values = payload.get(key)
+                tid = str((values or {}).get("technician_id") or "")
+                if tid:
+                    payload[key] = {**values, "technician_id": technician_names.get(tid, "Removed technician")}
         payload["description"] = _derive_description(it, status_labels)
         payload["entity_label"] = record_labels.get(str(it.id))
         if not is_audit_admin:

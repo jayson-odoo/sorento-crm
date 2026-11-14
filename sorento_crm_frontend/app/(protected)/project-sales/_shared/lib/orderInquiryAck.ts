@@ -51,6 +51,10 @@ export const ACK_FILTER_OPTIONS: { value: string; label: string }[] = [
   { value: 'to_confirm', label: ACK_LABELS.awaiting },
   { value: 'acknowledged', label: ACK_LABELS.acknowledged },
   { value: 'rejected', label: ACK_LABELS.rejected },
+  // F1b: the Status column's other words, each filtering exactly the rows that read it.
+  { value: 'waiting_for_cs', label: 'Waiting for CS' },
+  { value: 'so_cancelled', label: 'SO cancelled' },
+  { value: 'line_cancelled', label: 'Line cancelled' },
   { value: ACK_ANY, label: 'All' },
 ];
 
@@ -68,8 +72,16 @@ const trimQty = (value: number): string =>
  * Confirm / Unconfirm decided it.
  */
 export function ackStatusText(
-  row: OrderInquiryAckFields & { qty?: string | number | null; open_qty?: string | number | null },
+  row: OrderInquiryAckFields & {
+    qty?: string | number | null;
+    open_qty?: string | number | null;
+    waiting_for_cs?: boolean;
+    so_cancelled?: boolean;
+  },
 ): string {
+  // OI-WHOLE-SO-CANCEL v2 (AC-V2-5): a change waiting for CS reads first, then a cancelled SO.
+  if (row.waiting_for_cs) return 'Waiting for CS';
+  if (row.so_cancelled) return 'SO cancelled';
   const state = ackStateOf(row);
   let text: string = ACK_LABELS[state];
   if (state === 'awaiting' || state === 'changed') {

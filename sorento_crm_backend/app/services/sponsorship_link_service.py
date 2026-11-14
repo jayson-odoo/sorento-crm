@@ -19,12 +19,12 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Sequence
 
-from sqlalchemy import Integer, extract, func
+from sqlalchemy import Integer, extract, func, select
 from sqlalchemy.orm import Session
 
 from app.models.access import RespondContact
 from app.models.company import Company, RespondContactCompany
-from app.models.procurement import PurchaseRequestHeader
+from app.models.procurement import PurchaseRequestHeader, PurchaseRequestLine
 from app.models.projects import Project, ProjectPurchaseOrder
 from app.services.error_handler import AppException
 
@@ -91,6 +91,70 @@ def projects_for_contact(
     ]
 
 
+def _not_yours() -> AppException:
+    return AppException(
+        status_code=422,
+        message=(
+            "That project is not one of yours. Pick a project from the list, "
+            "which shows the ones registered under your company."
+        ),
+        code="sponsorship_project_not_permitted",
+    )
+
+
+def _owned_company_ids(db: Session, *, contact: Optional[RespondContact], project_id: str) -> List[str]:
+    """The ownership half (any approval state): the project belongs to one of the contact's
+    companies. Returns those companies; refuses otherwise. A contact linked to no company (or
+    none at all) is told THAT, so nobody hunts for a project problem an admin has to fix."""
+    company_ids = contact_company_ids(db, contact=contact) if contact is not None else []
+    if not company_ids:
+        raise AppException(
+            status_code=422,
+            message=(
+                "Your contact is not linked to any company yet, so no project can be "
+                "attached. Ask the Sorento team to link your company first."
+            ),
+            code="sponsorship_contact_no_company",
+        )
+    from uuid import UUID
+
+    from app.models.base import company_scope
+
+    try:
+        UUID(str(project_id))
+    except (TypeError, ValueError):
+        raise _not_yours()
+    with company_scope(db, frozenset(company_ids)):
+        owner = db.query(Project.company_id).filter(Project.id == str(project_id)).scalar()
+    if owner is None or str(owner) not in company_ids:
+        raise _not_yours()
+    return company_ids
+
+
+def assert_contact_may_link(
+    db: Session,
+    *,
+    contact: Optional[RespondContact],
+    project_id: Optional[str],
+    current: Optional[str] = None,
+    code: str,
+) -> None:
+    """THE check for a contact linking a record to a project (PROJECT-RELATED-RECORDS AC-C3):
+    portal create, draft save, submit and revise, the portal new product application and the
+    external stock inquiry all call this one. Ownership first, so another company's project reads
+    as "not one of yours"; then the record's own "not approved yet" (`assert_linkable_project`,
+    `code`). Re-saving the link a record already has is not a change."""
+    if not project_id or str(project_id) == str(current or ""):
+        return
+    company_ids = _owned_company_ids(db, contact=contact, project_id=str(project_id))
+    from app.models.base import company_scope
+
+    from app.services.project_service import assert_linkable_project
+
+    with company_scope(db, frozenset(company_ids)):
+        assert_linkable_project(db, str(project_id), current, code=code)
+
+
 def assert_project_requirement(
     db: Session, *, contact: Optional[RespondContact], project_id: Optional[str]
 ) -> None:
@@ -108,31 +172,15 @@ def assert_project_requirement(
         return
 
     if project_id:
-        company_ids = contact_company_ids(db, contact=contact)
-        if not company_ids:
-            raise AppException(
-                status_code=422,
-                message=(
-                    "Your contact is not linked to any company yet, so no project can be "
-                    "attached. Ask the Sorento team to link your company first."
-                ),
-                code="sponsorship_contact_no_company",
-            )
+        company_ids = _owned_company_ids(db, contact=contact, project_id=str(project_id))
         from app.models.base import company_scope
 
         from app.services.project_service import approved_projects
 
         with company_scope(db, frozenset(company_ids)):
             project = approved_projects(db.query(Project).filter(Project.id == project_id)).first()
-        if project is None or str(project.company_id) not in company_ids:
-            raise AppException(
-                status_code=422,
-                message=(
-                    "That project is not one of yours. Pick a project from the list, "
-                    "which shows the ones registered under your company."
-                ),
-                code="sponsorship_project_not_permitted",
-            )
+        if project is None:
+            raise _not_yours()
         return
 
     if getattr(contact, "requires_registered_project", False):
@@ -149,6 +197,25 @@ def assert_project_requirement(
 # ---------------------------------------------------------------------- reading
 
 
+def _sponsored_totals():
+    """Each sponsorship form's sponsored amount: the sum of its lines' totals (a line with no
+    total counts quantity x unit price), the form's own Grand total. NOT `total_project_value`,
+    which is the value of the PROJECT the form names (PROJECT-STAGE-ACTIONS, crew pass 11 Nov)."""
+    line_amount = func.coalesce(
+        PurchaseRequestLine.total,
+        PurchaseRequestLine.quantity * PurchaseRequestLine.unit_price,
+        0,
+    )
+    return (
+        select(
+            PurchaseRequestLine.purchase_request_id.label("request_id"),
+            func.sum(line_amount).label("amount"),
+        )
+        .group_by(PurchaseRequestLine.purchase_request_id)
+        .subquery()
+    )
+
+
 def list_sponsorships(db: Session, *, project_id: str) -> List[Dict[str, Any]]:
     """Sponsorship forms linked to one project.
 
@@ -156,8 +223,10 @@ def list_sponsorships(db: Session, *, project_id: str) -> List[Dict[str, Any]]:
     sponsorship spend, and mixing the two would double-count it in the rollup that reads
     the same rows.
     """
+    sums = _sponsored_totals()
     rows = (
-        db.query(PurchaseRequestHeader)
+        db.query(PurchaseRequestHeader, sums.c.amount)
+        .outerjoin(sums, sums.c.request_id == PurchaseRequestHeader.id)
         .filter(
             PurchaseRequestHeader.project_id == project_id,
             PurchaseRequestHeader.request_type == SPONSORSHIP_TYPE,
@@ -177,27 +246,35 @@ def list_sponsorships(db: Session, *, project_id: str) -> List[Dict[str, Any]]:
             "sponsor_subject": row.sponsor_subject,
             "sponsor_subject_other": row.sponsor_subject_other,
             "total_project_value": row.total_project_value,
+            "sponsored_total": Decimal(amount or 0).quantize(_CENTS),
             "purpose": row.purpose,
         }
-        for row in rows
+        for row, amount in rows
     ]
 
 
-def sponsorship_rollup(db: Session, *, project_id: str) -> Dict[str, Any]:
+def sponsorship_rollup(db: Session, *, project_id: str, clause: Any = None) -> Dict[str, Any]:
     """AC-F7, per project AND per year.
 
     Per year as well, because "how much have we spent sponsoring this development" and
     "how much did we spend on sponsorship in 2026" are two different management questions
     and only the second one justifies next year's budget.
+
+    `clause` narrows the forms counted (a `view_own` reader: `own_scope.request_clause`, the
+    Related tab's own rule, PROJECT-RELATED-RECORDS AC-B2).
     """
+    sums = _sponsored_totals()
+    extra = [clause] if clause is not None else []
     total, count = (
         db.query(
-            func.coalesce(func.sum(PurchaseRequestHeader.total_project_value), 0),
+            func.coalesce(func.sum(sums.c.amount), 0),
             func.count(PurchaseRequestHeader.id),
         )
+        .outerjoin(sums, sums.c.request_id == PurchaseRequestHeader.id)
         .filter(
             PurchaseRequestHeader.project_id == project_id,
             PurchaseRequestHeader.request_type == SPONSORSHIP_TYPE,
+            *extra,
         )
         .first()
     ) or (0, 0)
@@ -205,13 +282,15 @@ def sponsorship_rollup(db: Session, *, project_id: str) -> Dict[str, Any]:
     year_rows = (
         db.query(
             extract("year", PurchaseRequestHeader.request_date).label("year"),
-            func.coalesce(func.sum(PurchaseRequestHeader.total_project_value), 0),
+            func.coalesce(func.sum(sums.c.amount), 0),
             func.count(PurchaseRequestHeader.id),
         )
+        .outerjoin(sums, sums.c.request_id == PurchaseRequestHeader.id)
         .filter(
             PurchaseRequestHeader.project_id == project_id,
             PurchaseRequestHeader.request_type == SPONSORSHIP_TYPE,
             PurchaseRequestHeader.request_date.isnot(None),
+            *extra,
         )
         .group_by("year")
         .order_by("year")

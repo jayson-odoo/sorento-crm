@@ -129,6 +129,10 @@ def test_ac_1_2_confirm_on_a_closed_line_applies_and_cancels_the_raised_order_ro
     world.db.commit()
     calls.clear()
 
+    # F2 12/13 Nov: a cancel is saved like any change before Confirm
+    from .._cancel_decide import decide_cancelled_rows
+
+    decide_cancelled_rows(world.db, batch.id)
     planning_change_service.apply(world.db, str(batch.id), world.actor)
     world.db.commit()
 
@@ -170,6 +174,10 @@ def test_ac_3_borrow_on_a_closed_line_applies_and_cancels_the_raised_order_row(
     world.db.commit()
     calls.clear()
 
+    # F2 12/13 Nov: a cancel is saved like any change before Confirm
+    from .._cancel_decide import decide_cancelled_rows
+
+    decide_cancelled_rows(world.db, batch.id)
     planning_change_service.apply(world.db, str(batch.id), world.actor)
     world.db.commit()
 

@@ -105,11 +105,7 @@ vi.mock('@/components/common/SearchableSelect', () => ({
   },
 }));
 
-vi.mock('@/components/common/SearchableMultiSelect', () => ({
-  SearchableMultiSelect: (props: { value: string[]; disabled?: boolean }) => (
-    <select multiple aria-label="Alternatives" disabled={props.disabled} value={props.value} onChange={() => {}} />
-  ),
-}));
+vi.mock('@/components/common/SearchableMultiSelect');
 
 vi.mock('./AttachmentDropzone', () => ({ AttachmentDropzone: () => null }));
 
@@ -353,22 +349,24 @@ describe('PriceTagRequestForm - line pricing (S1/S2, S12-1)', () => {
     mockCombos.mockResolvedValue({ host_guarded: false, combos: [COMBO_WITH_PART] } as ProductCombosLookup);
     await startWithALine(COVERED);
     chooseSelling();
+    // PRICETAG-ALA-CARTE AC-3: a new line starts ala carte, so the one package is chosen.
+    await selectOption('Ala carte', COMBO_WITH_PART.combo_id);
     // The fixed part fills in as its own sub-row (AC-S2-1) - a `td[colspan]`
     // this line would not otherwise have. Once a part is attached, the
     // combo's own product id joins the pricing resolve, so the line's total
     // is no longer the bare COVERED figure other cases in this file pin -
-    // this case only needs the part row (and the "Add part" search row) to
-    // exist, not a specific RM total.
+    // this case only needs the part row (and the Package row) to exist, not a
+    // specific RM total. "Add part" is gone (PRICETAG-ALA-CARTE AC-18).
     await waitFor(() => expect(screen.getByText(COMBO_PART.code)).toBeInTheDocument());
     // The native `<select>` stand-in has no real `placeholder` attribute -
     // this mock exposes it as the accessible name instead.
     await waitFor(() =>
-      expect(screen.getByRole('combobox', { name: 'Add part' })).toBeInTheDocument(),
+      expect(screen.getByRole('combobox', { name: 'Ala carte' })).toBeInTheDocument(),
     );
 
     const headerCount = screen.getAllByRole('columnheader').length;
     const colSpanCells = Array.from(document.querySelectorAll('td[colspan]'));
-    // At least the part row and the "Add part" search row.
+    // At least the part row and the Package row.
     expect(colSpanCells.length).toBeGreaterThan(0);
     for (const cell of colSpanCells) {
       expect(Number(cell.getAttribute('colspan'))).toBe(headerCount);

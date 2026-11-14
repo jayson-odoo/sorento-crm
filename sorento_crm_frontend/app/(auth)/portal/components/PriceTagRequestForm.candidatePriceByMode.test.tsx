@@ -102,11 +102,7 @@ vi.mock('@/components/common/SearchableSelect', () => ({
   },
 }));
 
-vi.mock('@/components/common/SearchableMultiSelect', () => ({
-  SearchableMultiSelect: (props: { value: string[]; disabled?: boolean }) => (
-    <select multiple aria-label="Alternatives" disabled={props.disabled} value={props.value} onChange={() => {}} />
-  ),
-}));
+vi.mock('@/components/common/SearchableMultiSelect');
 
 vi.mock('./AttachmentDropzone', () => ({ AttachmentDropzone: () => null }));
 
@@ -179,6 +175,8 @@ async function startWithTheHost() {
   chooseTypedItems();
   fireEvent.click(screen.getByRole('button', { name: /Add line/ }));
   await selectOption('Search a set or product...', `${HOST.kind}:${HOST.id}`);
+  // PRICETAG-ALA-CARTE AC-3: a new line starts ala carte, so the one package is chosen.
+  await selectOption('Ala carte', COMBO_TAP_GROUP.combo_id);
 }
 
 function openPriceSection() {

@@ -79,6 +79,7 @@ import MyRequestPortalForm from '@/components/common/MyRequestPortalForm';
 import { useHasPermission } from '@/hooks/usePermissions';
 import StockInquiryDeleteDialog from './stock-inquiry-delete-dialog';
 import AuditTrail from '@/components/audit/AuditTrail';
+import { RecordProjectField } from '@/components/common/RecordProjectField';
 import { stockInquiriesPagerQuery } from '../hooks/useStockInquiries';
 import { useStockInquiryApplicationsQuery } from '../../new-product-applications/hooks/useNewProductApplications';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
@@ -190,6 +191,8 @@ function StaffStockInquiryDetail({
   const canPurchasingReject = useHasPermission('procurement.stock_inquiries.purchasing_reject');
   const canReopen = useHasPermission('procurement.stock_inquiries.reopen');
   const canVoid = useHasPermission('procurement.stock_inquiries.void');
+  // PROJECT-RELATED-RECORDS D2: the record's own edit right sets its project, at any status.
+  const canSetProject = useHasPermission('procurement.stock_inquiries.edit');
   // New product applications raised from this inquiry (NEW-PRODUCT-APP). The row is for users
   // who hold any application permission; the gear item starts one and needs `create`.
   const canCreateApplication = useHasPermission('procurement.new_product_applications.create');
@@ -1133,6 +1136,17 @@ function StaffStockInquiryDetail({
         </InquiryFormTableRow>
         <InquiryFormTableRow label="Project name">
           <InquiryReadValue>{inquiry.project_name}</InquiryReadValue>
+        </InquiryFormTableRow>
+        <InquiryFormTableRow label="Registered project">
+          <RecordProjectField
+            kind="stock_inquiry"
+            recordId={inquiry.id}
+            projectId={inquiry.project_id}
+            projectCode={inquiry.project_code}
+            projectTitle={inquiry.project_title}
+            canEdit={canSetProject}
+            onSaved={() => void queryClient.invalidateQueries({ queryKey: ['stock-inquiry', inquiryId] })}
+          />
         </InquiryFormTableRow>
         <InquiryFormTableRow label="Qty">
           <InquiryReadValue>{inquiry.quantity != null ? String(inquiry.quantity) : ''}</InquiryReadValue>

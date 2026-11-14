@@ -262,7 +262,7 @@ def test_sponsorship_spend_rolls_up_per_project_and_per_year():
     """AC-F7. Per YEAR as well as per project, because "how much did we spend sponsoring
     this development" and "how much did we spend on sponsorship in 2026" are two different
     management questions and only the second one justifies a budget."""
-    from app.models.procurement import PurchaseRequestHeader
+    from app.models.procurement import PurchaseRequestHeader, PurchaseRequestLine
     from app.services import sponsorship_link_service as links
 
     with blank_session() as db:
@@ -271,20 +271,36 @@ def test_sponsorship_spend_rolls_up_per_project_and_per_year():
         owner = _user(db, f"{MARKER} Ali")
         project = _project(db, company_id, owner)
 
-        for request_date, amount in (
-            ("2026-03-01", "1500.00"),
-            ("2026-09-01", "2500.00"),
-            ("2025-06-01", "800.00"),
+        # The spend is the form's lines (its Grand total), never `total_project_value`, which
+        # is the PROJECT's value (PROJECT-STAGE-ACTIONS, crew pass 11 Nov). The last form's
+        # line has no total: quantity x unit price counts.
+        for request_date, amount, line_total in (
+            ("2026-03-01", "1500.00", True),
+            ("2026-09-01", "2500.00", True),
+            ("2025-06-01", "800.00", False),
         ):
+            header_id = _uid()
             db.add(
                 PurchaseRequestHeader(
-                    id=_uid(),
+                    id=header_id,
                     request_type="sponsorship_form",
                     status="submitted",
                     request_date=request_date,
                     project_id=project.id,
-                    total_project_value=Decimal(amount),
+                    total_project_value=Decimal("999999.00"),
                     customer_name=f"{MARKER} dev",
+                )
+            )
+            db.flush()
+            db.add(
+                PurchaseRequestLine(
+                    id=_uid(),
+                    purchase_request_id=header_id,
+                    item_code=f"{MARKER}-1",
+                    quantity=Decimal("2"),
+                    unit_price=Decimal(amount) / 2,
+                    total=Decimal(amount) if line_total else None,
+                    sort_order=0,
                 )
             )
         db.flush()
@@ -394,6 +410,8 @@ def test_linked_sponsorships_are_listed_for_the_project_tab():
         assert rows[0]["request_number"] == "SF-0001"
         assert rows[0]["sponsor_subject"] == "Launch event"
         assert rows[0]["total_project_value"] == Decimal("1200.00")
+        # No lines yet: nothing sponsored, never the project value.
+        assert rows[0]["sponsored_total"] == Decimal("0.00")
 
 
 def test_the_contact_response_dict_carries_the_flag():

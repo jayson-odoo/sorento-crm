@@ -346,6 +346,11 @@ type PressRole =
   | { kind: 'split_edit' }
   | { kind: 'unpostable'; reason: UnpostableReason };
 
+/** The body line that carries a saved cancel: the line id and nothing to compose. */
+function cancelLineFor(projectLineId: string): ConfirmLine {
+  return { project_line_id: projectLineId, timely_spo_qty: '0', reserve: [], borrow: [], buy_qty: '0' };
+}
+
 function pressRoleFor(
   contribution: BoardContribution,
   decision: BoardDecision | undefined,
@@ -368,12 +373,12 @@ function pressRoleFor(
   }
   // A line CS already transferred to Cancel SO is committed: the press has nothing left to do.
   if (contribution.cancelled && contribution.cancelled_at) return { kind: 'skip' };
-  // A CANCELLED line is retired by the press (R3); it needs no composition. One that also
-  // carries a saved decision still posts it, as the body always did.
+  // A book-CANCELLED line takes the normal Decide -> Confirm path (OI-WHOLE-SO-CANCEL F2): CS
+  // saves the cancel (an approved decision, no composition) and Confirm retires it. Unsaved, it is
+  // not counted and not posted; the server leaves its row pending.
   if (contribution.cancelled) {
-    const built = lineFor(contribution, decision);
-    return built !== null && typeof built !== 'string'
-      ? { kind: 'post', line: built }
+    return decision?.verdict === 'approved' && contribution.project_line_id
+      ? { kind: 'post', line: cancelLineFor(contribution.project_line_id) }
       : { kind: 'cancelled' };
   }
   // A covered reject on an ACTIVE decision is a withdrawal Confirm carries out, unless a
@@ -931,42 +936,6 @@ function countsInPress(
 }
 
 /**
- * PLAN-BATCH-COUNT-DISPLAY (D2): per sales order, the lines a pending AutoCount change retires
- * (role `cancelled`: the book cancelled them and nobody decided them). The count leaves them out;
- * the board and the results say them in ONE note instead.
- */
-export interface AutocountChangeNote {
-  salesOrderId: string;
-  soNumber: string | null;
-  count: number;
-  itemCodes: string[];
-}
-
-export function autocountChangeNotes(
-  contributions: BoardContribution[],
-  draft: BoardDraft,
-  excludeKeys?: ReadonlySet<string>,
-): AutocountChangeNote[] {
-  const byOrder = new Map<string, AutocountChangeNote>();
-  for (const contribution of contributions) {
-    if (excludedFromPress(contribution, excludeKeys)) continue;
-    if (pressRoleFor(contribution, draft[contribution.key], false).kind !== 'cancelled') continue;
-    const note = byOrder.get(contribution.sales_order_id) ?? {
-      salesOrderId: contribution.sales_order_id,
-      soNumber: contribution.so_number ?? null,
-      count: 0,
-      itemCodes: [],
-    };
-    note.count += 1;
-    if (contribution.item_code && !note.itemCodes.includes(contribution.item_code)) {
-      note.itemCodes.push(contribution.item_code);
-    }
-    byOrder.set(contribution.sales_order_id, note);
-  }
-  return [...byOrder.values()].map((note) => ({ ...note, itemCodes: [...note.itemCodes].sort() }));
-}
-
-/**
  * "24/09/2026" from a batch's `created_at`, a naive UTC timestamp, read as the Malaysia calendar
  * date (reviewer round 1: a change uploaded before 08:00 MYT is the previous UTC day).
  */
@@ -1019,31 +988,11 @@ export function autocountChangeClause(note: NoteLines): string {
 }
 
 /**
- * The note beside the button and in the guide (D2, crew ruling b): one order reads the one
- * sentence; several read how many orders get an AutoCount change applied, then one line each.
+ * The Confirm button's label: always the decisions it confirms (OI-WHOLE-SO-CANCEL F2: a
+ * book-cancelled line is decided like any other, so there is no apply-only press any more).
  */
-export function autocountBoardNote(
-  notes: (NoteLines & { soNumber: string | null })[],
-  also: boolean,
-): string[] {
-  if (notes.length === 0) return [];
-  if (notes.length === 1) return [autocountChangeSentence(notes[0], 'board', also)];
-  return [
-    `${also ? 'Also applies' : 'Applies'} the AutoCount change on ${notes.length} orders`,
-    ...notes.map((note) => `${note.soNumber ?? ''}: ${autocountChangeClause(note)}`),
-  ];
-}
-
-/**
- * The Confirm button's label (crew ruling (b), 21 Oct 2026): the decisions it confirms, or, when
- * there are none but pending AutoCount changes would be applied, what it does instead. Never an
- * enabled "Confirm (0)".
- */
-export function confirmButtonLabel(toConfirm: number, changeOrders: number): string {
-  if (toConfirm > 0 || changeOrders === 0) return `Confirm (${toConfirm})`;
-  return changeOrders === 1
-    ? 'Apply AutoCount change'
-    : `Apply AutoCount changes (${changeOrders} orders)`;
+export function confirmButtonLabel(toConfirm: number): string {
+  return `Confirm (${toConfirm})`;
 }
 
 /**
@@ -1184,7 +1133,17 @@ function confirmScope(
     }
     if (contribution.cancelled && contribution.cancelled_at) continue;
     if (contribution.cancelled) {
-      orderIds.add(contribution.sales_order_id);
+      // F2: only a SAVED cancel admits its order (an unsaved one is not a decision).
+      if (
+        pressRoleFor(
+          contribution,
+          draft[contribution.key],
+          batchBlockedSalesOrderIds.has(contribution.sales_order_id),
+          options?.batchNamedKeys,
+        ).kind === 'post'
+      ) {
+        orderIds.add(contribution.sales_order_id);
+      }
       continue;
     }
     const decision = draft[contribution.key];

@@ -143,6 +143,8 @@ vi.mock('@/components/common/SearchableSelect', () => ({
 }));
 
 vi.mock('../../_shared/hooks/useProjects', () => ({
+  // PROJECT-RELATED-RECORDS: the Related tab's badge reads this hook.
+  useProjectRelatedRecords: () => ({ data: undefined }),
   // The pager reads the pipeline page through the entity's shared key + fetch (S3-03).
   projectsPagerQuery: {
     listQueryKey: () => ['projects'],

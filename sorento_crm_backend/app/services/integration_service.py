@@ -191,6 +191,31 @@ def _decrypt_workspace_key(workspace) -> Optional[str]:
         return None
 
 
+# The ONE place the Respond.io API host is written down. Every request URL and every
+# integration-log endpoint label is built from `resolve_respond_base_url`, so a test copy
+# that sets RESPOND_BASE_URL to a `.invalid` host can never reach the real API
+# (RESPOND-BASE-URL-LEAK; guarded by tests/test_respond_base_url_single_source.py).
+RESPOND_DEFAULT_BASE_URL = "https://api.respond.io"
+
+
+def resolve_respond_base_url(workspace_base_url: Optional[str] = None) -> str:
+    """Respond.io API base URL: env RESPOND_BASE_URL > workspace base_url > default.
+
+    The env override wins over a workspace row on purpose: a prod-clone database carries
+    the real workspace rows, and the env is the only lever a test copy controls.
+    """
+    for candidate in (settings.respond_base_url, workspace_base_url, RESPOND_DEFAULT_BASE_URL):
+        value = (candidate or "").strip()
+        if value:
+            return value.rstrip("/")
+    return RESPOND_DEFAULT_BASE_URL
+
+
+def respond_endpoint(path: str, workspace_base_url: Optional[str] = None) -> str:
+    """Full Respond.io URL for ``path`` (``/v2/...``), for request URLs and log labels alike."""
+    return f"{resolve_respond_base_url(workspace_base_url)}/{path.lstrip('/')}"
+
+
 def _resolve_workspace_credentials(
     db=None,
     *,
@@ -283,7 +308,7 @@ class RespondClient:
                     "RespondClient: no workspace API key resolved; falling back to "
                     "deprecated env RESPOND_API_KEY. Configure the workspace API key."
                 )
-        self.base_url = (base_url or settings.respond_base_url or "https://api.respond.io").rstrip("/")
+        self.base_url = resolve_respond_base_url(base_url)
         self.api_key = api_key
         self.space_id = space_id or settings.respond_space_id
 
@@ -467,12 +492,19 @@ class RespondClient:
         payload = {"message": {"type": "text", "text": text}}
         return self._post_contact_message(identifier, payload, timeout=15)
 
+    def send_quick_reply(self, identifier: str, text: str, replies: list[str]) -> dict:
+        """Send a text with tap-to-answer buttons. Payload shape UNVERIFIED against
+        Respond's live API (N8N-RETIRE-A Q4); proven at the stage-2 own-number test."""
+        payload = {"message": {"type": "quick_reply", "title": text, "replies": replies}}
+        return self._post_contact_message(identifier, payload, timeout=15)
+
     def send_attachment(
         self,
         identifier: str,
         attachment_type: str,
         url: str,
         caption: Optional[str] = None,
+        filename: Optional[str] = None,
     ) -> dict:
         """Send a media attachment to a contact. message type ``attachment``
         (R1, resolved 2026-08-12): subtypes are ``image`` / ``video`` / ``audio`` /
@@ -487,6 +519,8 @@ class RespondClient:
         attachment_payload: dict = {"type": attachment_type, "url": url}
         if caption:
             attachment_payload["caption"] = caption
+        if filename:
+            attachment_payload["fileName"] = filename
         payload = {"message": {"type": "attachment", "attachment": attachment_payload}}
         # Larger timeout than a text send: Respond fetches the media itself
         # before it can hand back a response.
@@ -1385,7 +1419,7 @@ def log_respond_send(
                 direction="outbound",
                 endpoint=(
                     endpoint
-                    or f"https://api.respond.io/v2/contact/id:{identifier or ''}/message"
+                    or respond_endpoint(f"/v2/contact/id:{identifier or ''}/message")
                 ),
                 http_method="POST",
                 status="failed" if exc is not None else "success",

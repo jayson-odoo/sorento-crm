@@ -32,6 +32,13 @@ import {
   useSalesOrderImportFile,
   useSalesOrderWorksheet,
 } from '../../../../../_shared/hooks/useProjectSalesOrders';
+import {
+  useAutocountWriteAccess,
+  useAutocountWriteCapabilities,
+  useCreateSalesOrderInAutocount,
+} from '../../../../../_shared/hooks/useProjectAutocountWrite';
+import { createInAutocountState } from '../../../../../_shared/lib/autocountWriteRules';
+import { AutocountWriteButton } from '../../../../../_shared/components/AutocountWriteButton';
 import type {
   ProjectSalesOrderFinding,
   SalesOrderWorksheet,
@@ -151,6 +158,9 @@ function WorksheetView({
     pageSize: 50,
   });
   const importFile = useSalesOrderImportFile(psoId);
+  const writeAccess = useAutocountWriteAccess();
+  const capabilities = useAutocountWriteCapabilities(writeAccess);
+  const createInAutocount = useCreateSalesOrderInAutocount();
 
   const lines = worksheet.lines ?? [];
   const findings = worksheet.findings ?? [];
@@ -174,6 +184,16 @@ function WorksheetView({
         ? 'This worksheet cannot be exported yet'
         : undefined;
   const canExport = !exportHint;
+  // R2: the CSV stays beside it. The rules are the shared ones (detail page, list, amendment page);
+  // the worksheet hides the button when the order is not eligible instead of greying it.
+  const createState = createInAutocountState({
+    status: worksheet.status,
+    canExport: worksheet.can_export,
+    autocountDocNo: worksheet.autocount_doc_no,
+    caps: capabilities.data,
+    capsLoading: capabilities.isLoading,
+  });
+  const canCreateInAutocount = writeAccess && createState.eligible;
 
   // The tick on the button is the confirmation; only a refusal needs saying (S7-05).
   const { isCopied, copyToClipboard } = useCopyToClipboard();
@@ -390,6 +410,16 @@ function WorksheetView({
             <Download className="size-4" aria-hidden />
             Download CSV
           </Button>
+          {canCreateInAutocount && (
+            <AutocountWriteButton
+              label="Create in AutoCount"
+              pendingLabel="Creating…"
+              variant="primary"
+              run={() => createInAutocount.mutateAsync(psoId)}
+              disabled={!createState.enabled}
+              title={createState.reason ?? undefined}
+            />
+          )}
         </div>
       </div>
 

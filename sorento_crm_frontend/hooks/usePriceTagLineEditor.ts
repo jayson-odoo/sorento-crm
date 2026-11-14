@@ -14,6 +14,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import type { SearchableSelectOption } from '@/components/common/SearchableSelect';
+import type { SearchableMultiSelectOption } from '@/components/common/SearchableMultiSelect';
 import type {
   PriceMode,
   ProductCombosLookup,
@@ -28,9 +29,7 @@ import {
   emptyDraftLine,
   formatRM,
   MISSING_TAG_TEMPLATE,
-  newPartKey,
   comboOfLine,
-  insertComboRow,
   partsFromCombo,
   pickedProductIds,
   restoreGroupCandidates,
@@ -63,6 +62,63 @@ function tagItemOption(item: TagItemOption): SearchableSelectOption {
     description: itemOptionDescription(item.kind === 'product_set', item.code, item.name),
     code: item.code,
     name: item.name || item.code,
+  };
+}
+
+/** The fields a picked Item sets on its line: type, id, name and code, with the package,
+ *  parts, price basis and variant family reset so the lookup effects ask again. One copy,
+ *  shared by a single pick and by Add N. */
+function itemPickPatch(option: SearchableSelectOption): Partial<DraftLine> {
+  const [kind, id] = option.value.split(':');
+  const isSet = kind === 'product_set';
+  return {
+    line_type: isSet ? 'product_set' : 'product',
+    product_id: isSet ? null : id,
+    product_set_id: isSet ? id : null,
+    name: option.name ?? option.label,
+    code: option.code ?? '',
+    guard_error: null,
+    // A picked Item makes this a new line: a saved id claims the saved line's tags on the server,
+    // so it travels only with the product it was saved with (PRICETAG-ALA-CARTE review).
+    saved_id: null,
+    // A set is printed as one thing and carries no package (D2: a cabinet
+    // request never mixes set and combo on one line), so both kinds reset
+    // here and only a product goes on to ask what it is sold as - the effect
+    // asking for combos picks it up off `combos_loaded`.
+    combo_id: null,
+    combos: [],
+    combos_loaded: isSet,
+    host_guarded: false,
+    parts: [],
+    // A different product invalidates any promotion or manual price the
+    // old one carried - the pricing effect re-asks for the new one.
+    promotion_id: null,
+    promotion_locked: false,
+    manual_sell_price: null,
+    pricing: null,
+    variant_members: undefined,
+    variant_members_for: null,
+    own_list_price: null,
+    excluded_variant_ids: [],
+  };
+}
+
+function lineHoldsItem(line: DraftLine, option: SearchableSelectOption): boolean {
+  const [kind, id] = option.value.split(':');
+  return kind === 'product_set' ? line.product_set_id === id : line.product_id === id;
+}
+
+/** The Item picker's option (AC-13): one line, the code only. The name stays on the option for
+ *  `handleItemSelect` and is matched server-side; a set and a discontinued product carry a hint. */
+/** What the Item picker lists: the multi-select's option, plus the code and name a pick reads. */
+export type TagItemSearchOption = SearchableMultiSelectOption & Pick<SearchableSelectOption, 'code' | 'name'>;
+
+function itemSearchOption(item: TagItemOption): TagItemSearchOption {
+  return {
+    ...tagItemOption(item),
+    label: item.code,
+    description: undefined,
+    badgeText: item.kind === 'product_set' ? 'Set' : item.is_discontinued ? 'Discontinued' : undefined,
   };
 }
 
@@ -108,6 +164,7 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
           l.key,
           l.line_type,
           l.product_id,
+          l.product_set_id,
           l.parts.map((p) => [p.product_id, p.product_ids, p.candidates.map((c) => c.product_id)]),
           l.promotion_id,
           l.combo_id,
@@ -117,10 +174,11 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
   );
   useEffect(() => {
     const inputs: LinePricingLineInput[] = linesRef.current
-      .filter((l) => l.line_type === 'product' && l.product_id)
+      .filter((l) => (l.line_type === 'product' ? !!l.product_id : !!l.product_set_id))
       .map((l) => ({
         key: l.key,
         product_id: l.product_id,
+        product_set_id: l.product_set_id,
         part_product_ids: pickedProductIds(l.parts),
         candidate_product_ids: l.parts.flatMap((p) =>
           p.candidates.map((c) => c.product_id),
@@ -165,11 +223,20 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
   }, [priceMode, pricingSignature, lookups, setLines]);
 
   // ---- Line management ----
-  const addLine = useCallback(() => {
-    // PRICETAG-LPSP: a new line is untyped, so it follows Preferred Default until the row's own
-    // toggle (or the paste) sets it.
-    setLines((prev) => [...prev, emptyDraftLine()]);
-  }, [setLines]);
+  /** Appends a new untyped line, or inserts it directly after `afterKey`; returns its key. */
+  const addLine = useCallback(
+    (afterKey?: string): string => {
+      // PRICETAG-LPSP: a new line is untyped, so it follows Preferred Default until the row's own
+      // toggle (or the paste) sets it.
+      const line = emptyDraftLine();
+      setLines((prev) => {
+        const at = afterKey === undefined ? -1 : prev.findIndex((l) => l.key === afterKey);
+        return at < 0 ? [...prev, line] : [...prev.slice(0, at + 1), line, ...prev.slice(at + 1)];
+      });
+      return line.key;
+    },
+    [setLines],
+  );
 
   const removeLine = useCallback(
     (key: string) => {
@@ -207,9 +274,9 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
    * is needed for a line that arrived from a reopened draft (AC-S2-9) or from
    * the AI extract, neither of which goes through the picker.
    *
-   * A single combo is applied on the spot (AC-S2-1) - but only on a line that
-   * has neither a package nor any parts yet, so reopening a draft whose parts
-   * were edited by hand does not quietly put the removed ones back.
+   * The answer never changes the line's package: every new line starts ala
+   * carte and a saved line keeps the package it was saved with
+   * (PRICETAG-ALA-CARTE AC-3, AC-5).
    */
   useEffect(() => {
     const pending = lines.filter(
@@ -229,25 +296,16 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
           setLines((prev) =>
             prev.map((l) => {
               if (l.key !== line.key || l.product_id !== productId) return l;
-              const autoApply =
-                !l.combo_id && l.parts.length === 0 && lookup.combos.length === 1;
               return {
                 ...l,
                 combos_loaded: true,
                 combos: lookup.combos,
                 host_guarded: lookup.host_guarded,
-                ...(autoApply
-                  ? {
-                      combo_id: lookup.combos[0].combo_id,
-                      parts: partsFromCombo(lookup.combos[0]),
-                    }
-                  : {
-                      // A reopened multi-pick row gets its group's options back (K5).
-                      parts: restoreGroupCandidates(
-                        l.parts,
-                        lookup.combos.find((c) => c.combo_id === l.combo_id),
-                      ),
-                    }),
+                // A reopened multi-pick row gets its group's options back (K5).
+                parts: restoreGroupCandidates(
+                  l.parts,
+                  lookup.combos.find((c) => c.combo_id === l.combo_id),
+                ),
               };
             }),
           );
@@ -476,14 +534,6 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
     [setLines],
   );
 
-  /** P2: put one missing combo row back (a group, the upgrade or a fixed part), at its combo position. */
-  const restorePart = useCallback(
-    (key: string, rowId: string) => {
-      setLines((prev) => prev.map((l) => (l.key === key ? { ...l, parts: insertComboRow(l, rowId) } : l)));
-    },
-    [setLines],
-  );
-
   /** An open row's candidate select (AC-S2-3): picking resolves the row, clearing
    *  reopens it, which is why `candidates` stays on the row either way. */
   const resolvePart = useCallback(
@@ -532,57 +582,15 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
     [setLines],
   );
 
-  /** A part added by hand, on any line, combo or not (AC-S2-4). */
-  const addPart = useCallback(
-    (key: string, option: SearchableSelectOption | null) => {
-      if (!option) return;
-      const [kind, id] = option.value.split(':');
-      if (kind !== 'product') return;
-      const code = option.code ?? '';
-      const name = option.name ?? option.label;
-      setLines((prev) =>
-        prev.map((l) => {
-          if (l.key !== key) return l;
-          if (l.parts.some((part) => part.product_id === id)) return l;
-          return {
-            ...l,
-            parts: [
-              ...l.parts,
-              {
-                key: newPartKey(),
-                product_id: id,
-                code,
-                name,
-                role: null,
-                candidates: [],
-              },
-            ],
-          };
-        }),
-      );
-    },
-    [setLines],
-  );
-
   // ---- Item options: sets and products in ONE list (D47) ----
   // Owner, 4 Nov: one line per option with the code shown once, "CODE  RM <list
   // price>", and the name under it only when it adds something. A set keeps its
   // marker (a set and a product look alike in a dropdown and picking the wrong one
   // produces a different tag); a product gets no word at all.
   const fetchItemOptions = useCallback(
-    async (query: string): Promise<SearchableSelectOption[]> => {
+    async (query: string): Promise<TagItemSearchOption[]> => {
       const items = await lookups.lookupTagItems(query);
-      return items.map(tagItemOption);
-    },
-    [lookups],
-  );
-
-  /** The same catalogue lookup the Item picker uses, products only: a part is a
-   *  product, never a set. */
-  const fetchPartOptions = useCallback(
-    async (query: string): Promise<SearchableSelectOption[]> => {
-      const items = await lookups.lookupTagItems(query);
-      return items.filter((i) => i.kind === 'product').map(tagItemOption);
+      return items.map(itemSearchOption);
     },
     [lookups],
   );
@@ -605,6 +613,8 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
           name: '',
           code: '',
           guard_error: null,
+          // An empty row is no longer the saved line.
+          saved_id: null,
           // The package belonged to the product that just went away.
           combo_id: null,
           combos: [],
@@ -627,47 +637,17 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
       const [kind, id] = option.value.split(':');
       const isSet = kind === 'product_set';
       const code = option.code ?? '';
-      // R3-7: refuse a product/set already on another line, inline - the
-      // same guard the backend now enforces (DUPLICATE_LINE), so a save
-      // never round-trips just to be told this.
-      const duplicate = lines.some(
-        (l) =>
-          l.key !== key &&
-          (isSet ? l.product_set_id === id : l.product_id === id),
-      );
+      // R3-7: refuse a set already on another line, inline - the same guard
+      // the backend enforces (DUPLICATE_LINE), so a save never round-trips just
+      // to be told this. A product may repeat (PRICETAG-ALA-CARTE AC-6).
+      const duplicate = isSet && lines.some((l) => l.key !== key && l.product_set_id === id);
       if (duplicate) {
         updateLine(key, {
           guard_error: `${code || option.label} is already on this request.`,
         });
         return;
       }
-      updateLine(key, {
-        line_type: isSet ? 'product_set' : 'product',
-        product_id: isSet ? null : id,
-        product_set_id: isSet ? id : null,
-        name: option.name ?? option.label,
-        code,
-        guard_error: null,
-        // A set is printed as one thing and carries no package (D2: a cabinet
-        // request never mixes set and combo on one line), so both kinds reset
-        // here and only a product goes on to ask what it is sold as - the effect
-        // above picks it up off `combos_loaded`.
-        combo_id: null,
-        combos: [],
-        combos_loaded: isSet,
-        host_guarded: false,
-        parts: [],
-        // A different product invalidates any promotion or manual price the
-        // old one carried - the pricing effect re-asks for the new one.
-        promotion_id: null,
-        promotion_locked: false,
-        manual_sell_price: null,
-        pricing: null,
-        variant_members: undefined,
-        variant_members_for: null,
-        own_list_price: null,
-        excluded_variant_ids: [],
-      });
+      updateLine(key, itemPickPatch(option));
     },
     [forgetCombosAsked, updateLine, lines],
   );
@@ -684,13 +664,49 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
     setManualSellPrice,
     removePart,
     restoreParts,
-    restorePart,
     resolvePart,
     resolvePicks,
-    addPart,
     fetchItemOptions,
-    fetchPartOptions,
   };
 }
 
 export type PriceTagLineEditor = ReturnType<typeof usePriceTagLineEditor>;
+
+/**
+ * PRICETAG-MULTI-ADD: Add N from the Item picker, through the one pick path. A set already on
+ * another line, or an option repeated in the batch, is dropped; a product already on the request
+ * gets another line (PRICETAG-ALA-CARTE AC-7). The first fills `key` through
+ * `handleItemSelect`; each further one goes on a new line directly below the previous, via
+ * `addLine` and the same `handleItemSelect`. Sets no line field itself. If the row already holds
+ * one of the options it keeps it and the rest go below (`handleItemSelect` would otherwise refuse
+ * that option on its new line, from its pre-batch `lines`). Returns the key of the last line it filled.
+ */
+export function addPickedItems(
+  editor: Pick<PriceTagLineEditor, 'addLine' | 'handleItemSelect'>,
+  lines: DraftLine[],
+  key: string,
+  options: SearchableSelectOption[],
+): string {
+  const fresh: SearchableSelectOption[] = [];
+  for (const option of options) {
+    const isSet = option.value.startsWith('product_set:');
+    if (isSet && lines.some((l) => l.key !== key && lineHoldsItem(l, option))) continue;
+    if (fresh.some((f) => f.value === option.value)) continue;
+    fresh.push(option);
+  }
+  const origin = lines.find((l) => l.key === key);
+  const held = origin ? fresh.find((o) => lineHoldsItem(origin, o)) : undefined;
+  let previous = key;
+  let rest = fresh;
+  if (held) {
+    rest = fresh.filter((o) => o !== held);
+  } else if (fresh.length > 0) {
+    editor.handleItemSelect(key, fresh[0]);
+    rest = fresh.slice(1);
+  }
+  for (const option of rest) {
+    previous = editor.addLine(previous);
+    editor.handleItemSelect(previous, option);
+  }
+  return previous;
+}

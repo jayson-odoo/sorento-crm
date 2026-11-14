@@ -36,10 +36,12 @@ from app.models.new_product_application import (
 from app.models.order import Customer
 from app.models.procurement import ProductSupplier, StockInquiry, Supplier
 from app.models.product import Brand, Product, ProductCategory, UnitOfMeasure
+from app.models.projects import Project
 from app.models.entity_attachment import EntityAttachmentLink
 from app.models.user import User
 from app.services import submission_status
 from app.services.error_handler import AppException, handle_not_found
+from app.utils.last_activity import last_activity_order, last_activity_range
 from app.services.response_gate import is_response_status_allowed
 
 logger = logging.getLogger(__name__)
@@ -220,6 +222,9 @@ def _check_refs(db: Session, data: Dict[str, Any]) -> None:
     inquiry_id = data.get("stock_inquiry_id")
     if inquiry_id is not None and not _ref_exists(db, StockInquiry, inquiry_id):
         raise _invalid("stock_inquiry_id", "That stock inquiry does not exist.")
+    project_id = data.get("project_id")
+    if project_id and not _is_uuid(project_id):
+        raise _invalid("project_id", "Pick a registered project from the list.")
     customer_id = data.get("customer_id")
     if customer_id is not None and not _ref_exists(db, Customer, customer_id):
         raise _invalid("customer_id", "That customer is not in the debtor list.")
@@ -257,6 +262,16 @@ def _apply(db: Session, app: NewProductApplication, data: Dict[str, Any]) -> Non
     for key in ("stock_inquiry_id", "customer_id", "needed_by"):
         if key in data:
             setattr(app, key, data[key] or None)
+    if "project_id" in data:
+        # PROJECT-RELATED-RECORDS AC-C2: an approved project only; re-saving the same link is
+        # not a change. The typed `project_name` never fills it (AC-C5).
+        from app.services.project_service import assert_linkable_project
+
+        project_id = data["project_id"] or None
+        assert_linkable_project(
+            db, project_id, app.project_id, code="new_product_application_project_not_approved"
+        )
+        app.project_id = project_id
     for key in HEADER_TEXT:
         if key in data:
             setattr(app, key, _clean(data[key]))
@@ -340,6 +355,12 @@ def create_draft(
     )
     db.add(app)
     _apply(db, app, data)
+    if "project_id" not in data and app.stock_inquiry_id:
+        # AC-C4: raised from a stock inquiry, it starts with that inquiry's project; the
+        # person may pick another or clear it (an explicit null is kept).
+        app.project_id = (
+            db.query(StockInquiry.project_id).filter(StockInquiry.id == app.stock_inquiry_id).scalar()
+        )
     db.flush()
     return app
 
@@ -932,12 +953,22 @@ def prefill(db: Session, stock_inquiry_id: str, *, contact_id: Optional[str] = N
     holds."""
     inquiry = _inquiry_for(db, stock_inquiry_id, contact_id=contact_id, space_id=space_id)
     current = _exact_current_code(db, inquiry.product_code)
+    project = (
+        db.query(Project.project_code, Project.title).filter(Project.id == inquiry.project_id).first()
+        if inquiry.project_id
+        else None
+    )
     return {
         "stock_inquiry_id": str(inquiry.id),
         "stock_inquiry_number": inquiry.inquiry_number,
         "customer_id": None,
         "customer_name": _clean(inquiry.project_customer),
         "project_name": _clean(inquiry.project_name),
+        # PROJECT-RELATED-RECORDS AC-C4: the inquiry's project starts picked; the person may
+        # change or clear it.
+        "project_id": inquiry.project_id if project else None,
+        "project_code": project[0] if project else None,
+        "project_title": project[1] if project else None,
         "needed_by": _parse_date(inquiry.delivery_date),
         "remark": _clean(inquiry.remark),
         "current_product_ids": current,
@@ -1431,6 +1462,8 @@ def list_for(
     limit: int = 25,
     sort: Optional[str] = None,
     direction: str = "desc",
+    last_activity_from: Optional[Any] = None,
+    last_activity_to: Optional[Any] = None,
 ) -> Dict[str, Any]:
     query = _visible(db.query(NewProductApplication), actor)
     if statuses:
@@ -1443,6 +1476,9 @@ def list_for(
         query = query.filter(
             NewProductApplication.applicant_id.in_([applicant_id] if isinstance(applicant_id, str) else applicant_id)
         )
+    in_range = last_activity_range(NewProductApplication.last_activity_at, last_activity_from, last_activity_to)
+    if in_range is not None:
+        query = query.filter(in_range)
     text = (q or "").strip()
     if text:
         like = f"%{text}%"
@@ -1475,10 +1511,18 @@ def list_for(
     elif sort == "print_count":
         column = StockInquiryService._print_count_sort(actor.user_id, ENTITY, NewProductApplication)
     else:
-        column = _SORTS.get(sort or "", NewProductApplication.created_at)
-    ordered = column.asc() if direction == "asc" else column.desc()
+        column = _SORTS.get(sort or "")
+    if column is None:
+        # Newest activity first (no sort, or an unknown one); ties by created_at, id.
+        ordering = last_activity_order(
+            NewProductApplication.last_activity_at, NewProductApplication.created_at, NewProductApplication.id,
+            direction if sort == "last_activity_at" else "desc",
+        )
+    else:
+        ordered = column.asc() if direction == "asc" else column.desc()
+        ordering = [ordered.nulls_last(), NewProductApplication.application_no.desc()]
     rows = (
-        query.order_by(ordered.nulls_last(), NewProductApplication.application_no.desc())
+        query.order_by(*ordering)
         .offset((page - 1) * limit)
         .limit(limit)
         .all()
@@ -1585,6 +1629,7 @@ def serialize_summary(
         "needed_by": _iso(app.needed_by),
         "submitted_at": _iso(app.submitted_at),
         "created_at": _iso(app.created_at),
+        "last_activity_at": _iso(app.last_activity_at),
     }
 
 
@@ -1738,8 +1783,17 @@ def serialize_detail(db: Session, app: NewProductApplication, *, portal: bool = 
         return out
 
     summary = serialize_summary(db, app)
+    project = (
+        db.query(Project.project_code, Project.title).filter(Project.id == app.project_id).first()
+        if app.project_id
+        else None
+    )
     out = {
         **summary,
+        # PROJECT-RELATED-RECORDS AC-C7: the linked project as code + title, never the UUID alone.
+        "project_id": app.project_id,
+        "project_code": project[0] if project else None,
+        "project_title": project[1] if project else None,
         "stock_inquiry_product_code": inquiry[1] if inquiry else None,
         # NPA-FROM-SI rule 7: the application's "Stock inquiry" tab (the one inquiry it links).
         "stock_inquiry": (

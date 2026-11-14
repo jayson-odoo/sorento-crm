@@ -6,14 +6,16 @@ opens it: order inquiries and the fulfilment board (`projects.projects.view`), t
 is shown to the same three.
 """
 from datetime import date
-from typing import Optional
+from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import require_any_permission_with_api_key
+from app.services.company_scope_resolver import widen_if_requested
 from app.services.field_access import CLEARANCE_PERMISSION
+from app.services.stock_read_scope import SPARE_PART_READ, quantities_only, reads_documents
 from app.services.stock_status_service import stock_status
 from app.services.user_service import UserPermissionService
 
@@ -49,8 +51,26 @@ def get_stock_status(
         None,
         description="Count SO due on or before this date only; undated SO always counts.",
     ),
-    _user: dict = Depends(require_any_permission_with_api_key(READ_PERMISSIONS)),
+    company_scope: Optional[Literal["grants"]] = Query(
+        None,
+        description=(
+            "`grants` reads every company the caller is granted (staff sessions only): an "
+            "order inquiry's line can sit at another granted company's bin."
+        ),
+    ),
+    request: Request = None,
+    # SPARE-PART-ORDER-REQUEST (D2): a spare part requester or approver reads a line's stock
+    # too, as quantities only (below).
+    _user: dict = Depends(require_any_permission_with_api_key([*READ_PERMISSIONS, *SPARE_PART_READ])),
     db: Session = Depends(get_db),
 ):
     """Every location holding the item, its SO / PO / SPO documents and incoming packing lists."""
-    return stock_status(db, product_id, so_due_by, eta_delay_visible=_may_see_eta_delay(db, _user))
+    with widen_if_requested(db, request, _user, company_scope):
+        status = stock_status(
+            db, product_id, so_due_by, eta_delay_visible=_may_see_eta_delay(db, _user)
+        )
+    if reads_documents(db, _user, READ_PERMISSIONS):
+        return status
+    return quantities_only(
+        status, ("sales_orders", "purchase_orders", "spos", "incoming_pl")
+    )

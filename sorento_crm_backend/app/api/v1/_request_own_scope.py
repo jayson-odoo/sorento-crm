@@ -246,12 +246,13 @@ _MODULE_READS: Dict[str, Dict[Tuple[str, str], str]] = {
         ("GET", "/customer-options"): "list",
         ("GET", "/{opportunity_id}"): "row",
     },
-    # The table and the request page only: the designer, its versions and data changes, claim,
-    # transition / void, the print-by and line price PATCHes, export and the staff line pricing
+    # The table and the request page (its History tab included) only: the designer, its versions
+    # and data changes, claim, transition / void, the print-by and line price PATCHes, export and the staff line pricing
     # are marketing's. The salesperson's own actions run through /api/v1/my-requests.
     "price_tag_request": {
         ("GET", ""): "list",
         ("GET", "/{request_id}"): "row",
+        ("GET", "/{request_id}/history"): "row",
     },
 }
 

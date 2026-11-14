@@ -62,6 +62,8 @@ export function PanelDataGrid<TRow extends object>({
   renderGroupHeader,
   sortable = false,
   serverSorting,
+  serverPaging,
+  isPlaceholderData,
   onSortedRowsChange,
   rowSelection,
   onRowSelectionChange,
@@ -152,6 +154,22 @@ export function PanelDataGrid<TRow extends object>({
    * leaves the rows in the order they came back. Wins over `sortable`.
    */
   serverSorting?: { sorting: SortingState; onSortingChange: OnChangeFn<SortingState> };
+  /**
+   * Page on the SERVER too (PROJECT-RELATED-RECORDS: a project's related records are many
+   * types, and every column sorts on the server, so the page has to come from there as well).
+   * The caller owns the state and refetches with it; `rows` is that one page and `rowCount`
+   * the server's total. Omitted, the grid pages the rows it was given, as before.
+   */
+  serverPaging?: {
+    pagination: PaginationState;
+    onPaginationChange: OnChangeFn<PaginationState>;
+    rowCount: number;
+  };
+  /**
+   * The query is showing the previous page while the next loads (`LIST_QUERY_OPTIONS`): the
+   * grid dims instead of flashing empty. Forward the query's flag with `serverPaging` (M4-01b).
+   */
+  isPlaceholderData?: boolean;
   /**
    * The rows in the grid's own live order - sorted, then filtered, never paginated - each time
    * that order changes (Should fix 3, review round 1, PR #1218 S3). OPTIONAL: a caller whose
@@ -253,15 +271,21 @@ export function PanelDataGrid<TRow extends object>({
     return rows.filter((row) => searchOf(row).toLowerCase().includes(needle));
   }, [rows, search, searchOf]);
 
-  const pageCount = paginate ? Math.ceil(filtered.length / pagination.pageSize) || 0 : 1;
+  const pageCount = serverPaging
+    ? Math.ceil(serverPaging.rowCount / serverPaging.pagination.pageSize) || 0
+    : paginate
+      ? Math.ceil(filtered.length / pagination.pageSize) || 0
+      : 1;
   // Clamped for THIS render, not in an effect: a row removal (a save, a
   // Confirm refetch) can leave `pageIndex` past the last page that still
   // exists, and an effect would still commit one paint at the stale index
   // first - showing "No data available" before it lands.
   const lastPageIndex = Math.max(0, pageCount - 1);
-  const tablePagination: PaginationState = paginate
-    ? { ...pagination, pageIndex: Math.min(pagination.pageIndex, lastPageIndex) }
-    : pagination;
+  const tablePagination: PaginationState = serverPaging
+    ? serverPaging.pagination
+    : paginate
+      ? { ...pagination, pageIndex: Math.min(pagination.pageIndex, lastPageIndex) }
+      : pagination;
 
   // The render clamp above is only a PAINT: `pagination` (the real state
   // `table.previousPage()`/`nextPage()` step from) is still left at the
@@ -269,11 +293,11 @@ export function PanelDataGrid<TRow extends object>({
   // page from the wrong number and looks like a dead click. Persist the
   // same clamp into state once the render settles, so they agree again.
   React.useEffect(() => {
-    if (!paginate) return;
+    if (!paginate || serverPaging) return;
     if (pagination.pageIndex > lastPageIndex) {
       setPagination((current) => ({ ...current, pageIndex: lastPageIndex }));
     }
-  }, [paginate, lastPageIndex, pagination.pageIndex]);
+  }, [paginate, serverPaging, lastPageIndex, pagination.pageIndex]);
 
   // A parent-side filter (see `pageResetKey`'s doc) resets the page by
   // changing this value instead of `rows`. Skips the render that mounts it,
@@ -312,7 +336,9 @@ export function PanelDataGrid<TRow extends object>({
           enableRowSelection: enableRowSelection ?? true,
         }
       : {}),
-    onPaginationChange: setPagination,
+    ...(serverPaging
+      ? { onPaginationChange: serverPaging.onPaginationChange, manualPagination: true }
+      : { onPaginationChange: setPagination }),
     ...(serverSorting
       ? { onSortingChange: serverSorting.onSortingChange, manualSorting: true }
       : sortable
@@ -329,7 +355,7 @@ export function PanelDataGrid<TRow extends object>({
     // shared loading skeleton - which draws `pageSize` rows - throw
     // `RangeError: Invalid array length` on every mount that still had
     // preferences resolving.
-    ...(paginate ? { getPaginationRowModel: getPaginationRowModel() } : {}),
+    ...(paginate && !serverPaging ? { getPaginationRowModel: getPaginationRowModel() } : {}),
     columnResizeMode: 'onChange',
   });
 
@@ -401,8 +427,9 @@ export function PanelDataGrid<TRow extends object>({
   return (
     <DataGrid
       table={table}
-      recordCount={filtered.length}
+      recordCount={serverPaging ? serverPaging.rowCount : filtered.length}
       isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       listingKey={listingKey}
       tableLayout={{
         width: 'fixed',

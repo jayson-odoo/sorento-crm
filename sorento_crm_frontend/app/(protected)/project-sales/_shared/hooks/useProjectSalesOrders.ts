@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/
 import { toast } from '@/lib/toast';
 import { saveBlobAs } from '../services/fileDownload';
 import { projectKey } from './useProjects';
+import { isOverridableRefusal } from '../lib/nonCancellable';
 import { allocationsKey } from './useProjectAllocations';
 import { acknowledgeFinding, acknowledgeScheduleFinding, buildSalesOrders, bulkDeleteProjectSalesOrders, bulkSetLinesStockLocation, createAmendment, deleteProjectSalesOrder, downloadAmendmentAutocountChangeListXlsx, downloadSalesOrderImportFile, getAmendment, getAmendmentAutocountChangeList, getProjectSalesOrder, getSalesOrderWorksheet, listPoVersions, listProjectSalesOrders, listScheduleFindings, listScheduleVersions, previewAmendment, publishAmendment, publishSalesOrder, regroupSalesOrder, reorderSalesOrderLines, saveSalesOrderDocument, unpublishSalesOrder, updateAmendmentRowDecisions, updateSalesOrderLine } from '../services/projectSalesOrderService';
 import type {
@@ -156,6 +157,9 @@ export function useAmendment(amendmentId: string | undefined) {
     queryKey: [AMENDMENT_KEY, amendmentId],
     queryFn: () => getAmendment(amendmentId as string),
     enabled: Boolean(amendmentId),
+    // The notice is approved on another screen; back on this tab, its pill and Publish state
+    // must be current (browser pass 4).
+    refetchOnWindowFocus: true,
   });
 }
 
@@ -457,14 +461,19 @@ export function useAmendmentMutations(projectId: string, psoId: string) {
   });
 
   const publish = useMutation({
-    mutationFn: (amendmentId: string) => publishAmendment(amendmentId),
-    onSuccess: (amendment) => {
+    mutationFn: ({ amendmentId, overrideReason }: { amendmentId: string; overrideReason?: string }) =>
+      publishAmendment(amendmentId, overrideReason),
+    // The publish answer carries no amendment id: refresh the one that was published.
+    onSuccess: (_published, { amendmentId }) => {
       queryClient.invalidateQueries({ queryKey: salesOrderKey(psoId) });
       queryClient.invalidateQueries({ queryKey: [SALES_ORDERS_KEY, projectId] });
-      queryClient.invalidateQueries({ queryKey: [AMENDMENT_KEY, amendment.id] });
+      queryClient.invalidateQueries({ queryKey: [AMENDMENT_KEY, amendmentId] });
       toast.success('Amendment published');
     },
-    onError: (error: Error) => toast.error(error.message),
+    // An overridable refusal opens the override dialog instead of a toast.
+    onError: (error: Error) => {
+      if (!isOverridableRefusal(error)) toast.error(error.message);
+    },
   });
 
   /**
@@ -489,7 +498,9 @@ export function useAmendmentMutations(projectId: string, psoId: string) {
       if (previous) {
         queryClient.setQueryData<AmendmentDetail>(key, {
           ...previous,
-          rows: previous.rows.map((row) => {
+          delta: {
+            ...previous.delta,
+            rows: (previous.delta?.rows ?? []).map((row) => {
             const rowKey = row.row_key ?? `${row.so_line_id}:${row.field}`;
             const patch = decisions[rowKey];
             if (!patch) return row;
@@ -499,6 +510,7 @@ export function useAmendmentMutations(projectId: string, psoId: string) {
               declined_reason: patch.decision === 'declined' ? (patch.reason ?? null) : null,
             };
           }),
+          },
         });
       }
       return { previous };

@@ -603,3 +603,14 @@ describe('SeriesProductsTable', () => {
     }
   });
 });
+
+describe('SeriesProductsTable non-cancellable column (NON-CANCELLABLE-ITEMS)', () => {
+  it('keeps "Follows category" on one line: the select label is cut, never wrapped', async () => {
+    getSeriesProductRows.mockResolvedValue(serverPage([row()]));
+    renderTable();
+    await screen.findByText('One piece WC');
+    const label = screen.getByText('Follows category');
+    expect(label.className).toContain('truncate');
+    expect(label.className).not.toContain('break-words');
+  });
+});
