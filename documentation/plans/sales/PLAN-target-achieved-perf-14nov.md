@@ -45,10 +45,12 @@ with their targets?" times out, and the Targets screen dealer tab takes about 8.
 
 ## Tests (red first)
 
-- `tests/test_sales_target_invoiced.py`: a plan test on a seeded volume (20 dealer targets x 12
-  monthly periods, analyzed): `Rows Removed by Join Filter` over the whole plan stays within
-  (credited documents x periods of one target), and no VALUES scan is re-run per document.
-  Red on today's code (removes about documents x 239). The file's figure tests stay green.
+- `tests/test_sales_target_invoiced.py`: a plan test on a prod-shaped, analyzed volume (60 dealers
+  x 2 accounts x 4 quarters x 30 documents): figures equal the shared sales total, the plan joins
+  ONE VALUES list read once, and `Rows Removed by Join Filter` stays within (credited documents x
+  periods of one target). Red on today's code (two VALUES lists). The prod tie-break itself does
+  not reproduce at fixture size (the fixture's first join is estimated at 5 rows, prod's at 1).
+  The file's figure tests stay green.
 - `tests/chatbot/agent/...` timeout message: a computed-entity timeout reads without "Narrow".
 
 ## Timing (brief step 4)
