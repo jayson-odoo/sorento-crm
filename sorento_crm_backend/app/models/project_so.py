@@ -1353,6 +1353,9 @@ class OrderInquiryRow(Base, CompanyScopedMixin):
         UUID(as_uuid=False), ForeignKey("products.id", ondelete="SET NULL"), nullable=True
     )
     revised_delivery_date = Column(Date, nullable=True)
+    #: R2: the description the requester typed for a revision's product swap; NULL takes the
+    #: new product's name at the settle (Create's G1 rule).
+    revised_description = Column(Text, nullable=True)
     #: The order the requester entered a spare part request's lines in (1-based).
     line_no = Column(Integer, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)

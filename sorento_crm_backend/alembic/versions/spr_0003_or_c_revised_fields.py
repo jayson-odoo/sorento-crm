@@ -8,6 +8,8 @@ C4.1 + C2.4 + "Migration"). Additive only:
   open revision proposes for the row.
 * `projects.order_inquiry_rows.revised_delivery_date date` (NULL): the line delivery date an
   open revision proposes.
+* `projects.order_inquiry_rows.revised_description text` (NULL): the description typed for
+  a revision's product swap (fix round 1, R2; NULL takes the new product's name).
 
 Then the guarded template step (`relabel_handover_template`): the seeded default handover
 email `order_inquiry_handover_default` reads OR NO / OR DATE / REQUESTER / REASON over its
@@ -122,6 +124,11 @@ def upgrade() -> None:
         sa.Column("revised_delivery_date", sa.Date(), nullable=True),
         schema="projects",
     )
+    op.add_column(
+        "order_inquiry_rows",
+        sa.Column("revised_description", sa.Text(), nullable=True),
+        schema="projects",
+    )
     relabel_handover_template(op.get_bind())
 
 
@@ -134,5 +141,6 @@ def downgrade() -> None:
         only_when=(_LAYOUT, _BODY_TEXT),
         direction="downgrade",
     )
+    op.drop_column("order_inquiry_rows", "revised_description", schema="projects")
     op.drop_column("order_inquiry_rows", "revised_delivery_date", schema="projects")
     op.drop_column("order_inquiry_rows", "revised_product_id", schema="projects")

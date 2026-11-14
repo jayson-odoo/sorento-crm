@@ -15,10 +15,10 @@ from __future__ import annotations
 from typing import Any, Iterable, Set
 
 from sqlalchemy import and_, exists, or_
-from sqlalchemy.orm import Session, aliased
+from sqlalchemy.orm import Session
 
 from app.models.planning_change import PlanningChangeBatch, PlanningChangeRow
-from app.models.project_so import OrderInquiry, OrderInquiryRow
+from app.models.project_so import OrderInquiryRow
 from app.services.planning_change_service import PLANNING_CHANGE_STATE_PENDING
 
 WAITING_FOR_CS_MESSAGE = "Waiting for CS to confirm the sales order change"
@@ -35,26 +35,19 @@ def pending_change_clause(so_line_id: Any):
     )
 
 
-_REVISED_HEADER = aliased(OrderInquiry)
-
-
 def revision_moved_clause(row: Any = OrderInquiryRow):
-    """SQL: an open revision of the row's order request moved the row (C4.2)."""
-    return and_(
-        or_(
-            and_(row.revised_qty.isnot(None), row.revised_qty != row.qty),
-            and_(
-                row.revised_product_id.isnot(None),
-                row.revised_product_id.is_distinct_from(row.product_id),
-            ),
-            and_(
-                row.revised_delivery_date.isnot(None),
-                row.revised_delivery_date.is_distinct_from(row.delivery_date),
-            ),
+    """SQL: an open revision of the row's order request moved the row (C4.2). The revision
+    fields are set only while a revision is open (every path that closes one clears them,
+    `spare_part_request_service._clear_revision`), so they alone say so."""
+    return or_(
+        and_(row.revised_qty.isnot(None), row.revised_qty != row.qty),
+        and_(
+            row.revised_product_id.isnot(None),
+            row.revised_product_id.is_distinct_from(row.product_id),
         ),
-        exists().where(
-            _REVISED_HEADER.id == row.order_inquiry_id,
-            _REVISED_HEADER.revision_state.isnot(None),
+        and_(
+            row.revised_delivery_date.isnot(None),
+            row.revised_delivery_date.is_distinct_from(row.delivery_date),
         ),
     )
 

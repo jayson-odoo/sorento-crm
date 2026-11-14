@@ -58,6 +58,8 @@ class SparePartRejectIn(BaseModel):
 class SparePartLineOut(BaseModel):
     id: str
     product_id: Optional[str] = None
+    #: R2: the approved product; `product_id` is an open revision's while one swaps it.
+    approved_product_id: Optional[str] = None
     product_name: Optional[str] = None
     item_code: Optional[str] = None
     description: Optional[str] = None

@@ -37,4 +37,4 @@ Card v1 + correction accepted 14 Nov (crew relaying owner rulings): Q1 (a) final
 - C5.4 Changing the header date on a draft fills only lines still on the previous header date.
 
 ## Migration
-- One additive revision (id <= 32 chars, single head): `order_inquiry_rows.revised_product_id` uuid FK products NULL, `order_inquiry_rows.revised_delivery_date` date NULL; plus the C2.4 template data step (guarded). Nothing dropped.
+- One additive revision (id <= 32 chars, single head): `order_inquiry_rows.revised_product_id` uuid FK products NULL, `order_inquiry_rows.revised_delivery_date` date NULL, `order_inquiry_rows.revised_description` text NULL (fix round 1, R2: the description typed for a revision's product swap); plus the C2.4 template data step (guarded). Nothing dropped.

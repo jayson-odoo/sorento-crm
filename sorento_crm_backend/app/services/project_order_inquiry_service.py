@@ -354,16 +354,20 @@ def mark_purchasing_email_trigger(session) -> None:
     """Mark the ROOT transaction this session is in as one that may email purchasing
     (FP-EMAIL-ONE-TRIGGER, owner 6 Nov 2026).
 
-    Three callers, each a person's press, and no others:
+    Four callers, each a person's press, and no others (the allowlist in
+    `tests/test_lessons_learnt_regressions.py`):
     - the board Confirm (`fulfilment_planning._confirm_with_possible_rejects`, the seam both
       Confirm routes share): THE trigger;
     - Publish amendment (`projects/sales_orders.publish_amendment`): kept as it was by the
       owner (Q4, "not used yet"), an exception named in
       `documentation/plans/fulfilment/PLAN-email-one-trigger-6nov.md`;
-    - a spare part request revision's final approval
-      (`spare_part_request_service._approve_revision`, owner 14 Nov, UAC U4.5 of
-      `documentation/plans/purchasing/spare-part-or-b-14nov-acceptance-criteria.md`), only
-      when a qty moved.
+    - a spare part request revision's final approval, or an approver's own revision at
+      Submit (`spare_part_request_service._approve_revision`, owner 14 Nov, UAC U4.5 / C4.4),
+      only when a line moved or was added;
+    - a spare part request's final approval, or an approver's own Submit
+      (`spare_part_request_service._raise_to_purchasing`, owner 14 Nov 18:42, UAC C2.1 of
+      `documentation/plans/purchasing/spare-part-or-c-14nov-acceptance-criteria.md`), when
+      a line is raised.
     A purchasing handover line any write queues is sent only when the root transaction it was
     queued under carries this mark, and a changed-with-links notice is queued only inside one.
     The mark ends with that transaction, committed or not (`_fire_pending_handover`)."""
@@ -3206,8 +3210,11 @@ class ProjectOrderInquiryService:
             row.item_code = new_item_code
             if settles_request and entry.get("product_id"):
                 # A request's row names its catalogue product itself (no SO line to read
-                # one off), so the product moves with its code.
+                # one off), so the product moves with its code, and its description with
+                # it (R2: the requester's own words, else the new product's name).
                 row.product_id = entry["product_id"]
+                if entry.get("description"):
+                    row.description = entry["description"]
         if changed:
             # One rule for all three "was" columns (review S5): every REAL settle says what
             # THIS change moved and nothing older, so the Was / Now table on a re-flagged
@@ -3226,6 +3233,13 @@ class ProjectOrderInquiryService:
             # product-only change: that would print a false "Was 10 -> Now 10".
             row.previous_qty = previous_qty
             row.previous_delivery_date = previous_date
+            if settles_request:
+                # F3: a request's revision names only what it moved, so the field it left
+                # alone carries no "was" (a qty revision is no date move).
+                if "qty" not in moves:
+                    row.previous_qty = None
+                if "delivery_date" not in moves:
+                    row.previous_delivery_date = None
         elif changed:
             # Product-only: no false "Was 10 -> Now 10", and no older qty move left behind.
             row.previous_qty = None

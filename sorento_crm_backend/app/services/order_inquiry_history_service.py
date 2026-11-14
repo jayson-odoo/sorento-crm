@@ -129,15 +129,9 @@ VIEW_INQUIRY = "inquiry"
 
 
 def _first_raise_at(db: Session, inquiry_id: str) -> Optional[datetime]:
-    """When an order request was FIRST raised to purchasing; None for any other inquiry (a
-    sales-order inquiry reads its whole history on every page)."""
+    """When an order request was FIRST raised to purchasing; None when it never was."""
     from sqlalchemy import func
 
-    from app.models.project_so import INQUIRY_TYPE_SPARE_PART, OrderInquiry
-
-    kind = db.query(OrderInquiry.inquiry_type).filter(OrderInquiry.id == inquiry_id).scalar()
-    if kind != INQUIRY_TYPE_SPARE_PART:
-        return None
     return (
         db.query(func.min(OrderInquiryRaise.raised_at))
         .filter(OrderInquiryRaise.order_inquiry_id == inquiry_id)
@@ -153,9 +147,15 @@ def history(
     events = _history(db, inquiry_id, mask_cost=mask_cost)
     if view != VIEW_INQUIRY:
         return events
+    from app.models.project_so import INQUIRY_TYPE_SPARE_PART, OrderInquiry
+
+    kind = db.query(OrderInquiry.inquiry_type).filter(OrderInquiry.id == inquiry_id).scalar()
+    if kind != INQUIRY_TYPE_SPARE_PART:
+        return events
     first_raise = _first_raise_at(db, inquiry_id)
     if first_raise is None:
-        return events
+        # R8: an order request never raised has nothing purchasing saw.
+        return []
     cut = _iso(first_raise)
     return [event for event in events if event.get("at") and event["at"] >= cut]
 

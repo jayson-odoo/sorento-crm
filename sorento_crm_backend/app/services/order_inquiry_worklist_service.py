@@ -1610,6 +1610,9 @@ class OrderInquiryWorklistService:
         # SPARE-PART-ORDER-REQUEST: the caller's own header visibility clause
         # (`spare_part_request_service.visibility_clause`); None = no pre-approval header.
         visibility: Any = None,
+        # SPARE-PART-OR-B C (R1): "request" is the order request page's own read, the one
+        # place a revision's added (still draft) line of an approved request is listed.
+        view: Optional[str] = None,
     ):
         """Every inquiry row in the company, with everything a column needs beside it.
 
@@ -1706,19 +1709,21 @@ class OrderInquiryWorklistService:
             # one rule the Documents tab counts by (`oi_row_visibility`). A cancelled row is
             # listed only when the State filter asks for it; a used row never is.
             # `include_cancelled` (the OI page's `include_history` fetch) reads both as History.
-            # A spare part request's `draft` rows are its lines on its own OI page only, and
-            # only before its approval: a line a revision adds stays a draft purchasing never
-            # sees until the re-approval raises it (SPARE-PART-OR-B C, C4.1).
+            # A spare part request's `draft` rows are its lines on its own OI page only.
             base = base.filter(
-                or_(
-                    live_row_clause(),
-                    and_(
-                        OrderInquiryRow.state == INQUIRY_DRAFT,
-                        OrderInquiry.state.in_(INQUIRY_PRE_APPROVAL_STATES),
-                    ),
-                )
+                or_(live_row_clause(), OrderInquiryRow.state == INQUIRY_DRAFT)
                 if inquiry_id
                 else live_row_clause()
+            )
+        if view != "request":
+            # SPARE-PART-OR-B C (C4.1, R1): a line a revision adds stays a draft row that
+            # purchasing never reads (the OI page, whoever opens it, History included) until
+            # the re-approval raises it; only the order request page lists it.
+            base = base.filter(
+                or_(
+                    OrderInquiryRow.state != INQUIRY_DRAFT,
+                    OrderInquiry.state.in_(INQUIRY_PRE_APPROVAL_STATES),
+                )
             )
         # SPARE-PART-ORDER-REQUEST (P1): a request before its final approval reaches only
         # whom `visibility` admits (the OI page of its requester / approver / an admin);

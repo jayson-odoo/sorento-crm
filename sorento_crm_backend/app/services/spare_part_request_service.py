@@ -175,31 +175,64 @@ def _on_stage_team(db: Session, tracker, user_id: str, company_id: Optional[str]
     )
 
 
-def is_final_approver(db: Session, user_id: Optional[str], company_id: Optional[str]) -> bool:
-    """SPARE-PART-OR-B C (C1.1): an admin, or a member of the team of the FINAL configured
-    approval level (an active level whose next level is not an active one). Such a user's own
-    request skips approval: their Submit raises it (C1.2), their revision applies at Submit
-    (C1.3). Deciding on someone else's request is still `can_decide` (C1.5)."""
-    from app.models.access import AccessAgent
+def _terminal_level(db: Session):
+    """S1 (fail closed): the ONE terminal level of the configured chain, walked from the
+    level `submitted` starts along `next_config_id` over active levels; None when there is
+    no start level, more than one terminal is reachable (parallel levels) or a cycle."""
     from app.models.sla import FormSLAConfig
 
-    if not user_id:
-        return False
-    if is_admin(db, user_id):
-        return True
     configs = (
         db.query(FormSLAConfig)
         .filter(FormSLAConfig.source_entity_type == KIND, FormSLAConfig.is_active.is_(True))
         .all()
     )
-    active = {str(c.id) for c in configs}
-    for config in configs:
-        if config.next_config_id and str(config.next_config_id) in active:
-            continue
-        agent = db.query(AccessAgent.id).filter(AccessAgent.code == config.agent_code).first()
-        if agent is not None and _on_team(db, agent[0], config.team_set_code, user_id, company_id):
-            return True
-    return False
+    by_id = {str(c.id): c for c in configs}
+    starts = [
+        c for c in configs
+        if "submitted" in {t.strip() for t in str(c.start_event or "").split(",")}
+    ]
+    terminals: Set[str] = set()
+    for config in starts:
+        seen: Set[str] = set()
+        while config.next_config_id and str(config.next_config_id) in by_id:
+            if str(config.id) in seen:
+                return None
+            seen.add(str(config.id))
+            config = by_id[str(config.next_config_id)]
+        terminals.add(str(config.id))
+    return by_id[next(iter(terminals))] if len(terminals) == 1 else None
+
+
+def is_final_approver(db: Session, user_id: Optional[str], company_id: Optional[str]) -> bool:
+    """SPARE-PART-OR-B C (C1.1, S1): an admin, or an ACTIVE member of the team of the one
+    terminal approval level reachable from the start level, whose agent is active. Anything
+    else (no chain, parallel terminals, a stray level, an inactive user or agent) is a normal
+    approval: fail closed. Such a user's own request skips approval: their Submit raises it
+    (C1.2), their revision applies at Submit (C1.3). Deciding on someone else's request is
+    still `can_decide` (C1.5)."""
+    from app.models.access import AccessAgent
+    from app.models.user import User, UserStatus
+
+    if not user_id:
+        return False
+    if is_admin(db, user_id):
+        return True
+    final = _terminal_level(db)
+    if final is None:
+        return False
+    active = (
+        db.query(User.id)
+        .filter(User.id == str(user_id), User.status == UserStatus.ACTIVE.value)
+        .first()
+    )
+    if active is None:
+        return False
+    agent = (
+        db.query(AccessAgent.id)
+        .filter(AccessAgent.code == final.agent_code, AccessAgent.is_active.is_(True))
+        .first()
+    )
+    return agent is not None and _on_team(db, agent[0], final.team_set_code, user_id, company_id)
 
 
 def in_revision(inquiry: OrderInquiry) -> bool:
@@ -461,13 +494,22 @@ def detail(db: Session, inquiry: OrderInquiry, user_id: Optional[str]) -> Dict[s
             {
                 "id": str(row.id),
                 "product_id": str(product_id) if product_id else None,
+                # R2: the product purchasing works to; differs from `product_id` while an
+                # open revision swaps it.
+                "approved_product_id": str(row.product_id) if row.product_id else None,
                 "product_name": product.product_name if product else None,
                 "item_code": (
                     product.product_code
                     if product is not None and product_id != row.product_id
                     else row.item_code
                 ),
-                "description": row.description,
+                # R2: a revision's product swap reads its typed words, else the new name.
+                "description": (
+                    row.revised_description
+                    or (product.product_name if product is not None else None)
+                    if revising and row.revised_product_id
+                    else row.description
+                ),
                 "stock_location": row.stock_location,
                 "delivery_date": delivery_date,
                 "qty": _num(qty) or "0",
@@ -791,23 +833,38 @@ def _save_revision(db: Session, inquiry: OrderInquiry, data: Dict[str, Any], act
     if inquiry.revision_state not in _EDITABLE:
         raise _conflict("This revision is waiting for approval.")
     before = _snapshot(db, inquiry, revised=True)
-    existing = {str(r.id): r for r in _rows(db, inquiry) if r.state != INQUIRY_CANCELLED}
+    every = {str(r.id): r for r in _rows(db, inquiry)}
+    existing = {row_id: r for row_id, r in every.items() if r.state != INQUIRY_CANCELLED}
     kept: Set[str] = set()
     for index, line in enumerate(data.get("lines") or [], start=1):
         if not isinstance(line, dict):
             raise _invalid("lines", f"Line {index} is not a line.")
+        line_id = str(line.get("id") or "")
+        if line_id and line_id in every and line_id not in existing:
+            # R4: a line cancelled while the form was open stays cancelled.
+            continue
         product = _product(db, line.get("product_id"), index)
         qty = _decimal(line.get("qty"), "qty")
-        row = existing.get(str(line.get("id") or ""))
+        row = existing.get(line_id)
         if row is not None and row.state != INQUIRY_DRAFT:
+            if qty is None:
+                # R4: a blank qty is never read as "remove the line".
+                raise _invalid("qty", f"Line {index}: enter a quantity (0 removes the line).")
             kept.add(str(row.id))
             own_date = _date(line.get("delivery_date"), "delivery_date")
-            row.revised_qty = qty if qty is not None else _ZERO
-            row.revised_product_id = (
-                str(product.id) if str(product.id) != str(row.product_id or "") else None
-            )
-            row.revised_delivery_date = (
+            revised_product = str(product.id) if str(product.id) != str(row.product_id or "") else None
+            revised_date = (
                 own_date if own_date is not None and own_date != row.delivery_date else None
+            )
+            _assert_settle_takes(db, row, qty, revised_product, revised_date)
+            row.revised_qty = qty
+            row.revised_product_id = revised_product
+            row.revised_delivery_date = revised_date
+            typed = _text(line.get("description"), 4000)
+            row.revised_description = (
+                typed
+                if revised_product and typed and typed not in (row.description, product.product_name)
+                else None
             )
             continue
         # A line this revision adds (new, or added by an earlier save of it).
@@ -829,10 +886,46 @@ def _save_revision(db: Session, inquiry: OrderInquiry, data: Dict[str, Any], act
         row.revised_qty = _ZERO
         row.revised_product_id = None
         row.revised_delivery_date = None
+        row.revised_description = None
     db.flush()
     _audit_edit(db, inquiry, before, _snapshot(db, inquiry, revised=True), actor)
     db.flush()
     return inquiry
+
+
+def _assert_settle_takes(
+    db: Session,
+    row: OrderInquiryRow,
+    qty: Decimal,
+    revised_product: Optional[str],
+    revised_date: Optional[date],
+) -> None:
+    """S2 / S3: refuse at save what the re-approval's settle could not apply, so an approval
+    never stops half way. A product change needs a row holding no document (link or
+    receipt) whose current code is a catalogue product; any change needs a row the settle
+    takes (not released to stock). Taking a line to 0 cancels it and is always allowed."""
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+    moved = (
+        qty != Decimal(row.qty or 0) or revised_product is not None or revised_date is not None
+    )
+    if not moved or qty <= 0:
+        return
+    code = row.item_code or "This line"
+    if row.redirected_to_pool:
+        raise _conflict(f"{code} was released to stock and can no longer be revised.")
+    if revised_product is None:
+        return
+    oi = ProjectOrderInquiryService(db)
+    if oi._links_of(row.id):  # noqa: SLF001
+        raise _conflict(
+            f"{code} is already on a purchase document, so its product cannot change. "
+            "Change its qty or date, or remove it and add the new product."
+        )
+    if not oi._is_catalogue_code(row.item_code):  # noqa: SLF001
+        raise _conflict(
+            f"{code} is not a catalogue product, so its product cannot change here."
+        )
 
 
 def create(db: Session, data: Dict[str, Any], actor: str) -> OrderInquiry:
@@ -1146,6 +1239,7 @@ def _clear_revision(db: Session, inquiry: OrderInquiry) -> None:
         row.revised_qty = None
         row.revised_product_id = None
         row.revised_delivery_date = None
+        row.revised_description = None
     inquiry.revision_state = None
     inquiry.reject_reason = None
 
@@ -1580,12 +1674,10 @@ def _approve_revision(
         # (FP-EMAIL-ONE-TRIGGER); nothing moved, nothing marked.
         mark_purchasing_email_trigger(db)
     product_ids = {str(row.revised_product_id) for row in moved if row.revised_product_id}
-    codes = {
-        str(pid): code
-        for pid, code in (
-            db.query(Product.id, Product.product_code).filter(Product.id.in_(product_ids))
-            if product_ids
-            else []
+    products = {
+        str(p.id): p
+        for p in (
+            db.query(Product).filter(Product.id.in_(product_ids)).all() if product_ids else []
         )
     }
     for row in moved:
@@ -1595,10 +1687,17 @@ def _approve_revision(
                 row, cause="revised_to_zero", stamp="Revised to 0", actor_user_id=str(actor)
             )
             continue
+        product = products.get(str(row.revised_product_id)) if row.revised_product_id else None
         entry = {
             "required_date": row.revised_delivery_date,
-            "item_code": codes.get(str(row.revised_product_id)) if row.revised_product_id else None,
-            "product_id": str(row.revised_product_id) if row.revised_product_id else None,
+            "item_code": product.product_code if product else None,
+            "product_id": str(product.id) if product else None,
+            # R2 (Create's G1): the typed description, else the new product's name.
+            "description": (
+                (row.revised_description or product.product_name or product.description)
+                if product
+                else None
+            ),
         }
         if not oi._settle_row_in_place(  # noqa: SLF001
             inquiry, entry, [row], new_qty, actor_user_id=str(actor)
@@ -1681,6 +1780,7 @@ def revise(db: Session, inquiry: OrderInquiry, actor: str) -> OrderInquiry:
         row.revised_qty = row.qty
         row.revised_product_id = None
         row.revised_delivery_date = None
+        row.revised_description = None
     _void_stages(db, inquiry, "Revised by the requester")
     _audit(db, inquiry, "SPR_REVISED", "Revised", actor)
     db.flush()

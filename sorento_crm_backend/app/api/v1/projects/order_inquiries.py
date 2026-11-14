@@ -525,6 +525,13 @@ def list_order_inquiry_worklist(
             "fetch. An explicit `state` still wins. Off, the response is unchanged."
         ),
     ),
+    view: Optional[Literal["request"]] = Query(
+        None,
+        description=(
+            "SPARE-PART-OR-B C (R1): `request` is the order request page's own read, the "
+            "only one that lists a revision's added (draft) line of an approved request."
+        ),
+    ),
     _user: dict = Depends(_OI_READ),
     db: Session = Depends(get_db),
 ):
@@ -546,6 +553,7 @@ def list_order_inquiry_worklist(
             direction=direction,
             include_cancelled=include_history,
             visibility=_visibility(db, _user),
+            view=view,
             **_worklist_filters(
                 query,
                 delivery_month,
