@@ -8,7 +8,8 @@ The prompt is `WA_ISSUE_PROMPT_FILE` when set (crew points it at a stored versio
 else the committed candidate `documentation/plans/chatbot/prompt-wa-issue-ideate.txt`, with
 `{{current_date}}` and `{{find_filters}}` rendered as `ai_prompt_registry.render` does at run time.
 The turns are `tests/chatbot/fixtures/wa_issue_gate_turns.json` (structure pinned offline by
-`test_wa_issue_gate_offline.py`). Contract: documentation/plans/chatbot/PROMPT-wa-issue-ideate.md, "Round 12".
+`test_wa_issue_gate_offline.py`). Contract: documentation/plans/chatbot/PROMPT-wa-issue-ideate.md, "Round 12"
+and "Round 13" (`entity_raw_contains`: some entity's `raw` contains that text, case-insensitive).
 """
 from __future__ import annotations
 
@@ -70,6 +71,7 @@ def _parse(system_text: str, message: str, previous: str, contact: str) -> dict[
                 "domain_hint": out.get("domain_hint"),
                 "intent_hint": out.get("intent_hint"),
                 "routing": out.get("routing"),
+                "entities": out.get("entities"),
             },
             ensure_ascii=False,
         )
@@ -92,3 +94,8 @@ def test_R12_gate_turn_live(turn):
     if "suggested_team" in expect:
         routing = out.get("routing") if isinstance(out.get("routing"), dict) else {}
         assert routing.get("suggested_team") == expect["suggested_team"], out
+    if "entity_raw_contains" in expect:
+        needle = str(expect["entity_raw_contains"]).lower()
+        entities = out.get("entities") if isinstance(out.get("entities"), list) else []
+        raws = [str(e.get("raw") or "") for e in entities if isinstance(e, dict)]
+        assert any(needle in raw.lower() for raw in raws), out

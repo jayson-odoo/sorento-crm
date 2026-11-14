@@ -75,5 +75,26 @@
     "previous_response": "(none)",
     "contact": "staff",
     "expect": {"message_type": "request_for_help", "domain_hint_not": "ideate"}
+  },
+  {
+    "id": "L2",
+    "message": "hi, the AI bot gave me the wrong stok number for my oder yesterday",
+    "previous_response": "(none)",
+    "contact": "staff",
+    "expect": {"domain_hint": "ideate", "suggested_team": null}
+  },
+  {
+    "id": "L3",
+    "message": "Salam, sistem CRM tak boleh buka page quotation, keluar eror",
+    "previous_response": "(none)",
+    "contact": "staff",
+    "expect": {"domain_hint": "ideate", "suggested_team": null}
+  },
+  {
+    "id": "A222",
+    "message": "SRTWC 8366-S (300MM) picture",
+    "previous_response": "(none)",
+    "contact": "staff",
+    "expect": {"domain_hint": "product_attachment", "entity_raw_contains": "8366"}
   }
 ]

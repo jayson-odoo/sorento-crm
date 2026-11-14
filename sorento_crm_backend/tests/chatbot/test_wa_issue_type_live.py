@@ -47,3 +47,5 @@ def test_live_the_model_reads_the_type_by_meaning(live_extractor, text, expected
     assert not out.failed
     assert out.type == expected, (text, out.type)
     assert out.fields.get("problem"), out
+    # Round 13: a title is always set once there is a problem statement, whatever the language (L3).
+    assert (out.title or "").strip(), (text, out.title)

@@ -10,6 +10,9 @@ as a new stored version:
 * Round 12 widens edit 2's text and adds edit 4 (rule 1, line 157) and edit 5 (the "outranks" line 164),
   each appended in place after an anchor found exactly once: five edits on four lines, no line added.
   The rule-1 phrase "is NOT request_for_help, even when it names IT" is in the candidate AND the template.
+* Round 13 adds edit 6: the DECISIVE signal-word rule (v72 line 58) gets an exception appended in place
+  after its last sentence: a report that the assistant or a CRM screen got something wrong is ideate and
+  the signal word sets no domain. Six edits on five lines, still no line added (1037 lines).
 * Applied to v72 it gives exactly the committed candidate `prompt-wa-issue-ideate.txt` (md5 pinned here).
 * The shared phrase "a problem with the CRM system or the assistant itself" is in the candidate AND the
   code template (`head.parser_template.TEMPLATE`), so the two agree.
@@ -88,6 +91,15 @@ OUTRANK_NEW = OUTRANK_OLD + " It never outranks a report of a CRM system or assi
 OUTRANK_LINE = 164
 # Round 12: the rule-1 phrase both the stored text and the code template carry.
 RULE1_PHRASE = "is NOT request_for_help, even when it names IT"
+# Round 13 edit 6: the DECISIVE signal-word rule (v72 line 58), appended in place after the anchor.
+EDIT6_OLD = "Only with NO decisive term AND a genuinely ambiguous domain \u2192 domain_hint and intent_hint null."
+EDIT6_NEW = EDIT6_OLD + (
+    " One exception: when the user says the assistant (the bot, the AI, its answer) or a CRM screen got "
+    "something wrong, a signal word only names what the problem was about and sets no domain; that report is "
+    "ideate (see the ideate bullet). A user who questions or disputes a record's own figure or status, without "
+    "blaming the assistant or a screen, keeps the domain."
+)
+EDIT6_LINE = 58
 V72_LINE_COUNT = 1037
 
 
@@ -101,18 +113,20 @@ def _v72() -> str:
 
 
 def _expected_from_doc(text: str) -> str:
-    """The doc's five edits, derived here independently of the code under test."""
+    """The doc's six edits, derived here independently of the code under test."""
     lines = text.split("\n")
     (i,) = [n for n, line in enumerate(lines) if EDIT1_OLD in line]
     assert lines[i].count(HUMAN_OLD) == 1, "edit 2's anchor sits on the ideate bullet's own line"
     (j,) = [n for n, line in enumerate(lines) if line == EDIT2_OLD]
     (k,) = [n for n, line in enumerate(lines) if RULE1_OLD in line]
     (m,) = [n for n, line in enumerate(lines) if OUTRANK_OLD in line]
-    assert len({i, j, k, m}) == 4, "the four edited lines are distinct"
+    (q,) = [n for n, line in enumerate(lines) if EDIT6_OLD in line]
+    assert len({i, j, k, m, q}) == 5, "the five edited lines are distinct"
     lines[j] = EDIT2_NEW
     lines[i] = lines[i].replace(EDIT1_OLD, EDIT1_NEW).replace(HUMAN_OLD, HUMAN_NEW)
     lines[k] = lines[k].replace(RULE1_OLD, RULE1_NEW)
     lines[m] = lines[m].replace(OUTRANK_OLD, OUTRANK_NEW)
+    lines[q] = lines[q].replace(EDIT6_OLD, EDIT6_NEW)
     return "\n".join(lines)
 
 
@@ -123,11 +137,11 @@ def _apply():
 
 
 # --------------------------------------------------------------------------- #
-# 1. The candidate file is v72 plus exactly the five edits, on four lines     #
+# 1. The candidate file is v72 plus exactly the six edits, on five lines      #
 # --------------------------------------------------------------------------- #
-def test_R12_the_candidate_is_pinned_and_is_v72_plus_the_five_edits():
-    """Round 12 (F3 kept): the five edits change four lines in place (ideate bullet, rule 1 on line 157, the
-    outranks line 164, the routing line) and add none."""
+def test_R13_the_candidate_is_pinned_and_is_v72_plus_the_six_edits():
+    """Round 13 (F3 kept): the six edits change five lines in place (ideate bullet, the DECISIVE rule on
+    line 58, rule 1 on line 157, the outranks line 164, the routing line) and add none."""
     v72 = _v72()
     assert len(v72.split("\n")) - (1 if v72.endswith("\n") else 0) == V72_LINE_COUNT
     assert CANDIDATE_PATH.is_file(), f"missing committed candidate {CANDIDATE_PATH.name}"
@@ -145,14 +159,18 @@ def test_R12_the_candidate_is_pinned_and_is_v72_plus_the_five_edits():
     new_bullet = old_bullet.replace(EDIT1_OLD, EDIT1_NEW).replace(HUMAN_OLD, HUMAN_NEW)
     old_rule1 = v72_lines[RULE1_LINE - 1]
     old_outrank = v72_lines[OUTRANK_LINE - 1]
+    old_decisive = v72_lines[EDIT6_LINE - 1]
+    assert EDIT6_OLD in old_decisive, f"edit 6's anchor sits on v72 line {EDIT6_LINE}"
     assert RULE1_OLD in old_rule1, f"edit 4's anchor sits on v72 line {RULE1_LINE}"
     assert OUTRANK_OLD in old_outrank, f"edit 5's anchor sits on v72 line {OUTRANK_LINE}"
     new_rule1 = old_rule1.replace(RULE1_OLD, RULE1_NEW)
     new_outrank = old_outrank.replace(OUTRANK_OLD, OUTRANK_NEW)
-    assert len(removed) == 4 and len(added) == 4, (removed, added)
-    assert sorted(removed) == sorted([old_bullet, old_rule1, old_outrank, EDIT2_OLD])
-    assert sorted(added) == sorted([new_bullet, new_rule1, new_outrank, EDIT2_NEW])
+    new_decisive = old_decisive.replace(EDIT6_OLD, EDIT6_NEW)
+    assert len(removed) == 5 and len(added) == 5, (removed, added)
+    assert sorted(removed) == sorted([old_bullet, old_decisive, old_rule1, old_outrank, EDIT2_OLD])
+    assert sorted(added) == sorted([new_bullet, new_decisive, new_rule1, new_outrank, EDIT2_NEW])
     cand_lines = candidate.split("\n")
+    assert cand_lines[EDIT6_LINE - 1] == new_decisive
     assert cand_lines[RULE1_LINE - 1] == new_rule1
     assert cand_lines[OUTRANK_LINE - 1] == new_outrank
     assert _md5(CANDIDATE_PATH) == CANDIDATE_MD5, "pin the candidate's md5 (CANDIDATE_MD5)"
@@ -170,8 +188,8 @@ def test_R9_apply_issue_rule_on_v72_returns_the_committed_candidate():
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize(
     "anchor",
-    [EDIT1_OLD, HUMAN_OLD, EDIT2_OLD, RULE1_OLD, OUTRANK_OLD],
-    ids=["complaint_clause", "human_clause", "routing_line", "rule1_line", "outranks_line"],
+    [EDIT1_OLD, HUMAN_OLD, EDIT2_OLD, RULE1_OLD, OUTRANK_OLD, EDIT6_OLD],
+    ids=["complaint_clause", "human_clause", "routing_line", "rule1_line", "outranks_line", "decisive_line"],
 )
 def test_R9_apply_issue_rule_raises_when_an_anchor_is_missing(anchor):
     text = _v72().replace(anchor, "zzt anchor gone")
@@ -179,14 +197,17 @@ def test_R9_apply_issue_rule_raises_when_an_anchor_is_missing(anchor):
         _apply()(text)
 
 
-def test_R12_edit4_and_edit5_anchors_occur_exactly_once_in_v72():
+def test_R12_edit4_edit5_and_edit6_anchors_occur_exactly_once_in_v72():
     v72 = _v72()
     assert v72.count(RULE1_OLD) == 1
     assert v72.count(OUTRANK_OLD) == 1
+    assert v72.count(EDIT6_OLD) == 1
 
 
-@pytest.mark.parametrize("anchor", [RULE1_OLD, OUTRANK_OLD], ids=["rule1_line", "outranks_line"])
-def test_R12_apply_issue_rule_raises_when_an_edit4_or_edit5_anchor_occurs_twice(anchor):
+@pytest.mark.parametrize(
+    "anchor", [RULE1_OLD, OUTRANK_OLD, EDIT6_OLD], ids=["rule1_line", "outranks_line", "decisive_line"]
+)
+def test_R12_apply_issue_rule_raises_when_an_edit4_edit5_or_edit6_anchor_occurs_twice(anchor):
     """Each new anchor must be found exactly once: a second copy is ambiguous, so refuse rather than guess."""
     text = _v72() + "\n" + anchor
     assert text.count(anchor) == 2

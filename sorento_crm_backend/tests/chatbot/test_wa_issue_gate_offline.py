@@ -1,9 +1,10 @@
 """WA-COMPLAINT-INTAKE round 12: the frozen gate turns and the routing pin, offline (no LLM, no DB).
 
-Contract: documentation/plans/chatbot/PROMPT-wa-issue-ideate.md, "Round 12".
+Contract: documentation/plans/chatbot/PROMPT-wa-issue-ideate.md, "Round 12" and "Round 13".
 
 * The gate turns live in `tests/chatbot/fixtures/wa_issue_gate_turns.json` (owner turns OWN1-OWN3, G01, G03,
-  G05, G08, G09, and the negatives GD2, G10, GH1) and are run live by `test_wa_issue_parser_gate_live.py`. Here only their structure and
+  G05, G08, G09, the negatives GD2, G10, GH1, and round 13's L2, L3 (ideate) and A222 (product_attachment,
+  the 8366 product as an entity)) and are run live by `test_wa_issue_parser_gate_live.py`. Here only their structure and
   expectations are pinned, so the live run cannot drift from the contract silently.
 * The routing code needs no change: `turn/apply.py` `_HELP_EXEMPT_DOMAINS` already sends a `request_for_help`
   verdict whose `domain_hint` is ideate to the ideate lane, never to escalation. Pinned here.
@@ -31,6 +32,10 @@ EXPECTED = {
     "GD2": {"domain_hint": "order", "message_type_not": "request_for_help", "domain_hint_not": "ideate"},
     "G10": {"domain_hint": "inventory"},
     "GH1": {"message_type": "request_for_help", "domain_hint_not": "ideate"},
+    # Round 13: an assistant-error report with signal words, a Malay bug report, and the A-222 attachment ask.
+    "L2": IDEATE,
+    "L3": IDEATE,
+    "A222": {"domain_hint": "product_attachment", "entity_raw_contains": "8366"},
 }
 OWNER_TEXT = "i want to report this is not the answer i want to the IT team"
 MESSAGES = {
@@ -45,8 +50,15 @@ MESSAGES = {
     "GD2": "my order shows the wrong status",
     "G10": "how many SRTWC8152 do we have in stock",
     "GH1": "can someone call me about my quotation",
+    "L2": "hi, the AI bot gave me the wrong stok number for my oder yesterday",
+    "L3": "Salam, sistem CRM tak boleh buka page quotation, keluar eror",
+    "A222": "SRTWC 8366-S (300MM) picture",
 }
-CONTACTS = {"GD2": "dealer", "G10": "staff", "GH1": "staff"}
+CONTACTS = {"GD2": "dealer", "G10": "staff", "GH1": "staff", "L2": "staff", "L3": "staff", "A222": "staff"}
+#: Every expectation key the live test knows how to check.
+LIVE_KEYS = {
+    "domain_hint", "domain_hint_not", "message_type", "message_type_not", "suggested_team", "entity_raw_contains",
+}
 
 
 def _turns() -> list[dict]:
@@ -61,6 +73,19 @@ def test_R12_gate_fixture_holds_exactly_the_frozen_turns():
     ids = [t["id"] for t in turns]
     assert len(ids) == len(set(ids)), "duplicate gate turn id"
     assert set(ids) == set(EXPECTED)
+    assert {"L2", "L3", "A222"} <= set(ids), "round 13 freezes L2, L3 and A222"
+
+
+def test_R13_every_expectation_key_is_one_the_live_test_checks():
+    import inspect
+
+    from tests.chatbot import test_wa_issue_parser_gate_live as live
+
+    src = inspect.getsource(live.test_R12_gate_turn_live)
+    for turn in _turns():
+        for key in turn["expect"]:
+            assert key in LIVE_KEYS, (turn["id"], key)
+            assert f'"{key}"' in src, f"the live test ignores {key!r} ({turn['id']})"
 
 
 @pytest.mark.parametrize("turn_id", sorted(EXPECTED))
