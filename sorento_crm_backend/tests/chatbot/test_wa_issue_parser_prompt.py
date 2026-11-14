@@ -231,6 +231,16 @@ def test_R12_the_rule1_phrase_is_in_the_candidate_and_the_code_template():
     assert RULE1_PHRASE in TEMPLATE
 
 
+def test_R12_N5_the_code_template_ideate_line_names_loading_screens_and_a_named_team():
+    """Review N5: the template's ideate line says a screen or list that keeps loading is an issue, and that it
+    stays an issue when the user names IT or a team."""
+    from app.services.chatbot.head.parser_template import TEMPLATE
+
+    (line,) = [ln for ln in TEMPLATE.split("\n") if ln.startswith("- ideate / submit_idea:")]
+    assert "keeps loading" in line
+    assert "names IT or a team" in line
+
+
 # --------------------------------------------------------------------------- #
 # 4. The migration publishes the next version, unlabelled, once               #
 # --------------------------------------------------------------------------- #

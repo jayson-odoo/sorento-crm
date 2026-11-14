@@ -83,6 +83,8 @@ def test_R12_gate_turn_live(turn):
     expect = turn["expect"]
     if "domain_hint" in expect:
         assert out.get("domain_hint") == expect["domain_hint"], out
+    if "domain_hint_not" in expect:
+        assert out.get("domain_hint") != expect["domain_hint_not"], out
     if "message_type" in expect:
         assert out.get("message_type") == expect["message_type"], out
     if "message_type_not" in expect:

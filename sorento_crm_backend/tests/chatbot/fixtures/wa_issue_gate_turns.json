@@ -54,5 +54,26 @@
     "previous_response": "(none)",
     "contact": "staff",
     "expect": {"message_type": "request_for_help"}
+  },
+  {
+    "id": "GD2",
+    "message": "my order shows the wrong status",
+    "previous_response": "(none)",
+    "contact": "dealer",
+    "expect": {"domain_hint": "order", "message_type_not": "request_for_help", "domain_hint_not": "ideate"}
+  },
+  {
+    "id": "G10",
+    "message": "how many SRTWC8152 do we have in stock",
+    "previous_response": "(none)",
+    "contact": "staff",
+    "expect": {"domain_hint": "inventory"}
+  },
+  {
+    "id": "GH1",
+    "message": "can someone call me about my quotation",
+    "previous_response": "(none)",
+    "contact": "staff",
+    "expect": {"message_type": "request_for_help", "domain_hint_not": "ideate"}
   }
 ]

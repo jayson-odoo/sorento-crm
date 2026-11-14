@@ -3,7 +3,7 @@
 Contract: documentation/plans/chatbot/PROMPT-wa-issue-ideate.md, "Round 12".
 
 * The gate turns live in `tests/chatbot/fixtures/wa_issue_gate_turns.json` (owner turns OWN1-OWN3, G01, G03,
-  G05, G08, G09) and are run live by `test_wa_issue_parser_gate_live.py`. Here only their structure and
+  G05, G08, G09, and the negatives GD2, G10, GH1) and are run live by `test_wa_issue_parser_gate_live.py`. Here only their structure and
   expectations are pinned, so the live run cannot drift from the contract silently.
 * The routing code needs no change: `turn/apply.py` `_HELP_EXEMPT_DOMAINS` already sends a `request_for_help`
   verdict whose `domain_hint` is ideate to the ideate lane, never to escalation. Pinned here.
@@ -27,6 +27,10 @@ EXPECTED = {
     "G03": IDEATE,
     "G08": {"domain_hint": "portal_link", "message_type_not": "request_for_help"},
     "G09": {"message_type": "request_for_help"},
+    # Review N2: the gate's own negatives, frozen beside the positives.
+    "GD2": {"domain_hint": "order", "message_type_not": "request_for_help", "domain_hint_not": "ideate"},
+    "G10": {"domain_hint": "inventory"},
+    "GH1": {"message_type": "request_for_help", "domain_hint_not": "ideate"},
 }
 OWNER_TEXT = "i want to report this is not the answer i want to the IT team"
 MESSAGES = {
@@ -38,7 +42,11 @@ MESSAGES = {
     "G03": "I want to report a problem",
     "G08": "the basin we delivered to the customer arrived cracked",
     "G09": "get me IT support",
+    "GD2": "my order shows the wrong status",
+    "G10": "how many SRTWC8152 do we have in stock",
+    "GH1": "can someone call me about my quotation",
 }
+CONTACTS = {"GD2": "dealer", "G10": "staff", "GH1": "staff"}
 
 
 def _turns() -> list[dict]:
@@ -63,6 +71,8 @@ def test_R12_gate_turn_shape_and_expectation(turn_id):
     assert turn["contact"] in {"staff", "dealer"}
     assert isinstance(turn["previous_response"], str) and turn["previous_response"]
     assert turn["expect"] == EXPECTED[turn_id]
+    if turn_id in CONTACTS:
+        assert turn["contact"] == CONTACTS[turn_id]
 
 
 def test_R12_owner_turn_1_carries_a_prior_bot_reply_and_turn_2_none():
