@@ -1,6 +1,6 @@
 # PLAN: Agent short tool menu + "find more tools" (AGENT-CONTEXT-BUDGET slice 2)
 
-Status: UAC filed for crew sign-off, 14/11/2026. No code yet. Size M (no migration, no permission change,
+Status: Build done, in review, 14/11/2026. Size M (no migration, no permission change,
 no new ingest surface; touches the agent loop). Parent plan: `PLAN-agent-context-budget-14nov.md` (v2,
 owner D1 = (c), 14/11/2026 19:27). UAC: `agent-tool-menu-14nov-acceptance-criteria.md`.
 Paths: BE = `sorento_crm_backend/app/`. Read from `main` 752a23d5.

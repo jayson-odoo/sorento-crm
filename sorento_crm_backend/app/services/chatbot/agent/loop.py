@@ -110,7 +110,7 @@ def _schema_name(schema: dict) -> str:
 def directory_line(schema: dict) -> str:
     """`name: what it does` for the directory: the tool's label, else the first sentence of its description."""
     name = _schema_name(schema)
-    text = TOOL_LABELS.get(name) or re.split(r"(?<=[.!?])\s", str(schema.get("function", {}).get("description") or ""), 1)[0]
+    text = TOOL_LABELS.get(name) or re.split(r"(?<=[.!?])\s", str(schema.get("function", {}).get("description") or ""), maxsplit=1)[0]
     text = " ".join(text.split())[:DIRECTORY_LINE_CHARS].rstrip() or name
     return f"{name}: {text}"
 
@@ -173,11 +173,11 @@ def load_tools(args: Any, rest: dict[str, dict], offered: set[str]) -> tuple[Too
 
 def _previous_turn_tools(db, conv, turn_id: str) -> list[str]:
     """The tools the previous agent turn of this conversation called, from its stored digest (Q1)."""
-    turns = [t for t in memory.conversation_turns(db, conv) if str(t.id) != turn_id and isinstance(t.response, dict)]
+    turns = [t for t in memory.conversation_turns(db, conv, limit=2) if str(t.id) != turn_id and isinstance(t.response, dict)]
     if not turns:
         return []
-    last = max(turns, key=lambda t: (t.created_at, t.started_at or t.created_at))
-    return [str(d.get("name")) for d in last.response.get("tool_digest") or [] if isinstance(d, dict) and d.get("name")]
+    digest = turns[-1].response.get("tool_digest") or []
+    return [str(d.get("name")) for d in digest if isinstance(d, dict) and d.get("name")]
 
 
 #: Said in crm_resolve's description when crm_query is offered too (crew live rerun on 53908030).
@@ -1448,7 +1448,6 @@ def _system_prompt(db, user_name: str, tool_names: Any = (), principal: str = "u
         )
     if "ANSWER ONLY WHAT WAS ASKED" not in text:
         text = f"{text.rstrip()}\n\n{ANSWER_SCOPE_RULE}"
-    text = f"{text.rstrip()}\n\n{TOOLS_LOAD_LINE}"
     return f"{text}\n\nToday's date is {today}. You are working for {user_name}."
 
 
@@ -2172,15 +2171,6 @@ def _run(
         if ctx.principal != "contact":
             # AGENT-CONTEXT-BUDGET slice 2: the core set first; the rest load by name or join on a direct call.
             schemas, menu_rest = tool_menu(schemas, _previous_turn_tools(db, conv, turn_id))
-        trace.add("agent_context", {
-            **_context_record(
-                db, system=system, context_before=context_before if waiting is None else "",
-                context_after=context_after if waiting is None else "", history=history, schemas=schemas,
-                file_text=file_text, images=images,
-            ),
-            "core_tools": len(schemas),
-            "directory_tools": len(menu_rest or {}),
-        })
         action_id = str(uuid.uuid4())
         id_names: dict[str, str] = {}
         plan_parts: list[str] = []
@@ -2276,6 +2266,21 @@ def _run(
             trace.add("agent_dealer_access", {"dealer_access": dealer_flow})
             if dealer_flow:
                 schemas, menu_rest = dealer_schemas(every_schema), None
+        if menu_rest is not None:
+            # Only a turn that offers crm_tools_load names it (review S1): not a contact turn, not the dealer flow.
+            system = f"{system}\n\n{TOOLS_LOAD_LINE}"
+            messages[0]["content"] = system
+        core = [s for s in schemas if menu_rest is None or _schema_name(s) not in menu_rest]
+        trace.add("agent_context", {
+            **_context_record(
+                db, system=system, context_before=context_before if waiting is None else "",
+                context_after=context_after if waiting is None else "", history=history, schemas=schemas,
+                file_text=file_text, images=images,
+            ),
+            "core_tools": len(core),
+            "preloaded_tools": len(schemas) - len(core),
+            "directory_tools": len(menu_rest or {}),
+        })
         while True:
             if run.rounds >= 1:
                 # Confirming acts on the user's own message only: from the second round on, tool
