@@ -9,6 +9,7 @@ from __future__ import annotations
 import pytest
 
 from .test_sample_requests_core import (  # noqa: F401  (world is a fixture)
+    _link_consignment,
     SR,
     _draft,
     _get,
@@ -164,9 +165,8 @@ def test_answer_only_in_stage_one(world):
     assert _code(early) == "SAMPLE_REQUEST_DATE_ANSWER_CLOSED"
 
     assert _move(world, rid, "processing", date_feasible=True).status_code == 200
-    assert _move(world, rid, "customer_confirmed", date="2026-11-20").status_code == 200
     assert _answer(world, rid, date_feasible=True).status_code == 200  # still Stage 1
-    assert _move(world, rid, "delivered", date="2026-11-25").status_code == 200
+    assert _link_consignment(world, rid).status_code == 200
     late = _answer(world, rid, date_feasible=True)
     assert late.status_code == 409, late.text
     assert _code(late) == "SAMPLE_REQUEST_DATE_ANSWER_CLOSED"
@@ -200,8 +200,7 @@ def test_stage_on_detail_through_the_flow(world):
     assert _submit(world, d["id"]).status_code in (200, 201)
     assert _get(world, d["id"])["stage"] == "processing"
     assert _move(world, d["id"], "processing", date_feasible=True).status_code == 200
-    assert _move(world, d["id"], "customer_confirmed", date="2026-11-20").status_code == 200
-    assert _move(world, d["id"], "delivered", date="2026-11-25").status_code == 200
+    assert _link_consignment(world, d["id"]).status_code == 200
     assert _get(world, d["id"])["stage"] == "delivery"
 
 

@@ -1,7 +1,8 @@
 """PS-SAMPLE-TRACKING: the two re-sync hooks, driven through their real pipelines (review B1).
 
 - The consignment ingest (`AutocountCancelIngestService._project_consignment`): a CG voided in
-  AutoCount takes its linked sample request back to Stage 1; restored, it delivers again.
+  AutoCount takes its linked sample request back to Processing and unlinks it; a later restore of
+  that CG never delivers it again (owner ruling 11 Nov ~19:55: voided stays voided).
 - The order tracking import (`OrderService.import_excel_tracking`): an Overall Tracking row for
   the CG's number moves the linked request's delivered date to the tracked one.
 - Neither hook may break its host: a sample-request error is logged, the import / CG still lands.
@@ -28,18 +29,17 @@ SR_DATE = date(2026, 9, 25)
 
 
 def _linked_request(env) -> SampleRequest:
-    """A Customer confirmed request linked to the ingested CG ZZCG-0001 (so: Delivered)."""
+    """A Processing request linked to the ingested CG ZZCG-0001 (so: Delivered)."""
     project_seed_service.run(env.db, company_id=env.company)
     req = SampleRequest(
         company_id=env.company,
         customer_name="ZZT pipeline customer",
         project_title="ZZT pipeline project",
         delivery_date=SR_DATE,
-        confirmed_at=SR_DATE,
     )
     env.db.add(req)
     env.db.flush()
-    svc._set_status(env.db, req, svc.CUSTOMER_CONFIRMED)
+    svc._set_status(env.db, req, svc.PROCESSING)
     cg = _order(env)
     svc.link_consignment(env.db, req, actor=svc.Actor(can_process=True), consignment_order_id=cg.id)
     env.db.commit()
@@ -64,14 +64,15 @@ def test_a_cg_voided_in_autocount_takes_the_request_back(env):
                                    modified="2026-10-05T10:00:00.000")])
     assert _records(res)["db1:CSGN:980001"]["outcome"] != "failed"
     back = _fresh(env, req)
-    assert svc.status_key(env.db, back) == svc.CUSTOMER_CONFIRMED
+    assert svc.status_key(env.db, back) == svc.PROCESSING
     assert back.delivered_at is None and back.return_due is None
+    assert back.consignment_order_id is None
 
     env.post(CG_INGEST, [_cg(details=[_cg_line(981001, transferred=0)], cancelled="F",
                              modified="2026-10-06T10:00:00.000")])
     again = _fresh(env, req)
-    assert svc.status_key(env.db, again) == svc.DELIVERED
-    assert again.delivered_at == date(2026, 10, 1)
+    assert svc.status_key(env.db, again) == svc.PROCESSING  # voided stays voided
+    assert again.delivered_at is None
 
 
 def test_a_sample_request_error_never_fails_the_cg(env, monkeypatch):

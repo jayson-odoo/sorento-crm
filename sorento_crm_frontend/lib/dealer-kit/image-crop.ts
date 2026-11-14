@@ -195,6 +195,36 @@ export function cropOverlayLayout(
 }
 
 /**
+ * The overlay layout for one crop SESSION (PRICETAG-DESIGNER-FEEDBACK AC-9.1): `source` is laid
+ * out once from the crop the session started from, so the picture never moves or rescales while
+ * a handle or the window is dragged; `window` is the in-flight `cropRect` on that fixed source.
+ * With `cropRect` equal to `session` this is exactly `cropOverlayLayout(session, ...)`.
+ */
+export function cropSessionLayout(
+  session: CropRect | null | undefined,
+  cropRect: CropRect | null | undefined,
+  natural: { width: number; height: number },
+  fit: 'cover' | 'contain' | 'stretch',
+  w: number,
+  h: number,
+): {
+  window: { x: number; y: number; width: number; height: number };
+  source: { x: number; y: number; width: number; height: number };
+} {
+  const { source } = cropOverlayLayout(session, natural, fit, w, h);
+  const rect = resolvedCropRect(cropRect);
+  return {
+    window: {
+      x: source.x + rect.x * source.width,
+      y: source.y + rect.y * source.height,
+      width: rect.width * source.width,
+      height: rect.height * source.height,
+    },
+    source,
+  };
+}
+
+/**
  * The print path's crop-window layout (S8): a wrapper carrying the
  * CROPPED region's own aspect ratio (which only equals the crop fraction's
  * own W:H ratio when the source happens to be square - `natural` is what
