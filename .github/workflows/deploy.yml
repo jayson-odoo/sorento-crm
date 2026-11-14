@@ -2070,6 +2070,18 @@ jobs:
       # VARIABLE since CI-SECRETS-ENV: a public key inlined into the browser
       # bundle is config, not a secret); the backend and mcp Dockerfiles do
       # not declare it.
+      # A variable that was never created reads as an empty string, which
+      # would ship an image with no push-notification key and no error.
+      - name: Require the VAPID public key variable
+        if: steps.decide.outputs.build_frontend == 'true'
+        env:
+          VAPID: ${{ vars.NEXT_PUBLIC_VAPID_PUBLIC_KEY }}
+        run: |
+          if [ -z "$VAPID" ]; then
+            echo "::error::Repository variable NEXT_PUBLIC_VAPID_PUBLIC_KEY is not set (Settings > Secrets and variables > Actions > Variables)"
+            exit 1
+          fi
+
       - name: Build and push frontend image
         if: steps.decide.outputs.build_frontend == 'true'
         uses: docker/build-push-action@v5
