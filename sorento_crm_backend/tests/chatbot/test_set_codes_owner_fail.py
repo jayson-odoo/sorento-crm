@@ -72,16 +72,8 @@ def test_t2_one_number_after_how_many_units_applies_to_every_part(session_factor
         assert f"{code} x 4: {TICK} Got stock." in _lines(text), (code, text)
 
 
-@pytest.mark.parametrize("who", ["dealer", "staff"])
-def test_t3_a_part_without_a_description_has_no_trailing_dash(session_factory, monkeypatch, stub_access, who):  # noqa: F811
-    c = _owner_world(session_factory, monkeypatch, stub_access)
-    _who(c, who)
-    text = c.say("QWC604-S-RL stock", stock(product(S_RL)))
-    assert "How many units for each?" in text or who == "staff", text
-    assert not [line for line in text.splitlines() if re.search(r"\s-\s*$", line)], text
-
-
-# --------------------------------------------------------------------------- T2b / T2c: one number bound to the last part
+# T3 removed (crew 14 Nov 10:52): the " - " on a "How many units for each?" line is the owner's round-6 fill-in
+# blank before the quantity (test_stock_ask_ht26_r9_r6_all_point_form), kept as is.
 
 
 def _shape_fill_code():
