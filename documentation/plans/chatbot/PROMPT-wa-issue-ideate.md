@@ -36,4 +36,6 @@
 
 Console dry-run turns with the new version pinned (or after the owner promotes it), staff and dealer contacts:
 an EN bug report, a Malay bug report with a typo, a greeting-prefixed report, a Chinese report, a feature
-request (still ideate), a product complaint (still portal_link), "get me IT support" (still request_for_help).
+request (still ideate), a product complaint (still portal_link), "get me IT support" (still request_for_help),
+a dealer disputing a record ("my order shows the wrong status", still order, not ideate) and a stock figure
+question (still inventory, not ideate).
