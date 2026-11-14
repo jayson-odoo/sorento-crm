@@ -331,6 +331,14 @@ def _lines(reply: str) -> list[str]:
     return [line.strip() for line in reply.splitlines() if line.strip()]
 
 
+def _number_line(language: str) -> str:
+    """The shipped "Number:" line of the issue reply in `language`, number filled."""
+    from app.services.chatbot_reply_copy import IDEATION_CAPTURE_COMPLETE_ISSUE
+
+    (line,) = [ln for ln in IDEATION_CAPTURE_COMPLETE_ISSUE[language].splitlines() if "{{idea_number}}" in ln]
+    return line.replace("{{idea_number}}", IDEA_NUMBER).strip()
+
+
 def test_I1_an_issue_creates_at_once_with_the_ss_type_field(env):  # noqa: F811
     env.ready()
     env.created()
@@ -504,6 +512,7 @@ def test_P2_a_failed_upload_never_fails_the_filing(env, photos):
     assert len(photos.uploads) == 2
     lines = _lines(out["reply_text"])
     assert f"Your feedback has been logged: Problem report - {TITLE}" in lines
+    assert _number_line("en") in lines
     assert "Photos: 1" in lines
 
 
@@ -609,6 +618,7 @@ def test_P2_any_error_in_the_photo_step_never_fails_the_filing(env, photos, monk
     assert out["status"] == "complete"
     lines = _lines(out["reply_text"])
     assert f"Your feedback has been logged: Problem report - {TITLE}" in lines
+    assert _number_line("en") in lines
     assert not any(line.startswith("Photos") for line in lines)
     assert photos.uploads == []
 

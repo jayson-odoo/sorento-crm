@@ -308,3 +308,61 @@ def test_R14_the_schema_counts_a_complaint_about_the_assistants_answer_as_a_prob
     ).lower()
     assert "assistant's answer" in described, described
     assert "not what" in described, described
+
+
+# --------------------------------------------------------------------------- #
+# 7. Review B1: a cancel answer to the issue ask files nothing                #
+# --------------------------------------------------------------------------- #
+CANCEL = "never mind"
+
+
+def test_R15_review_B1_a_cancel_answer_to_the_issue_ask_files_nothing_and_drops_the_pointer(env):  # noqa: F811
+    env.ready()
+    env.created()
+
+    first = env.turn(_script(env, FIRST, type_="issue", has_idea=False))
+    assert first["status"] == "ask_idea", first["status"]
+    assert (env.persisted().get("ideation") or {}).get("status") == "asked", "positive control: the ask is held"
+
+    _script(env, CANCEL, type_="issue", has_idea=False)
+    env.extractions[CANCEL].review_action = "cancel"
+    second = env.turn_ask(CANCEL)
+
+    assert env.create_calls == [], env.create_calls
+    assert second["status"] not in ("complete", "ask_idea", "ask_idea_gave_up"), second
+    reply = second["reply_text"] or ""
+    assert reply.strip(), second
+    assert "idea" not in reply.lower() and "创意" not in reply, reply
+    assert reply not in (IDEATION_CAPTURE_GIVE_UP["en"], IDEATION_CAPTURE_ASK_ISSUE["en"]), reply
+    assert "ideation" not in env.persisted(), env.persisted()
+
+    # The next turn starts fresh: no issue ask is remembered, so an answer with no problem files nothing.
+    third = env.turn_ask(_script(env, "ok", type_="idea", has_idea=False))
+    assert env.create_calls == [], env.create_calls
+    assert third["status"] != "complete", third
+
+
+# --------------------------------------------------------------------------- #
+# 8. Review N4: the asked type is kept when the answer carries a problem       #
+# --------------------------------------------------------------------------- #
+def test_R15_review_N4_an_answer_with_a_problem_read_as_idea_files_as_the_asked_issue(env):  # noqa: F811
+    env.ready()
+    env.created()
+    _seed_done_turn(env, PREV_USER, PREV_BOT)
+
+    first = env.turn(_script(env, FIRST, type_="issue", has_idea=False))
+    assert first["status"] == "ask_idea", first["status"]
+
+    second = env.turn_ask(
+        _script(env, SECOND, type_="idea", has_idea=True, fields={"problem": COMPLAINT_PROBLEM},
+                title="Assistant answer not satisfying")
+    )
+    assert second["status"] == "complete", second
+    (payload,) = env.create_calls
+    assert payload.get("type") == "issue", payload
+    lines = _lines(second["reply_text"])
+    assert lines[0] == "Your feedback has been logged: Problem report - Assistant answer not satisfying", lines
+    transcript = payload.get("raw_transcript") or ""
+    assert PREV_USER in transcript, transcript
+    assert PREV_BOT in transcript, transcript
+    assert SECOND in transcript, transcript
