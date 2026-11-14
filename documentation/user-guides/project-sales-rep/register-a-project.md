@@ -92,6 +92,12 @@ automatically: open the record and pick the project in its **Registered project*
 Sorento team may also link some older ones from a reviewed list). A project name typed on a record
 that is not picked from the list does not link it.
 
+## Back to the project
+
+A record you open from any project tab (Samples Request, Related, Proposals, PO, SO) shows
+**Back to project** at the top right. Click it to return to the same project on the tab you opened
+it from. The same record opened from its own list shows that list's Back button instead.
+
 ## Link a record to a project
 
 * **Stock inquiry** and **new product application** forms (in the CRM and in the portal or
