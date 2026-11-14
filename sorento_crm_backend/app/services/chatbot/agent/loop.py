@@ -1916,8 +1916,9 @@ def _run(
         final_args: dict | None = None
         forced_args: dict | None = None
         nudge = (
-            "Finish by calling the answer tool now: put your reply in text, list every number in "
-            "figures with the call_id that shows it, and anything you could not find in not_found."
+            "Finish by calling the answer tool now: put your reply in text, put in figures only the key "
+            "numbers (totals, gaps) with the call_id that shows each, never every table cell, and anything "
+            "you could not find in not_found."
         )
 
         def answer_of(result_obj: Any) -> dict:

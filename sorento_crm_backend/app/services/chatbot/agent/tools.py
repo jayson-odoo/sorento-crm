@@ -457,7 +457,8 @@ ANSWER_SCHEMA: dict[str, Any] = {
         "name": ANSWER,
         "description": (
             "Finish the turn with the reply for the user. Every number in text must appear in a tool "
-            "result of this turn (list it in figures with the call_id when you can). Anything you could "
+            "result of this turn. Put in figures only the key numbers (totals, gaps) with the call_id that "
+            "shows each, never every table cell. Anything you could "
             "not find goes in not_found with the call_id that showed it, the parts of your plan you "
             "answered go in answered, and anything you did not check goes in not_checked."
         ),
