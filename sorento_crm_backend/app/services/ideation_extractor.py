@@ -220,7 +220,8 @@ IDEATE_EXTRACTION_JSON_SCHEMA: dict[str, Any] = {
             "description": (
                 "What the message is, read by its meaning: 'issue' when it reports something "
                 "wrong with the CRM system or the AI assistant (an error, a page or answer that "
-                "is broken, wrong or not working); 'idea' when it is a wish, a feature request "
+                "is broken, wrong or not working), or says they want to report one before saying "
+                "what it is; 'idea' when it is a wish, a feature request "
                 "or a change the user wants. A complaint about a product or an order is neither "
                 "and stays 'idea' here."
             ),
