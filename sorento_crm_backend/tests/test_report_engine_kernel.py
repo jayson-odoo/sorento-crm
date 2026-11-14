@@ -466,6 +466,85 @@ def test_the_export_path_has_no_cap(db, definition, monkeypatch):
     assert result.row_count == 5
 
 
+def test_a_pivot_is_capped_on_cells_with_data_not_rows_times_columns(db, definition, monkeypatch):
+    """REPORT-PIVOT-MONTHS. Agent x Month of 2026 is 2 x 12 = 24 printed cells, but only 4
+    hold data (Alice Jan, Alice Mar, Bob Mar, Bob Nov). The cap counts the 4: an empty cell
+    costs nothing to send, and counting it refused a 2-week summary on production."""
+    from app.services.reports import engine
+
+    monkeypatch.setattr(engine, "PIVOT_CELL_CAP", 5)
+    pivot = _run(db, definition).layouts.summary
+    assert len(pivot.row_values) * len(pivot.col_dim.values) == 24
+    assert pivot.grand_total["amount"] == "1750.24"
+
+
+def _month_of_year_definition():
+    """The scratch definition plus a Month-of-the-year axis (JAN..DEC fixed values), the
+    shape billing_document_lines' `month_of_year` carries."""
+    import dataclasses
+
+    from app.services.reports import registry as reg
+
+    base = fixture.dataset()
+    month_of_year = reg.Column(
+        "month_of_year", "Month of the year", "text", "dimension",
+        lambda c: sa.func.to_char(c.date_basis, "MM"), fixed_values=reg.MONTHS_OF_YEAR,
+    )
+    return fixture.definition(dataclasses.replace(base, columns=base.columns + (month_of_year,)))
+
+
+def _month_of_year_view(rows="agent", cols="month_of_year"):
+    from app.schemas.report import ReportViewConfig
+
+    return ReportViewConfig(
+        params={},
+        detail={"columns": [], "order": []},
+        pivot={"rows": rows, "cols": cols, "measures": ["amount"]},
+    )
+
+
+@pytest.mark.parametrize(
+    "period, months",
+    [
+        # The owner's case: two weeks of November is ONE column, not twelve.
+        ({"kind": "custom", "from": "2026-11-01", "to": "2026-11-14"}, ["11"]),
+        ({"kind": "month_range", "year": 2026, "from_month": 1, "to_month": 3}, ["01", "02", "03"]),
+        # Across a year end: still in JAN..DEC order, only the months the range touches.
+        ({"kind": "custom", "from": "2026-11-15", "to": "2027-02-10"}, ["01", "02", "11", "12"]),
+        # A whole year (the yearly comparison) keeps all twelve.
+        ({"kind": "year", "year": 2026}, [f"{m:02d}" for m in range(1, 13)]),
+        ({"kind": "custom", "from": "2024-01-01", "to": "2026-11-14"}, [f"{m:02d}" for m in range(1, 13)]),
+    ],
+)
+def test_a_month_of_the_year_axis_prints_only_the_months_of_the_period(db, period, months):
+    definition = _month_of_year_definition()
+    pivot = _run(db, definition, {"period": period}, view=_month_of_year_view()).layouts.summary
+    assert pivot.col_dim.values == months
+    assert list(pivot.col_dim.value_labels) == months
+
+
+def test_a_month_of_the_year_row_axis_prints_only_the_months_of_the_period(db):
+    definition = _month_of_year_definition()
+    view = _month_of_year_view(rows="month_of_year", cols="agent")
+    period = {"kind": "custom", "from": "2026-11-01", "to": "2026-11-30"}
+    pivot = _run(db, definition, {"period": period}, view=view).layouts.summary
+    assert pivot.row_values == ["11"]
+    assert pivot.cells["11"]["Bob"]["amount"] == "99.99"
+
+
+def test_a_short_period_by_month_of_the_year_keeps_every_figure(db):
+    """Dropping the empty months moves no money: the grand total equals the detail total."""
+    definition = _month_of_year_definition()
+    period = {"kind": "month_range", "year": 2026, "from_month": 1, "to_month": 3}
+    result = _run(db, definition, {"period": period}, view=_month_of_year_view())
+    pivot = result.layouts.summary
+    assert pivot.col_dim.values == ["01", "02", "03"]
+    assert pivot.cells["Alice"]["01"]["amount"] == "1250.25"
+    assert pivot.cells["Alice"]["03"]["amount"] == "400.00"
+    assert pivot.grand_total["amount"] == "1650.25"
+    assert result.layouts.detail.totals["amount"] == "1650.25"
+
+
 # ------------------------------------------------------------------ company scope
 
 
