@@ -362,7 +362,7 @@ _PURCHASING_EMAIL_GUARDS = {
     "tests/test_ac_removed_lines_ingest.py": (
         "test_fp_email_one_trigger_s1_a_removed_so_line_emails_purchasing_nothing",
         "test_fp_email_one_trigger_a_removed_lines_open_row_stays_open_until_the_board_confirm",
-        "test_fp_email_one_trigger_a_line_dropped_by_a_header_cancel_push_is_still_flagged",
+        "test_fp_email_one_trigger_a_line_dropped_by_a_header_cancel_push_is_left_for_the_board",
     ),
     "tests/scm/test_purchasing_email_one_trigger.py": (
         "test_structural_a_handover_queued_outside_a_trigger_is_dropped_and_logged",

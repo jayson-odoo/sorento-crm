@@ -56,7 +56,7 @@ describe('PriceTagLivePreview popup mode', () => {
   it('draws no card while closed, but still reports readiness', async () => {
     const { onReadyChange } = draw({ open: false, onClose: vi.fn() });
     await waitFor(() =>
-      expect(onReadyChange).toHaveBeenLastCalledWith({ missing: [], drawn: true, failed: false }),
+      expect(onReadyChange).toHaveBeenLastCalledWith({ missing: [], missingKeys: [], drawn: true, failed: false }),
     );
     expect(screen.queryByTestId('viewer')).toBeNull();
     expect(screen.queryByTestId('lightbox')).toBeNull();

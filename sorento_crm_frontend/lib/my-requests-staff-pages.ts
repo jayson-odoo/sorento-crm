@@ -37,6 +37,12 @@ export const MY_REQUEST_STAFF_PAGES: Readonly<
     permission: 'procurement.new_product_applications.view_own',
     create: 'procurement.new_product_applications.create',
   },
+  // OCN round 20 (UAC I4): raised from its own list; the list's Create opens the form.
+  order_change_notice: {
+    path: '/procurement-management/order-change-notices',
+    permission: 'procurement.order_change_notices.view_own',
+    create: 'procurement.order_change_notices.create',
+  },
   // No staff /new page: the Log opportunity modal opens on the list.
   sales_opportunity: {
     path: '/sales/opportunities',

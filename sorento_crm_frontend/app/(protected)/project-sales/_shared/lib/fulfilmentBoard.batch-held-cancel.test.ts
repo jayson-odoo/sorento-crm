@@ -129,7 +129,7 @@ describe('a saved Cancel SO the pending AutoCount change names rides in the same
 
 describe('the counter offers exactly what the press does (U1)', () => {
   // PLAN-BATCH-COUNT-DISPLAY (owner ruling 21 Oct 2026 ~16:15): decisions only. The 10 lines the
-  // change retires are one note (`autocountChangeNotes`), not part of the count.
+  // change retires are not part of the count.
   it('Confirm counts the 12 Cancel SO, on one order, not the 10 lines the change retires', () => {
     const summary = confirmSummaryFor(contributions, draft, blocked, options);
     expect(summary.orderCount).toBe(1);

@@ -41,6 +41,7 @@ from app.models.projects import (
 )
 from app.services import project_pricing_service as pricing
 from app.services import quotation_matrix as matrix
+from app.services import non_cancellable_service as non_cancellable
 from app.services.error_handler import AppException
 from app.utils.tag_rich_text import plain_text, sanitise_description
 
@@ -456,6 +457,7 @@ def copy_line(
         unit_type=line.unit_type,
         line_total=line.line_total,
         is_non_standard=line.is_non_standard,
+        is_non_cancellable=bool(line.is_non_cancellable),
         floor_value_applied=line.floor_value_applied,
         floor_level_applied=line.floor_level_applied,
         is_below_floor=line.is_below_floor,
@@ -738,6 +740,7 @@ def _apply_guardrails(
     product_set: Optional[ProductSet] = None,
     membership: Optional["pricing.SeriesMembership"] = None,
     series_pricing: Optional[Dict[str, tuple]] = None,
+    non_cancellable_setting: Optional["non_cancellable.SeriesNonCancellable"] = None,
 ) -> Optional[Dict[str, Any]]:
     """Recompute both alerts for one line. Returns a breach event, or None.
 
@@ -750,6 +753,14 @@ def _apply_guardrails(
     version so the category walk and the product read happen once rather than per line.
     ``series_pricing`` is its twin for the money (T5) and is passed for the same reason.
     """
+    # NON-CANCELLABLE-ITEMS: stored on save with the other flags, from the scope's series.
+    non_cancellable.apply_to_line(
+        db,
+        line=line,
+        series_id=quotation.series_id,
+        product=product,
+        setting=non_cancellable_setting,
+    )
     if line.is_section:
         # A heading row is never priced, so never flagged (PROPOSAL-FORM-COLLAPSE).
         line.is_non_standard = line.is_below_floor = line.is_discounted = False
@@ -1188,6 +1199,7 @@ def _write_section(
     line.is_non_standard = False
     line.is_below_floor = False
     line.is_discounted = False
+    line.is_non_cancellable = False
     setattr(line, _BREACH_ATTR, [])
     db.flush()
     return line
@@ -1200,6 +1212,7 @@ def upsert_line(
     actor_user_id: str,
     payload: Dict[str, Any],
     line: Optional[ProjectQuotationLine] = None,
+    non_cancellable_override_reason: Optional[str] = None,
 ) -> ProjectQuotationLine:
     """Add or edit one line on the CURRENT version, in place (AC-E2).
 
@@ -1208,11 +1221,109 @@ def upsert_line(
     """
     assert_editable(db, version)
     quotation = _quotation_of(db, version)
+    if line is not None:
+        _assert_no_non_cancellable_cut(
+            db,
+            quotation=quotation,
+            stored={line.id: line},
+            incoming=[{**payload, "id": line.id}],
+            user_id=actor_user_id,
+            override_reason=non_cancellable_override_reason,
+        )
     line = _write_line(
         db, version=version, quotation=quotation, payload=payload, line=line
     )
     _recalculate_total(db, version)
     return line
+
+
+def _assert_no_non_cancellable_cut(
+    db: Session,
+    *,
+    quotation: ProjectQuotation,
+    stored: Dict[str, ProjectQuotationLine],
+    incoming: Sequence[Dict[str, Any]],
+    user_id: Optional[str],
+    override_reason: Optional[str],
+) -> None:
+    """NON-CANCELLABLE-ITEMS: refuse, BEFORE anything is written, a save that drops, zeroes,
+    lowers, turns into a heading, or swaps the product of a Non-cancellable line that a
+    confirmed (published) SO already consumes, unless an override holder gives a reason.
+
+    ``stored`` holds the lines the save may touch; a stored line absent from ``incoming`` is
+    being removed (``incoming`` is the full set for a bulk save, empty for a delete).
+    "Confirmed" is read off the SO, not the quotation: a scope carries no outcome of its own,
+    and the SO line's ``quotation_line_id`` is what every CRM cancel path reads the flag
+    through, so guarding the quotation line also keeps that link from being cut.
+    """
+    flagged = [
+        row for row in stored.values() if row.is_non_cancellable and not row.is_section
+    ]
+    if not flagged:
+        return
+    confirmed = non_cancellable.confirmed_quotation_line_ids(db, [row.id for row in flagged])
+    if not confirmed:
+        return
+    wanted = {str(item.get("id")): item for item in incoming if item.get("id")}
+    reductions = []
+    for row in flagged:
+        if str(row.id) not in confirmed:
+            continue
+        item = wanted.get(str(row.id))
+        before = Decimal(row.quantity or 0)
+        if item is None or item.get("is_section"):
+            to_qty = Decimal("0")
+        elif (item.get("product_id") and str(item["product_id"]) != str(row.product_id or "")) or (
+            item.get("product_set_id")
+            and str(item["product_set_id"]) != str(row.product_set_id or "")
+        ):
+            to_qty = Decimal("0")  # swapped for another item: the confirmed one is cancelled
+        elif item.get("quantity") is not None:
+            to_qty = Decimal(str(item["quantity"]))
+        else:
+            continue
+        if to_qty < before:
+            reductions.append(
+                non_cancellable.Reduction(
+                    label=row.product_code_snapshot or row.description_snapshot or "line",
+                    entity_type="project_quotation_lines",
+                    entity_id=str(row.id),
+                    from_qty=str(row.quantity),
+                    to_qty=str(to_qty),
+                )
+            )
+    non_cancellable.assert_may_reduce(
+        db,
+        reductions=reductions,
+        user_id=user_id,
+        override_reason=override_reason,
+        action="quotation_line_change",
+        company_id=quotation.company_id,
+    )
+    # Passed with lines to cut means an override was given: it shows in the proposal's own
+    # History (owner rule: every tracked action in the record's one History view).
+    if reductions and getattr(quotation, "document_id", None):
+        from app.models.projects import ProjectQuotationDocument
+        from app.services import quotation_form_draft_service as drafts
+
+        document = (
+            db.query(ProjectQuotationDocument)
+            .filter(ProjectQuotationDocument.id == quotation.document_id)
+            .first()
+        )
+        if document is not None:
+            for r in reductions:
+                drafts.record_event(
+                    db,
+                    document=document,
+                    note=(
+                        f"Non-cancellable override: {r.label} "
+                        f"{non_cancellable._qty_or_none(r.from_qty)} to "
+                        f"{non_cancellable._qty_or_none(r.to_qty)}. "
+                        f"Reason: {(override_reason or '').strip()}"
+                    ),
+                    user_id=user_id,
+                )
 
 
 def replace_lines(
@@ -1221,6 +1332,7 @@ def replace_lines(
     version: ProjectQuotationVersion,
     actor_user_id: str,
     lines: Sequence[Dict[str, Any]],
+    non_cancellable_override_reason: Optional[str] = None,
 ) -> List[ProjectQuotationLine]:
     """The whole desired line set for one version, written in ONE transaction (S10).
 
@@ -1253,6 +1365,14 @@ def replace_lines(
     quotation = _quotation_of(db, version)
 
     stored = {row.id: row for row in list_lines(db, version.id)}
+    _assert_no_non_cancellable_cut(
+        db,
+        quotation=quotation,
+        stored=stored,
+        incoming=lines,
+        user_id=actor_user_id,
+        override_reason=non_cancellable_override_reason,
+    )
     kept: Set[str] = set()
     written: List[ProjectQuotationLine] = []
 
@@ -1345,9 +1465,24 @@ def set_columns(
 
 
 def delete_line(
-    db: Session, *, version: ProjectQuotationVersion, line: ProjectQuotationLine
+    db: Session,
+    *,
+    version: ProjectQuotationVersion,
+    line: ProjectQuotationLine,
+    user_id: Optional[str] = None,
+    non_cancellable_override_reason: Optional[str] = None,
 ) -> None:
     assert_editable(db, version)
+    # NON-CANCELLABLE-ITEMS: removing a Non-cancellable line a confirmed SO already consumes
+    # needs an override with a reason. Quoting before that stays free.
+    _assert_no_non_cancellable_cut(
+        db,
+        quotation=_quotation_of(db, version),
+        stored={line.id: line},
+        incoming=[],
+        user_id=user_id,
+        override_reason=non_cancellable_override_reason,
+    )
     db.delete(line)
     db.flush()
     _recalculate_total(db, version)
@@ -1404,6 +1539,7 @@ def recompute_version(
     # Expanded once for the whole version rather than per line (S18, and T5 for the money).
     membership = pricing.series_membership(db, quotation.series_id)
     series_pricing = pricing.series_pricing_map(db, quotation.series_id)
+    nc_setting = non_cancellable.series_setting(db, quotation.series_id, quotation.company_id)
 
     report = {
         "version_id": version.id,
@@ -1436,6 +1572,7 @@ def recompute_version(
             line.floor_value_applied,
             line.floor_level_applied,
             bool(line.is_discounted),
+            bool(line.is_non_cancellable),
         )
         event = _apply_guardrails(
             db,
@@ -1444,6 +1581,7 @@ def recompute_version(
             product=products.get(line.product_id or ""),
             membership=membership,
             series_pricing=series_pricing,
+            non_cancellable_setting=nc_setting,
         )
         if event:
             report["breach_events"].append(event)
@@ -1454,6 +1592,7 @@ def recompute_version(
             line.floor_value_applied,
             line.floor_level_applied,
             bool(line.is_discounted),
+            bool(line.is_non_cancellable),
         )
         if before == after:
             continue
@@ -1754,6 +1893,7 @@ def serialize_lines(
             "band_label": line.band_label,
             "is_section": bool(line.is_section),
             "is_non_standard": line.is_non_standard,
+            "is_non_cancellable": bool(line.is_non_cancellable),
             "floor_value_applied": line.floor_value_applied,
             "floor_level_applied": line.floor_level_applied,
             "is_below_floor": line.is_below_floor,

@@ -1532,6 +1532,15 @@ class ResolveReferenceRequest(BaseModel):
             "for SRTWC8088's seat cover, never SRTWC8088-SC)."
         ),
     )
+    alternatives_offerable_only: bool = Field(
+        default=False,
+        description=(
+            "CHATBOT-CODE-MATCH AC-20 / owner Q3: the resolver's `alternatives_offerable_only` - "
+            "a token's did-you-mean `alternatives` (trigram and same-family) hold only products "
+            "the chat may offer (active and not discontinued). Set by the chatbot's resolve only; "
+            "off keeps every other caller's alternatives unchanged."
+        ),
+    )
     understand_phrase: bool = Field(
         default=False,
         description=(
@@ -1847,14 +1856,19 @@ def _drop_word_code_fragments(result: dict[str, Any], vocabulary: Any) -> None:
             _rebuild_intersection_fields(result)
 
 
-def _drop_word_neighbours(result: dict[str, Any]) -> None:
+def _drop_word_neighbours(result: dict[str, Any], *, offer_for: set[str] | frozenset[str] = frozenset()) -> None:
     """Fix round 10 on PR #833 (owner, 28 Sep 2026: "i tried to search like gunmetal
     basin, there is no such thing and it gives me flexible trap", "for #833 yeah exact
     only"), for `exact_match` callers: a WORD token (no digit in it: "basin", "gunmetal
     basin") gets no product by nearest neighbour, neither as a match (the embedding tier
     answered "basin" with the flexible trap) nor as a did-you-mean alternative. A token
     with a digit keeps them: a code typo ("SRWC8088") still finds its code. Customers,
-    orders and every other entity type are untouched."""
+    orders and every other entity type are untouched.
+
+    `offer_for` (CHATBOT-CODE-MATCH AC-19, owner Q1 (b), 13 Nov 2026): the folded word tokens
+    the caller typed as a product code. Such a word keeps its trigram ALTERNATIVES, the
+    did-you-mean a digit code gets, so a letters-only code typo is offered its near code; it
+    still never gets a neighbour as a MATCH, and an embedding neighbour never."""
     def word(token: Any) -> bool:
         return not _has_digit(token)
 
@@ -1868,8 +1882,12 @@ def _drop_word_neighbours(result: dict[str, Any]) -> None:
     for resolution in result.get("resolutions") or []:
         if not isinstance(resolution, dict) or not word(resolution.get("token")):
             continue
+        offered = _fold_code(resolution.get("token")) in offer_for
         for key in ("matches", "alternatives"):
-            kept = [m for m in resolution.get(key) or [] if not neighbour(m)]
+            kept = [
+                m for m in resolution.get(key) or []
+                if not neighbour(m) or (offered and key == "alternatives" and m.get("match_tier") == "trgm")
+            ]
             if len(kept) != len(resolution.get(key) or []):
                 resolution[key] = kept
         if not resolution.get("matches"):
@@ -2523,6 +2541,7 @@ def _resolve_input(
     code_reader: Any = None,
     hint_locked_tokens: list[str] | None = None,
     brand_tokens: dict[str, str] | None = None,
+    alternatives_offerable_only: bool = False,
 ):
     # RESOLVE-SEMANTIC-FALLBACK: the one code reader for this REQUEST, wrapped here so the
     # per-token memo and the per-request cap hold whatever reader a caller hands in (a
@@ -2720,6 +2739,7 @@ def _resolve_input(
                 # a sentence for an alpha-only type (`_synthesize_alpha_tokens`) are not
                 # that, so they are never put to it (security review, final head item 5).
                 code_reader=None if synthesized_from_query else code_reader,
+                alternatives_offerable_only=alternatives_offerable_only,
             ).as_dict()
         # CLASS-HINT-KIND-PICK: a locked token's name-matched kinds go before anything
         # downstream can read them as an answer - the AND exit, the OR degrade and the
@@ -2832,6 +2852,7 @@ def _resolve_input(
         cross_type_expand=True,
         regions=regions,
         family_raw_by_token=family_raw_by_token,
+        alternatives_offerable_only=alternatives_offerable_only,
     ).as_dict()
     fb = _apply_promotion_access_levels_filter(db, fb_raw, access_levels)
     fb = _strip_name_kinds_for_locked(fb, hint_locked_tokens, domain_hint)
@@ -3560,6 +3581,7 @@ def resolve_reference_post(
             code_reader=code_reader,
             hint_locked_tokens=payload.hint_locked_tokens,
             brand_tokens=payload.brand_tokens,
+            alternatives_offerable_only=payload.alternatives_offerable_only,
         )
     except EntityPinMismatch as exc:
         raise AppException(
@@ -3578,7 +3600,14 @@ def resolve_reference_post(
         # A size or named spec no variant of the typed code's family holds; the reply says so.
         result["spec_none"] = spec_none
     if payload.exact_match:
-        _drop_word_neighbours(result)
+        # CHATBOT-CODE-MATCH AC-19 (owner Q1 (b), 13 Nov 2026): a word token the caller typed
+        # as a PRODUCT (its own type, positionally parallel) keeps its trigram did-you-mean.
+        typed_products = (
+            {_fold_code(t) for t, kind in zip(payload.tokens, payload.allowed_entity_types) if kind == "product"}
+            if payload.tokens and payload.allowed_entity_types and len(payload.tokens) == len(payload.allowed_entity_types)
+            else set()
+        )
+        _drop_word_neighbours(result, offer_for=typed_products)
     if payload.require or payload.spec_fallback:
         # CODE-SUBSTRING: before Shape B and the spec fallback read the rows.
         from app.services.product_spec_search import _search_vocabulary

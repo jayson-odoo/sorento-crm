@@ -41,6 +41,7 @@ FORM_COMMENT_KINDS = (
     "purchase_request",
     "sponsorship_form",
     "sample_request",
+    "order_change_notice",
 )
 MAX_BODY_CHARS = 4000
 VIEW_PERMISSION = {
@@ -49,6 +50,7 @@ VIEW_PERMISSION = {
     "purchase_request": "procurement.purchase_requests.view",
     "sponsorship_form": "procurement.sponsorship_forms.view",
     "sample_request": "projects.sample_requests.view",
+    "order_change_notice": "procurement.order_change_notices.view",
 }
 MAX_FILES = 5
 
@@ -61,6 +63,7 @@ _LABELS = {
     "purchase_request": "purchase request",
     "sponsorship_form": "sponsorship form",
     "sample_request": "sample request",
+    "order_change_notice": "order change notice",
 }
 _NUMBER_ATTR = {
     "complaint": "complaint_number",
@@ -68,6 +71,7 @@ _NUMBER_ATTR = {
     "purchase_request": "request_number",
     "sponsorship_form": "request_number",
     "sample_request": "request_no",
+    "order_change_notice": "ocn_number",
 }
 
 
@@ -133,6 +137,11 @@ class FormCommentService:
 
             model = SampleRequest
             q = self.db.query(SampleRequest)
+        elif kind == "order_change_notice":
+            from app.models.project_so import OrderChangeNotice
+
+            model = OrderChangeNotice
+            q = self.db.query(OrderChangeNotice)
         else:
             model = PurchaseRequestHeader
             q = self.db.query(PurchaseRequestHeader).filter(PurchaseRequestHeader.request_type == kind)
@@ -346,9 +355,15 @@ class FormCommentService:
         )
         self.db.add(msg)
         self.db.flush()
+        # A person's comment is activity on the form (not an edit or a delete of one).
+        from app.services.audit_service import stamp_form_activity
+
+        stamp_form_activity(self.db, form_entity_type(kind), entity_id)
         return msg
 
-    def _store_staff_files(self, kind: str, entity_id: str, comment_id: str, user_id: str, files: Sequence[CommentFile]) -> None:
+    def _store_staff_files(self, kind: str, entity_id: str, comment_id: str, user_id: str, files: Sequence[CommentFile], company_id: Optional[str] = None) -> None:
+        """``company_id`` owns the files for a company-scoped record (the order change notice,
+        security review M5); other kinds keep them shared, as before."""
         from app.services.entity_attachment_service import create_response_attachment
 
         for filename, contents, content_type in files:
@@ -361,6 +376,7 @@ class FormCommentService:
                 content_type=content_type,
                 uploaded_by=user_id,
                 commit=False,
+                company_id=company_id,
             )
 
     def _store_contact_files(self, kind: str, entity_id: str, comment_id: str, contact_id: str, files: Sequence[CommentFile], acting_user_id: Optional[str] = None) -> None:
@@ -447,6 +463,20 @@ class FormCommentService:
     # Edit / delete (author or admin, enforced here)
     # ------------------------------------------------------------------ #
 
+    def _may_open_notice(self, row, user_id: Optional[str]) -> bool:
+        """Can this user open the order change notice? Its own reader rule (view all, or view_own
+        on the ones they raised or are named on), the same check as its page, so its raiser edits
+        their own comments and gets the thread's mail. Other kinds keep their view slug."""
+        if not user_id:
+            return False
+        from app.services import order_change_notice_service as ocn
+
+        try:
+            ocn.assert_can_view(row, ocn.actor_for_user(self.db, str(user_id)))
+            return True
+        except AppException:
+            return False
+
     def _require_modifier(self, msg: EntityConversationMessage, viewer: dict) -> None:
         if not self._can_modify(msg, {**viewer}) and msg.deleted_at is None:
             raise AppException(status_code=403, message="Only the author can change this comment.", code="FORBIDDEN")
@@ -509,8 +539,11 @@ class FormCommentService:
                 raise AppException(status_code=403, message="Sign in to do that.", code="FORBIDDEN")
             row = self._load_row(msg.entity_type, msg.entity_id)
             viewer = self.staff_viewer({"id": requested_by_id})
-            if not viewer["is_admin"] and VIEW_PERMISSION[msg.entity_type] not in set(
-                UserPermissionService(self.db).get_user_permission_slugs(viewer["user_id"])
+            if not viewer["is_admin"] and not (
+                self._may_open_notice(row, viewer["user_id"])
+                if msg.entity_type == "order_change_notice"
+                else VIEW_PERMISSION[msg.entity_type]
+                in set(UserPermissionService(self.db).get_user_permission_slugs(viewer["user_id"]))
             ):
                 raise AppException(status_code=403, message="You can't change this comment.", code="FORBIDDEN")
             if msg.deleted_at is None:
@@ -547,12 +580,22 @@ class FormCommentService:
         user_id = str(user.id if hasattr(user, "id") else user["id"])
         try:
             msg = self._insert(kind, entity_id, text, user_id=user_id, parent_id=parent_id)
-            self._store_staff_files(kind, entity_id, msg.id, user_id, files)
+            owner = getattr(row, "company_id", None) if kind == "order_change_notice" else None
+            self._store_staff_files(kind, entity_id, msg.id, user_id, files, str(owner) if owner else None)
             comment = self._commit_comment(msg, self.staff_viewer(user))
         except Exception:
             self.db.rollback()
             raise
-        delivery = self._notify_submitter(kind, row, user, text, comment["attachments"])
+        if kind == "order_change_notice":
+            # An office-only form: its raiser and the staff on its thread are told by mail, the
+            # same mail a submitter's comment sends (no WhatsApp contact to tell).
+            author = self.db.query(User).filter(User.id == user_id).first()
+            delivery = self._notify_handler(
+                kind, row, None, text, comment["attachments"],
+                acting_user_id=user_id, author_name=self._staff_name(author),
+            )
+        else:
+            delivery = self._notify_submitter(kind, row, user, text, comment["attachments"])
         return {"comment": comment, "delivery": delivery}
 
     def add_contact_comment(
@@ -701,7 +744,11 @@ class FormCommentService:
                 # Mail carries the comment text: only staff who can still open the form get it.
                 and (
                     bool(perms.get_user_role_slugs(u.id) & admin_slugs)
-                    or perms.check_user_has_permission(u.id, VIEW_PERMISSION[kind])
+                    or (
+                        self._may_open_notice(row, u.id)
+                        if kind == "order_change_notice"
+                        else perms.check_user_has_permission(u.id, VIEW_PERMISSION[kind])
+                    )
                 )
             )
 
@@ -726,6 +773,9 @@ class FormCommentService:
         if author_ids:
             for u in self.db.query(User).filter(User.id.in_(author_ids)).all():
                 add(u)
+        if kind == "order_change_notice" and getattr(row, "created_by", None):
+            # The notice's raiser stands where a request's submitter stands: told of the thread.
+            add(self.db.query(User).filter(User.id == str(row.created_by)).first())
         responded_by = getattr(row, "last_responded_by", None)
         if responded_by and kind in ("stock_inquiry", "complaint"):
             # respond_user_id is the stored value's meaning; users.id only when nobody has it.
@@ -752,7 +802,14 @@ class FormCommentService:
         return list(found.values())
 
     def _notify_handler(
-        self, kind: str, row, contact_id: str, body: str, attachments: list[dict], acting_user_id: Optional[str] = None
+        self,
+        kind: str,
+        row,
+        contact_id: Optional[str],
+        body: str,
+        attachments: list[dict],
+        acting_user_id: Optional[str] = None,
+        author_name: Optional[str] = None,
     ) -> str:
         try:
             recipients = self._recipients(kind, row, acting_user_id)
@@ -770,15 +827,20 @@ class FormCommentService:
             from app.models.notification import Notification, NotificationDelivery
             from app.services.email_template_service import EmailTemplateService
 
-            contact = self.db.query(RespondContact).filter(RespondContact.id == contact_id).first()
+            contact = (
+                self.db.query(RespondContact).filter(RespondContact.id == contact_id).first()
+                if contact_id
+                else None
+            )
             label = _LABELS[kind].title()
             number = self._number(kind, row)
             heading = f"New comment on {label} {number}".strip()
-            intro = f'{_contact_display_name(contact)} commented on {label} {number}:\n"{body}"'
+            who = author_name if contact_id is None and author_name else _contact_display_name(contact)
+            intro = f'{who} commented on {label} {number}:\n"{body}"'
             names = ", ".join(a["filename"] for a in attachments if a.get("filename"))
             if names:
                 intro += f"\nAttachments: {names}"
-            if acting_user_id:
+            if acting_user_id and contact_id:
                 admin = self.db.query(User).filter(User.id == acting_user_id).first()
                 intro += f"\nPosted by {self._staff_name(admin)} on behalf of {_contact_display_name(contact)}."
             rendered = EmailTemplateService(self.db).render_code(

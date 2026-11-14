@@ -398,6 +398,9 @@ class ProjectResponse(BaseModel):
 
     owner_user_id: Optional[str] = None
     owner_name: Optional[str] = None
+    # The owner's linked contact: Requested by on a sponsorship form written from the project.
+    owner_contact_id: Optional[str] = None
+    owner_contact_name: Optional[str] = None
 
     is_critical: bool = False
     critical_at: Optional[datetime] = None
@@ -977,6 +980,8 @@ class ProjectSeriesCreate(ProjectSeriesBase):
             "short list of groups rather than a list of every SKU."
         ),
     )
+    #: NON-CANCELLABLE-ITEMS: the nominated categories that are Non-cancellable.
+    non_cancellable_category_ids: List[str] = Field(default_factory=list)
 
 
 class ProjectSeriesUpdate(BaseModel):
@@ -989,6 +994,8 @@ class ProjectSeriesUpdate(BaseModel):
     category_ids: Optional[List[str]] = Field(
         None, description="Sent WHOLE, not as a delta."
     )
+    #: NON-CANCELLABLE-ITEMS: sent WHOLE; each must also be in the series' categories.
+    non_cancellable_category_ids: Optional[List[str]] = None
 
 
 class ProjectSeriesResponse(ProjectSeriesBase):
@@ -999,6 +1006,7 @@ class ProjectSeriesResponse(ProjectSeriesBase):
     brand_names: List[str] = Field(default_factory=list)
     category_ids: List[str] = Field(default_factory=list)
     category_names: List[str] = Field(default_factory=list)
+    non_cancellable_category_ids: List[str] = Field(default_factory=list)
     covered_category_count: int = Field(
         0,
         description=(
@@ -1075,6 +1083,8 @@ class QuotationLineVerdictResponse(BaseModel):
 
     is_non_standard: bool
     is_below_floor: bool
+    #: NON-CANCELLABLE-ITEMS F1: the save's `is_non_cancellable`, judged now.
+    is_non_cancellable: bool = False
     # Below the default price (series price, else list price): the save's `is_discounted`.
     is_discounted: bool = False
     floor_value: Optional[Decimal] = None
@@ -1117,6 +1127,10 @@ class SeriesProductRowResponse(BaseModel):
     derived_floor: Optional[Decimal] = None
     #: True when the product is of the series' brand and under one of its categories.
     in_scope: bool = False
+    #: NON-CANCELLABLE-ITEMS: the row's own answer; NULL follows the category / company default.
+    non_cancellable: Optional[bool] = None
+    #: What a quotation line of this product on this series is marked, all levels applied.
+    non_cancellable_effective: bool = False
 
 
 class SeriesSetRowResponse(BaseModel):
@@ -1131,6 +1145,41 @@ class SeriesSetRowResponse(BaseModel):
     selling_price: Optional[Decimal] = None
     max_discount_pct: Optional[Decimal] = None
     derived_floor: Optional[Decimal] = None
+    #: NON-CANCELLABLE-ITEMS: the set as quoted is Non-cancellable on this series.
+    non_cancellable: bool = False
+
+
+class SeriesNonCancellableUpdate(BaseModel):
+    """NON-CANCELLABLE-ITEMS: a product row's own answer (null = follow the category) or a
+    set row's flag (null reads as false)."""
+
+    non_cancellable: Optional[bool] = None
+
+
+class NonCancellableRuleCreate(BaseModel):
+    """A company-wide default for exactly one product or one category."""
+
+    product_id: Optional[str] = None
+    category_id: Optional[str] = None
+    non_cancellable: bool = True
+    notes: Optional[str] = Field(None, max_length=2000)
+
+
+class NonCancellableRuleUpdate(BaseModel):
+    non_cancellable: bool
+    notes: Optional[str] = Field(None, max_length=2000)
+
+
+class NonCancellableRuleResponse(BaseModel):
+    id: str
+    product_id: Optional[str] = None
+    product_code: Optional[str] = None
+    product_name: Optional[str] = None
+    category_id: Optional[str] = None
+    category_name: Optional[str] = None
+    non_cancellable: bool
+    notes: Optional[str] = None
+    updated_at: Optional[datetime] = None
 
 
 class SeriesProductPricingUpdate(BaseModel):
@@ -1591,6 +1640,9 @@ class ProjectQuotationLineResponse(BaseModel):
     is_section: bool = False
 
     is_non_standard: bool = False
+    # NON-CANCELLABLE-ITEMS: stored on save from the scope's series; printed under the
+    # description on screen and in the PDF.
+    is_non_cancellable: bool = False
     # The floor IN FORCE WHEN PRICED (AC-E7). A later policy change never rewrites it.
     floor_value_applied: Optional[Decimal] = None
     floor_level_applied: Optional[str] = None
@@ -1872,7 +1924,27 @@ class ProjectSponsorshipResponse(BaseModel):
     sponsor_subject: Optional[str] = None
     sponsor_subject_other: Optional[str] = None
     total_project_value: Optional[Decimal] = None
+    # What the form sponsors (its lines' Grand total); `total_project_value` is the project's.
+    sponsored_total: Optional[Decimal] = None
     purpose: Optional[str] = None
+
+
+class ProjectOrderChangeNoticeResponse(BaseModel):
+    """An order change notice of this project, for the project page's panel
+    (OCN-ORDER-CHANGE-NOTICE F1). The record itself is owned by procurement; the panel links out."""
+
+    id: str
+    ocn_number: Optional[str] = None
+    ocn_date: Optional[date] = None
+    status: Optional[str] = None
+    status_label: Optional[str] = None
+    approval_status: Optional[str] = None
+    customer_name: Optional[str] = None
+    customer_po_no: Optional[str] = None
+    change_type_name: Optional[str] = None
+    risk_level: Optional[str] = None
+    requested_by: Optional[str] = None
+    revision_no: int = 0
 
 
 class SponsorshipYearTotal(BaseModel):
@@ -2167,6 +2239,9 @@ class ProjectQuotationDocumentUpdate(ProjectQuotationRecipientPick, ProjectQuota
         description="Saved scopes Edit quotation deletes (#1341). Refused with 422 "
         "quotation_scope_issued for a scope any version of which has been issued.",
     )
+    #: NON-CANCELLABLE-ITEMS: an override holder's reason for cutting a Non-cancellable line a
+    #: confirmed SO consumes; without it such a save is refused 409 `non_cancellable_line`.
+    non_cancellable_override_reason: Optional[str] = Field(default=None, max_length=2000)
     # QUOTE-AUTOSAVE: the form's whole state at Save. Present, the same commit writes a `saved`
     # History entry from it and clears the draft; a Save the server refuses writes neither.
     form_state: Optional[Dict[str, Any]] = Field(
@@ -2660,6 +2735,8 @@ class QuotationSignScopeLine(BaseModel):
     uom: Optional[str] = None
     unit_price: Decimal = Decimal("0")
     complete_set: Optional[str] = None
+    # NON-CANCELLABLE-ITEMS: the REMARK cell ("Non-cancellable"), as the PDF prints it.
+    remark: Optional[str] = None
     band_label: Optional[str] = None
     # A heading row: draw band_label as the band, nothing else (PROPOSAL-FORM-COLLAPSE).
     is_section: bool = False

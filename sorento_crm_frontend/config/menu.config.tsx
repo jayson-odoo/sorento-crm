@@ -1,5 +1,6 @@
 import {
   AlertCircle,
+  Wrench,
   Award,
   Badge,
   Bell,
@@ -74,6 +75,7 @@ const MY_REQUEST_ICONS: Partial<Record<(typeof LANDING_KINDS)[number], LucideIco
   sponsorship_form: Gift,
   sample_request: Package,
   new_product_application: FileText,
+  order_change_notice: FileText,
   price_tag_request: Receipt,
   sales_opportunity: TrendingUp,
 };
@@ -278,8 +280,18 @@ const STAFF_SIDEBAR: MenuConfig = [
             permission: 'projects.types.view',
           },
           {
+            title: 'Project import',
+            path: '/project-sales/import',
+            permission: 'projects.import.view',
+          },
+          {
             title: 'Price Floors',
             path: '/project-sales/price-floors',
+            permission: 'projects.types.view',
+          },
+          {
+            title: 'Non-cancellable Items',
+            path: '/project-sales/non-cancellable',
             permission: 'projects.types.view',
           },
           {
@@ -791,6 +803,28 @@ const STAFF_SIDEBAR: MenuConfig = [
     ],
   },
   {
+    title: 'After-Sales Service',
+    icon: Wrench,
+    moduleKey: 'after_sales',
+    children: [
+      {
+        title: 'Service Jobs',
+        path: '/after-sales/service-jobs',
+        permission: 'after_sales.service_jobs.view',
+      },
+      {
+        title: 'Dispatch Board',
+        path: '/after-sales/dispatch-board',
+        permission: 'after_sales.service_jobs.view',
+      },
+      {
+        title: 'Technicians',
+        path: '/after-sales/technicians',
+        permissionsAny: ['after_sales.service_jobs.view', 'after_sales.technicians.manage'],
+      },
+    ],
+  },
+  {
     title: 'SLA',
     icon: Clock,
     moduleKey: 'sla',
@@ -870,6 +904,14 @@ const STAFF_SIDEBAR: MenuConfig = [
         title: 'Sponsorship Forms',
         path: '/procurement-management/sponsorship-forms',
         permission: 'procurement.sponsorship_forms.view',
+      },
+      {
+        title: 'Order Change Notices',
+        path: '/procurement-management/order-change-notices',
+        permissionsAny: [
+          'procurement.order_change_notices.view',
+          'procurement.order_change_notices.view_own',
+        ],
       },
       {
         title: 'Sponsorship Report',
@@ -1983,6 +2025,28 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
     ],
   },
   {
+    title: 'After-Sales Service',
+    icon: Wrench,
+    moduleKey: 'after_sales',
+    children: [
+      {
+        title: 'Service Jobs',
+        path: '/after-sales/service-jobs',
+        permission: 'after_sales.service_jobs.view',
+      },
+      {
+        title: 'Dispatch Board',
+        path: '/after-sales/dispatch-board',
+        permission: 'after_sales.service_jobs.view',
+      },
+      {
+        title: 'Technicians',
+        path: '/after-sales/technicians',
+        permissionsAny: ['after_sales.service_jobs.view', 'after_sales.technicians.manage'],
+      },
+    ],
+  },
+  {
     title: 'SLA Management',
     icon: Clock,
     moduleKey: 'sla',
@@ -2190,6 +2254,14 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         permission: 'procurement.sponsorship_forms.view',
       },
       {
+        title: 'Order Change Notices',
+        path: '/procurement-management/order-change-notices',
+        permissionsAny: [
+          'procurement.order_change_notices.view',
+          'procurement.order_change_notices.view_own',
+        ],
+      },
+      {
         title: 'Sponsorship Report',
         path: '/procurement-management/sponsorship-forms/report',
         permission: 'procurement.sponsorship_forms.report',
@@ -2392,8 +2464,18 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         permission: 'projects.types.view',
       },
       {
+        title: 'Project import',
+        path: '/project-sales/import',
+        permission: 'projects.import.view',
+      },
+      {
         title: 'Price Floors',
         path: '/project-sales/price-floors',
+        permission: 'projects.types.view',
+      },
+      {
+        title: 'Non-cancellable Items',
+        path: '/project-sales/non-cancellable',
         permission: 'projects.types.view',
       },
       {

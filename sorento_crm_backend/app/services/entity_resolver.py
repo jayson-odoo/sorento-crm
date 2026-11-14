@@ -3079,18 +3079,26 @@ def _family_alternatives(
         return []
 
 
-def _drop_inactive_products(db: Session, hits: list[ResolvedEntity]) -> list[ResolvedEntity]:
-    """`hits` minus inactive products (one bounded IN query); other types pass through."""
+def _keep_products(db: Session, hits: list[ResolvedEntity], predicate: Any) -> list[ResolvedEntity]:
+    """`hits` minus the products `predicate` rejects (one bounded IN query); other types pass."""
     ids = [str(h.uuid) for h in hits if h.entity_type == "product" and h.uuid]
     if not ids:
         return hits
-    active = {
-        str(pid)
-        for (pid,) in db.query(Product.id)
-        .filter(Product.id.in_(ids), Product.is_active.is_(True))
-        .all()
-    }
-    return [h for h in hits if h.entity_type != "product" or str(h.uuid) in active]
+    kept = {str(pid) for (pid,) in db.query(Product.id).filter(Product.id.in_(ids), predicate).all()}
+    return [h for h in hits if h.entity_type != "product" or str(h.uuid) in kept]
+
+
+def _drop_inactive_products(db: Session, hits: list[ResolvedEntity]) -> list[ResolvedEntity]:
+    """`hits` minus inactive products; other types pass through."""
+    return _keep_products(db, hits, Product.is_active.is_(True))
+
+
+def _drop_unofferable_products(db: Session, hits: list[ResolvedEntity]) -> list[ResolvedEntity]:
+    """`hits` minus the products the chat may not offer (`offerable_products`: inactive or
+    discontinued, owner Q3); other types pass through."""
+    from app.models.product import offerable_products
+
+    return _keep_products(db, hits, offerable_products())
 
 
 def _embedding_scope_sql(db: Session) -> tuple[str, dict[str, Any]]:
@@ -5480,13 +5488,21 @@ def resolve_references(
     regions=None,
     code_reader: Optional[Callable[[list[tuple[str, Optional[str]]]], dict[str, Any]]] = None,
     alternatives_active_only: bool = False,
+    alternatives_offerable_only: bool = False,
 ) -> ResolutionResult:
     """Main entry point.
 
     `alternatives_active_only` (AI-EXTRACT-DYM): drop inactive products from a token's
     "did you mean" `alternatives` BEFORE the `_ALTERNATIVES_CAP` cut, so inactive near
-    matches cannot push an active one out. Off by default: every other caller's
-    alternatives are unchanged.
+    matches cannot push an active one out. The same-family alternatives
+    (`_family_alternatives`) honour it too. Set by the AI document read
+    (`ai_extract/extract_service.py`). Off by default.
+
+    `alternatives_offerable_only` (CHATBOT-CODE-MATCH AC-20, owner Q3): the same, for the
+    chatbot only, with the chat's offer rule (`offerable_products`: active AND not
+    discontinued), trigram and same-family alternatives alike. Set by the chat resolve
+    (`resolve_gate`, the grounding near-pick) through the route's request field. Off by
+    default: every other caller's alternatives are unchanged.
 
     `code_reader` (RESOLVE-SEMANTIC-FALLBACK, owner ruling 6 Oct 2026): a
     `resolver_code_reader.CodeReader`. When set, a PRE-EXTRACTED product-typed token that
@@ -6037,7 +6053,9 @@ def resolve_references(
             }
             if member_uuids:
                 hits = [h for h in hits if str(h.uuid) not in member_uuids]
-        if alternatives_active_only:
+        if alternatives_offerable_only:
+            hits = _drop_unofferable_products(db, hits)
+        elif alternatives_active_only:
             hits = _drop_inactive_products(db, hits)
         alternatives = [
             h for h in hits if (h.similarity or 0.0) >= ENTITY_MISS_SUGGEST_FLOOR
@@ -6053,7 +6071,11 @@ def resolve_references(
             else None
         )
         if family_key:
-            family = _family_alternatives(db, tr.token, family_key, alternatives_active_only)
+            family = _family_alternatives(
+                db, tr.token, family_key, alternatives_active_only or alternatives_offerable_only
+            )
+            if alternatives_offerable_only:
+                family = _drop_unofferable_products(db, family)
             family_ids = {h.uuid for h in family}
             alternatives = family + [h for h in alternatives if h.uuid not in family_ids]
         tr.alternatives = alternatives[:_ALTERNATIVES_CAP]

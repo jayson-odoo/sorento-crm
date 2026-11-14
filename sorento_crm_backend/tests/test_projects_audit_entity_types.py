@@ -70,6 +70,9 @@ BORN_AFTER_THE_MOVE = frozenset({
     # PLAN-set-quote-line-14oct.md, migration sql_0001_set_quote_line (#1682): one product
     # set priced into a series, born straight into `projects` beside `series_products`.
     "series_sets",
+    # PLAN-non-cancellable-items-11nov.md, migration nc_0001_non_cancellable: the company-wide
+    # Non-cancellable default per product or category, born straight into `projects`.
+    "non_cancellable_rules",
     # PLAN-series-filters-15oct.md, migration sf_0001_series_brands (#1697): the brands a
     # series picks, born straight into `projects` beside `series_categories`.
     "series_brands",
@@ -119,7 +122,20 @@ BORN_AFTER_THE_MOVE = frozenset({
     # autosaved state and its insert-only History, born straight into `projects`.
     "quotation_document_drafts",
     "quotation_document_snapshots",
+    # OCN-ORDER-CHANGE-NOTICE (migration ocn_0001_order_change_notice): the notice's lines and
+    # its change-type lookup, born straight into `projects` beside `order_change_notices`.
+    "order_change_notice_lines",
+    "order_change_types",
+    # PROJECT-MIGRATION-TOOL (#2385, migration pimp_0001_import_value_maps): the project import's
+    # saved value links, born straight into `projects`.
+    "import_value_maps",
 })
+
+# A kept-name model whose audit entity type was deliberately re-pinned after the move, with
+# the reason. `order_change_notices` became a form with a History tab (OCN-ORDER-CHANGE-NOTICE
+# B11) and audits as `order_change_notice`, the name the form's SLA, comments and History use;
+# the table held no rows in production when it moved, so no audit row was orphaned.
+REPINNED = {"order_change_notices": "order_change_notice"}
 
 
 def _projects_schema_classes():
@@ -192,6 +208,10 @@ def test_a_model_born_after_the_move_keeps_the_prefix_convention_it_was_born_wit
     from app.models.sample_request import SampleRequest
 
     assert _audit_entity_type(SampleRequest) == "project_sample_requests"
+    # PROJECT-MIGRATION-TOOL (#2385): the same convention, pinned at birth.
+    from app.models.project_import import ProjectImportValueMap
+
+    assert _audit_entity_type(ProjectImportValueMap) == "project_import_value_maps"
 
 
 def test_every_renamed_model_pins_its_pre_move_audit_entity_type():
@@ -213,18 +233,25 @@ def test_every_renamed_model_pins_its_pre_move_audit_entity_type():
 
 
 def test_models_that_kept_their_name_keep_their_audit_entity_type():
-    """The other 13 changed schema only, so their entity type must not have moved either."""
+    """The other 13 changed schema only, so their entity type must not have moved either,
+    except the re-pinned ones (`REPINNED`), which carry exactly their new entity type."""
     pre_move = _pre_move_names()
     checked = 0
+    repinned = set()
 
     for cls in _projects_classes():
         name = cls.__tablename__
         if pre_move[name] != name:
             continue
+        if name in REPINNED:
+            assert _audit_entity_type(cls) == REPINNED[name]
+            repinned.add(name)
+            continue
         assert _audit_entity_type(cls) == name
         checked += 1
 
-    assert checked == 13
+    assert repinned == set(REPINNED)
+    assert checked + len(repinned) == 13
 
 
 def test_no_projects_entity_type_collides_with_any_other_model():

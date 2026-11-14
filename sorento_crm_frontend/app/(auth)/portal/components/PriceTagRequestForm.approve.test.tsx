@@ -111,13 +111,20 @@ vi.mock('@/components/dealer-kit/PriceTagLivePreview', async () => {
   const React = await import('react');
   return {
     PriceTagLivePreview: (props: {
-      onReadyChange?: (s: { missing: string[]; drawn: boolean; failed: boolean }) => void;
+      lines?: { key: string; code: string }[];
+      onReadyChange?: (s: { missing: string[]; missingKeys: string[]; drawn: boolean; failed: boolean }) => void;
       popup?: { open: boolean; footer?: React.ReactNode };
     }) => {
       const { onReadyChange } = props;
+      // PRICETAG-ALA-CARTE: a line is flagged by its key; the lines holding a missing code.
+      const missingKeys = (props.lines ?? [])
+        .filter((line) => previewReport.missing.includes(line.code))
+        .map((line) => line.key);
+      const missingSignature = missingKeys.join('|');
       React.useEffect(() => {
-        onReadyChange?.({ ...previewReport });
-      }, [onReadyChange]);
+        onReadyChange?.({ ...previewReport, missingKeys });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [onReadyChange, missingSignature]);
       // PRICETAG-REQUEST-LAYOUT: the popup's footer holds Approve.
       return props.popup?.open ? <div data-testid="sheet-popup">{props.popup.footer}</div> : null;
     },

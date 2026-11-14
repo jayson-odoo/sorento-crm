@@ -585,6 +585,16 @@ class SystemSetting(Base):
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
+    # Order change notice (OCN-ORDER-CHANGE-NOTICE): the approval stage's default approver,
+    # and whether Submit needs a project.
+    order_change_notice_default_approver_user_id = Column(
+        String,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    order_change_notice_require_project = Column(
+        Boolean, default=False, nullable=False, server_default="false"
+    )
     # Who approves a project quotation carrying a line outside its series (PS-QUOTE-RULES R4.1).
     off_series_approver_user_id = Column(
         String,
@@ -831,6 +841,12 @@ class SystemSetting(Base):
     embedding_records_search_model = Column(String(128), nullable=True)
     embedding_backfill_rpm = Column(Integer, nullable=True, server_default="20", default=20)
     chatbot_direct_ingress_contacts = Column(Text, nullable=True)
+    # N8N-RETIRE-A: who sends a covered contact's bot reply. `n8n` (today), `contacts` (only the
+    # ids in `chatbot_reply_sender_contacts`) or `all`; the CRM sends it itself when covered.
+    chatbot_reply_sender_mode = Column(
+        String(16), nullable=False, server_default="n8n", default="n8n"
+    )
+    chatbot_reply_sender_contacts = Column(Text, nullable=True)
     # CLOSED-LISTS-INDEX-MODE: how a CLOSED LISTS parser version sees the closed lists.
     # `block` (today) renders every full list into the system prompt; `index` renders each
     # as one fixed pointer line, and the per-turn CLOSED LISTS block carries only what the

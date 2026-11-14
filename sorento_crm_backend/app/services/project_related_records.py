@@ -126,6 +126,24 @@ def _complaint_select(me: Me, access: str):
     )
 
 
+def _request_value(kind: str, M):
+    """A sponsorship form's value is what it SPONSORS, its lines' Grand total (a line with no total
+    counts quantity x unit price), the same rule as `sponsorship_link_service._sponsored_totals`;
+    its `total_project_value` is the PROJECT's value (PROJECT-STAGE-ACTIONS, crew pass round 2).
+    A purchase request keeps its own value."""
+    if kind != "sponsorship_form":
+        return M.total_project_value
+    from app.models.procurement import PurchaseRequestLine as L
+
+    amount = func.coalesce(L.total, L.quantity * L.unit_price, 0)
+    return (
+        select(func.coalesce(func.sum(amount), 0))
+        .where(L.purchase_request_id == M.id)
+        .correlate(M)
+        .scalar_subquery()
+    )
+
+
 def _request_select(kind: str, subject_column: str):
     def build(me: Me, access: str):
         from app.models.procurement import PurchaseRequestHeader as M
@@ -140,7 +158,7 @@ def _request_select(kind: str, subject_column: str):
                 request_record_date().label("date"),
                 M.requested_by.label("raised_by"),
                 getattr(M, subject_column).label("subject"),
-                M.total_project_value.label("value"),
+                _request_value(kind, M).label("value"),
             ).where(M.request_type == kind),
             access,
             own_scope.request_clause(M, me),
@@ -171,10 +189,34 @@ def _npa_select(me: Me, access: str):
     )
 
 
+def _order_change_notice_select(me: Me, access: str):
+    from app.models.project_so import OrderChangeNotice as M
+    from app.models.user import User
+    from app.services import order_change_notice_service as ocn
+
+    raiser = select(User.name).where(User.id == M.created_by).correlate(M).scalar_subquery()
+    return _own(
+        select(
+            literal("order_change_notice", String).label("kind"),
+            M.id.label("id"),
+            M.ocn_number.label("number"),
+            M.status.label("status"),
+            M.approval_status.label("approval_status"),
+            cast(M.ocn_date, Date).label("date"),
+            raiser.label("raised_by"),
+            M.description.label("subject"),
+            cast(null(), Numeric).label("value"),
+        ),
+        access,
+        ocn.own_clause(me.user_id),
+    )
+
+
 def _register_builtin_types() -> None:
     from app.models.complaints import Complaint
     from app.models.new_product_application import NewProductApplication
     from app.models.procurement import PurchaseRequestHeader, StockInquiry
+    from app.models.project_so import OrderChangeNotice
 
     for rt in (
         RelatedType(
@@ -200,6 +242,11 @@ def _register_builtin_types() -> None:
             NewProductApplication, _npa_select,
             "/procurement-management/new-product-applications/{id}",
             value_is_cost=True,
+        ),
+        RelatedType(
+            "order_change_notice", "Order change notice", "order_change_notice",
+            OrderChangeNotice, _order_change_notice_select,
+            "/procurement-management/order-change-notices/{id}",
         ),
     ):
         register_related_type(rt)

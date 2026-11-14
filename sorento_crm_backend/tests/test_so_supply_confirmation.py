@@ -806,6 +806,8 @@ def test_publishing_an_amendment_supersedes_the_active_decision(api):
         id=_uid(), company_id=world.company_id, ocn_number=f"ZZT-OCN-{_suffix()}",
         project_id=world.project.id, project_sales_order_id=order.id,
         approver_id=world.eling, approved_at=None,
+        # OCN-ORDER-CHANGE-NOTICE E3: publishing needs the notice approved through its chain.
+        status="approved", approval_status="approved",
     )
     db.add(ocn)
     db.flush()

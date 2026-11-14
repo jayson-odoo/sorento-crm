@@ -19,6 +19,7 @@ from sqlalchemy import inspect
 from decimal import Decimal, InvalidOperation
 from typing import Optional, List, Dict, Any
 from datetime import date, datetime, timedelta, timezone
+from app.utils.last_activity import last_activity_order, last_activity_range
 from app.utils.multi_value import multi_values
 from app.models.procurement import (
     Supplier, ProductSupplier, InboundShipment, InboundShipmentLine, SPOAllocation,
@@ -58,7 +59,7 @@ from app.schemas.procurement import (
     SPODocument, SPODocumentLine, SPODocumentRow, SPODocumentContainer,
     refuse_missing_sponsorship_unit_prices,
 )
-from app.services import submission_status
+from app.services import approval_chain_rules, submission_status
 from app.services.error_handler import (
     AppException,
     handle_not_found,
@@ -5638,6 +5639,8 @@ class StockInquiryService:
         space_id: Optional[str] = None,
         statuses: Optional[List[str]] = None,
         viewer_user_id: Optional[str] = None,
+        last_activity_from: Optional[Any] = None,
+        last_activity_to: Optional[Any] = None,
     ):
         """Build the filtered + sorted stock-inquiry query shared by ``list_inquiries``
         and ``neighbours`` so the two can never drift.
@@ -5658,6 +5661,10 @@ class StockInquiryService:
             q = q.filter(StockInquiry.space_id == str(space_id).strip())
         if statuses:
             q = q.filter(StockInquiry.status.in_(statuses))
+
+        in_range = last_activity_range(StockInquiry.last_activity_at, last_activity_from, last_activity_to)
+        if in_range is not None:
+            q = q.filter(in_range)
 
         if query:
             q = q.filter(
@@ -5694,9 +5701,6 @@ class StockInquiryService:
             "salesperson": StockInquiry.salesperson,
             "status": StockInquiry.status,
             "last_responded_at": StockInquiry.last_responded_at,
-            "last_activity_at": func.coalesce(
-                StockInquiry.last_revised_at, StockInquiry.created_at
-            ),
             "revision_no": StockInquiry.revision_no,
         }
         if sort_field in ("assigned_to_name", "handled_by_name"):
@@ -5705,10 +5709,12 @@ class StockInquiryService:
             )
         elif sort_field == "print_count":
             sort_map[sort_field] = self._print_count_sort(viewer_user_id)
-        sort_column = sort_map.get(sort_field, StockInquiry.created_at)
-
         if sort_dir not in ("asc", "desc"):
             sort_dir = "desc"
+
+        if sort_field == "last_activity_at":
+            return q.order_by(*last_activity_order(StockInquiry.last_activity_at, StockInquiry.created_at, StockInquiry.id, sort_dir))
+        sort_column = sort_map.get(sort_field, StockInquiry.created_at)
 
         if sort_dir == "desc":
             q = q.order_by(sort_column.desc().nulls_last(), StockInquiry.id.asc())
@@ -5727,6 +5733,8 @@ class StockInquiryService:
         space_id: Optional[str] = None,
         statuses: Optional[List[str]] = None,
         viewer_user_id: Optional[str] = None,
+        last_activity_from: Optional[Any] = None,
+        last_activity_to: Optional[Any] = None,
     ):
         """List stock inquiries.
 
@@ -5742,6 +5750,8 @@ class StockInquiryService:
             space_id=space_id,
             statuses=statuses,
             viewer_user_id=viewer_user_id,
+            last_activity_from=last_activity_from,
+            last_activity_to=last_activity_to,
         )
 
         total = q.count()
@@ -8021,7 +8031,8 @@ class PurchaseRequestService:
     # Customer-service finalize: only an approved request (post-approval, CS stage)
     # can be finalized. 'processed_by_cs' (CS handled it) and 'closed' (can't
     # fulfil) both close the customer-service form-SLA stage (same 'resolved' event).
-    _CS_FINALIZE_FROM_STATUSES: tuple[str, ...] = ("approved",)
+    # The shared chain rule (approval_chain_rules.FINALIZE_FROM_STATUSES), named here for readers.
+    _CS_FINALIZE_FROM_STATUSES: tuple[str, ...] = approval_chain_rules.FINALIZE_FROM_STATUSES
     _CS_FINALIZE_STATUSES: tuple[str, ...] = ("processed_by_cs", "closed")
     _CS_FINALIZE_STATUS_LABELS: dict[str, str] = {
         "processed_by_cs": "processed by our customer service team",
@@ -8089,7 +8100,7 @@ class PurchaseRequestService:
         current_status = (getattr(header, "status", None) or "").strip().lower()
         if current_status == new_status:
             return header  # idempotent
-        if current_status not in self._CS_FINALIZE_FROM_STATUSES:
+        if not approval_chain_rules.can_finalize(header):
             raise handle_validation_error(
                 f"Request must be approved before it can be marked {new_status} "
                 f"(current status: {current_status or 'unknown'})."
@@ -8160,17 +8171,16 @@ class PurchaseRequestService:
     # Blocked once terminal. PR uses status + approval_status: a rejected request
     # sets BOTH status='rejected' and approval_status='rejected' (reject_submitted /
     # decide_approval), so either signal blocks a second void.
-    _VOID_BLOCKED_STATUSES: frozenset[str] = frozenset(
-        {"voided", "rejected", "closed", "processed_by_cs"}
-    )
+    # The rules live in `approval_chain_rules` (shared with the order change notice,
+    # OCN-ORDER-CHANGE-NOTICE); the names stay here for the callers that read them.
+    _VOID_BLOCKED_STATUSES: frozenset[str] = approval_chain_rules.VOID_BLOCKED_STATUSES
 
     @staticmethod
     def _refuse_if_voided(header, doing: str) -> None:
         """Void is terminal (PLAN-form-void D3/D6): no approval step may touch a voided
         request, whichever door it comes through (in-system buttons, the emailed link,
         send for approval, reject before approval)."""
-        if (getattr(header, "status", None) or "").strip().lower() == "voided":
-            raise handle_conflict(f"This request has been voided and can no longer be {doing}.")
+        approval_chain_rules.refuse_if_voided(header, doing)
 
     def void_request(
         self,
@@ -8187,29 +8197,9 @@ class PurchaseRequestService:
         event (SLA stop is pure config), then best-effort notifies assignee +
         handling-lock holder (in-app) and the salesperson (WhatsApp).
         """
-        reason = (void_reason or "").strip()
-        if len(reason) < 3:
-            raise handle_validation_error(
-                "A void reason of at least 3 characters is required."
-            )
+        reason = approval_chain_rules.void_reason(void_reason)
         header = self.get_request(request_id)
-        current = (getattr(header, "status", None) or "").strip().lower()
-        approval = (getattr(header, "approval_status", None) or "").strip().lower()
-        if current in self._VOID_BLOCKED_STATUSES or approval == "rejected":
-            raise handle_conflict(
-                f"This request cannot be voided from its current state "
-                f"({current or 'unknown'})."
-            )
-
-        now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
-        header.status = "voided"
-        if approval == "pending":
-            # Close the open approval with the form, so no approval queue or filter
-            # still lists it as waiting on a decision.
-            header.approval_status = "voided"
-        header.voided_by = actor_user_id
-        header.voided_at = now_utc
-        header.void_reason = reason
+        approval_chain_rules.apply_void(header, reason=reason, actor_user_id=actor_user_id)
         self.db.commit()
         self.db.refresh(header)
 
@@ -9393,6 +9383,8 @@ class PurchaseRequestService:
         contact_id: Optional[str] = None,
         space_id: Optional[str] = None,
         assigned_to: Optional[list[str] | str] = None,
+        last_activity_from: Optional[Any] = None,
+        last_activity_to: Optional[Any] = None,
     ):
         """Build the filtered + sorted PR/SF query shared by ``list_requests`` and
         ``neighbours`` so the two can never drift.
@@ -9503,6 +9495,10 @@ class PurchaseRequestService:
             # Several statuses are OR-ed (an unknown one adds nothing, as before).
             q = q.filter(or_(*status_clauses))
 
+        in_range = last_activity_range(PurchaseRequestHeader.last_activity_at, last_activity_from, last_activity_to)
+        if in_range is not None:
+            q = q.filter(in_range)
+
         sort_map = {
             "submitted_at": PurchaseRequestHeader.submitted_at,
             "request_date": PurchaseRequestHeader.request_date,
@@ -9523,6 +9519,10 @@ class PurchaseRequestService:
             sort_map[sort_field] = self._request_sla_person_name_sort(
                 "assigned_to_id" if sort_field == "assigned_to_name" else "handled_by_id"
             )
+        if sort_field == "last_activity_at":
+            return q.order_by(*last_activity_order(
+                PurchaseRequestHeader.last_activity_at, PurchaseRequestHeader.created_at, PurchaseRequestHeader.id, sort_dir
+            ))
         sort_col = sort_map.get(sort_field, PurchaseRequestHeader.submitted_at)
         if sort_dir == "desc":
             q = q.order_by(sort_col.desc().nullslast(), PurchaseRequestHeader.id.asc())
@@ -9569,6 +9569,8 @@ class PurchaseRequestService:
         contact_id: Optional[str] = None,
         space_id: Optional[str] = None,
         assigned_to: Optional[list[str] | str] = None,
+        last_activity_from: Optional[Any] = None,
+        last_activity_to: Optional[Any] = None,
     ):
         """List purchase requests / sponsorship forms with pagination."""
         q = self._build_request_list_query(
@@ -9580,6 +9582,8 @@ class PurchaseRequestService:
             contact_id=contact_id,
             space_id=space_id,
             assigned_to=assigned_to,
+            last_activity_from=last_activity_from,
+            last_activity_to=last_activity_to,
         )
 
         total = q.count()
@@ -10124,27 +10128,20 @@ class PurchaseRequestService:
         from app.services.error_handler import handle_conflict
 
         header = self.get_request(request_id)
-        self._refuse_if_voided(header, "sent for approval")
-        current = (getattr(header, "approval_status", None) or "").strip().lower()
-        if current == "rejected":
-            raise handle_conflict(
-                "Cannot change to pending approval: request was rejected. "
-                "Salesperson must edit and re-submit from the portal."
-            )
         # No-op guard: only treat this as a real transition into pending when it
         # wasn't already pending. A redundant call (double-click before the FE
         # refetch hides the button, client/proxy retry, etc.) must NOT re-emit the
         # 'send_for_approval' SLA event - that re-runs the approval-stage start and,
         # combined with stages sharing a policy, spawns a duplicate assignment +
         # duplicate WhatsApp. See _active_tracker stage-scoping fix in form_sla_service.
-        already_pending = current == "pending"
-        header.approval_status = "pending"
-        header.approved_at = None
-        header.approved_by = None
-        header.approval_signature_ref = None
-        header.approval_comments = None
-        if requested_by_user_id is not None:
-            header.requested_approval_by_user_id = requested_by_user_id
+        already_pending = approval_chain_rules.apply_send_for_approval(
+            header,
+            requested_by_user_id=requested_by_user_id,
+            rejected_message=(
+                "Cannot change to pending approval: request was rejected. "
+                "Salesperson must edit and re-submit from the portal."
+            ),
+        )
         try:
             self.db.commit()
         except Exception as e:
@@ -10214,41 +10211,18 @@ class PurchaseRequestService:
         approval_comments, and notifies the contact via Respond.io. Same permission as
         Send for Approval.
         """
-        from app.services.error_handler import handle_validation_error, handle_conflict
-
-        reason = (rejection_reason or "").strip()
-        if not reason:
+        if not (rejection_reason or "").strip():
             raise handle_validation_error("Rejection reason is required.")
-
         header = self.get_request(request_id)
-        self._refuse_if_voided(header, "rejected")
-        current = (getattr(header, "approval_status", None) or "").strip().lower()
-        if current and current not in ("", "draft"):
-            raise handle_conflict(
-                f"Cannot reject submitted: approval_status is already '{current}'. "
-                "Reject is only available before sending for approval."
-            )
-
-        now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
-        header.approval_status = "rejected"
-        header.status = "rejected"
-        header.approval_comments = reason
-        header.approved_at = now_utc
-        # Store a resolved display name (never a raw UUID) so the "Rejected by"
-        # field renders a person, consistent with the approval-decision path.
-        # The raw actor id is preserved separately in requested_approval_by_user_id.
-        header.approved_by = self._resolve_actor_display_name(actor_user_id)
-        # Dedicated rejecter id so the banner can resolve a name + wa.me phone.
-        # Guard the FK the same way the approval-decision path does: only set it when
-        # the actor resolves to a real users row, so a non-user actor id can never
-        # abort the whole reject on the FK constraint (NULL -> banner plain text).
-        _rid = (actor_user_id or "").strip() if actor_user_id else None
-        header.rejected_by_id = (
-            _rid if (_rid and self.db.query(User.id).filter(User.id == _rid).first()) else None
+        # The raw actor id is preserved separately in requested_approval_by_user_id; the
+        # "Rejected by" field gets a resolved display name, never a raw UUID.
+        approval_chain_rules.apply_reject_submitted(
+            self.db,
+            header,
+            reason=rejection_reason,
+            actor_user_id=actor_user_id,
+            actor_display_name=self._resolve_actor_display_name(actor_user_id),
         )
-        header.approval_signature_ref = None
-        if actor_user_id is not None:
-            header.requested_approval_by_user_id = actor_user_id
         self.db.commit()
         self.db.refresh(header)
 
@@ -10616,28 +10590,12 @@ class PurchaseRequestService:
     def assert_decidable(self, header) -> None:
         """The in-system decision's premise: not voided, and still awaiting a decision
         (approval_status == 'pending'). The agent's proposal asks the same question."""
-        self._refuse_if_voided(header, "approved or rejected")
-        appr = (getattr(header, "approval_status", None) or "").strip().lower()
-        if appr in ("approved", "rejected"):
-            raise handle_conflict(f"This request has already been {appr}.")
-        if appr != "pending":
-            raise handle_conflict(
-                "This request is not pending approval. Send it for approval first."
-            )
+        approval_chain_rules.assert_decidable(header)
 
     @staticmethod
     def decision_comments(action: str, approval_comments: Optional[str]) -> Optional[str]:
         """The comments a decision stores, or the refusal: a rejection needs a reason."""
-        from app.services.error_handler import handle_validation_error
-
-        if action not in ("approved", "rejected"):
-            raise handle_conflict("action must be 'approved' or 'rejected'.")
-        if action == "rejected":
-            rejection_notes = (approval_comments or "").strip()
-            if not rejection_notes:
-                raise handle_validation_error("Rejection reason is required.")
-            return rejection_notes
-        return approval_comments
+        return approval_chain_rules.decision_comments(action, approval_comments)
 
     def submit_approval(
         self,
@@ -10693,28 +10651,23 @@ class PurchaseRequestService:
         Reject buttons so both behave identically. Does NOT touch approval tokens.
         """
         approval_comments = self.decision_comments(action, approval_comments)
-        self._refuse_if_voided(header, "approved or rejected")
-
-        now = datetime.now(timezone.utc)
-        header.approval_status = action
-        # Advance the lifecycle status off "submitted" so every view reflects the
-        # decision, not just approval_status.
-        header.status = action
-        header.approved_at = now
-        header.approved_by = approved_by or header.approver_email or ""
+        # Populate the dedicated rejecter id when it resolves to a CRM user
+        # (in-system decision). External-email approvers (public link) have no
+        # user row -> NULL, and the banner falls back to plain text (REJ-4).
+        resolved_rejecter_id = None
         if action == "rejected":
-            # Populate the dedicated rejecter id when it resolves to a CRM user
-            # (in-system decision). External-email approvers (public link) have no
-            # user row -> NULL, and the banner falls back to plain text (REJ-4).
-            resolved_rejecter_id = None
             for candidate in (actor_user_id, getattr(header, "approver_user_id", None)):
-                cid = (candidate or "").strip() if candidate else None
-                if cid and self.db.query(User.id).filter(User.id == cid).first():
-                    resolved_rejecter_id = cid
+                resolved_rejecter_id = approval_chain_rules.existing_user_id(self.db, candidate)
+                if resolved_rejecter_id:
                     break
-            header.rejected_by_id = resolved_rejecter_id
-        header.approval_signature_ref = approval_signature_ref
-        header.approval_comments = approval_comments
+        approval_chain_rules.apply_decision(
+            header,
+            action,
+            approved_by=approved_by or header.approver_email or "",
+            approval_comments=approval_comments,
+            rejected_by_id=resolved_rejecter_id,
+            approval_signature_ref=approval_signature_ref,
+        )
         self.db.commit()
         self.db.refresh(header)
         if action == "approved":

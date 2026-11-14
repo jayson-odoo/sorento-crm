@@ -6,6 +6,8 @@
  * label and the record's own page from this map and nothing else, so it never changes.
  */
 import { complaintStatusLabel, complaintStatusPillClass } from '@/lib/complaint-status';
+import { statusPillClass } from '@/lib/status-pill';
+import { ocnStatusPillKey, ocnStatusWord } from '@/types/orderChangeNotice';
 
 /** The retired Sponsorship Form tab; its old links open Related, filtered to sponsorship forms. */
 export const LEGACY_SPONSORSHIP_TAB = 'sponsorships';
@@ -41,6 +43,13 @@ export const RELATED_RECORD_TYPES: Record<string, RelatedRecordTypeDef> = {
   new_product_application: {
     label: 'New product application',
     href: (id) => `/procurement-management/new-product-applications/${id}`,
+  },
+  order_change_notice: {
+    label: 'Order change notice',
+    href: (id) => `/procurement-management/order-change-notices/${id}`,
+    // As the notice's own page reads it ("Done", never "processed_by_cs").
+    statusLabel: (status) => ocnStatusWord({ status, approval_status: null }),
+    statusPillClass: (status) => statusPillClass(ocnStatusPillKey({ status, approval_status: null })),
   },
 };
 

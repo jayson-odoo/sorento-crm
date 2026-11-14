@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Project import mock v1</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{--background:#fff;--foreground:#09090b;--card:#fff;--primary:#3b82f6;--muted:#f4f4f5;--muted-fg:#71717a;--border:#ececee;--input:#e4e4e7;--destructive:#dc2626;--radius:.5rem}
+*{box-sizing:border-box}
+body{margin:0;background:#e4e4e7;color:var(--foreground);font:14px/1.5 Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+.mocknav{position:sticky;top:0;z-index:80;background:#18181b;display:flex;gap:4px;padding:8px 16px;overflow-x:auto;font-size:13px;align-items:center}
+.mocknav span{color:#71717a;padding:6px 8px 6px 0;white-space:nowrap}
+.mocknav button{background:transparent;border:0;color:#a1a1aa;font:inherit;padding:6px 10px;border-radius:6px;cursor:pointer;white-space:nowrap}
+.mocknav button.on{background:#3f3f46;color:#fff}
+.mocknav .w{margin-left:auto;display:flex;gap:4px}
+.stage{padding:16px;display:flex;justify-content:center}
+.frame{position:relative;background:#fafafa;width:1280px;max-width:100%;min-height:760px;overflow:hidden;border:1px solid #d4d4d8;border-radius:8px}
+.frame.w375{width:375px}
+.view{display:none}.view.on{display:block}
+.container{padding:20px 16px 80px}
+.crumb{font-size:12px;font-weight:500;text-transform:uppercase;letter-spacing:.04em;color:var(--muted-fg)}
+.hdr{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;margin:4px 0 16px}
+.hdr .t{display:flex;gap:10px;align-items:center;min-width:0}
+h1{font-size:20px;font-weight:600;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sub{font-size:13px;color:var(--muted-fg);margin:-12px 0 16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card{position:relative;border:1px solid var(--border);border-radius:12px;background:var(--card);box-shadow:0 1px 2px rgba(0,0,0,.05);margin-bottom:16px}
+.toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border)}
+.input{height:32px;border:1px solid var(--input);border-radius:var(--radius);padding:0 10px;font:inherit;font-size:13px;background:#fff;min-width:0;max-width:100%}
+.sel{display:inline-flex;align-items:center;gap:6px;height:30px;border:1px solid var(--input);border-radius:var(--radius);padding:0 8px 0 10px;font-size:13px;background:#fff;white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis}
+.sel.set{border-color:#93c5fd;background:#eff6ff;color:#1d4ed8}.sel .k{color:var(--muted-fg)}.sel.set .k{color:#1d4ed8;opacity:.75}
+.sel.todo{border-style:dashed;color:var(--muted-fg)}
+.btn{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:var(--radius);border:1px solid var(--input);background:#fff;font:inherit;font-size:13px;font-weight:500;cursor:pointer;white-space:nowrap}
+.btn.primary{background:var(--primary);border-color:var(--primary);color:#fff}
+.btn.ghost{border-color:transparent;background:transparent;color:var(--muted-fg)}
+.btn[disabled]{opacity:.5;cursor:not-allowed}
+.btn.count{background:#fff7ed;border-color:#fdba74;color:#9a3412}
+.bulkbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:8px 16px;background:#eff6ff;border-bottom:1px solid #bfdbfe;font-size:13px;position:relative}
+.menu{position:absolute;z-index:30;min-width:220px;background:#fff;border:1px solid var(--border);border-radius:10px;box-shadow:0 10px 24px rgba(0,0,0,.15);padding:4px}
+.menu div{padding:6px 10px;border-radius:6px;font-size:13px;white-space:nowrap}.menu div:hover{background:var(--muted)}
+.menu .sep{height:1px;padding:0;margin:4px 0;background:var(--border)}.menu .dest{color:var(--destructive)}.menu .hint{color:var(--muted-fg);font-size:12px}
+.tablewrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;table-layout:fixed;font-size:13px}
+th{font-weight:500;color:var(--muted-fg);text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);background:#fafafa;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+th .s{opacity:.5;margin-left:4px}
+td{padding:8px 10px;border-bottom:1px solid var(--border);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+td.n,th.n{text-align:right}
+tr.on td{background:#f8fbff}
+.pill{display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:999px;font-size:12px;font-weight:500;background:var(--muted);white-space:nowrap}
+.pill.ok{background:#dcfce7;color:#166534}.pill.no{background:var(--muted);color:var(--muted-fg)}.pill.warn{background:#fef3c7;color:#92400e}.pill.info{background:#e0f2fe;color:#075985}.pill.err{background:#fee2e2;color:#991b1b}
+.dash{color:var(--muted-fg)}
+.foot{display:flex;justify-content:space-between;padding:10px 16px;font-size:13px;color:var(--muted-fg);flex-wrap:wrap;gap:8px}
+.tabs{display:flex;gap:20px;border-bottom:1px solid var(--border);margin-bottom:16px;font-size:14px;overflow-x:auto}
+.tabs span{padding:8px 0;color:var(--muted-fg);white-space:nowrap}.tabs .on{color:var(--foreground);border-bottom:2px solid var(--primary);font-weight:500}
+.tabs .c{margin-left:6px;font-size:12px;color:#9a3412}
+.steps{display:flex;align-items:center;gap:0;margin:0 0 18px;max-width:560px}
+.steps .st{display:flex;align-items:center;gap:8px;flex:0 0 auto}
+.steps .dot{width:26px;height:26px;border-radius:50%;border:1px solid var(--input);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;background:#fff;color:var(--muted-fg)}
+.steps .done .dot{background:#18181b;border-color:#18181b;color:#fff}
+.steps .cur .dot{border:2px solid var(--primary);color:var(--primary)}
+.steps .ln{flex:1 1 auto;height:1px;background:var(--input);margin:0 8px;min-width:16px}
+.steps .lb{font-size:13px;font-weight:500}
+.empty{text-align:center;padding:36px 16px}.empty b{display:block;font-size:15px}.empty span{color:var(--muted-fg);font-size:13px}
+.overlay{position:absolute;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:flex-start;justify-content:center;padding:32px 12px;z-index:40;overflow:auto}
+.dialog{background:#fff;border-radius:12px;width:100%;max-width:620px;box-shadow:0 20px 40px rgba(0,0,0,.2)}
+.dh{padding:18px 20px 6px}.dh h2{margin:0;font-size:17px;font-weight:600}
+.db{padding:12px 20px}.df{display:flex;justify-content:flex-end;gap:8px;padding:12px 20px 18px;flex-wrap:wrap}
+.drop{border:1.5px dashed var(--input);border-radius:10px;padding:22px;text-align:center;color:var(--muted-fg);font-size:13px}
+.drop b{color:var(--foreground)}
+.file{display:flex;justify-content:space-between;align-items:center;gap:8px;border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;margin:10px 0;font-size:13px}
+.chk{display:flex;gap:8px;align-items:center;font-size:13px;padding:5px 0;border-bottom:1px solid var(--border)}.chk:last-child{border-bottom:0}.chk .r{margin-left:auto;color:var(--muted-fg)}
+.counts{display:flex;gap:8px;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid var(--border)}
+.tile{border:1px solid var(--border);border-radius:10px;padding:8px 14px;min-width:120px;background:#fff}.tile b{display:block;font-size:20px;font-weight:600}.tile span{font-size:12px;color:var(--muted-fg)}
+.tile.sel{border-color:#93c5fd;background:#eff6ff}
+.notice{margin:12px 16px;padding:10px 12px;border-radius:var(--radius);background:#fffbeb;border:1px solid #fde68a;font-size:13px;color:#92400e}
+.err{font-size:12px;color:var(--destructive)}
+.drop-open{position:absolute;z-index:35;width:340px;background:#fff;border:1px solid var(--border);border-radius:10px;box-shadow:0 10px 24px rgba(0,0,0,.15);padding:6px}
+.drop-open .q{margin:2px 2px 6px;width:calc(100% - 4px)}
+.drop-open div.o{padding:6px 8px;border-radius:6px;font-size:13px;display:flex;justify-content:space-between;gap:8px;white-space:nowrap}.drop-open div.o:hover{background:var(--muted)}
+.drop-open div.o .c{color:var(--muted-fg)}
+.drop-open .act{color:#1d4ed8}
+.countdown{display:inline-flex;align-items:center;gap:8px;height:32px;padding:0 6px 0 12px;border-radius:var(--radius);background:#fee2e2;color:#991b1b;font-size:13px;font-weight:500}
+.countdown .btn{height:26px}
+.legend{max-width:1280px;margin:0 auto 40px;padding:0 16px;font-size:13px}
+.legend h2{font-size:16px}
+.legend table{table-layout:auto;background:#fff}.legend td,.legend th{white-space:normal;vertical-align:top}
+code{overflow-wrap:anywhere;font-size:12px;background:var(--muted);padding:1px 4px;border-radius:4px}
+.w375 .container{padding:16px}.w375 .hdr .btn.primary{width:100%;justify-content:center}.w375 .steps .lb{display:none}.w375 .steps .cur .lb{display:inline}
+.w375 .hide375{display:none}
+</style>
+</head>
+<body>
+<nav class="mocknav">
+  <span>Project import v1</span>
+  <button data-v="a" class="on">A Runs list</button>
+  <button data-v="a0">A Empty</button>
+  <button data-v="b">B Create: upload</button>
+  <button data-v="c">C Columns</button>
+  <button data-v="d1">D Values: Customers</button>
+  <button data-v="d2">D Values: Projects (picker)</button>
+  <button data-v="d3">D Values: bulk</button>
+  <button data-v="e">E Preview</button>
+  <button data-v="f">F Results</button>
+  <button data-v="f2">F Revert counting</button>
+  <span class="w"><button data-w="1280" class="on">1280</button><button data-w="375">375</button></span>
+</nav>
+<div class="stage"><div class="frame" id="frame">
+
+<!-- A: runs list -->
+<div class="view on" data-v="a"><div class="container">
+  <div class="crumb">Project Sales / Configuration</div>
+  <div class="hdr"><div class="t"><h1>Project import</h1></div></div>
+  <div class="card">
+    <div class="toolbar"><input class="input" placeholder="Search file or run no." style="width:240px"><span class="sel"><span class="k">Status</span> All</span><span class="sel"><span class="k">Uploaded by</span> All</span><button class="btn ghost">Columns</button><span style="flex:1"></span><button class="btn primary">Create</button></div>
+    <div class="tablewrap"><table style="min-width:980px">
+      <colgroup><col style="width:110px"><col style="width:260px"><col style="width:140px"><col style="width:120px"><col style="width:110px"><col style="width:70px"><col style="width:80px"><col style="width:80px"><col style="width:90px"></colgroup>
+      <thead><tr><th>Run no.<span class="s">&#8597;</span></th><th>File<span class="s">&#8597;</span></th><th>Uploaded by<span class="s">&#8597;</span></th><th>Uploaded on<span class="s">&#8595;</span></th><th>Status<span class="s">&#8597;</span></th><th class="n">Rows</th><th class="n">Created</th><th class="n">Skipped</th><th class="n">To review</th></tr></thead>
+      <tbody>
+        <tr><td>PIM-0003</td><td title="TOTAL SALES ORDER SUMMARY 2026 (SEP).xlsx">TOTAL SALES ORDER SUMMARY 2026 (SEP).xlsx</td><td>STAFF 02</td><td>02/10/2026</td><td><span class="pill info">Previewed</span></td><td class="n">1,481</td><td class="n dash">-</td><td class="n dash">-</td><td class="n">14</td></tr>
+        <tr><td>PIM-0002</td><td title="TOTAL SALES ORDER SUMMARY 2026 (AUG).xlsx">TOTAL SALES ORDER SUMMARY 2026 (AUG).xlsx</td><td>STAFF 02</td><td>05/09/2026</td><td><span class="pill ok">Imported</span></td><td class="n">1,282</td><td class="n">78</td><td class="n">131</td><td class="n">0</td></tr>
+        <tr><td>PIM-0001</td><td title="TOTAL SALES ORDER SUMMARY 2026 (JUL).xlsx">TOTAL SALES ORDER SUMMARY 2026 (JUL).xlsx</td><td>STAFF 01</td><td>04/08/2026</td><td><span class="pill ok">Imported</span></td><td class="n">1,204</td><td class="n">851</td><td class="n">353</td><td class="n">0</td></tr>
+      </tbody></table></div>
+    <div class="foot"><span>3 runs</span><span>Page 1 of 1</span></div>
+  </div>
+</div></div>
+
+<!-- A0: empty -->
+<div class="view" data-v="a0"><div class="container">
+  <div class="crumb">Project Sales / Configuration</div>
+  <div class="hdr"><div class="t"><h1>Project import</h1></div></div>
+  <div class="card">
+    <div class="toolbar"><input class="input" placeholder="Search file or run no." style="width:240px"><span class="sel"><span class="k">Status</span> All</span><span class="sel"><span class="k">Uploaded by</span> All</span><button class="btn ghost">Columns</button><span style="flex:1"></span><button class="btn primary">Create</button></div>
+    <div class="empty"><b>No imports yet</b><span>Uploaded sales order summaries show here.</span></div>
+  </div>
+</div></div>
+
+<!-- B: create dialog -->
+<div class="view" data-v="b"><div class="container">
+  <div class="crumb">Project Sales / Configuration</div>
+  <div class="hdr"><div class="t"><h1>Project import</h1></div></div>
+  <div class="card" style="height:420px"></div>
+  <div class="overlay"><div class="dialog">
+    <div class="dh"><h2>Import projects</h2></div>
+    <div class="db">
+      <div class="drop"><b>Drop an .xlsx file here</b> or click to choose (up to 10 MB)</div>
+      <div class="file"><span>TOTAL SALES ORDER SUMMARY 2026 (AUG).xlsx</span><span class="dash">412 KB</span></div>
+      <div class="lbl" style="font-size:13px;font-weight:500;margin:10px 0 4px">Sheets</div>
+      <div class="chk"><input type="checkbox" checked> JAN'26<span class="r">170 rows</span></div>
+      <div class="chk"><input type="checkbox" checked> FEB'26<span class="r">128 rows</span></div>
+      <div class="chk"><input type="checkbox" checked> MAC'26<span class="r">173 rows</span></div>
+      <div class="chk"><input type="checkbox" checked> APR'26<span class="r">216 rows</span></div>
+      <div class="chk"><input type="checkbox" checked> MAY'26<span class="r">155 rows</span></div>
+      <div class="chk"><input type="checkbox" checked> JUN'26<span class="r">169 rows</span></div>
+      <div class="chk"><input type="checkbox"> SUMMARY JAN-JUN<span class="r">no PS numbers</span></div>
+      <div class="chk"><input type="checkbox" checked> JUL'26<span class="r">193 rows</span></div>
+      <div class="chk"><input type="checkbox" checked> AUG'26<span class="r">194 rows</span></div>
+    </div>
+    <div class="df"><button class="btn">Cancel</button><button class="btn primary">Next</button></div>
+  </div></div>
+</div></div>
+
+<!-- C: columns -->
+<div class="view" data-v="c"><div class="container">
+  <div class="crumb">Project Sales / Project import</div>
+  <div class="hdr"><div class="t"><h1>PIM-0002</h1><span class="pill no">Draft</span></div><span><button class="btn ghost">&lsaquo;</button><button class="btn ghost">&rsaquo;</button><button class="btn primary">Next</button></span></div>
+  <div class="sub">TOTAL SALES ORDER SUMMARY 2026 (AUG).xlsx</div>
+  <div id="steps-c"></div>
+  <div class="card"><div class="tablewrap"><table style="min-width:700px">
+    <colgroup><col style="width:220px"><col style="width:260px"><col style="width:240px"></colgroup>
+    <thead><tr><th>Sample</th><th>Heading in file</th><th>Field</th></tr></thead>
+    <tbody>
+      <tr><td>PS26-0100</td><td>RUNNING PS NUMBER</td><td><span class="sel set">PS number</span></td></tr>
+      <tr><td>ALVIN</td><td>SALES PERSON</td><td><span class="sel set">Salesperson</span></td></tr>
+      <tr><td>KATE</td><td>CUSTOMER SERVICE</td><td><span class="sel set">Customer service</span></td></tr>
+      <tr><td>CUSTOMER 001 SDN BHD</td><td>CUSTOMER</td><td><span class="sel set">Customer</span></td></tr>
+      <tr><td>PROJECT 001 SAMPLE NAME</td><td>PROJECT NAME REF:</td><td><span class="sel set">Project name</span></td></tr>
+      <tr><td>DEVELOPER 001</td><td>DEVELOPER REMARK 1 :</td><td><span class="sel set">Developer</span></td></tr>
+      <tr><td>JV/PO/7430/75</td><td>PO NUMBER</td><td><span class="sel set">PO number</span></td></tr>
+      <tr><td>25,487.00</td><td>TOTAL VALUE</td><td><span class="sel set">PO value</span></td></tr>
+      <tr><td>02/01/2025</td><td>DATE</td><td><span class="sel set">PO date</span></td></tr>
+      <tr><td>amend 9/9/9999</td><td>AMENDED DATE</td><td><span class="sel set">Amended (note)</span></td></tr>
+      <tr><td>YES</td><td>SCHEDULE YES/NO</td><td><span class="sel set">Schedule (note)</span></td></tr>
+      <tr><td>1Q 2027</td><td>DELIVERY DATE</td><td><span class="sel set">Delivery (note)</span></td></tr>
+      <tr><td>on hold 23/4/2026</td><td>OUTSTANDING</td><td><span class="sel set">Outstanding</span></td></tr>
+      <tr><td>SO498152</td><td>SO NUMBER</td><td><span class="sel set">SO number(s)</span></td></tr>
+      <tr><td>WAIVE TRANSPORT CHARGE</td><td>REMARKS</td><td><span class="sel todo">Choose a field or Ignore</span></td></tr>
+    </tbody></table></div></div>
+</div></div>
+
+<!-- D1: values customers -->
+<div class="view" data-v="d1"><div class="container" id="d1"></div></div>
+<!-- D2: values projects with picker -->
+<div class="view" data-v="d2"><div class="container" id="d2"></div></div>
+<!-- D3: bulk -->
+<div class="view" data-v="d3"><div class="container" id="d3"></div></div>
+
+<!-- E: preview -->
+<div class="view" data-v="e"><div class="container">
+  <div class="crumb">Project Sales / Project import</div>
+  <div class="hdr"><div class="t"><h1>PIM-0002</h1><span class="pill info">Previewed</span></div><span><button class="btn ghost">&lsaquo;</button><button class="btn ghost">&rsaquo;</button><button class="btn primary">Import</button></span></div>
+  <div class="sub">TOTAL SALES ORDER SUMMARY 2026 (AUG).xlsx</div>
+  <div id="steps-e"></div>
+  <div class="card">
+    <div class="counts">
+      <div class="tile"><b>903</b><span>Will create</span></div>
+      <div class="tile"><b>0</b><span>Already imported</span></div>
+      <div class="tile"><b>365</b><span>Skipped</span></div>
+      <div class="tile sel"><b>14</b><span>Needs review</span></div>
+      <div class="tile"><b>0</b><span>Errors</span></div>
+    </div>
+    <div class="notice">14 rows need review and will be left out. Fix their values or import without them.</div>
+    <div class="toolbar"><input class="input" placeholder="Search PS no., PO no." style="width:220px"><span class="sel set"><span class="k">Outcome</span> Needs review</span><span class="sel"><span class="k">Reason</span> All</span><span class="sel"><span class="k">Sheet</span> All</span><button class="btn ghost">Columns</button></div>
+    <div class="tablewrap"><table style="min-width:1100px">
+      <colgroup><col style="width:80px"><col style="width:60px"><col style="width:100px"><col style="width:200px"><col style="width:200px"><col style="width:130px"><col style="width:100px"><col style="width:120px"><col style="width:200px"></colgroup>
+      <thead><tr><th>Sheet</th><th class="n">Row</th><th>PS no.<span class="s">&#8597;</span></th><th>Customer</th><th>Project</th><th>PO no.</th><th>PO date</th><th>Outcome</th><th>Reason</th></tr></thead>
+      <tbody>
+        <tr><td>JAN'26</td><td class="n">101</td><td>PS26-0100</td><td>CUSTOMER 001 SDN BHD</td><td>PROJECT 001 SAMPLE NAME</td><td>JV/PO/7430/75</td><td>02/01/2025</td><td><span class="pill warn">Needs review</span></td><td title="Project not linked">Project not linked</td></tr>
+        <tr><td>APR'26</td><td class="n">47</td><td>PS26-0518</td><td>CUSTOMER 014 SDN BHD</td><td>PROJECT 052 SAMPLE NAME</td><td>AA-55120</td><td>11/04/2026</td><td><span class="pill warn">Needs review</span></td><td title="Customer differs from the sales order's shop">Customer differs from the SO's shop</td></tr>
+        <tr><td>MAY'26</td><td class="n">88</td><td>PS26-0775</td><td>CUSTOMER 021 SDN BHD</td><td>PROJECT 060 SAMPLE NAME</td><td>HQ/12/40/118</td><td>19/05/2026</td><td><span class="pill warn">Needs review</span></td><td title="Same developer and title as project PRJ-0412">Already registered as PRJ-0412</td></tr>
+      </tbody></table></div>
+    <div class="foot"><span>14 rows</span><span>Page 1 of 1</span></div>
+  </div>
+</div></div>
+
+<!-- F: results -->
+<div class="view" data-v="f"><div class="container" id="f"></div></div>
+<div class="view" data-v="f2"><div class="container" id="f2"></div></div>
+
+</div></div>
+
+<div class="legend">
+<h2>Elements and what they reuse</h2>
+<table><thead><tr><th>Element</th><th>Reuses (repo path)</th></tr></thead><tbody>
+<tr><td>Menu entry Project Sales &gt; Configuration &gt; Project import</td><td><code>sorento_crm_frontend/config/menu.config.tsx:268</code> (both trees), permission <code>projects.import.view</code></td></tr>
+<tr><td>Page header (run no. + status pill, subtitle, pager, one main button, gear)</td><td><code>components/common/PageHeader.tsx</code>, <code>components/common/RecordNavigation.tsx</code>, <code>components/ui/badge.tsx</code> / <code>StatusPill</code></td></tr>
+<tr><td>Runs list, Values grids, Preview rows</td><td><code>components/ui/data-grid.tsx</code> (fixed layout, resizable, server sort), <code>buildDataGridParams</code> in <code>lib/api-client</code>, filters <code>SearchableMultiSelect</code></td></tr>
+<tr><td>Create dialog: file drop</td><td><code>components/common/FileDropzone.tsx</code>, <code>components/ui/dialog.tsx</code>; two-step upload shape of <code>app/(protected)/scm/reorder/hooks/useTwoStepUpload.ts</code></td></tr>
+<tr><td>Steps row (Columns, Values, Preview, Import)</td><td><code>components/common/WizardSteps.tsx</code></td></tr>
+<tr><td>Columns step (sample / heading / field, Ignore, saved headings)</td><td><code>components/common/ImportColumnMapper.tsx</code> over the header probe; headings saved in <code>import_field_alias</code> (<code>sorento_crm_backend/app/models/import_alias.py</code>) under doc type <code>project_po_register</code></td></tr>
+<tr><td>Values tabs</td><td><code>components/ui/tabs.tsx</code> <code>variant="line"</code></td></tr>
+<tr><td>Linked to: customer</td><td><code>components/common/SearchableSelect.tsx</code> + <code>useFetchCustomerOptions</code> (the register form's customer picker, name or debtor code)</td></tr>
+<tr><td>Linked to: project / developer / person</td><td><code>components/common/SearchableSelect.tsx</code>; persons through <code>services/userSelectService</code></td></tr>
+<tr><td>Bulk action on ticked lines</td><td>the DataGrid selection + one action dropdown; each line calls the same save as the single picker</td></tr>
+<tr><td>Preview outcome tiles + rows, Results breakdown + rows</td><td><code>app/(protected)/system-management/import-jobs/components/OutcomeBreakdownCard.tsx</code>, <code>ImportJobRowsCard.tsx</code>; codes in <code>sorento_crm_backend/app/services/import_outcome_codes.py</code></td></tr>
+<tr><td>Import progress</td><td><code>components/upload-activity/useImportJobDrawer.ts</code> (queued job on the <code>imports</code> queue)</td></tr>
+<tr><td>Revert (countdown + Cancel, no confirm)</td><td><code>components/common/DeferredActionButton.tsx</code>, row/record actions <code>components/common/recordActions.tsx</code></td></tr>
+<tr><td>History tab</td><td><code>components/audit/AuditTrail.tsx</code></td></tr>
+<tr><td>Dates</td><td><code>formatDate</code> in <code>lib/helpers.ts</code> (dd/mm/yyyy)</td></tr>
+</tbody></table>
+<p>All names, codes and numbers in this mock are fake. Run numbers (PIM-NNNN) are illustrative.</p>
+</div>
+
+<script>
+const STEPS=['Columns','Values','Preview','Import'];
+function steps(cur){return '<div class="steps">'+STEPS.map((s,i)=>{const c=i<cur?'done':(i===cur?'cur':'');return `<div class="st ${c}"><span class="dot">${i<cur?'&#10003;':i+1}</span><span class="lb">${s}</span></div>`+(i<STEPS.length-1?'<span class="ln"></span>':'');}).join('')+'</div>';}
+document.getElementById('steps-c').innerHTML=steps(0);
+document.getElementById('steps-e').innerHTML=steps(2);
+function head(status,pill,btn){return `<div class="crumb">Project Sales / Project import</div>
+<div class="hdr"><div class="t"><h1>PIM-0002</h1><span class="pill ${pill}">${status}</span></div><span><button class="btn ghost">&lsaquo;</button><button class="btn ghost">&rsaquo;</button>${btn}</span></div>
+<div class="sub">TOTAL SALES ORDER SUMMARY 2026 (AUG).xlsx</div>`;}
+function vtabs(on){const t=[['Customers',3],['Projects',12],['Developers',4],['People',0]];return '<div class="tabs">'+t.map(([n,c])=>`<span class="${n===on?'on':''}">${n}${c?`<span class="c">${c} to do</span>`:''}</span>`).join('')+'</div>';}
+const CUST=[
+ ['CUSTOMER 001 SDN BHD',41,'set','CUSTOMER 001 SDN BHD','3000-C001','From SO'],
+ ['CUSTOMER 002 SDN BHD',37,'set','CUSTOMER 002 SDN BHD','3000-C002','Saved, STAFF 01, 04/08/2026'],
+ ['CUSTOMER 003 SDN BHD',22,'set','CUSTOMER 003 SDN BHD (A/C II)','3000-C003','STAFF 02, 05/09/2026'],
+ ['CUSTOMER 009 SENDIRIAN BERHAD',6,'todo','','',''],
+ ['CUSTOMER 010 SDN BHD',3,'todo','','',''],
+ ['CUSTOMER 011 TRADING',2,'skip','','','STAFF 02, 05/09/2026'],
+ ['CUSTOMER 012 SDN BHD',1,'todo','','',''],
+];
+function pick(st,name,code){if(st==='set')return `<span class="sel set" title="${name} (${code})">${name} <span class="k">${code}</span></span>`;if(st==='skip')return '<span class="sel">Skip</span>';return '<span class="sel todo">To do</span>';}
+function custTable(ticked){return `<div class="card">`+(ticked?`<div class="bulkbar"><b>3 selected</b><button class="btn">Set to &#9662;</button><button class="btn ghost">Clear</button>
+<div class="menu" style="left:100px;top:40px"><div>Link to a customer...</div><div>Skip</div><div class="sep"></div><div class="hint">Applies to all 3 lines</div></div></div>`:
+`<div class="toolbar"><input class="input" placeholder="Search value" style="width:220px"><span class="sel"><span class="k">Status</span> All</span><span class="sel"><span class="k">Set by</span> All</span><button class="btn ghost">Columns</button><span style="flex:1"></span><button class="btn count">3 to do</button></div>`)+
+`<div class="tablewrap"><table style="min-width:900px"><colgroup><col style="width:40px"><col style="width:280px"><col style="width:70px"><col style="width:320px"><col style="width:220px"></colgroup>
+<thead><tr><th><input type="checkbox"></th><th>Value in file<span class="s">&#8597;</span></th><th class="n">Rows<span class="s">&#8597;</span></th><th>Linked to</th><th>Set by<span class="s">&#8597;</span></th></tr></thead><tbody>`+
+CUST.map(([v,n,st,nm,cd,by])=>{const on=ticked&&st==='todo';return `<tr class="${on?'on':''}"><td><input type="checkbox" ${on?'checked':''}></td><td title="${v}">${v}</td><td class="n">${n}</td><td>${pick(st,nm,cd)}</td><td>${by||'<span class="dash">-</span>'}</td></tr>`;}).join('')+
+`</tbody></table></div><div class="foot"><span>7 values, 112 rows</span><span>Page 1 of 1</span></div></div>`;}
+document.getElementById('d1').innerHTML=head('Draft','no','<button class="btn primary">Preview</button>')+steps(1)+vtabs('Customers')+custTable(false);
+document.getElementById('d3').innerHTML=head('Draft','no','<button class="btn primary">Preview</button>')+steps(1)+vtabs('Customers')+custTable(true);
+const PROJ=[
+ ['CUSTOMER 007 SDN BHD','PROJECT 004 SAMPLE NAME',9,'<span class="sel set" title="PRJ-0388 PROJECT 004 SAMPLE NAME">PRJ-0388 <span class="k">PROJECT 004 SAMPLE NAME</span></span>','Saved, STAFF 01, 04/08/2026'],
+ ['CUSTOMER 002 SDN BHD','PROJECT 002 SAMPLE NAME',6,'<span class="sel set">Create new <span class="k">PROJECT 002 SAMPLE NAME</span></span>','STAFF 02, 05/09/2026'],
+ ['CUSTOMER 016 SDN BHD','PROJECT 002 SAMPLE NAME (PH 2)',2,'<span class="sel set">Create new <span class="k">PROJECT 002 SAMPLE NAME</span></span>','STAFF 02, 05/09/2026'],
+ ['CUSTOMER 003 SDN BHD','PROJECT 003 SAMPLE NAME',4,'<span class="sel todo">To do</span>',''],
+ ['CUSTOMER 005 SDN BHD','REPLACEMENT ORDER',3,'<span class="sel">Skip</span>','STAFF 02, 05/09/2026'],
+];
+document.getElementById('d2').innerHTML=head('Draft','no','<button class="btn primary">Preview</button>')+steps(1)+vtabs('Projects')+
+`<div class="card"><div class="toolbar"><input class="input" placeholder="Search customer or project" style="width:240px"><span class="sel"><span class="k">Status</span> All</span><span class="sel"><span class="k">Customer</span> All</span><button class="btn ghost">Columns</button><span style="flex:1"></span><button class="btn count">12 to do</button></div>
+<div class="tablewrap"><table style="min-width:1040px"><colgroup><col style="width:40px"><col style="width:220px"><col style="width:260px"><col style="width:60px"><col style="width:300px"><col style="width:200px"></colgroup>
+<thead><tr><th><input type="checkbox"></th><th>Customer in file<span class="s">&#8597;</span></th><th>Project in file<span class="s">&#8597;</span></th><th class="n">Rows</th><th>Linked to</th><th>Set by</th></tr></thead><tbody>`+
+PROJ.map(([c,p,n,l,by])=>`<tr><td><input type="checkbox"></td><td title="${c}">${c}</td><td title="${p}">${p}</td><td class="n">${n}</td><td>${l}</td><td>${by||'<span class="dash">-</span>'}</td></tr>`).join('')+
+`</tbody></table></div><div class="foot"><span>578 pairs, 937 rows (345 rows without a project name are skipped)</span><span>Page 1 of 24</span></div>
+<div class="drop-open" style="left:580px;top:262px"><input class="input q" value="PROJECT 003"><div class="o"><span>PRJ-0391 PROJECT 003 SAMPLE NAME</span><span class="c">DEVELOPER 002</span></div><div class="o"><span>PRJ-0402 PROJECT 003 SAMPLE NAME TOWER B</span><span class="c">DEVELOPER 002</span></div><div class="menu sep" style="position:static;box-shadow:none;border:0;padding:0;height:1px;background:var(--border);margin:4px 0"></div><div class="o act"><span>Create new project...</span></div><div class="o act"><span>Skip</span></div></div></div>`;
+function results(counting){return head(counting?'Imported':'Imported','ok',counting?'<span class="countdown">Reverting in 7s <button class="btn">Cancel</button></span>':'<button class="btn">&#9881;</button>')+
+`<div class="tabs"><span class="on">Results</span><span>Values</span><span>History</span></div>
+<div class="card"><div class="counts"><div class="tile"><b>903</b><span>Created</span></div><div class="tile"><b>365</b><span>Skipped</span></div><div class="tile"><b>14</b><span>Left out for review</span></div><div class="tile"><b>0</b><span>Errors</span></div></div>
+<div class="tablewrap"><table style="min-width:640px"><colgroup><col style="width:280px"><col style="width:90px"><col style="width:260px"></colgroup><thead><tr><th>Reason</th><th class="n">Rows</th><th>Example</th></tr></thead><tbody>
+<tr><td>Created project and PO</td><td class="n">402</td><td>PS26-0178</td></tr>
+<tr><td>Added PO to a project</td><td class="n">501</td><td>PS26-0113</td></tr>
+<tr><td>No project name</td><td class="n">345</td><td>PS26-0152</td></tr>
+<tr><td>Cancelled</td><td class="n">7</td><td>PS26-0139</td></tr>
+<tr><td>Pre-numbered blank row</td><td class="n">13</td><td>PS26-1290</td></tr>
+<tr><td>SO number not synced yet</td><td class="n">22</td><td>PS26-1188</td></tr>
+<tr><td>PO date in another year</td><td class="n">16</td><td>PS26-0100</td></tr>
+</tbody></table></div></div>`+(counting?'':`<div class="menu" style="right:24px;top:96px"><div>Download results</div><div class="sep"></div><div class="dest">Revert this import</div></div>`);}
+document.getElementById('f').innerHTML=results(false);
+document.getElementById('f2').innerHTML=results(true);
+document.querySelectorAll('.mocknav [data-v]').forEach(b=>b.onclick=()=>{document.querySelectorAll('.mocknav [data-v]').forEach(x=>x.classList.toggle('on',x===b));document.querySelectorAll('.view').forEach(v=>v.classList.toggle('on',v.dataset.v===b.dataset.v));});
+const fr=document.getElementById('frame');
+document.querySelectorAll('.mocknav [data-w]').forEach(b=>b.onclick=()=>{document.querySelectorAll('.mocknav [data-w]').forEach(x=>x.classList.toggle('on',x===b));fr.classList.toggle('w375',b.dataset.w==='375');});
+</script>
+</body>
+</html>

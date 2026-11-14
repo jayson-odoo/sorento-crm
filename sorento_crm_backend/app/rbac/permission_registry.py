@@ -149,6 +149,23 @@ PERMISSION_REGISTRY.append({
     "description": "Void a complaint (irreversible; sets status='voided' with a required reason, stops the SLA by config, notifies assignee/handler/salesperson).",
 })
 
+# After-sales P1: service jobs (a technician sent to a customer's site) and the technician roster.
+PERMISSION_REGISTRY.append({
+    "slug": "after_sales.service_jobs.view",
+    "name": "View Service Jobs",
+    "description": "See service jobs, the dispatch board and the technician list.",
+})
+PERMISSION_REGISTRY.append({
+    "slug": "after_sales.service_jobs.dispatch",
+    "name": "Dispatch Service Jobs",
+    "description": "Create service jobs, confirm dates, assign technicians and move a job through its steps.",
+})
+PERMISSION_REGISTRY.append({
+    "slug": "after_sales.technicians.manage",
+    "name": "Manage Technicians",
+    "description": "Create, edit, archive and delete technicians.",
+})
+
 # SLA Management
 PERMISSION_REGISTRY.extend(_crud("sla_management", "sla_policies", "SLA Policies"))
 PERMISSION_REGISTRY.extend(_crud("sla_management", "conversation_sla_tracking", "Conversation SLA Tracking"))
@@ -277,6 +294,19 @@ PERMISSION_REGISTRY.extend([
     {"slug": "procurement.new_product_applications.create", "name": "Create New Product Applications", "description": "Raise, submit, revise and cancel your own new product applications."},
     {"slug": "procurement.new_product_applications.approve", "name": "Approve New Product Applications", "description": "Approve or reject a submitted new product application, and revise one. Approvers are told when one is submitted."},
     {"slug": "procurement.new_product_applications.open_code", "name": "Open Codes for New Product Applications", "description": "Purchasing grant: link each line of an approved application to the product AutoCount sent, or close it as not opening. Told when one is approved."},
+])
+# OCN-ORDER-CHANGE-NOTICE: the order change notice, on the purchase request's approval chain.
+# Seeded and granted (from the matching purchase request slug holders) by migration
+# `ocn_0001_order_change_notice`.
+PERMISSION_REGISTRY.extend([
+    {"slug": "procurement.order_change_notices.view", "name": "View Order Change Notices", "description": "See every order change notice of your companies."},
+    {"slug": "procurement.order_change_notices.view_own", "name": "View Own Order Change Notices", "description": "See only the order change notices you raised, are the customer service in charge of, or are the user linked to the Requested by contact of. Ignored when View Order Change Notices is also held."},
+    {"slug": "procurement.order_change_notices.create", "name": "Create Order Change Notices", "description": "Raise, edit and submit your own order change notices."},
+    {"slug": "procurement.order_change_notices.edit", "name": "Edit Order Change Notices", "description": "Send an order change notice for approval or back to its raiser, edit, void or revise it. Includes seeing every notice."},
+    {"slug": "procurement.order_change_notices.delete", "name": "Delete Order Change Notices", "description": "Delete an order change notice."},
+    {"slug": "procurement.order_change_notices.approve", "name": "Approve Order Change Notices", "description": "Approve or reject an order change notice that is pending approval. Includes seeing every notice."},
+    {"slug": "procurement.order_change_notices.process", "name": "Mark Order Change Notices Done", "description": "Customer service: mark an approved order change notice done. Includes seeing every notice."},
+    {"slug": "procurement.order_change_notices.report", "name": "Order Change Notice Report", "description": "Read the order change notice report."},
 ])
 PERMISSION_REGISTRY.extend(_crud("procurement", "purchase_requests", "Purchase Requests"))
 PERMISSION_REGISTRY.extend(_crud("procurement", "sponsorship_forms", "Sponsorship Forms"))
@@ -607,6 +637,21 @@ PERMISSION_REGISTRY.extend([
             "and edit any project regardless of ownership."
         ),
     },
+    # PROJECT-MIGRATION-TOOL (PLAN-project-import-12nov.md): the in-app import of the PO
+    # register workbook. Migration pimp_0001 grants both to the superadmin and admin roles
+    # (who also pass by bypass); any other role gets them only when someone grants them.
+    {
+        "slug": "projects.import.view",
+        "name": "View Project Imports",
+        "description": "See project import runs, their value links and their results.",
+    },
+    {
+        "slug": "projects.import.run",
+        "name": "Run Project Imports",
+        "description": (
+            "Upload a PO register workbook, link its values, preview, import and revert a run."
+        ),
+    },
     {
         "slug": "projects.quotations.approve",
         "name": "Approve Quotation Discounts and Off-Series Lines",
@@ -616,6 +661,14 @@ PERMISSION_REGISTRY.extend([
             "customer. A request is routed to one approver (off-series approver, project "
             "override, or the owner's superior); only that approver, someone above them, or "
             "an admin may decide it."
+        ),
+    },
+    {
+        "slug": "projects.non_cancellable.override",
+        "name": "Override a non-cancellable item",
+        "description": (
+            "Cancel or reduce a Non-cancellable line after its sales order is confirmed, with a "
+            "reason. Also receives the alert when AutoCount cancels or reduces one."
         ),
     },
     {
