@@ -14,6 +14,10 @@ Plan: `PLAN-pricetag-designer-feedback-14nov.md`. Slice 1 = AC-2, AC-4, AC-9. Sl
 
 ### AC-4 Insert field while previewing
 - AC-4.1 Browser check: on a template with a sample product previewing, select a text box, Insert field inserts `{{...}}` at the cursor. Reported in the browser-pass note; no code change if it works.
+- AC-4.2 (owner hand test 14 Nov ~22:00) With the rich Content editor open holding "{{combo.description}}" (paragraph 1) and bold "LP: RM {{product.list_price}}" (paragraph 2) and the caret after "RM ", Insert field opens with the Content box showing the element's EXISTING text (both lines, tokens as written; never empty) with the insert point visible at the caret.
+- AC-4.3 Picking a field shows it at the caret in the dialog's Content box; the Preview renders the whole content (before + field + after) against the previewed data, so it is never empty when data exists; with no data it shows the existing "(preview a product to see values)" text.
+- AC-4.4 Done inserts only the picked field(s) at the rich editor's caret: the stored HTML keeps paragraph 1 and the bold run of paragraph 2 (`<strong>` around "LP: RM " and the new token sits at the caret inside it); nothing else in the content changes. Picking two fields inserts both, in order, at the caret.
+- AC-4.5 Cancel changes nothing. Without the rich Content editor open (Inspector Insert field on a plain layer), the dialog behaves as today (editable content, Done replaces the content).
 
 ### AC-9 Crop (shared TagCanvasEditor: price tag template editor + spec sheet designer)
 - AC-9.1 While dragging a crop handle or the crop window, the drawn source picture keeps the same position and scale on every move (only the window changes); the handle stays under the pointer.
