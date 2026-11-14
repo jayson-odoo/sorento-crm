@@ -73,3 +73,13 @@ Plan: `PLAN-target-achieved-perf-14nov.md`.
     (loop.py:77, used only by `forced_final`) and timed out after exactly 10 s (14:30:53 -> 14:31:03), so the
     turn ended "I could not finish the answer" (12c). Same on "and last year?". The forced final answer gets a
     real wait: a final answer that needs 20 s (a 50-row answer under load) completes and the turn is answered.
+
+## Fix round 3 (crew-pass on 05de2bba NOT READY, 14 Nov: timeout fixed, "this year" not a full answer)
+
+14. Crew trace f0c0f4c8: the agent read "my dealers" as an agent filter on the asker's own name ("Teh Jayson",
+    who has no sales agent: 0 agents by that name on the copy), so agent_target_summary, customer and
+    target_list all came back empty or partial; 5 rounds, then the 12a guard and the forced final answered
+    from partial results ("Showing 20 of 27", no totals). `strip_self_agent` (query_tools.py:380) drops the
+    asker's own name unless the question says "my". When the asker has no sales agent of their own
+    (`own_scope.me(...).agent_ids` empty), "my" cannot mean an agent: the own-name filter is dropped too and
+    the question covers everything the asker may see. An asker WITH an agent keeps today's "my" behaviour.
