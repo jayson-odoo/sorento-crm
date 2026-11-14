@@ -28,13 +28,9 @@ Crew 14 Nov 15:50: Q1 (a), Q3 (a), Q5 (a) decided. Q2 assumed (a) for R5. Q4 ope
 - U3.4 Purchasing-facing labels: the OI page header title and the OI header list No. cell show `oi_no` when set, else inquiry_no. The OR page header title stays inquiry_no (OR-).
 - U3.5 Both new columns: explicit size, truncate + title, hideable in Columns, one line.
 
-## R4 (partial until Q4) OI page shows approved qty only
+## R4 OI page shows approved qty only; a post-approval change follows the SO-change path (owner 14 Nov ~15:54, Q4 (a))
 - U4.1 On the OI page (not the OR page) a spare part line shows no submitted qty / submitted price and no "was" (covered by U1.1).
-- U4.2 On the OI page the History button's data-changed is true only when the line has a qty or price change AFTER the first raise (see U5.2), not for pre-approval changes. HOLD until Q4: any ack_state change.
+- U4.2 HOLD (trigger question open, see PR crew-ask): when an approved line's qty changes after purchasing has acted (acknowledged, or confirmed manually), the row goes through the SO-change functions, no second copy: `handover_moves` (`project_order_inquiry_service.py:1188`), `previous_qty` + "Was" note as `_restate_borrow_hole` (`:6431`) writes them, `_amended_by_cs` (`:10560`, stamps changed and reopens To order unless still covered), `_record_handover(kind="settled", was=moves)` (`:4777`, the same order inquiry email to purchasing), `_dispatch_changed_with_links` (`:4698`) when it had links. No extra "Changed" mark: the OI History icon is coloured when the row has `previous_qty`.
 
-## R5 History meaning (Q2 assumed (a))
-- U5.1 `GET /order-inquiry-headers/{id}/history` unchanged by default (whole life): the OR page History tab and line lightbox show created, edited, submitted, line changed (old -> new), approved, rejected, revised, raised, purchasing events.
-- U5.2 `GET /order-inquiry-headers/{id}/history?scope=inquiry`: for a spare part request, only events at or after its FIRST raise (earliest `order_inquiry_raises.raised_at` for it): Raised, purchasing presses / links / rejections, and any SPR_LINE_CHANGED / SPR_EDITED / SPR_REVISED / SPR_APPROVED after it. Nothing before. For a sales-order inquiry, scope=inquiry returns the same as the default.
-- U5.3 A spare part request never raised + scope=inquiry -> empty list (200).
-- U5.4 FE: `OrderInquiryHistory` takes `scope?: 'record' | 'inquiry'`; the OI page (OrderInquiryDetail) and its line lightbox pass 'inquiry' for spare part inquiries; the OR page passes nothing (record).
-- U5.5 Example E2: approver 10 -> 8, approve, revise, requester 8 -> 20, approve. scope=inquiry shows the 8 -> 20 change and both raises but not 10 -> 8; default shows all.
+## R5 History meaning (owner 14 Nov ~15:54: "history show everything")
+- U5.1 `GET /order-inquiry-headers/{id}/history` shows the whole life on BOTH the OR page and the OI page (History tab and the line lightbox): created, edited, submitted, line changed (old -> new), approved, rejected, revised, raised, purchasing events. No scope cut, no new param.
