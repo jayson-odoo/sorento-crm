@@ -7,13 +7,16 @@ phones 012-000 0xxx, emails @example.com, bathroom/tile products priced in RM. N
 Run from the backend directory against the local sandbox DB only:
 
     cd sorento_crm_backend && SORENTO_ENV_FILE=.env.ci-tests \
-        venv/bin/python ../scripts/training-videos/seed_fake.py [--part p1|p2|all]
+        venv/bin/python ../scripts/training-videos/seed_fake.py [--part p1|p2|p3|all]
 
 p1: admin + salesperson logins, sales agent with own customers, products, prices, stock in
     two warehouses, tag templates, complaint master data, a chatbot-console test contact.
 p2: a project with a published project sales order (4 lines), order inquiries in mixed
     states through the real decision path, a CS user, ready for an amendment. p2 drives the
     sandbox backend over HTTP, so it needs TV_API_URL (that backend's /api/v1 base) set.
+p3: Order Requests and Order Change Notices: grants, a CS manager and a project sales manager,
+    the Form SLA levels both forms run on, and three notices walked through the real API (one
+    Approved). Needs p1 + p2 first and TV_API_URL, like p2.
 
 Idempotent: every row is found by a natural key first and only created when missing.
 Refuses to run against anything but the local throwaway database named exactly sorento_ci_tv.
@@ -1084,12 +1087,252 @@ def seed_p2(db) -> dict:
     return {"project": project.id, "orders": [o.id for _s, o in orders], "inquiry": inquiry.inquiry_no}
 
 
+# ============================================================================ P3
+
+# Order Request (the spare part request) and Order Change Notice: who may raise, approve and
+# finish them, the Form SLA levels they run on, and three notices walked through the real API.
+CS_P3_PERMS = [
+    # The owner's setup for Order Requests (laneboard/scripts/2381.md, Requester A).
+    "procurement.spare_part_requests.create",
+    "procurement.spare_part_requests.view",
+    # Customer service reads every notice and marks an approved one done (2384.md, CS Person A).
+    "procurement.order_change_notices.view",
+    "procurement.order_change_notices.process",
+]
+CS_MANAGER = {"name": "Mona Manager", "email": "manager@example.com", "phone": "012-000 0004"}
+CS_MANAGER_ROLE = ("customer_service_manager", "Customer Service Manager")
+CS_MANAGER_PERMS = ["procurement.spare_part_requests.view"]  # 2381.md, Approver B
+PS_MANAGER = {"name": "Farid Manager", "email": "psmanager@example.com", "phone": "012-000 0005"}
+PS_MANAGER_ROLE = ("project_sales_manager", "Project Sales Manager")
+PS_MANAGER_PERMS = ["procurement.order_change_notices.view", "procurement.order_change_notices.approve"]
+
+SLA_AGENT = ("customer_service", "Customer Service")
+# Form SLA levels: (form type, stage code, policy code, team set, team name, member key, stage kwargs).
+# The notice's three stages are the tests' chain (sorento_crm_backend/tests/_ocn_support.py:55-62),
+# the purchase request's shape that migration ocn_0001 copies; this sandbox has no purchase request
+# stages, so the migration copied none. The order request's single level is the tests' ONE_STAGE
+# (tests/_spare_part_request_support.py:154-156).
+P3_STAGES = [
+    ("order_change_notice", "ocn_project_sales", "ORDER_CHANGE_NOTICE", "project_sales", "Project Sales Admin",
+     "admin", dict(start_event="submit", resolve_event="send_for_approval,reject_submitted,voided",
+                   advance_on_event="send_for_approval")),
+    ("order_change_notice", "ocn_project_sales_manager", "ORDER_CHANGE_NOTICE", "project_sales_manager",
+     "Project Sales Managers", "ps_manager",
+     dict(start_event="send_for_approval", resolve_event="approved,approval_rejected,voided",
+          advance_on_event="approved")),
+    ("order_change_notice", "ocn_customer_service", "ORDER_CHANGE_NOTICE", "customer_service", "Customer Service",
+     "cs", dict(start_event="approved", resolve_event="resolved,voided")),
+    ("spare_part_request", "or_cs_manager", "ORDER_REQUEST", "cs_manager", "Customer Service Managers",
+     "cs_manager", dict(start_event="submitted", resolve_event="approved,rejected", advance_on_event="approved")),
+]
+
+# The notices the video reads, keyed by their customer PO no. (how a re-run finds them). The first
+# ends Approved (customer service marks it done on camera); the others fill the list.
+P3_NOTICES = [
+    {"po": "LBH/PO/2026/0217", "customer": "300-L001", "type": "Exchange", "so": "SO-DM-26011",
+     "upto": "approved",
+     "description": "Customer swaps the chrome basin mixer for the matte black one.",
+     "lines": [("DM-BS-1001", "40", "0", "2026-12-15", None, "Chrome no longer wanted"),
+               ("DM-BS-1002", "0", "40", "2026-12-15", "2027-01-05", "Matte black instead")]},
+    {"po": "SMT/PO/2026/0388", "customer": "300-S002", "type": "Delay", "so": "SO-DM-26012", "upto": "pending",
+     "description": "Site not ready, deliver the tiles a month later.",
+     "lines": [("DM-TL-6060", "120", "120", "2026-12-01", "2027-01-04", "")]},
+    {"po": "KJH/PO/2026/0051", "customer": "300-K003", "type": "Cancellation", "so": "SO-DM-26013",
+     "upto": "submitted", "description": "Customer cancels the balance of the shower sets.",
+     "lines": [("DM-SH-3003", "12", "4", "2026-12-10", "2026-12-10", "Keep 4, cancel 8")]},
+]
+
+
+def _ocn_migration():
+    """Migration ocn_0001 as a module, so its own seed SQL runs here (change types, the OCN{yy}-
+    numbering rule, portal revision config); this sandbox was built by create_all and stamped."""
+    import importlib.util
+
+    path = BACKEND / "alembic" / "versions" / "ocn_0001_order_change_notice.py"
+    spec = importlib.util.spec_from_file_location("tv_ocn_0001", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def seed_p3_sla(db, members: dict):
+    from app.models.access import AccessAgent, AgentTeam, Team, TeamMember
+    from app.models.sla import FormSLAConfig, SLAPolicy, SLAPolicyTier
+
+    agent = db.query(AccessAgent).filter(AccessAgent.code == SLA_AGENT[0]).first()
+    if agent is None:
+        agent = AccessAgent(code=SLA_AGENT[0], name=SLA_AGENT[1], is_active=True,
+                            assign_to_new_internal_contacts=False, in_parser_prompt=False, synced_to_excel=False)
+        db.add(agent)
+        db.flush()
+        say(f"access agent {SLA_AGENT[1]}")
+    configs = {}
+    for kind, stage_code, policy_code, team_set, team_name, member, stage in P3_STAGES:
+        policy = db.query(SLAPolicy).filter(SLAPolicy.code == policy_code).first()
+        if policy is None:
+            policy = SLAPolicy(code=policy_code, name=policy_code.replace("_", " ").title(), is_active=True)
+            db.add(policy)
+            db.flush()
+            for level in (1, 2, 3):
+                db.add(SLAPolicyTier(policy_id=policy.id, tier_level=level, tier_name=f"Tier {level}",
+                                     response_hours=4, resolution_hours=24))
+            db.flush()
+        team = db.query(Team).filter(Team.name == team_name).first()
+        if team is None:
+            team = Team(name=team_name, company_id=COMPANY_ID)
+            db.add(team)
+            db.flush()
+        if not db.query(AgentTeam).filter_by(agent_id=agent.id, code=team_set, tier=1).first():
+            db.add(AgentTeam(agent_id=agent.id, code=team_set, team_id=team.id, tier=1, company_id=COMPANY_ID))
+        if not db.query(TeamMember).filter_by(team_id=team.id, user_id=members[member].id).first():
+            db.add(TeamMember(team_id=team.id, user_id=members[member].id, sort_order=0))
+        cfg = db.query(FormSLAConfig).filter_by(source_entity_type=kind, stage_code=stage_code).first()
+        if cfg is None:
+            cfg = FormSLAConfig(source_entity_type=kind, stage_code=stage_code, policy_id=policy.id,
+                                agent_code=agent.code, team_set_code=team_set, is_active=True,
+                                notify_assignee=True, **stage)
+            db.add(cfg)
+            say(f"form SLA stage {kind} / {team_name}")
+        cfg.is_active = True
+        db.flush()
+        configs[stage_code] = cfg
+    # The notice's chain: admin check -> management approval -> customer service action.
+    configs["ocn_project_sales"].next_config_id = configs["ocn_project_sales_manager"].id
+    configs["ocn_project_sales_manager"].next_config_id = configs["ocn_customer_service"].id
+    db.flush()
+
+
+def _delete_trackers(db, kind: str, ids: list[str]) -> None:
+    from app.models.sla import ConversationSLATracking, SlaFormAction
+
+    if not ids:
+        return
+    db.query(ConversationSLATracking).filter(ConversationSLATracking.source_entity_type == kind,
+                                             ConversationSLATracking.source_entity_id.in_(ids)
+                                             ).delete(synchronize_session=False)
+    db.query(SlaFormAction).filter(SlaFormAction.source_entity_id.in_(ids)).delete(synchronize_session=False)
+
+
+def reset_p3_video_rows(db, chloe):
+    """Every order request Chloe raised (the order request video files one) and every seeded
+    notice, so a re-run creates them again from the same numbers: OR- and OI- numbers are the
+    highest plus one (models/project_so.py next_inquiry_no), the notice's comes from its rule."""
+    from app.models.numbering import DocumentNumberingRule
+    from app.models.project_so import INQUIRY_TYPE_SPARE_PART, OrderChangeNotice, OrderInquiry
+
+    ors = [str(i) for (i,) in db.query(OrderInquiry.id).filter(OrderInquiry.inquiry_type == INQUIRY_TYPE_SPARE_PART,
+                                                               OrderInquiry.raised_by == chloe.id)]
+    _delete_trackers(db, INQUIRY_TYPE_SPARE_PART, ors)
+    if ors:
+        db.query(OrderInquiry).filter(OrderInquiry.id.in_(ors)).delete(synchronize_session=False)
+        say(f"removed {len(ors)} video order requests")
+    pos = [n["po"] for n in P3_NOTICES]
+    ocns = [str(i) for (i,) in db.query(OrderChangeNotice.id).filter(OrderChangeNotice.customer_po_no.in_(pos))]
+    _delete_trackers(db, "order_change_notice", ocns)
+    if ocns:
+        db.query(OrderChangeNotice).filter(OrderChangeNotice.id.in_(ocns)).delete(synchronize_session=False)
+        say(f"removed {len(ocns)} seeded order change notices")
+    if db.query(OrderChangeNotice.id).first() is None:
+        db.query(DocumentNumberingRule).filter(DocumentNumberingRule.doc_type == "order_change_notice").update(
+            {DocumentNumberingRule.next_value: DocumentNumberingRule.start_value}, synchronize_session=False)
+    db.flush()
+
+
+def _settle(token: str, entity_type: str, result) -> None:
+    """A held stage move (202 with a commit time) is waited out, then applied by reading the
+    record's pending action, as the countdown button does (pending_actions.py _commit_if_due)."""
+    import time
+    from datetime import datetime
+
+    if not (isinstance(result, dict) and result.get("deferred")):
+        return
+    commit_at = datetime.fromisoformat(result["commit_at"])
+    time.sleep(max(0.0, (commit_at - datetime.utcnow()).total_seconds()) + 1.0)
+    for _ in range(10):
+        state = http("GET", f"/pending-actions/current?entity_type={entity_type}&entity_id={result['entity_id']}",
+                     token)
+        if not state.get("pending"):
+            return
+        time.sleep(1.0)
+    raise SystemExit(f"held {entity_type} action never committed: {result}")
+
+
+def seed_p3_notices(db, customers, products, chloe) -> list[str]:
+    """Each notice through the real routes as the person whose step it is: Aina (sales admin)
+    raises, submits and sends it for approval; Farid (project sales manager) approves."""
+    from app.models.project_so import OrderChangeType
+
+    types = {t.name: str(t.id) for t in db.query(OrderChangeType)}
+    admin_token = login(ADMIN["email"])
+    manager_token = None
+    base = "/procurement/order-change-notices"
+    numbers = []
+    for spec in P3_NOTICES:
+        customer = customers[spec["customer"]]
+        body = {
+            "change_type_id": types[spec["type"]], "customer_id": str(customer.id),
+            "customer_name": customer.customer_name, "customer_po_no": spec["po"], "so_no_text": spec["so"],
+            "cs_in_charge_user_id": str(chloe.id), "description": spec["description"],
+            "lines": [{"product_id": str(products[code].id), "qty_before": qb, "qty_after": qa,
+                       "date_before": db_, "date_after": da, "delivered_qty": "0", "remark": rm or None}
+                      for code, qb, qa, db_, da, rm in spec["lines"]],
+        }
+        row = http("POST", base, admin_token, body)
+        ocn_id = row["id"]
+
+        def move(path, token, payload=None):
+            out = http("POST", f"{base}/{ocn_id}/{path}", token, payload)
+            if isinstance(out, dict) and out.get("deferred"):
+                out["entity_id"] = ocn_id
+            _settle(token, "order_change_notice", out)
+
+        move("submit", admin_token)
+        if spec["upto"] in ("pending", "approved"):
+            move("send-for-approval", admin_token)
+        if spec["upto"] == "approved":
+            manager_token = manager_token or login(PS_MANAGER["email"])
+            move("approval-decision", manager_token, {"action": "approved", "comments": "Agreed with the customer."})
+        numbers.append(row.get("ocn_number"))
+        say(f"order change notice {row.get('ocn_number')} ({spec['type']}): {spec['upto']}")
+    return numbers
+
+
+def seed_p3(db) -> dict:
+    from app.models.order import Customer
+    from app.models.product import Product
+    from app.models.user import User
+
+    print("p3:")
+    admin = _need(db, User, email=ADMIN["email"])
+    chloe = _need(db, User, email=CS["email"])
+    customers = {code: _need(db, Customer, customer_code=code) for code, *_ in CUSTOMERS}
+    products = {code: _need(db, Product, product_code=code) for code, *_ in PRODUCTS}
+
+    mig = _ocn_migration()
+    bind = db.connection()
+    mig._seeds(bind, mig._schema(bind, "projects"))
+
+    role_with_perms(db, CS_ROLE[0], CS_ROLE[1], CS_P3_PERMS)
+    role_with_perms(db, CS_MANAGER_ROLE[0], CS_MANAGER_ROLE[1], CS_MANAGER_PERMS)
+    role_with_perms(db, PS_MANAGER_ROLE[0], PS_MANAGER_ROLE[1], PS_MANAGER_PERMS)
+    mona = user(db, CS_MANAGER, CS_MANAGER_ROLE[0])
+    farid = user(db, PS_MANAGER, PS_MANAGER_ROLE[0])
+    seed_p3_sla(db, {"admin": admin, "ps_manager": farid, "cs": chloe, "cs_manager": mona})
+    reset_p3_video_rows(db, chloe)
+    db.commit()
+
+    numbers = seed_p3_notices(db, customers, products, chloe)
+    db.expire_all()
+    return {"notices": numbers}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--part", choices=["p1", "p2", "all"], default="all")
+    parser.add_argument("--part", choices=["p1", "p2", "p3", "all"], default="all")
     args = parser.parse_args()
-    if args.part in ("p2", "all") and not API:
-        raise SystemExit("Part p2 calls the sandbox backend: set TV_API_URL (e.g. http://127.0.0.1:8477/api/v1).")
+    if args.part in ("p2", "p3", "all") and not API:
+        raise SystemExit(f"Part {args.part} calls the sandbox backend: set TV_API_URL "
+                         "(e.g. http://127.0.0.1:8477/api/v1).")
 
     register_company_scope_listeners()
     db = SessionLocal()
@@ -1099,6 +1342,8 @@ def main() -> None:
                 seed_p1(db)
             if args.part in ("p2", "all"):
                 seed_p2(db)
+            if args.part in ("p3", "all"):
+                seed_p3(db)
     except BaseException:
         db.rollback()
         raise
