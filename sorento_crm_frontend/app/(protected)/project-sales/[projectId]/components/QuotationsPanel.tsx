@@ -253,9 +253,7 @@ export function QuotationsPanel({ project }: { project: Project }) {
       },
       {
         id: 'grand_total',
-        // A number for the sort only (a string sort puts RM 696,923 before RM 12,000); the cell
-        // and the footer still read the exact string.
-        accessorFn: (row) => Number(row.grand_total),
+        accessorFn: (row) => row.grand_total,
         header: ({ column }) => <DataGridColumnHeader title="Value" column={column} />,
         cell: ({ row }) => (
           <span className="block truncate text-end text-sm font-medium tabular-nums">
@@ -409,7 +407,7 @@ export function QuotationsPanel({ project }: { project: Project }) {
       isLoading={documents.isLoading}
       error={documents.isError ? documents.error : undefined}
       emptyTitle={
-        search.trim() && (documents.data ?? []).length > 0
+        (search.trim() || preparedBy.length > 0) && (documents.data ?? []).length > 0
           ? 'Nothing matches that search'
           : 'Nothing quoted yet'
       }

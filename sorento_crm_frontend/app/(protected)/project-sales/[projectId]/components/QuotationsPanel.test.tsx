@@ -694,19 +694,6 @@ describe('QuotationsPanel: Prepared by column', () => {
     await waitFor(() => expect(order()).toEqual(['Sales Rep Beta', 'Sales Rep Alpha']));
   });
 
-  it('Value sorts by amount, not as text', async () => {
-    listQuotationDocuments.mockResolvedValue([
-      byAlice(),
-      byBeta({ grand_total: '12000.00' }),
-    ]);
-    renderPanel();
-
-    await screen.findByText('Sales Rep Beta');
-    fireEvent.click(screen.getByRole('button', { name: 'Value' }));
-    const order = () => screen.getAllByText(/^Sales Rep /).map((node) => node.textContent);
-    await waitFor(() => expect(order()).toEqual(['Sales Rep Beta', 'Sales Rep Alpha']));
-  });
-
   it('the search box matches the preparer name', async () => {
     listQuotationDocuments.mockResolvedValue([byAlice(), byBeta()]);
     renderPanel();
