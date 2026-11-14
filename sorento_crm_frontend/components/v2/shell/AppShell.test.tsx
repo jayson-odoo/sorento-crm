@@ -123,6 +123,23 @@ describe('AppShell (E-1)', () => {
   });
 });
 
+describe('AppShell content column fills the row (crew-pass 6879537499)', () => {
+  // <body> is a flex row (app/layout.tsx). A column without grow/w-full shrinks to its content, so a
+  // record with narrow cards (OI General tab) left a 162 px empty strip at 1280 and the top bar jumped.
+  for (const width of [1280, 360]) {
+    it(`at ${width} the column holding the top bar and <main> grows to the full width`, () => {
+      setViewport(width);
+      render(<AppShell><p>narrow content</p></AppShell>);
+      const column = screen.getByTestId('topbar').parentElement as HTMLElement;
+      expect(column).toContainElement(document.querySelector('main'));
+      const cls = column.className.split(/\s+/);
+      expect(cls).toContain('w-full');
+      expect(cls).toContain('grow');
+      expect(cls).toContain('min-w-0');
+    });
+  }
+});
+
 describe('usePageView is mounted once, in AppShell (D-5)', () => {
   it('exactly one instance is mounted, and it stays one across shell state changes', () => {
     setViewport(360);

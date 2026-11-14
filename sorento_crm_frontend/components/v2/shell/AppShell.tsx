@@ -32,7 +32,14 @@ export function AppShell({ children }: { children: ReactNode }) {
         </a>
         <SystemBanner />
         {!isPhone && <Sidebar />}
-        <div className={isPhone ? 'flex min-h-dvh min-w-0 flex-col' : 'flex min-h-dvh min-w-0 flex-col ps-(--v2-sidebar-width)'}>
+        {/* <body> is a flex row: grow + w-full keep this column full width whatever the page holds. */}
+        <div
+          className={
+            isPhone
+              ? 'flex min-h-dvh w-full min-w-0 grow flex-col'
+              : 'flex min-h-dvh w-full min-w-0 grow flex-col ps-(--v2-sidebar-width)'
+          }
+        >
           <Topbar onOpenNav={() => setNavOpen(true)} />
           <main
             id="main"
