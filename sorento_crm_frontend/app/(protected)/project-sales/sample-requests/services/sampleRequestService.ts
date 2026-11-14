@@ -24,6 +24,8 @@ export type SampleRequestListParams = DataGridApiFetchParams & {
   stage?: string;
   projectId?: string;
   salespersonId?: string;
+  lastActivityFrom?: string;
+  lastActivityTo?: string;
 };
 
 /** A refusal that names a field arrives as `{message, code, details: {field}}`. */
@@ -58,6 +60,8 @@ export async function getSampleRequests(params: SampleRequestListParams): Promis
       stage: params.stage,
       project_id: params.projectId,
       salesperson_id: params.salespersonId,
+      last_activity_from: params.lastActivityFrom,
+      last_activity_to: params.lastActivityTo,
     },
   );
   const res = await apiFetch(`${BASE}/sample-requests?${sp.toString()}`);

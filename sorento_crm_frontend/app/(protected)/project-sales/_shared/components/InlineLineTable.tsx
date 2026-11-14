@@ -1321,6 +1321,9 @@ function InlineCell<TRow>({
           selectedOption={column.resolveSelected?.(row, draft)}
           placeholder={column.placeholder ?? 'Select'}
           emptyMessage="No matches"
+          // Every row is ONE line (owner standing rules): a long choice is cut with "..." and
+          // shown in full on hover, never wrapped onto a second line.
+          truncateTriggerLabel
         />
       </>
     );

@@ -356,6 +356,8 @@ class SalespersonMeOut(BaseModel):
     portal_kinds: List[str] = []
     portal_slug: str
     contact_id: Optional[str] = None
+    #: The linked contact's name: a new order change notice's Requested by prefill (OCN UAC I8).
+    contact_name: Optional[str] = None
 
 
 class UserResponse(UserBase):
@@ -393,6 +395,9 @@ class UserResponse(UserBase):
     phone_differs_from_contact: bool = False
     last_sign_in_method: Optional[str] = None
     needs_invitation: bool = False
+    # PASSKEY-LOGIN (AC-06, AC-45), from the same `sign_in_summary`.
+    passkey_enabled: bool = False
+    passkey_count: int = 0
 
     class Config:
         from_attributes = True

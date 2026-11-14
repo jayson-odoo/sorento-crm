@@ -884,7 +884,8 @@ def test_AC_E2_the_tool_description_never_asks_for_a_bare_percent():
     from app.services.chatbot.agent.tools import QUOTATION_LINES_SCHEMA
 
     text = QUOTATION_LINES_SCHEMA["function"]["description"]
-    assert "vs_list" in text and "below list" in text and "above list" in text
+    # AGENT-PROPOSAL-INSIGHTS D3: vs_list is for when the user asks about list price; no format prescribed.
+    assert "vs_list" in text
     assert "discount %" not in text and "(discount" not in text
 
 

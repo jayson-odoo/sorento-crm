@@ -7,6 +7,7 @@ declared before `/{application_id}`.
 """
 from __future__ import annotations
 
+from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Response, status
@@ -15,6 +16,7 @@ from sqlalchemy.orm import Session
 from app.api.v1.projects._common import permission_slugs
 from app.database import get_db
 from app.dependencies import get_current_user, require_any_permission, require_permission
+from app.schemas.common import RecordProjectUpdate
 from app.schemas.new_product_application import (
     FeedbackIn,
     AttachmentLinkIn,
@@ -143,8 +145,10 @@ def list_applications(
     applicant_id: Optional[list[str]] = Query(None),
     page: int = Query(1, ge=1),
     limit: int = Query(25, ge=1, le=200),
-    sort: Optional[str] = Query(None),
+    sort: Optional[str] = Query("last_activity_at"),
     dir: str = Query("desc"),
+    last_activity_from: Optional[date] = Query(None, description="YYYY-MM-DD, Malaysia day, inclusive"),
+    last_activity_to: Optional[date] = Query(None, description="YYYY-MM-DD, Malaysia day, inclusive"),
     user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -161,6 +165,8 @@ def list_applications(
         limit=limit,
         sort=sort,
         direction=dir,
+        last_activity_from=last_activity_from,
+        last_activity_to=last_activity_to,
     )
 
 
@@ -206,6 +212,30 @@ def update_application(
     except Exception:
         db.rollback()
         raise
+
+
+@router.patch("/{application_id}/project")
+def set_application_project(
+    application_id: str,
+    body: RecordProjectUpdate,
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Set or clear the application's registered project at any status, without Revise
+    (PROJECT-RELATED-RECORDS D2)."""
+    from app.services import project_related_records as related
+
+    # Every refusal below comes before the one write, so there is nothing to roll back.
+    related.assert_can_set_project(db, "new_product_application", user["id"])
+    app = _load(db, application_id, for_update=True)
+    svc.assert_can_view(app, _actor(db, user))
+    # The NPA edit rule: the applicant's (or an admin's), not any creator's (review S3).
+    related.assert_can_set_project(db, "new_product_application", user["id"], record=app)
+    related.set_record_project(
+        db, kind="new_product_application", record_id=application_id,
+        project_id=body.project_id, actor=user["id"],
+    )
+    return _done(db, app)
 
 
 @router.get("/{application_id}/download")

@@ -10,6 +10,7 @@ DELETE /delivery-schedule-versions/{version_id}
 DELETE /delivery-schedules/{schedule_id}
 DELETE /fulfilment-planning/lines/{contribution_key}/draft
 DELETE /leads/{lead_id}
+DELETE /order-inquiry-rows/{row_id}/attachments/{link_id}
 DELETE /projects/{project_id}
 DELETE /projects/{project_id}/quotation-documents/{document_id}
 DELETE /projects/{project_id}/quotation-documents/{document_id}/certificates/{certificate_id}/boxes
@@ -23,6 +24,7 @@ DELETE /sales-orders/{pso_id}
 DELETE /samples/{sample_id}
 GET /allocation-claims
 GET /config/loss-reasons
+GET /config/non-cancellable-rules
 GET /config/price-floors
 GET /config/price-floors/effective
 GET /config/quotation-templates
@@ -81,6 +83,7 @@ GET /projects/
 GET /projects/{project_id}
 GET /projects/{project_id}/collaborators
 GET /projects/{project_id}/delivery-schedules
+GET /projects/{project_id}/order-change-notices
 GET /projects/{project_id}/order-inquiry-export
 GET /projects/{project_id}/order-inquiry-rows
 GET /projects/{project_id}/order-inquiry-summary
@@ -108,6 +111,7 @@ GET /projects/{project_id}/quotation-documents/{document_id}/spec-sheets/{sheet_
 GET /projects/{project_id}/quotation-documents/{document_id}/spec-sheets/{sheet_id}/preview
 GET /projects/{project_id}/quotation-documents/{document_id}/views
 GET /projects/{project_id}/quotations
+GET /projects/{project_id}/related-records
 GET /projects/{project_id}/sales-orders
 GET /projects/{project_id}/sample-requests
 GET /projects/{project_id}/sample-requests/quotation-prefill
@@ -148,6 +152,8 @@ GET /sample-requests/products
 GET /sample-requests/{request_id}
 GET /sample-requests/{request_id}/consignments
 GET /sample-requests/{request_id}/pdf
+GET /spare-part-requests
+GET /spare-part-requests/{inquiry_id}
 GET /status-graph/{entity_type}
 GET /stock-debt
 GET /stock-debt/snapshots
@@ -163,6 +169,8 @@ PATCH /projects/{project_id}/quotation-documents/{document_id}/certificates/{cer
 PATCH /projects/{project_id}/quotation-documents/{document_id}/feedback/{row_id}
 PATCH /projects/{project_id}/quotation-documents/{document_id}/scopes/{quotation_id}
 PATCH /projects/{project_id}/quotation-documents/{document_id}/spec-sheets/{sheet_id}
+PATCH /spare-part-requests/{inquiry_id}/lines/{row_id}
+POST /config/non-cancellable-rules
 POST /config/price-floors
 POST /config/quotation-templates
 POST /config/quotation-templates/cover-preview
@@ -210,7 +218,9 @@ POST /order-inquiries/{inquiry_id}/export/pdf
 POST /order-inquiries/{inquiry_id}/reserve-commit
 POST /order-inquiries/{inquiry_id}/reserve-requests
 POST /order-inquiries/{row_id}/reject
+POST /order-inquiry-rows/attachments/lookup
 POST /order-inquiry-rows/mark
+POST /order-inquiry-rows/{row_id}/attachments
 POST /order-inquiry-rows/{row_id}/place-on-po
 POST /order-inquiry-rows/{row_id}/unplace
 POST /projects/
@@ -277,6 +287,11 @@ POST /sales-orders/{pso_id}/unpublish
 POST /sample-requests
 POST /sample-requests/{request_id}/move
 POST /sample-requests/{request_id}/submit
+POST /spare-part-requests
+POST /spare-part-requests/{inquiry_id}/approve
+POST /spare-part-requests/{inquiry_id}/reject
+POST /spare-part-requests/{inquiry_id}/revise
+POST /spare-part-requests/{inquiry_id}/submit
 POST /stock-debt/export
 POST /stock-debt/po-link/operations/{operation_id}/resume
 POST /stock-debt/po-link/relocate
@@ -285,8 +300,11 @@ POST /stock-debt/snapshots/{snapshot_id}/export
 POST /stock-debt/snapshots/{snapshot_id}/rows/{row_id}/po-link/link
 POST /stock-debt/snapshots/{snapshot_id}/rows/{row_id}/po-link/relink
 POST /stock-debt/snapshots/{snapshot_id}/rows/{row_id}/po-link/unlink
+PUT /config/non-cancellable-rules/{rule_id}
 PUT /config/quotation-templates/{template_id}
 PUT /config/series/{series_id}
+PUT /config/series/{series_id}/products/{product_id}/non-cancellable
+PUT /config/series/{series_id}/sets/{product_set_id}/non-cancellable
 PUT /config/templates/{template_id}
 PUT /config/templates/{template_id}/tasks/{template_task_id}
 PUT /config/types/{type_id}
@@ -321,4 +339,5 @@ PUT /sample-requests/{request_id}/consignment
 PUT /sample-requests/{request_id}/date-answer
 PUT /sample-requests/{request_id}/internal
 PUT /samples/{sample_id}
+PUT /spare-part-requests/{inquiry_id}
 PUT /stock-debt/snapshots/{snapshot_id}/rows/{row_id}/decision

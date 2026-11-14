@@ -225,6 +225,22 @@ describe('limited user, Sample Request seeded from a project (?project_id=)', ()
     expect(getProject).toHaveBeenCalledWith(PROJECT_ID);
   });
 
+  it('from a project, the bottom Cancel goes back to its Samples Request tab (PROJECT-STAGE-ACTIONS)', async () => {
+    (getProject as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({ id: PROJECT_ID, project_code: 'PRJ-0001', title: 'Project One' });
+    mountForm(LIMITED, { projectId: PROJECT_ID });
+    await waitFor(() => expect((document.getElementById('sr-project-title') as HTMLInputElement).value).toBe('Project One'));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(nav.push).toHaveBeenCalledWith(`/project-sales/${PROJECT_ID}?tab=sample-requests`);
+  });
+
+  it('Request Delivery Date is the shared DD/MM/YYYY picker, never the browser date box', async () => {
+    mountForm(LIMITED);
+    await screen.findByRole('button', { name: 'Submit sample request' });
+    const date = document.getElementById('sr-delivery-date') as HTMLInputElement;
+    expect(date.type).not.toBe('date');
+    expect(date.placeholder).toBe('DD/MM/YYYY');
+  });
+
   it('no projectId: nothing is seeded', async () => {
     mountForm(LIMITED);
     await screen.findByRole('button', { name: 'Submit sample request' });

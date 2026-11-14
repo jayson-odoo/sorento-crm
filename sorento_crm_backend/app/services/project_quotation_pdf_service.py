@@ -642,6 +642,7 @@ def _grid_scope_html(
             "PRODUCT CODE": f"<td>{_cell(line.product_code_snapshot)}</td>",
             "UNIT RATE (RM)": f'<td class="num">{_line_money(line.unit_price)}</td>',
             "COMPLETE SET": f"<td>{_cell(line.complete_set)}</td>",
+            "REMARK": f'<td class="remark">{_cell(quotation_columns.remark(line))}</td>',
             "GRAND TOTAL": f'<td class="num">{money}</td>',
         }
         body.append(
@@ -777,6 +778,9 @@ def _scope_html(
             "qty": f'<td class="num">{qty_text}</td>',
             "unit_rate": f'<td class="num">{_line_money(line.unit_price)}</td>',
             "complete_set": f"<td>{_cell(line.complete_set)}</td>",
+            quotation_columns.REMARK: (
+                f'<td class="remark">{_cell(quotation_columns.remark(line))}</td>'
+            ),
             "amount": f'<td class="num">{money}</td>',
         }
         body.append("<tr>" + "".join(cells[key] for key, _label in columns) + "</tr>")

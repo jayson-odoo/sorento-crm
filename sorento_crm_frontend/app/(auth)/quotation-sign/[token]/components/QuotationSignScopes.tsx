@@ -49,6 +49,7 @@ const PRESENTATION: Record<string, { th: string; td: string }> = {
   qty: { th: 'min-w-[70px] text-right', td: 'text-right tabular-nums' },
   unit_rate: { th: 'min-w-[120px] text-right', td: 'text-right tabular-nums' },
   complete_set: { th: 'min-w-[140px] text-left', td: 'text-muted-foreground' },
+  remark: { th: 'min-w-[110px] text-left', td: '' },
   amount: { th: 'min-w-[120px] text-right', td: 'text-right' },
 };
 
@@ -109,6 +110,7 @@ function commonCells(
     brand: cell(line.brand),
     product_code: cell(line.product_code),
     complete_set: cell(line.complete_set),
+    remark: cell(line.remark),
   };
 }
 

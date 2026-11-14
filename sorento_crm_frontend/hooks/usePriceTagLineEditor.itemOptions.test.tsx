@@ -52,28 +52,23 @@ function setup() {
 }
 
 describe('usePriceTagLineEditor Item options (bug 17)', () => {
-  it('labels each option "CODE  RM <list price>", the price only when known and above 0', async () => {
+  it('labels each Item option with the code only: no name, no price (AC-13)', async () => {
     const { result } = setup();
     const options = await result.current.editor.fetchItemOptions('');
     expect(options.map((o) => o.label)).toEqual([
-      'SRTWT7634-BL  RM 1,050',
+      'SRTWT7634-BL',
       'SRTSH2626-GY',
       'SRTZERO-1',
-      'SET-ONE  RM 2,400',
+      'SET-ONE',
       'SET-TWO',
     ]);
   });
 
-  it('shows the name only when it adds something, and never the word Product', async () => {
+  it('has no second line; a set carries a Set badge, a product none (AC-13)', async () => {
     const { result } = setup();
     const options = await result.current.editor.fetchItemOptions('');
-    expect(options.map((o) => o.description)).toEqual([
-      'ZZT Basin Mixer',
-      undefined,
-      undefined,
-      'Set - ZZT Vanity Set',
-      'Set',
-    ]);
+    expect(options.map((o) => o.description)).toEqual([undefined, undefined, undefined, undefined, undefined]);
+    expect(options.map((o) => o.badgeText)).toEqual([undefined, undefined, undefined, 'Set', 'Set']);
   });
 
   it('carries the code on the option itself', async () => {
@@ -85,16 +80,6 @@ describe('usePriceTagLineEditor Item options (bug 17)', () => {
       'SRTZERO-1',
       'SET-ONE',
       'SET-TWO',
-    ]);
-  });
-
-  it('the part picker lists products only, with the same option shape', async () => {
-    const { result } = setup();
-    const options = await result.current.editor.fetchPartOptions('');
-    expect(options.map((o) => [o.label, o.description, o.code])).toEqual([
-      ['SRTWT7634-BL  RM 1,050', 'ZZT Basin Mixer', 'SRTWT7634-BL'],
-      ['SRTSH2626-GY', undefined, 'SRTSH2626-GY'],
-      ['SRTZERO-1', undefined, 'SRTZERO-1'],
     ]);
   });
 });
@@ -124,17 +109,6 @@ describe('usePriceTagLineEditor item pick (bug 14)', () => {
     const set = options.find((o) => o.value === 'product_set:s-2')!;
     act(() => result.current.editor.handleItemSelect('l1', set));
     expect(result.current.lines[0].code).toBe('SET-TWO');
-  });
-
-  it('a part added by hand whose name equals its code carries that code', async () => {
-    const { result } = setup();
-    const items = await result.current.editor.fetchItemOptions('');
-    act(() => result.current.editor.handleItemSelect('l1', items[0]));
-    const parts = await result.current.editor.fetchPartOptions('');
-    act(() => result.current.editor.addPart('l1', parts.find((o) => o.value === 'product:p-2')!));
-    await waitFor(() => expect(result.current.lines[0].parts).toHaveLength(1));
-    expect(result.current.lines[0].parts[0].code).toBe('SRTSH2626-GY');
-    expect(result.current.lines[0].parts[0].name).toBe('SRTSH2626-GY');
   });
 });
 

@@ -38,6 +38,7 @@ import {
 } from '@/lib/helpers';
 import {
   FORM_SLA_TYPE_LABELS,
+  formSlaStageLabel,
   getFormSLATrackers,
   type FormSLASourceType,
 } from './formSLAService';
@@ -125,6 +126,14 @@ function formatSecondsToDurationWithSeconds(
   return formatDurationWithSeconds(seconds * 1000);
 }
 
+/**
+ * The list while the read is on its way: ONE array, not a new `[]` per render. The table resets
+ * its page whenever its data changes identity, and that reset renders the tab again, so a fresh
+ * empty list per render looped for as long as the read was pending (inside a tab click it froze
+ * the page: the order change notice's SLA tab, browser pass round 7).
+ */
+const NO_TRACKERS: ConversationSLATrackingDetail[] = [];
+
 export default function FormSLATrackingTab({
   sourceEntityType,
   sourceEntityId,
@@ -172,8 +181,15 @@ export default function FormSLATrackingTab({
         header: ({ column }) => (
           <DataGridColumnHeader title="Stage" column={column} />
         ),
-        cell: ({ row }) => row.original.team_set_code || '-',
-        size: 140,
+        cell: ({ row }) => {
+          const name = formSlaStageLabel(sourceEntityType, row.original.team_set_code);
+          return (
+            <span className="block truncate" title={name}>
+              {name}
+            </span>
+          );
+        },
+        size: 180,
       },
       {
         accessorKey: 'policy_name',
@@ -444,10 +460,10 @@ export default function FormSLATrackingTab({
         size: 60,
       },
     ],
-    [],
+    [sourceEntityType],
   );
 
-  const trackers = data || [];
+  const trackers = data ?? NO_TRACKERS;
   const table = useReactTable({
     columns,
     data: trackers,

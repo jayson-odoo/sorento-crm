@@ -37,6 +37,7 @@ import {
   type KpiTaskRow,
   type KpiWindow,
 } from './slaKpiService';
+import { FORM_SLA_TYPE_LABELS, type FormSLASourceType } from '@/app/(protected)/sla-management/_shared/formSLAService';
 
 // All three KPI aggregates are expensive (full conversation_sla_tracking scans),
 // so cache for 5 minutes - revisits/reloads inside the window hit the cache
@@ -66,6 +67,7 @@ const ENTITY_ROUTES: Record<string, string> = {
   product_drawing: '/master-data-management/products',
   product_photo: '/master-data-management/products',
   new_product_application: '/procurement-management/new-product-applications',
+  spare_part_request: '/procurement-management/spare-part-requests',
 };
 
 function taskHref(t: KpiTaskRow): string {
@@ -267,7 +269,13 @@ function TasksCard({ scope, filter, onClear, window }: { scope: KpiScope; filter
       {
         accessorKey: 'source_entity_type',
         header: ({ column }) => <DataGridColumnHeader title="Type" column={column} />,
-        cell: ({ row }) => (row.original.source_entity_type || 'conversation').replace(/_/g, ' '),
+        cell: ({ row }) => {
+          // One name everywhere: the same label map the SLA tab and Form SLA config use.
+          const type = row.original.source_entity_type || 'conversation';
+          // Sentence case, as the My pending tasks widget above it reads ("Order request").
+          const label = FORM_SLA_TYPE_LABELS[type as FormSLASourceType] ?? type.replace(/_/g, ' ');
+          return label.charAt(0).toUpperCase() + label.slice(1).toLowerCase();
+        },
         size: 150,
       },
       {

@@ -93,6 +93,8 @@ class SystemSettingUpdate(BaseModel):
     n8n_close_convo_webhook_url: Optional[str] = None
     purchase_request_default_approver_user_id: Optional[str] = None
     sponsorship_form_default_approver_user_id: Optional[str] = None
+    # OCN-ORDER-CHANGE-NOTICE: the approval stage's default approver. Here and in the GET dict.
+    order_change_notice_default_approver_user_id: Optional[str] = None
     # PS-QUOTE-RULES R4: who approves an off-series line, and the last-resort approver.
     off_series_approver_user_id: Optional[str] = None
     default_quotation_approver_user_id: Optional[str] = None
@@ -134,6 +136,12 @@ class SystemSettingUpdate(BaseModel):
     cost_price_verification_enabled: Optional[bool] = None
     # Sample requests (SR-CORE, card rule 2): soft-transition switch, OFF on deploy. Must appear here, in the GET dict, and in AppConfigResponse below.
     sample_request_require_project: Optional[bool] = None
+    # OCN-ORDER-CHANGE-NOTICE: Submit needs a project, OFF on deploy. Here, in the GET dict, and in
+    # AppConfigResponse below (the form marks the project required, as the sample request's does).
+    order_change_notice_require_project: Optional[bool] = None
+    # AC-QTSO-CRM: "AutoCount quotations and sales orders from Project sales", OFF on deploy.
+    # Here, in the GET dict, and in AppConfigResponse below.
+    project_autocount_write_enabled: Optional[bool] = None
     # AC-LINK-CRM-UI: "AutoCount links from Stock Debt", OFF on deploy. Here, in the GET
     # dict, and in AppConfigResponse below.
     stock_debt_po_link_enabled: Optional[bool] = None
@@ -219,6 +227,9 @@ class SystemSettingUpdate(BaseModel):
     # appear HERE and in the GET dict, because both are manual.
     chatbot_direct_ingress_mode: Optional[Literal["off", "contacts", "all"]] = None
     chatbot_direct_ingress_contacts: Optional[str] = Field(None, max_length=20000)
+    # N8N-RETIRE-A: who sends bot replies. A Literal, so a bad mode answers 422.
+    chatbot_reply_sender_mode: Optional[Literal["n8n", "contacts", "all"]] = None
+    chatbot_reply_sender_contacts: Optional[str] = Field(None, max_length=20000)
     # CLOSED-LISTS-INDEX-MODE: a Literal, so a mode outside the two answers 422. Same rule as
     # every block above - it must appear HERE and in the GET dict, because both are manual.
     chatbot_closed_lists_mode: Optional[Literal["block", "index"]] = None
@@ -289,6 +300,12 @@ class AppConfigResponse(BaseModel):
     #: SR-CORE: a salesperson's sample request form must know whether to require a
     #: registered project, and holds no `user_management.settings.view`.
     sample_request_require_project: bool = False
+    #: OCN-ORDER-CHANGE-NOTICE: the order change notice form says whether Submit needs a project,
+    #: and its raisers hold no `user_management.settings.view` (the sample request's reason).
+    order_change_notice_require_project: bool = False
+    #: AC-QTSO-CRM: Project sales hides every AutoCount write action while this is off; the
+    #: salesperson who sends holds no `user_management.settings.view`.
+    project_autocount_write_enabled: bool = False
     #: AC-LINK-CRM-UI: the Stock Debt drill hides its PO actions while this is off, and the
     #: purchasing user who links holds no `user_management.settings.view`.
     stock_debt_po_link_enabled: bool = False
@@ -333,8 +350,10 @@ def get_settings(
             }
         pr_uid = getattr(settings, "purchase_request_default_approver_user_id", None) if settings else None
         sf_uid = getattr(settings, "sponsorship_form_default_approver_user_id", None) if settings else None
+        ocn_uid = getattr(settings, "order_change_notice_default_approver_user_id", None) if settings else None
         user_pr = db.query(User).filter(User.id == pr_uid).first() if pr_uid else None
         user_sf = db.query(User).filter(User.id == sf_uid).first() if sf_uid else None
+        user_ocn = db.query(User).filter(User.id == ocn_uid).first() if ocn_uid else None
         # The default unit's CODE as well as its id: the settings screen may not render a
         # bare UUID, and the id alone would leave it with nothing to show until the units
         # master happens to be loaded beside it.
@@ -419,6 +438,8 @@ def get_settings(
                 "sponsorship_form_default_approver_user_id": sf_uid,
                 "sponsorship_form_default_approver_name": user_sf.name if user_sf else None,
                 "sponsorship_form_default_approver_email": user_sf.email if user_sf else None,
+                "order_change_notice_default_approver_user_id": ocn_uid,
+                "order_change_notice_default_approver_name": user_ocn.name if user_ocn else None,
                 **_quotation_approver_fields(db, settings),
                 "n8n_attachment_webhook_url": getattr(settings, "n8n_attachment_webhook_url", None)
                 if settings
@@ -483,6 +504,12 @@ def get_settings(
                 "sample_request_require_project": (
                     bool(getattr(settings, "sample_request_require_project", False)) if settings else False
                 ),
+                "order_change_notice_require_project": (
+                    bool(getattr(settings, "order_change_notice_require_project", False)) if settings else False
+                ),
+                "project_autocount_write_enabled": (
+                    bool(getattr(settings, "project_autocount_write_enabled", False)) if settings else False
+                ),
                 "stock_debt_po_link_enabled": (
                     bool(getattr(settings, "stock_debt_po_link_enabled", False)) if settings else False
                 ),
@@ -545,6 +572,8 @@ def get_settings(
                 "chatbot_ordering_enabled": getattr(settings, "chatbot_ordering_enabled", False) if settings else None,
                 "chatbot_direct_ingress_mode": getattr(settings, "chatbot_direct_ingress_mode", None) or "off" if settings else None,
                 "chatbot_direct_ingress_contacts": getattr(settings, "chatbot_direct_ingress_contacts", None) if settings else None,
+                "chatbot_reply_sender_mode": getattr(settings, "chatbot_reply_sender_mode", None) or "n8n" if settings else None,
+                "chatbot_reply_sender_contacts": getattr(settings, "chatbot_reply_sender_contacts", None) if settings else None,
                 "chatbot_closed_lists_mode": getattr(settings, "chatbot_closed_lists_mode", None) or "block" if settings else None,
                 "chatbot_composer_enabled": bool(getattr(settings, "chatbot_composer_enabled", False)) if settings else None,
                 "chatbot_parser_max_output_tokens": getattr(settings, "chatbot_parser_max_output_tokens", None) or 8192 if settings else None,
@@ -624,6 +653,12 @@ def get_app_config(
             ),
             sample_request_require_project=bool(
                 getattr(settings, "sample_request_require_project", False)
+            ),
+            order_change_notice_require_project=bool(
+                getattr(settings, "order_change_notice_require_project", False)
+            ),
+            project_autocount_write_enabled=bool(
+                getattr(settings, "project_autocount_write_enabled", False)
             ),
             stock_debt_po_link_enabled=bool(getattr(settings, "stock_debt_po_link_enabled", False)),
             # Same value and fallback as the admin GET above.
@@ -990,6 +1025,7 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
     for col in (
         "purchase_request_default_approver_user_id",
         "sponsorship_form_default_approver_user_id",
+        "order_change_notice_default_approver_user_id",
         "off_series_approver_user_id",
         "default_quotation_approver_user_id",
     ):
@@ -1189,6 +1225,8 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
         "chatbot_business_lane_enabled": False,
         "chatbot_ordering_enabled": False,
         "chatbot_direct_ingress_mode": "off",
+        "chatbot_reply_sender_mode": "n8n",
+        "chatbot_reply_sender_contacts": None,
         "chatbot_closed_lists_mode": "block",
         "chatbot_composer_enabled": False,
         # Repeats SystemSetting.chatbot_parser_max_output_tokens' own default (app/models/user.py).
@@ -1237,7 +1275,12 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
     )
 
     # NOT NULL booleans: an explicit null would 500 at commit, so it reads as "off".
-    for column in ("sample_request_require_project", "stock_debt_po_link_enabled"):
+    for column in (
+        "sample_request_require_project",
+        "order_change_notice_require_project",
+        "project_autocount_write_enabled",
+        "stock_debt_po_link_enabled",
+    ):
         if column in update_data and update_data[column] is None:
             update_data[column] = False
 

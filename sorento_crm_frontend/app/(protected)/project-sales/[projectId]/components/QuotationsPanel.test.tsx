@@ -92,6 +92,28 @@ vi.mock('../../_shared/services/projectService', async (importOriginal) => {
   };
 });
 
+// A plain <select multiple> for the filter picker, the same stub the opportunities filters test
+// uses: the real one is a popover a jsdom test cannot reach without a pointer.
+vi.mock('@/components/common/SearchableMultiSelect', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/components/common/SearchableMultiSelect')>();
+  type Props = Parameters<typeof actual.SearchableMultiSelect>[0];
+  const Stub = ({ id, value, onChange, options }: Props) => (
+    <select
+      multiple
+      id={id}
+      value={value}
+      onChange={(e) => onChange(Array.from(e.target.selectedOptions, (o) => o.value))}
+    >
+      {(options ?? []).map((o) => (
+        <option key={o.value} value={o.value}>
+          {o.label}
+        </option>
+      ))}
+    </select>
+  );
+  return { ...actual, SearchableMultiSelect: (props: Props) => <Stub {...props} /> };
+});
+
 import { QuotationsPanel } from './QuotationsPanel';
 
 function project(overrides: Partial<Project> = {}): Project {
@@ -630,5 +652,82 @@ describe('QuotationsPanel on a project waiting for approval (review round 3)', (
     renderPanel({ approval_state: 'approved', project_code: 'PPF2610001', can_edit: true });
     expect(await screen.findByText(/Nothing quoted yet/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Add a proposal/i })).toBeInTheDocument();
+  });
+});
+
+/**
+ * PROPOSALS-PREPARED-BY-COL (owner, 14 Nov): "better show who is the salesperson that quoted".
+ * Prepared By is the document's creator (owner, 11 Nov), the same `prepared_by` the document
+ * header prints, never the project owner.
+ */
+describe('QuotationsPanel: Prepared by column', () => {
+  const byAlice = () => quotationDocument({ id: 'd-a', our_ref: 'SRT/Q/2026/0141 (R2)', prepared_by: 'Sales Rep Alpha' });
+  const byBeta = (overrides: Partial<QuotationDocument> = {}) =>
+    draftDocument({ id: 'd-b', our_ref: 'SRT/Q/2026/0150', prepared_by: 'Sales Rep Beta', ...overrides });
+  const byNobody = () =>
+    draftDocument({ id: 'd-c', our_ref: 'SRT/Q/2026/0160', document_no: 'SRT/Q/2026/0160', prepared_by: null });
+
+  it('shows the creator by name in its own one-line column, "-" when unknown', async () => {
+    listQuotationDocuments.mockResolvedValue([byAlice(), byNobody()]);
+    renderPanel();
+
+    expect(await screen.findByRole('button', { name: 'Prepared by' })).toBeInTheDocument();
+    const cell = screen.getByText('Sales Rep Alpha');
+    expect(cell).toHaveClass('truncate');
+    expect(cell).toHaveAttribute('title', 'Sales Rep Alpha');
+    const empty = (screen.getByText('SRT/Q/2026/0160').closest('tr') as HTMLElement);
+    expect(within(empty).getAllByText('-').length).toBeGreaterThan(0);
+  });
+
+  it('sorts by Prepared by from the column header', async () => {
+    listQuotationDocuments.mockResolvedValue([byBeta(), byAlice()]);
+    renderPanel();
+
+    await screen.findByText('Sales Rep Beta');
+    fireEvent.click(screen.getByRole('button', { name: 'Prepared by' }));
+    const order = () =>
+      screen
+        .getAllByText(/^Sales Rep /)
+        .map((node) => node.textContent);
+    await waitFor(() => expect(order()).toEqual(['Sales Rep Alpha', 'Sales Rep Beta']));
+    fireEvent.click(screen.getByRole('button', { name: 'Prepared by' }));
+    await waitFor(() => expect(order()).toEqual(['Sales Rep Beta', 'Sales Rep Alpha']));
+  });
+
+  it('the search box matches the preparer name', async () => {
+    listQuotationDocuments.mockResolvedValue([byAlice(), byBeta()]);
+    renderPanel();
+
+    await screen.findByText('Sales Rep Beta');
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search proposals' }), {
+      target: { value: 'beta' },
+    });
+    expect(screen.getByText('SRT/Q/2026/0150')).toBeInTheDocument();
+    expect(screen.queryByText('SRT/Q/2026/0141 (R2)')).toBeNull();
+  });
+
+  it('Filters offers a multi-select of the preparers; ticking two keeps either', async () => {
+    listQuotationDocuments.mockResolvedValue([byAlice(), byBeta(), byNobody()]);
+    renderPanel();
+
+    await screen.findByText('SRT/Q/2026/0160');
+    fireEvent.keyDown(screen.getByRole('button', { name: /Filters/i }), { key: 'Enter' });
+    const picker = (await screen.findByLabelText('Prepared by')) as HTMLSelectElement;
+    expect(picker.multiple).toBe(true);
+    expect(within(picker).getAllByRole('option').map((o) => o.textContent)).toEqual([
+      'Sales Rep Alpha',
+      'Sales Rep Beta',
+    ]);
+
+    for (const option of Array.from(picker.options)) option.selected = option.value === 'Sales Rep Beta';
+    fireEvent.change(picker);
+    await waitFor(() => expect(screen.queryByText('SRT/Q/2026/0141 (R2)')).toBeNull());
+    expect(screen.queryByText('SRT/Q/2026/0160')).toBeNull();
+
+    for (const option of Array.from(picker.options)) option.selected = true;
+    fireEvent.change(picker);
+    await waitFor(() => expect(screen.getByText('SRT/Q/2026/0141 (R2)')).toBeInTheDocument());
+    expect(screen.getByText('SRT/Q/2026/0150')).toBeInTheDocument();
+    expect(screen.queryByText('SRT/Q/2026/0160')).toBeNull();
   });
 });

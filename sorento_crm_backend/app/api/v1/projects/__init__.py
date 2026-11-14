@@ -14,6 +14,7 @@ from app.api.v1.projects import (
     parties,
     planning_changes,
     po_intake,
+    project_autocount_write,
     projects,
     quotation_certificates,
     quotation_documents,
@@ -24,6 +25,7 @@ from app.api.v1.projects import (
     samples_pos,
     schedules,
     so_line_attachments,
+    spare_part_requests,
     spec_sheet,
     status_graphs,
     stock_debt,
@@ -88,6 +90,9 @@ router.include_router(fulfilment_planning.router, tags=["project-fulfilment-plan
 # OI-LINE-SPLIT: `/sales-orders/{pso_id}/line-splits`, ahead of the plain sales-order
 # router for the same reason fulfilment planning is.
 router.include_router(line_splits.router, tags=["project-fulfilment-planning"])
+# AutoCount write-back (AC-QTSO-CRM): `/sales-orders/amendments/{id}/autocount` is a longer path
+# than `/sales-orders/{pso_id}`, but declared ahead of the plain router like its neighbours.
+router.include_router(project_autocount_write.router, tags=["project-autocount-write"])
 router.include_router(sales_orders.router, tags=["project-sales-orders"])
 # Allocation (P9) hangs off sales order LINES and off claims between projects, so it is
 # root-mounted alongside sales orders. Its paths add a segment to the sales-order ones
@@ -97,6 +102,8 @@ router.include_router(allocations.router, tags=["project-allocations"])
 # so it is root-mounted for the same reason. Before the projects router, or
 # /projects/{id}/order-inquiry-rows is captured by /projects/{project_id}.
 router.include_router(order_inquiries.router, tags=["project-order-inquiry"])
+# SPARE-PART-ORDER-REQUEST: an order inquiry raised without a sales order, and its row photos.
+router.include_router(spare_part_requests.router, tags=["project-spare-part-requests"])
 # Planning changes (PLAN-so-book-diff-replanning.md) are addressed by their own batch id,
 # never nested under a sales order, so root-mounted for the same reason order inquiry is.
 router.include_router(planning_changes.router, tags=["project-planning-changes"])

@@ -50,10 +50,36 @@ FORM_SLA_TYPES = (
     "product_photo",
     # NPA-FORM-SLA: approval + purchasing stages, the SI's teams (PLAN-npa-form-sla-08nov).
     "new_product_application",
+    # SPARE-PART-ORDER-REQUEST: the approval levels of a spare part request (an Order Inquiry
+    # of that type), configured as stages; the record opens on the OI page.
+    "spare_part_request",
+    # OCN-ORDER-CHANGE-NOTICE: the purchase request chain (main, approval, customer service).
+    "order_change_notice",
 )
+
+#: The approval-chain form types whose approval stage honours a default approver, and the
+#: `system_settings` column that names it (`_is_approval_stage`,
+#: `_form_default_approver_user_id`).
+DEFAULT_APPROVER_SETTING: dict[str, str] = {
+    "purchase_request": "purchase_request_default_approver_user_id",
+    "sponsorship_form": "sponsorship_form_default_approver_user_id",
+    "order_change_notice": "order_change_notice_default_approver_user_id",
+}
 
 #: The quotation line media requests among FORM_SLA_TYPES.
 MEDIA_REQUEST_TYPES = ("product_drawing", "product_photo")
+
+#: A form type whose user-facing name is not its key read with spaces (owner rename, 13 Nov:
+#: a `spare_part_request` is an "order request" to every user).
+_FORM_TYPE_WORDS = {"spare_part_request": "order request"}
+
+
+def form_type_words(source_entity_type: Optional[str], default: str = "form") -> str:
+    """The lower-case words a notice uses for a form type: `purchase request`, `order request`."""
+    key = str(source_entity_type or "")
+    if not key:
+        return default
+    return _FORM_TYPE_WORDS.get(key) or key.replace("_", " ")
 
 
 def is_media_conversation(tracking) -> bool:
@@ -153,6 +179,9 @@ _ENTITY_NUMBER_SOURCE: dict = {
     "product_drawing": ("products", "product_code", False),
     "product_photo": ("products", "product_code", False),
     "new_product_application": ("new_product_applications", "application_no", False),
+    # spare_part_request: read through the model in `_resolve_entity_number` (its table is
+    # in the `projects` schema).
+    "order_change_notice": ("projects.order_change_notices", "ocn_number", True),
 }
 
 
@@ -163,6 +192,20 @@ def _resolve_entity_number(db: Session, source_entity_type: str, source_entity_i
     Revisable types render at their revision (``SI-26-0184-R2``), so an SLA
     notification names the version the recipient is actually being asked to work.
     """
+    if source_entity_type == "spare_part_request" and source_entity_id:
+        # Read through the model, not raw SQL: the order inquiry lives in the `projects`
+        # schema, which a raw table name would have to hard-code.
+        from app.models.project_so import OrderInquiry
+
+        try:
+            return (
+                db.query(OrderInquiry.inquiry_no)
+                .filter(OrderInquiry.id == str(source_entity_id))
+                .scalar()
+            )
+        except Exception:  # pragma: no cover - never break notifications on lookup
+            logger.warning("SLA notify: number lookup failed for %s", source_entity_id, exc_info=True)
+            return None
     src = _ENTITY_NUMBER_SOURCE.get(source_entity_type)
     if not src or not source_entity_id:
         return None
@@ -253,6 +296,10 @@ _STAGE_ACTION_LABELS: dict[tuple[str, str], dict[str, str]] = {
         "response": "send the purchasing response",
         "resolution": "complete or reject the application",
     },
+    # OCN-ORDER-CHANGE-NOTICE: the PR chain on the same three team sets.
+    ("order_change_notice", "project_sales"): {"resolution": "send the notice for approval"},
+    ("order_change_notice", "project_sales_manager"): {"resolution": "approve or reject"},
+    ("order_change_notice", "customer_service"): {"resolution": "mark the notice done (CS)"},
     ("ticket", "it_admin"): {
         "response": "respond to the ticket",
         "resolution": "resolve the ticket",
@@ -290,6 +337,10 @@ def _form_detail_link(source_entity_type: str, source_entity_id: str) -> str:
         return f"/project-sales/sample-requests/{source_entity_id}"
     if source_entity_type == "new_product_application":
         return f"/procurement-management/new-product-applications/{source_entity_id}"
+    if source_entity_type == "spare_part_request":
+        return f"/procurement-management/spare-part-requests/{source_entity_id}"
+    if source_entity_type == "order_change_notice":
+        return f"/procurement-management/order-change-notices/{source_entity_id}"
     if source_entity_type in ("product_drawing", "product_photo"):
         return f"/master-data-management/products/{source_entity_id}"
     return f"/{source_entity_type.replace('_', '-')}/{source_entity_id}"
@@ -316,7 +367,7 @@ def build_sla_whatsapp_data(
 
     s_type = str(getattr(tracking, "source_entity_type", "") or "")
     s_id = str(getattr(tracking, "source_entity_id", "") or "")
-    number = _resolve_entity_number(db, s_type, s_id) or (s_type.replace("_", " ").title() or "an SLA task")
+    number = _resolve_entity_number(db, s_type, s_id) or (form_type_words(s_type, "").title() or "an SLA task")
     due_str = _fmt_due(getattr(tracking, "due_at", None))
     resolve_due_str = _fmt_due(getattr(tracking, "due_at_resolution", None))
     base_url = (getattr(_settings, "frontend_base_url", None) or "").strip().rstrip("/")
@@ -431,6 +482,112 @@ class FormSLAOrchestrator:
                     return True
             return False
 
+        # A stage this very emit STARTS (directly, or as the next stage a resolve above spawns)
+        # is not responded or resolved by the same emit: with two chained stages that both
+        # resolve on 'approved', one approval would otherwise close stage 1, start stage 2 and
+        # close stage 2 in one pass (SPARE-PART-ORDER-REQUEST T8). Restored afterwards, so a
+        # nested emit keeps its caller's set.
+        outer_started = self._started_in_emit
+        self._started_in_emit = set()
+        try:
+            self._dispatch_configs(
+                configs,
+                _matches,
+                source_entity_id,
+                event_name,
+                contact_id=contact_id,
+                actor_user_id=actor_user_id,
+                company_id=company_id,
+                source_entity_type=source_entity_type,
+            )
+        finally:
+            self._started_in_emit = outer_started
+
+    def resolve_stage(
+        self,
+        tracker: ConversationSLATracking,
+        event_name: str,
+        *,
+        actor_user_id: Optional[str] = None,
+        company_id: Optional[str] = None,
+    ) -> None:
+        """Resolve ONE open stage with `event_name` (and start the stage it chains to), never
+        any other open stage of the same form. `emit_event` resolves every config whose
+        resolve event matches, which is right for a form with one stage open at a time and
+        wrong for parallel sign-off, where each team decides only its own stage.
+
+        Unlike `emit_event` this RAISES: a caller that decides on a stage must know the
+        decision (or the next stage's start) did not happen."""
+        config = self._config_for_tracker(tracker)
+        if config is None:
+            raise handle_validation_error("This approval stage is no longer configured.")
+        outer_started = self._started_in_emit
+        self._started_in_emit = set()
+        try:
+            self._resolve_for_active(
+                config,
+                str(tracker.source_entity_id),
+                actor_user_id=actor_user_id,
+                resolve_event=event_name,
+                company_id=company_id,
+            )
+        finally:
+            self._started_in_emit = outer_started
+
+    def _config_for_tracker(self, tracker: ConversationSLATracking) -> Optional[FormSLAConfig]:
+        """The active stage config a tracker was started from. A team set can serve more
+        than one stage of a form (each stage naming its own agent), so the tracker's AGENT is
+        part of the match, not the team set alone."""
+        query = self.db.query(FormSLAConfig).filter(
+            FormSLAConfig.source_entity_type == tracker.source_entity_type,
+            FormSLAConfig.is_active.is_(True),
+        )
+        if tracker.team_set_code is None:
+            query = query.filter(FormSLAConfig.team_set_code.is_(None))
+        else:
+            query = query.filter(FormSLAConfig.team_set_code == tracker.team_set_code)
+        if tracker.agent_id:
+            agent_code = (
+                self.db.query(AccessAgent.code).filter(AccessAgent.id == tracker.agent_id).scalar()
+            )
+            if agent_code:
+                query = query.filter(FormSLAConfig.agent_code == agent_code)
+        return query.order_by(FormSLAConfig.id).first()
+
+    def next_stage_config(self, tracker: ConversationSLATracking, event_name: str):
+        """The active config the stage `tracker` is on chains to when it resolves with
+        `event_name`, or None when that resolve ends the chain."""
+        config = self._config_for_tracker(tracker)
+        if config is None or not config.next_config_id:
+            return None
+        advance_on = (getattr(config, "advance_on_event", None) or "").strip()
+        if advance_on and advance_on != event_name:
+            return None
+        return (
+            self.db.query(FormSLAConfig)
+            .filter(FormSLAConfig.id == config.next_config_id, FormSLAConfig.is_active.is_(True))
+            .first()
+        )
+
+    #: Tracker ids started during the emit in progress (see `emit_event`); None outside one.
+    _started_in_emit: Optional[set] = None
+
+    def _started_this_emit(self, tracker) -> bool:
+        started = self._started_in_emit
+        return bool(started) and str(tracker.id) in started
+
+    def _dispatch_configs(
+        self,
+        configs,
+        _matches,
+        source_entity_id: str,
+        event_name: str,
+        *,
+        contact_id: Optional[str],
+        actor_user_id: Optional[str],
+        company_id: Optional[str],
+        source_entity_type: str,
+    ) -> None:
         for config in configs:
             try:
                 if _matches(config.start_event):
@@ -909,27 +1066,24 @@ class FormSLAOrchestrator:
 
     @staticmethod
     def _is_approval_stage(config: FormSLAConfig) -> bool:
-        """The PR/SF stage whose resolution IS the approval decision (resolves on
+        """The approval-chain stage whose resolution IS the approval decision (resolves on
         'approved'). Only this stage honours the form's default-approver routing."""
         return (
-            str(getattr(config, "source_entity_type", "") or "")
-            in ("purchase_request", "sponsorship_form")
+            str(getattr(config, "source_entity_type", "") or "") in DEFAULT_APPROVER_SETTING
             and "approved" in (str(getattr(config, "resolve_event", "") or ""))
         )
 
     def _form_default_approver_user_id(self, source_entity_type: Optional[str]) -> Optional[str]:
-        """The configured default approver user id for PR / SF, from SystemSetting."""
+        """The configured default approver user id for the form type, from SystemSetting."""
         from app.models.user import SystemSetting
 
+        column = DEFAULT_APPROVER_SETTING.get(str(source_entity_type or ""))
+        if column is None:
+            return None
         row = self.db.query(SystemSetting).first()
         if not row:
             return None
-        if source_entity_type == "purchase_request":
-            uid = getattr(row, "purchase_request_default_approver_user_id", None)
-        elif source_entity_type == "sponsorship_form":
-            uid = getattr(row, "sponsorship_form_default_approver_user_id", None)
-        else:
-            uid = None
+        uid = getattr(row, column, None)
         return str(uid) if uid else None
 
     def _start_for_config(
@@ -1111,6 +1265,8 @@ class FormSLAOrchestrator:
         self.db.add(tracker)
         self.db.commit()
         self.db.refresh(tracker)
+        if self._started_in_emit is not None:
+            self._started_in_emit.add(str(tracker.id))
 
         # Coverage redirect → record why the task landed on the coverer (best-effort).
         if covered_for_id:
@@ -1387,6 +1543,8 @@ class FormSLAOrchestrator:
         tracker = self._active_tracker(config, source_entity_id)
         if not tracker or bool(getattr(tracker, "is_responded", False)):
             return
+        if self._started_this_emit(tracker):
+            return
         svc = ConversationSLATrackingService(self.db)
         update_payload = {"is_responded": True}
         if actor_user_id:
@@ -1411,6 +1569,8 @@ class FormSLAOrchestrator:
 
         tracker = self._active_tracker(config, source_entity_id)
         if not tracker or bool(getattr(tracker, "is_resolved", False)):
+            return
+        if self._started_this_emit(tracker):
             return
         # resolve implies responded - set both if not yet responded
         update_payload = {"is_resolved": True}
@@ -1466,7 +1626,7 @@ class FormSLAOrchestrator:
         # Relative path for in-app navigation; absolute URL for the email body.
         link = _form_detail_link(s_type, s_id)
         full_link = _full_form_link(s_type, s_id)
-        type_label = (s_type or "form").replace("_", " ")
+        type_label = form_type_words(s_type)
         # Human-readable document number, never the raw UUID.
         number = _resolve_entity_number(self.db, s_type, s_id) or type_label.capitalize()
         due_str = _fmt_due(tracker.due_at)
@@ -1490,6 +1650,9 @@ class FormSLAOrchestrator:
         _FE_RECORD_ROUTES = {
             "stock_inquiry", "complaint", "purchase_request", "sponsorship_form",
             "product_drawing", "product_photo", "new_product_application",
+            # SPARE-PART-ORDER-REQUEST: the request opens on its own record page.
+            "spare_part_request",
+            "order_change_notice",
         }
         if s_type in _FE_RECORD_ROUTES:
             form_url = full_link

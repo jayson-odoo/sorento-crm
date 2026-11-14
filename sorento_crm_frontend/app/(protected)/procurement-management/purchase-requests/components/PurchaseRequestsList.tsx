@@ -1,5 +1,6 @@
 'use client';
 
+import { LastActivityFilter, lastActivityActive, lastActivityLabel } from '@/components/common/LastActivityFilter';
 import { APPEALED_LABEL } from '@/lib/submission-status';
 import { useCallback, useMemo, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
@@ -86,7 +87,7 @@ function getDisplayStatus(row: PurchaseRequest): string {
 const DEFAULT_BASE_PATH = '/procurement-management/purchase-requests';
 
 /** The listing's shipped default, used until the user has left one behind. */
-const DEFAULT_SORTING: SortingState = [{ id: 'created_at', desc: true }];
+const DEFAULT_SORTING: SortingState = [{ id: 'last_activity_at', desc: true }];
 
 /**
  * Shape of what this page stores in the opaque `filters` blob (PLAN-listing-view-memory,
@@ -100,6 +101,8 @@ type PurchaseRequestsFilters = {
   request_type?: string;
   approval_status?: string;
   assigned_to?: string;
+  last_activity_from?: string;
+  last_activity_to?: string;
 };
 
 /** The single "variable" column between Project Title and Requested By:
@@ -212,6 +215,10 @@ function StaffPurchaseRequestsList({
   const requestTypeFilter = requestType ?? viewFilters?.request_type ?? '';
   const statusFilter = viewFilters?.approval_status ?? '';
   const assignedToFilter = viewFilters?.assigned_to ?? '';
+  const lastActivity = useMemo(
+    () => ({ from: viewFilters?.last_activity_from, to: viewFilters?.last_activity_to }),
+    [viewFilters],
+  );
 
   // Merges a change over the current filters, drops empties, resets to page 1. Every filter
   // control goes through this ONE path, so the chip's Clear and "Clear filters" agree.
@@ -222,6 +229,8 @@ function StaffPurchaseRequestsList({
       if (!requestType && merged.request_type) cleaned.request_type = merged.request_type;
       if (merged.approval_status) cleaned.approval_status = merged.approval_status;
       if (merged.assigned_to) cleaned.assigned_to = merged.assigned_to;
+      if (merged.last_activity_from) cleaned.last_activity_from = merged.last_activity_from;
+      if (merged.last_activity_to) cleaned.last_activity_to = merged.last_activity_to;
       setViewFilters(Object.keys(cleaned).length ? cleaned : null);
       setPagination((p) => ({ ...p, pageIndex: 0 }));
     },
@@ -262,6 +271,8 @@ function StaffPurchaseRequestsList({
     requestType: effectiveRequestType,
     approvalStatus: effectiveStatusFilter,
     assignedTo: assignedToFilter || undefined,
+    lastActivityFrom: lastActivity.from,
+    lastActivityTo: lastActivity.to,
     // One fetch, with the remembered view already applied (AC-B3).
     enabled: !isViewPrefsLoading,
   });
@@ -285,6 +296,8 @@ function StaffPurchaseRequestsList({
         request_type: effectiveRequestType,
         approval_status: effectiveStatusFilter,
         assigned_to: assignedToFilter || undefined,
+        last_activity_from: lastActivity.from,
+        last_activity_to: lastActivity.to,
       },
     );
     const qs = search ? `?${search}` : '';
@@ -384,6 +397,20 @@ function StaffPurchaseRequestsList({
             : '-',
         size: 160,
         meta: { headerTitle: 'Created At', skeleton: <Skeleton className="h-4 w-24" /> },
+      },
+      {
+        accessorKey: 'last_activity_at',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Last activity" column={column} />
+        ),
+        cell: ({ row }) => {
+          const raw = row.original.last_activity_at;
+          if (!raw) return '-';
+          const text = formatDateTimeInMalaysia(raw) || '-';
+          return <span className="truncate" title={text}>{text}</span>;
+        },
+        size: 190,
+        meta: { headerTitle: 'Last activity', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         accessorKey: 'approval_status',
@@ -509,7 +536,7 @@ function StaffPurchaseRequestsList({
   });
 
   const filtersActiveCount =
-    (!requestType && requestTypeFilter ? 1 : 0) + (statusFilter ? 1 : 0) + (assignedToFilter ? 1 : 0);
+    (!requestType && requestTypeFilter ? 1 : 0) + (statusFilter ? 1 : 0) + (assignedToFilter ? 1 : 0) + lastActivityActive(lastActivity);
 
   // The chip above the grid that states the remembered filter in plain words, with Clear.
   const activeFilterLabel = (() => {
@@ -528,6 +555,8 @@ function StaffPurchaseRequestsList({
         : assigneeOptions.find((u) => u.id === v)?.name?.trim() || 'Selected',
     );
     if (assignees.length) parts.push(multiChipLabel('Assigned to', assignees));
+    const range = lastActivityLabel(lastActivity);
+    if (range) parts.push(range);
     return parts.join(', ');
   })();
 
@@ -629,6 +658,11 @@ function StaffPurchaseRequestsList({
                       ]}
                     />
                   </div>
+                  <LastActivityFilter
+                    id="pr-last-activity"
+                    value={lastActivity}
+                    onChange={(v) => applyFilters({ last_activity_from: v.from, last_activity_to: v.to })}
+                  />
                   {filtersActiveCount > 0 && (
                     <div className="flex justify-end">
                       <Button

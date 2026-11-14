@@ -30,6 +30,7 @@ import {
   type DraftDeleteProps,
   type SubmissionClient,
   type SubmissionExtraTab,
+  type SubmissionPaths,
 } from '@/app/(auth)/portal/lib/submission-client';
 import { createMyRequestsSubmissionApi, myRequestsPaths } from '@/services/myRequestsSubmissionClient';
 import type { MyRequestKind } from '@/services/myRequestsService';
@@ -152,19 +153,38 @@ function refreshingService<T extends object>(qc: QueryClient, list: string, serv
 export function MyRequestClientProvider({
   children,
   extraTabs,
+  paths,
+  aiExtract,
+  alsoRefresh,
 }: {
   children: ReactNode;
   extraTabs?: SubmissionExtraTab[];
+  /** Where Cancel / Submit go instead of the kind's own pages (a form opened from a project goes
+   *  back to it). Pass a memoised object (it rebuilds the client). */
+  paths?: SubmissionPaths;
+  /** `false`: no AI Extract (a sponsorship form started from a project, as staff see it). */
+  aiExtract?: false;
+  /** More query keys a save or submit refreshes (a project's Sponsorship Form tab, so the form
+   *  shows there at once rather than after the 30 s cache). Pass a memoised array. */
+  alsoRefresh?: string[];
 }) {
   const qc = useQueryClient();
   // One client per form: its lookup sets are cached per client, never shared with the portal's.
   const client = useMemo<SubmissionClient>(() => {
     const api = createMyRequestsSubmissionApi();
     const listOf = (kind: unknown) => LIST_KEYS[String(kind)];
+    // `fn`, then every `alsoRefresh` key (a throw skips them, as `refreshing` does).
+    function andAlso<A extends unknown[], R>(fn: (...args: A) => Promise<R>) {
+      return async (...args: A): Promise<R> => {
+        const result = await fn(...args);
+        for (const key of alsoRefresh ?? []) void qc.invalidateQueries({ queryKey: [key] });
+        return result;
+      };
+    }
     return {
       ...api,
-      saveDraft: refreshing(qc, listOf, api.saveDraft),
-      submitDraft: refreshing(qc, listOf, api.submitDraft),
+      saveDraft: andAlso(refreshing(qc, listOf, api.saveDraft)),
+      submitDraft: andAlso(refreshing(qc, listOf, api.submitDraft)),
       deleteDraftSubmission: refreshing(qc, listOf, api.deleteDraftSubmission),
       saveRevisionDraft: refreshing(qc, listOf, api.saveRevisionDraft),
       discardRevisionDraft: refreshing(qc, listOf, api.discardRevisionDraft),
@@ -178,12 +198,13 @@ export function MyRequestClientProvider({
         api.salesOpportunity && refreshingService(qc, 'sales-opportunities', api.salesOpportunity),
       priceTagRequest:
         api.priceTagRequest && refreshingService(qc, 'price-tag-requests', api.priceTagRequest),
-      paths: myRequestsPaths,
+      paths: paths ?? myRequestsPaths,
       deletes: { DraftDelete, AttachmentRemove },
       embedded: true,
       ...(extraTabs ? { extraTabs } : {}),
+      ...(aiExtract === false ? { aiExtract } : {}),
     };
-  }, [qc, extraTabs]);
+  }, [qc, extraTabs, paths, aiExtract, alsoRefresh]);
   return <SubmissionClientProvider client={client}>{children}</SubmissionClientProvider>;
 }
 
@@ -192,6 +213,9 @@ export default function MyRequestPortalForm({
   submissionId,
   initialValues,
   extraTabs,
+  paths,
+  aiExtract,
+  alsoRefresh,
 }: {
   kind: MyRequestKind;
   /** None: a new request (`?from=<id>` duplicates one of theirs, as on the portal). */
@@ -200,9 +224,18 @@ export default function MyRequestPortalForm({
   initialValues?: SubmissionInitialValues;
   /** Tabs the caller adds after the portal form's own (a complaint's fulfilment DOs). */
   extraTabs?: SubmissionExtraTab[];
+  /** See `MyRequestClientProvider`. */
+  paths?: SubmissionPaths;
+  aiExtract?: false;
+  alsoRefresh?: string[];
 }) {
   return (
-    <MyRequestClientProvider extraTabs={extraTabs}>
+    <MyRequestClientProvider
+      extraTabs={extraTabs}
+      paths={paths}
+      aiExtract={aiExtract}
+      alsoRefresh={alsoRefresh}
+    >
       <SubmissionForm
         kind={kind}
         submissionId={submissionId}

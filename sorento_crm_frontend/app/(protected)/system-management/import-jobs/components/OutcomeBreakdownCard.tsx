@@ -36,10 +36,12 @@ function ReasonRow({
   entry,
   active,
   onSelect,
+  showCode = true,
 }: {
   entry: ImportOutcomeBreakdownEntry;
   active: boolean;
   onSelect?: (code: string) => void;
+  showCode?: boolean;
 }) {
   const topValues = entry.top_values ?? [];
   return (
@@ -62,7 +64,9 @@ function ReasonRow({
           {entry.count.toLocaleString()}
         </span>
       </button>
-      <p className="mt-0.5 font-mono text-[11px] text-muted-foreground">{entry.code}</p>
+      {showCode && (
+        <p className="mt-0.5 font-mono text-[11px] text-muted-foreground">{entry.code}</p>
+      )}
       {topValues.length > 0 && (
         <ul className="mt-2 space-y-0.5">
           {topValues.map((tv) => (
@@ -87,12 +91,18 @@ export interface OutcomeBreakdownCardProps {
   /** Currently filtered reason code, so the matching row can be highlighted. */
   activeCode?: string;
   onSelectCode?: (code: string, outcome: Group) => void;
+  /**
+   * Print each reason's code under its label (default, the import jobs screen). A screen that
+   * reads in plain words only (the project import's Results) turns it off.
+   */
+  showCodes?: boolean;
 }
 
 export function OutcomeBreakdownCard({
   result,
   activeCode,
   onSelectCode,
+  showCodes = true,
 }: OutcomeBreakdownCardProps) {
   const breakdown = result?.breakdown;
   // Legacy jobs predate the envelope - say so plainly instead of rendering three
@@ -151,6 +161,7 @@ export function OutcomeBreakdownCard({
                           entry={entry}
                           active={activeCode === entry.code}
                           onSelect={(code) => onSelectCode?.(code, group)}
+                          showCode={showCodes}
                         />
                       ))}
                     </div>

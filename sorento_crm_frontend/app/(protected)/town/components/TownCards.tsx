@@ -15,6 +15,7 @@ import {
   shopLabel,
   shopToday,
   signedPercent,
+  splitParts,
 } from '../lib/townFormat';
 import type { TownTarget } from './TownLightbox';
 
@@ -77,6 +78,7 @@ export function TownCards({
   const { today, compare, reorder, deliveries, approvals, incoming } = snapshot;
   const { bought, others } = boughtToday(snapshot);
   const pct = changePercent(snapshot);
+  const split = splitParts(today);
   const open = (target: TownTarget) => () => onOpen?.(target);
   return (
     <div className="grid gap-2.5">
@@ -89,18 +91,24 @@ export function TownCards({
         <span className="text-xl font-bold tracking-tight">
           {today.amount != null ? rm(today.amount) : `${count(today.invoice_count)} invoices`}
         </span>
-        <span className="text-sm text-muted-foreground">
-          {today.amount != null ? `${count(today.invoice_count)} invoices` : null}
-          {today.amount != null && pct != null ? ' · ' : null}
+        <span className="flex flex-wrap gap-x-3 text-sm text-muted-foreground">
+          {today.amount != null ? <span>{count(today.invoice_count)} invoices</span> : null}
           {pct != null && compare ? (
-            <>
+            <span>
               <span className={pct >= 0 ? 'font-semibold text-success' : 'font-semibold text-destructive'}>
                 {signedPercent(pct)}
               </span>{' '}
               vs all of {compare.label}
-            </>
+            </span>
           ) : null}
         </span>
+        {split ? (
+          <span className="col-start-2 flex flex-wrap gap-x-3 text-xs text-muted-foreground">
+            {split.map((part) => (
+              <span key={part}>{part}</span>
+            ))}
+          </span>
+        ) : null}
       </Card>
       <Card
         question="Who bought today?"
@@ -151,9 +159,13 @@ export function TownCards({
         <span className="text-xl font-bold tracking-tight">
           {approvals.total ? `${approvals.total} waiting` : 'All clear'}
         </span>
-        <span className="text-sm text-muted-foreground">
-          {approvals.purchase_requests} purchase request{approvals.purchase_requests === 1 ? '' : 's'} ·{' '}
-          {approvals.quotation_documents} quotation{approvals.quotation_documents === 1 ? '' : 's'}
+        <span className="flex flex-wrap gap-x-3 text-sm text-muted-foreground">
+          <span>
+            {approvals.purchase_requests} purchase request{approvals.purchase_requests === 1 ? '' : 's'}
+          </span>
+          <span>
+            {approvals.quotation_documents} quotation{approvals.quotation_documents === 1 ? '' : 's'}
+          </span>
         </span>
       </Card>
       {incoming ? (
@@ -166,13 +178,12 @@ export function TownCards({
           <span className="text-xl font-bold tracking-tight">
             {incoming.incoming || incoming.late ? `${count(incoming.incoming)} incoming` : 'Nothing on the way'}
           </span>
-          <span className="text-sm text-muted-foreground">
+          <span className="flex flex-wrap gap-x-3 text-sm text-muted-foreground">
             {incoming.late ? (
               <span className="font-semibold text-destructive">{count(incoming.late)} late</span>
             ) : null}
-            {incoming.late && incoming.next_eta ? ' · ' : null}
-            {incoming.next_eta ? `next ETA ${formatDateInMalaysia(incoming.next_eta)}` : null}
-            {incoming.incoming && !incoming.late && !incoming.next_eta ? 'No ETA yet' : null}
+            {incoming.next_eta ? <span>next ETA {formatDateInMalaysia(incoming.next_eta)}</span> : null}
+            {incoming.incoming && !incoming.late && !incoming.next_eta ? <span>No ETA yet</span> : null}
           </span>
         </Card>
       ) : null}

@@ -28,6 +28,9 @@ checked against the quotation, not against the proposals.
 1. Open **Project Sales > Projects** and open the project.
 2. Click the **Proposals** tab. Each proposal is listed with its number, the **Kind** column
    (**Proposal** or **Quotation**) and its latest revision. The project's quotation is listed first.
+   The **Prepared by** column shows who created each proposal, the same name its header prints.
+   Click any column heading to sort by it, and use **Filters > Prepared by** to see only the
+   proposals of one or more salespeople.
 3. Click one to open it. Its **Header** tab shows the letterhead and, under it, the priced lines.
 
 To start a new proposal, use **Add a proposal** on the project's **Proposals** tab.
@@ -214,29 +217,27 @@ free-text description as a line.
   is quoted from (hover: *Outside the series this scope is quoted from*). That is allowed, but
   the quotation then needs approval before it can be sent (see below).
 
-### Minimum price and default price, while you type
+### Minimum price, while you type
 
 * Under a line's rate, **Below minimum price** appears as soon as the price you type is
   below the lowest price allowed for that item. It shows on a new quotation too, before the
   first save.
-* Under a line's product code, **Below default price** appears when the price is below the
-  line's default price (see below) but not below the minimum price. It sits beside
-  **Non-standard** when both apply.
 * **Non-standard** also appears while you pick, on a new quotation as on a saved one.
 * A quotation with a line below the minimum price says *One line is priced below the minimum
-  price* (or *N lines are ...*) and needs approval before it can be sent. The number of
-  **Below default price** flags across all scopes is the number in the banner's *... priced
-  below the default price*.
+  price* (or *N lines are ...*) and needs approval before it can be sent.
+* A price below the line's default price but not below the minimum price shows no flag on the
+  line. The approval banner still counts it (*... priced below the default price*).
 
 ### Find the flagged lines
 
-* **Flags**, beside **Search lines**, narrows the table to **Non-standard**, **Below default
-  price** and/or **Below minimum price** lines. Each option shows how many lines on the open
+* **Flags**, beside **Search lines**, narrows the table to **Non-standard** and/or **Below minimum
+  price** lines. Each option shows how many lines on the open
   scope match it. Pick several to see lines matching any of them. Item numbers and the total do
   not change.
 * The filter stays on when you switch scope tabs, so you can walk the tabs looking for them.
-* In the approval banner, click **One line is** / **N lines are** in front of a reason: the
-  table filters to those lines, opens the first scope that has one, and scrolls to it.
+* In the approval banner, click **One line is** / **N lines are** in front of the
+  series or minimum price reason: the table filters to those lines, opens the first scope that
+  has one, and scrolls to it. The default price reason is plain text.
 * While editing, a line you change or add stays on screen until you change the filter, even if
   it no longer matches.
 

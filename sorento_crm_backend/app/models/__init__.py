@@ -38,6 +38,7 @@ from app.models.workflow_forms import (
 )
 from app.models.complaints import Complaint, ComplaintAttachment, ComplaintManualAttachment, ComplaintFulfilmentOrder
 from app.models.complaint_master_data import ComplaintRootCause, ComplaintResolution
+from app.models.service_jobs import ServiceJob, Technician
 from app.models.entity_attachment import EntityAttachmentLink
 from app.models.attachment_field_link import AttachmentFieldLink
 from app.models.sla import SLAPolicy, SLAPolicyTier, ConversationSLATracking, ConversationSLAEventLog, FormSLAConfig
@@ -128,6 +129,7 @@ from app.models.media import (
     MediaExtractionJob,
 )
 from app.models.user_session import UserSession
+from app.models.user_passkey import UserPasskey
 from app.models.activities import ActivityEvent, InternalNote, ActivityMention
 from app.models.tickets import Ticket, TicketWatcher, TicketRespondContactLink
 from app.models.email_template import EmailTemplate
@@ -182,6 +184,7 @@ from app.models.scm import (
     MarketResearchRun,
     PriorityPolicy,
 )
+from app.models.project_import import ProjectImportValueMap  # noqa: F401
 from app.models.project_so import (  # noqa: F401
     ProjectPOVersion,
     ProjectPOLine,
@@ -380,6 +383,7 @@ __all__ = [
     "ContactMediaUsage",
     "MediaExtractionJob",
     "UserSession",
+    "UserPasskey",
     "ActivityEvent",
     "InternalNote",
     "ActivityMention",

@@ -3,15 +3,15 @@
 /**
  * The price tag request's lines table while it is being written: the Item picker, quantity, the
  * line's List price / Promotion / Selling price, remarks, and under each line its Package select,
- * part rows ("Not sure, any of N" for an open group), Add part and the package warning.
+ * part rows ("Not sure, any of N" for an open group) and the package warning.
  *
  * Shared by the portal's price tag form and the CRM request page (PORTAL-P4-REQUESTS S7b); the
  * behaviour lives in `usePriceTagLineEditor`, which the caller passes in as `editor`. Moved out of
  * `app/(auth)/portal/components/PriceTagRequestForm.tsx` unchanged.
  */
 
-import { Fragment, useCallback, useMemo } from 'react';
-import { Eye, Trash2 } from 'lucide-react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
+import { ChevronDown, Eye, Trash2, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { PriceModeToggle } from '@/components/dealer-kit/PriceModeToggle';
@@ -20,14 +20,18 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { NumberInput } from '@/components/ui/number-input';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
-import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import {
+  SearchableMultiSelect,
+  type SearchableMultiSelectOption,
+} from '@/components/common/SearchableMultiSelect';
+import { selectTriggerVariants } from '@/components/common/select-trigger-variants';
 import { numberFieldError } from '@/lib/number-field';
 import { promotionOptionLabel, type LinePricingResult } from '@/lib/dealer-kit/line-pricing-types';
 import { comboShape, needsText } from '@/lib/dealer-kit/combo-slots';
 import { distinctName, sameDisplayText } from '@/lib/product-display';
 import { defaultOptionFor, lineTypeLabel, templateFitsLine } from '@/lib/dealer-kit/template-price-type';
 import type { LinePartCandidate, PriceMode, ProductComboOption } from '@/app/(auth)/portal/lib/price-tag-request-service';
-import type { PriceTagLineEditor } from '@/hooks/usePriceTagLineEditor';
+import { addPickedItems, type PriceTagLineEditor, type TagItemSearchOption } from '@/hooks/usePriceTagLineEditor';
 import {
   formatRM,
   hasOpenGroup,
@@ -35,7 +39,6 @@ import {
   itemValue,
   linePriceType,
   lineTemplateState,
-  missingComboRows,
   type LineTemplateState,
   packageWarningFor,
   comboOfLine,
@@ -148,9 +151,8 @@ export function PriceTagLinesTable({
               isMobile={isMobile}
               anySelling={anySelling}
               pricing={editor.linePricing[line.key] ?? null}
-              fetchItemOptions={editor.fetchItemOptions}
-              fetchPartOptions={editor.fetchPartOptions}
-              onItemSelect={editor.handleItemSelect}
+              lines={lines}
+              editor={editor}
               onUpdate={editor.updateLine}
               onRemove={editor.removeLine}
               onChoosePackage={editor.choosePackage}
@@ -158,8 +160,6 @@ export function PriceTagLinesTable({
               onResolvePart={editor.resolvePart}
               onResolvePicks={editor.resolvePicks}
               onRemovePart={editor.removePart}
-              onAddPart={editor.addPart}
-              onRestorePart={editor.restorePart}
               onRestoreParts={editor.restoreParts}
               onChoosePromotion={editor.choosePromotion}
               onManualSellPriceChange={editor.setManualSellPrice}
@@ -259,9 +259,9 @@ interface LineRowProps {
   /** S1/S2: this line's latest `lookupLinePricing` answer, or null before
    *  the first one lands (no product yet, or still in flight). */
   pricing: LinePricingResult | null;
-  fetchItemOptions: (query: string) => Promise<SearchableSelectOption[]>;
-  fetchPartOptions: (query: string) => Promise<SearchableSelectOption[]>;
-  onItemSelect: (key: string, option: SearchableSelectOption | null) => void;
+  /** Every line of the request, and the editor the Item picker adds them through. */
+  lines: DraftLine[];
+  editor: PriceTagLineEditor;
   onUpdate: (key: string, patch: Partial<DraftLine>) => void;
   onRemove: (key: string) => void;
   onChoosePackage: (key: string, comboId: string) => void;
@@ -270,8 +270,6 @@ interface LineRowProps {
   onResolvePart: (key: string, partKey: string, productId: string) => void;
   onResolvePicks: (key: string, partKey: string, productIds: string[]) => void;
   onRemovePart: (key: string, partKey: string) => void;
-  onAddPart: (key: string, option: SearchableSelectOption | null) => void;
-  onRestorePart: (key: string, rowId: string) => void;
   onRestoreParts: (key: string) => void;
   onChoosePromotion: (key: string, promotionId: string) => void;
   onManualSellPriceChange: (key: string, value: number | null) => void;
@@ -460,21 +458,194 @@ function PartRow({
   );
 }
 
+/** Tells the picker when its list opens and closes, from inside the trigger (the multi-select only
+ *  hands `open` to `renderTrigger`). */
+function OpenWatcher({ open, onChange }: { open: boolean; onChange: (open: boolean) => void }) {
+  useEffect(() => {
+    onChange(open);
+  }, [open, onChange]);
+  return null;
+}
+
+const HINT = 'shrink-0 rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground';
+
+/**
+ * The Item cell (PRICETAG-MULTI-ADD, round 3): the list-filter `SearchableMultiSelect`, so a click on a
+ * result ticks it and the list stays open. A tick goes through the one pick path at once: the first
+ * fills this row when it is empty, every other lands on a new line below the one added last.
+ * Unticking an item ticked in this session removes its line while that line is untouched. Sets on
+ * the request when the list opened are disabled ("Already added"); a product on the request is
+ * neither ticked nor disabled, and a tick adds another line of it (PRICETAG-ALA-CARTE AC-7).
+ */
+const isSetValue = (value: string) => value.startsWith('product_set:');
+
+function ItemPicker({
+  line,
+  lines,
+  editor,
+}: {
+  line: DraftLine;
+  lines: DraftLine[];
+  editor: PriceTagLineEditor;
+}) {
+  const requestValues = [...new Set(lines.map(itemValue).filter(Boolean))];
+  const onRequestAtOpen = useRef<Set<string>>(new Set());
+  /** Keys of the lines that already held an item when the list opened: never an untick's owner. */
+  const heldAtOpen = useRef<Set<string>>(new Set());
+  const ticked = useRef<Set<string>>(new Set());
+  const anchor = useRef(line.key);
+  const optionCache = useRef<Map<string, TagItemSearchOption>>(new Map());
+  const latest = useRef({ requestValues, lines });
+  latest.current = { requestValues, lines };
+
+  // The list keeps its last results while closed, so each close remounts it: the next open then
+  // lists only what its own fetch (made against the request as it stands) returns.
+  const [session, setSession] = useState(0);
+  const wasOpen = useRef(false);
+  const cellRef = useRef<HTMLDivElement | null>(null);
+  // The remount drops the focused trigger, leaving focus on <body>: put it back on the new
+  // trigger, but only when nothing else took it (a click on another field keeps its focus).
+  useEffect(() => {
+    if (session === 0) return;
+    const frame = requestAnimationFrame(() => {
+      const active = document.activeElement;
+      if (active && active !== document.body) return;
+      cellRef.current?.querySelector<HTMLElement>('[role="combobox"]')?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [session]);
+  const onOpenChange = useCallback(
+    (open: boolean) => {
+      ticked.current = new Set();
+      if (open) {
+        onRequestAtOpen.current = new Set(latest.current.requestValues);
+        heldAtOpen.current = new Set(latest.current.lines.filter((l) => itemValue(l)).map((l) => l.key));
+        anchor.current = line.key;
+      } else if (wasOpen.current) {
+        setSession((n) => n + 1);
+      }
+      wasOpen.current = open;
+    },
+    [line.key],
+  );
+
+  const fetchItemOptionsOf = editor.fetchItemOptions;
+  const fetchOptions = useCallback(
+    async (query: string): Promise<SearchableMultiSelectOption[]> => {
+      const found = await fetchItemOptionsOf(query);
+      return found.map((opt) => {
+        optionCache.current.set(opt.value, opt);
+        return { ...opt, disabled: isSetValue(opt.value) && onRequestAtOpen.current.has(opt.value) };
+      });
+    },
+    [fetchItemOptionsOf],
+  );
+
+  // What the list shows ticked: the sets on the request, and what this session ticked. Any other
+  // product on the request is unticked, so a click on it adds another line.
+  const pickerValues = requestValues.filter((v) => isSetValue(v) || ticked.current.has(v));
+
+  const handleChange = (next: string[]) => {
+    const before = new Set(pickerValues);
+    const after = new Set(next);
+    const added = next
+      .filter((v) => !before.has(v))
+      .map((v) => optionCache.current.get(v))
+      .filter((o): o is TagItemSearchOption => !!o);
+    if (added.length > 0) {
+      const hasItem = !!itemValue(line);
+      const target = hasItem ? editor.addLine(anchor.current) : line.key;
+      anchor.current = addPickedItems(editor, lines, target, added);
+      for (const o of added) ticked.current.add(o.value);
+    }
+    for (const v of pickerValues) {
+      if (after.has(v) || !ticked.current.has(v)) continue;
+      const owner = lines.find((l) => itemValue(l) === v && !heldAtOpen.current.has(l.key));
+      // A line the user has since edited keeps its item, and so its tick.
+      if (!owner || owner.quantity !== 1 || owner.remarks) continue;
+      ticked.current.delete(v);
+      if (owner.key === line.key) {
+        editor.handleItemSelect(owner.key, null);
+        continue;
+      }
+      if (anchor.current === owner.key) {
+        const at = lines.findIndex((l) => l.key === owner.key);
+        anchor.current = lines[at - 1]?.key ?? line.key;
+      }
+      editor.removeLine(owner.key);
+    }
+  };
+
+  // Owner, 12 Nov 17:50: the cell shows the CODE for a set as for a product; the name stays in the
+  // list's search, on hover here, and in the eye preview.
+  const itemLabel = itemValue(line) ? line.code || line.name : '';
+  const itemTitle = itemValue(line) && line.name && line.name !== itemLabel ? line.name : undefined;
+
+  return (
+    <div className="flex items-center gap-1">
+      <div ref={cellRef} className="min-w-0 flex-1">
+        <SearchableMultiSelect
+          key={session}
+          value={pickerValues}
+          onChange={handleChange}
+          fetchOptions={fetchOptions}
+          emptyMessage="No sets or products match."
+          renderOption={(opt) => (
+            <span className="flex min-w-0 flex-1 items-center gap-2">
+              <span className="min-w-0 truncate" title={opt.label}>
+                {opt.label}
+              </span>
+              {opt.badgeText ? <span className={HINT}>{opt.badgeText}</span> : null}
+              {opt.disabled ? <span className={HINT}>Already added</span> : null}
+            </span>
+          )}
+          renderTrigger={({ open }) => (
+            <button
+              type="button"
+              role="combobox"
+              aria-expanded={open}
+              aria-label={`Item for line ${lines.findIndex((l) => l.key === line.key) + 1}`}
+              className={cn(selectTriggerVariants({}), 'w-full')}
+            >
+              <span
+                className={cn('min-w-0 flex-1 truncate text-left', !itemLabel && 'text-muted-foreground')}
+                title={itemTitle}
+              >
+                {itemLabel || 'Search a set or product...'}
+              </span>
+              <ChevronDown className="size-4 shrink-0 opacity-60" />
+              <OpenWatcher open={open} onChange={onOpenChange} />
+            </button>
+          )}
+        />
+      </div>
+      {itemValue(line) ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          aria-label="Clear item"
+          onClick={() => editor.handleItemSelect(line.key, null)}
+        >
+          <X className="size-4" />
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
 /**
  * One row of the lines table, on the Purchase Request pattern in `SubmissionForm`:
  * a cell per field, a trash button, and horizontal scroll on a narrow screen.
  */
-const PACKAGE_ROW = 'package:';
-
 function LineRow({
   line,
   index,
   priceMode,
   isMobile,
   pricing,
-  fetchItemOptions,
-  fetchPartOptions,
-  onItemSelect,
+  lines,
+  editor,
   onUpdate,
   onRemove,
   onChoosePackage,
@@ -482,8 +653,6 @@ function LineRow({
   onResolvePart,
   onResolvePicks,
   onRemovePart,
-  onAddPart,
-  onRestorePart,
   onRestoreParts,
   onChoosePromotion,
   onManualSellPriceChange,
@@ -493,44 +662,18 @@ function LineRow({
 }: LineRowProps) {
   const templateState = lineTemplateState(line, priceMode);
   const unfitted = unfittedPriceType(line, priceMode);
-  // P2: Add part lists the combo's own rows the line lacks first, then the catalogue search.
-  const missingRows = useMemo(() => missingComboRows(line), [line]);
-  const fetchAddPartOptions = useCallback(
-    async (query: string, page: number): Promise<SearchableSelectOption[]> => {
-      const needle = query.trim().toLowerCase();
-      const own: SearchableSelectOption[] =
-        page === 0
-          ? missingRows
-              .filter((row) => !needle || row.label.toLowerCase().includes(needle))
-              .map((row) => ({ value: `${PACKAGE_ROW}${row.id}`, label: row.label, group: 'This package' }))
-          : [];
-      return [...own, ...(await fetchPartOptions(query))];
-    },
-    [missingRows, fetchPartOptions],
-  );
   const isSet = line.line_type === 'product_set';
   const warning = packageWarningFor(line);
   // What the chosen template reads from each group, once per part.
   const picksByPart = new Map(line.parts.map((part) => [part.key, picksNeeded(line, part.role, priceMode)]));
   // Only when there is a choice to make: one combo is applied on pick, and none
   // leaves nothing to select.
-  const showPackage = !isSet && line.combos.length > 1;
-  // D4 (AC-S2-1..S2-3): "Add part" only once the combos lookup answered AND
-  // the product actually has at least one package - nothing to add a part
-  // TO otherwise. Existing part rows (a reopened draft) still render with
-  // their Remove regardless; this only gates the search below.
-  const showParts = !isSet && !!line.product_id && line.combos_loaded && line.combos.length > 0;
-  const picked = itemValue(line);
-  const selectedItem: SearchableSelectOption | undefined = picked
-    ? {
-        value: picked,
-        label: line.name || line.code,
-      }
-    : undefined;
+  // PRICETAG-ALA-CARTE AC-1: any combo means a choice, the empty value being ala carte.
+  const showPackage = !isSet && line.combos.length > 0;
 
   // ---- S1/S2: price cells (product lines only - a set is priced whole,
   // no combo/promotion concept applies to it). ----
-  const showPricing = !isSet && !!line.product_id;
+  const showPricing = isSet ? !!line.product_set_id : !!line.product_id;
   const isSelling = linePriceType(line, priceMode) === 'selling';
   // A product with a finished lookup and no published template has nothing to draw.
   const noTemplate =
@@ -595,7 +738,16 @@ function LineRow({
     </div>
   );
 
-  const renderPromotionCell = (withLabel: boolean) => (
+  const renderPromotionCell = (withLabel: boolean) =>
+    isSet ? (
+      // A set has no promotion choice.
+      <div>
+        {withLabel && (
+          <div className="text-2xs uppercase tracking-wide text-muted-foreground">Promotion</div>
+        )}
+        <div className="text-sm text-muted-foreground">-</div>
+      </div>
+    ) : (
     <div>
       <Label
         className={
@@ -619,7 +771,7 @@ function LineRow({
         size="sm"
       />
     </div>
-  );
+    );
 
   const renderSellingPriceCell = (withLabel: boolean) => (
     <div>
@@ -628,7 +780,10 @@ function LineRow({
           Selling price
         </div>
       )}
-      {line.promotion_id ? (
+      {isSet ? (
+        // A set's selling price is the tag function's figure, never typed.
+        <div className="text-sm font-medium whitespace-nowrap">{formatRM(pricing?.sell_price)}</div>
+      ) : line.promotion_id ? (
         <div>
           <div
             className="text-sm font-medium whitespace-nowrap"
@@ -675,22 +830,7 @@ function LineRow({
       <tr className="border-t border-border align-top">
         <td className="px-2 py-2 text-muted-foreground">{index + 1}</td>
         <td className="px-2 py-2">
-          <SearchableSelect
-            value={picked}
-            onChange={() => {
-              /* the whole option is what carries the kind; see onOptionChange */
-            }}
-            onOptionChange={(option) => onItemSelect(line.key, option)}
-            fetchOptions={fetchItemOptions}
-            selectedOption={selectedItem}
-            // The closed cell reads the line's own item, not a picker option's
-            // "CODE  RM <price>" text when the picked value is among the options.
-            renderTriggerLabel={() => selectedItem?.label}
-            clearable
-            wrapOptions
-            placeholder="Search a set or product..."
-            emptyMessage="No sets or products match."
-          />
+          <ItemPicker line={line} lines={lines} editor={editor} />
           {/* AC-S1-11: below the app's 992px mobile breakpoint (useIsMobile),
               the same fields stack here instead of living in their own
               columns - never both at once (isMobile picks exactly one), so
@@ -870,7 +1010,7 @@ function LineRow({
                   value: combo.combo_id,
                   label: combo.name,
                 }))}
-                placeholder="Package"
+                placeholder="Ala carte"
                 emptyMessage="No packages."
                 size="sm"
               />
@@ -923,37 +1063,6 @@ function LineRow({
           )}
         </Fragment>
       ))}
-      {showParts && (
-        <tr className="align-top">
-          <td colSpan={subRowSpan} className="px-2 pb-2 pl-9">
-            <div className="border-l-2 border-border pl-3">
-              {/* The shared catalogue search, so a part missing from the package -
-                  or on a product that has none - can be named by hand (AC-S2-4).
-                  It holds no value of its own: picking adds a row and it returns
-                  to its placeholder, so there is nothing to clear. */}
-              <SearchableSelect
-                value=""
-                onChange={() => {
-                  /* the whole option carries the code; see onOptionChange */
-                }}
-                onOptionChange={(option) => {
-                  // The package's own rows come back by their id; anything else is a catalogue part.
-                  if (option?.value.startsWith(PACKAGE_ROW)) {
-                    onRestorePart(line.key, option.value.slice(PACKAGE_ROW.length));
-                  } else {
-                    onAddPart(line.key, option);
-                  }
-                }}
-                fetchOptions={fetchAddPartOptions}
-                wrapOptions
-                placeholder="Add part"
-                emptyMessage="No products match."
-                size="sm"
-              />
-            </div>
-          </td>
-        </tr>
-      )}
       {(reasons.length > 0 || warning) && (
         <tr>
           <td colSpan={subRowSpan} className="px-2 pb-2">

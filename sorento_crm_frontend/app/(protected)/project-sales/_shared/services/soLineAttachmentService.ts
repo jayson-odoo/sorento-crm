@@ -19,9 +19,28 @@ import { extractApiError } from '@/lib/api-client';
  *         file was modelled on, nothing in this domain ever calls the DELETE route
  *         directly, so there is no caller for it to exist for parity with.
  *  Auth: `projects.projects.view` (lookup), `projects.projects.edit` (upload/delete).
+ *
+ * SPARE-PART-ORDER-REQUEST (UAC R4): the same files on an ORDER INQUIRY ROW (a spare part
+ * request's line), through the same backend service (`so_line_attachments.OI_ROW`):
+ *  POST   /api/v1/project-sales/order-inquiry-rows/attachments/lookup   {row_ids}
+ *  POST   /api/v1/project-sales/order-inquiry-rows/{rowId}/attachments  multipart files[]
+ *  DELETE deferred, `order_inquiry_row_attachment.delete`.
+ *  Auth: whoever can see the inquiry (lookup); the requester while draft / rejected, the
+ *  current approver while pending (upload/delete).
  */
 
-const BASE = '/api/v1/project-sales/sales-order-lines';
+/** What the files hang off: a core sales-order line, or an order inquiry row. */
+export type AttachmentTargetKind = 'sales_order_line' | 'order_inquiry_row';
+
+export interface AttachmentTarget {
+  kind: AttachmentTargetKind;
+  id: string;
+}
+
+const TARGETS: Record<AttachmentTargetKind, { base: string; lookupKey: string }> = {
+  sales_order_line: { base: '/api/v1/project-sales/sales-order-lines', lookupKey: 'line_ids' },
+  order_inquiry_row: { base: '/api/v1/project-sales/order-inquiry-rows', lookupKey: 'row_ids' },
+};
 
 export interface SoLineAttachment {
   id: string;
@@ -37,12 +56,14 @@ export type SoLineAttachmentsByLine = Record<string, SoLineAttachment[]>;
 
 export async function lookupSoLineAttachments(
   lineIds: string[],
+  kind: AttachmentTargetKind = 'sales_order_line',
 ): Promise<SoLineAttachmentsByLine> {
   if (lineIds.length === 0) return {};
-  const response = await apiFetch(`${BASE}/attachments/lookup`, {
+  const { base, lookupKey } = TARGETS[kind];
+  const response = await apiFetch(`${base}/attachments/lookup`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ line_ids: lineIds }),
+    body: JSON.stringify({ [lookupKey]: lineIds }),
   });
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to load attachments'));
@@ -52,10 +73,11 @@ export async function lookupSoLineAttachments(
 export async function uploadSoLineAttachments(
   lineId: string,
   files: File[],
+  kind: AttachmentTargetKind = 'sales_order_line',
 ): Promise<SoLineAttachment[]> {
   const form = new FormData();
   for (const file of files) form.append('files', file);
-  const response = await apiFetch(`${BASE}/${lineId}/attachments`, {
+  const response = await apiFetch(`${TARGETS[kind].base}/${lineId}/attachments`, {
     method: 'POST',
     body: form,
   });

@@ -22,6 +22,7 @@ UAC: `documentation/plans/audit/standard-history-10nov-acceptance-criteria.md` A
 from __future__ import annotations
 
 from collections import defaultdict
+from decimal import Decimal, InvalidOperation
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
@@ -123,10 +124,11 @@ class _Rows:
         }
 
 
-def history(db: Session, inquiry_id: str) -> List[dict]:
+def history(db: Session, inquiry_id: str, *, mask_cost: bool = False) -> List[dict]:
     rows = _Rows(db, inquiry_id)
     events: List[dict] = []
     events += _raises(db, inquiry_id, rows)
+    events += _request_events(db, inquiry_id, rows, mask_cost=mask_cost)
     if rows.ids:
         events += _presses(db, rows)
         events += _links(db, rows)
@@ -153,6 +155,118 @@ def _event(event_id: str, kind: str, at, actor_id, title: str, lines, actor=None
         "title": title,
         "lines": list(lines),
     }
+
+
+#: SPARE-PART-ORDER-REQUEST (UAC H1): the request's own moves, written by
+#: `spare_part_request_service` on the OI itself (`event` names the move).
+_REQUEST_KINDS = {
+    "SPR_CREATED": "created",
+    "SPR_EDITED": "edited",
+    "SPR_SUBMITTED": "submitted",
+    "SPR_APPROVED": "approved",
+    "SPR_REJECTED": "rejected",
+    "SPR_LINE_CHANGED": "changed",
+    "SPR_RAISED": "raised",
+    "SPR_REVISED": "revised",
+}
+#: `unit_cost`: a spare part line's price is the expected supplier cost, audited under the
+#: cost key so every History reader masks it (`cost_access.COST_AUDIT_KEYS`).
+_LINE_FIELD_LABEL = {"qty": "Qty", "unit_cost": "Unit price"}
+#: The fields a requester's edit can move on a line, in the order History reads them.
+_EDIT_FIELD_LABEL = (
+    ("product", "Product"),
+    ("description", "Description"),
+    ("stock_location", "Location"),
+    ("qty", "Qty"),
+    ("unit_cost", "Unit price"),
+)
+
+
+def _shown(field: str, value: Any) -> Any:
+    """A price reads as money, two decimals (`25.00`), the way the Lines tab prints it; a
+    masked value ("hidden") and every other field as they are."""
+    if field != "unit_cost" or value is None:
+        return value
+    try:
+        return format(Decimal(str(value)), ",.2f")
+    except (InvalidOperation, ValueError):
+        return value
+
+
+def _request_events(
+    db: Session, inquiry_id: str, rows: _Rows, *, mask_cost: bool = False
+) -> List[dict]:
+    """A spare part request's submit / approve / reject / line change / revise / raise, and
+    the photos added to or removed from its lines. Nothing on a sales-order inquiry.
+    `mask_cost`: the reader may not see cost, so a price change reads "hidden"."""
+    from app.services.cost_access import mask_audit_values
+
+    audits = (
+        db.query(AuditLog)
+        .filter(
+            AuditLog.entity_type == "project_order_inquiries",
+            AuditLog.entity_id == str(inquiry_id),
+        )
+        .all()
+    )
+    if not audits:
+        return []
+    actors = audit_actor(db, audits)
+    out = []
+    for audit in audits:
+        old = audit.old_values or {}
+        new = audit.new_values or {}
+        if mask_cost:
+            old, new, _masked = mask_audit_values(old, new)
+        kind = _REQUEST_KINDS.get(audit.event or "")
+        row_id = str(new.get("row_id") or old.get("row_id") or "")
+        lines = []
+        if kind == "changed" and row_id in rows.by_id:
+            field = next((f for f in _LINE_FIELD_LABEL if f in new), None)
+            if field:
+                lines = [
+                    rows.line(
+                        row_id,
+                        f"{_LINE_FIELD_LABEL[field]} {_shown(field, old.get(field))} → "
+                        f"{_shown(field, new.get(field))}",
+                    )
+                ]
+        elif kind == "edited":
+            # R5: each changed line, old -> new per field (the header's changes are the title).
+            prior = {str(e.get("row_id")): e for e in (old.get("lines") or []) if isinstance(e, dict)}
+            for entry in new.get("lines") or []:
+                if not isinstance(entry, dict) or str(entry.get("row_id")) not in rows.by_id:
+                    continue
+                if entry.get("added"):
+                    lines.append(rows.line(str(entry["row_id"]), "Added"))
+                    continue
+                was = prior.get(str(entry["row_id"]), {})
+                moved = [
+                    f"{label} {_shown(field, was.get(field))} → {_shown(field, entry.get(field))}"
+                    for field, label in _EDIT_FIELD_LABEL
+                    if field in entry
+                ]
+                if moved:
+                    lines.append(rows.line(str(entry["row_id"]), ", ".join(moved)))
+        elif kind is None:
+            if "attachment_added" in new:
+                kind, verb, name = "photo_added", "Added", new.get("attachment_added")
+            elif "attachment_removed" in old:
+                kind, verb, name = "photo_removed", "Removed", old.get("attachment_removed")
+            else:
+                continue
+            if row_id in rows.by_id:
+                lines = [rows.line(row_id, f"{verb} {name}")]
+        title = audit.description or (kind or "").replace("_", " ").capitalize()
+        if kind in ("photo_added", "photo_removed"):
+            title = f"{'Added' if kind == 'photo_added' else 'Removed'} a file"
+        out.append(
+            _event(
+                f"audit-{audit.id}", kind, audit.changed_at, audit.user_id, title, lines,
+                actor=actors.get(str(audit.id)),
+            )
+        )
+    return out
 
 
 def _raises(db: Session, inquiry_id: str, rows: _Rows) -> List[dict]:

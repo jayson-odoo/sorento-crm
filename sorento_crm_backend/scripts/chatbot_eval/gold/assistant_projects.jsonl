@@ -1,0 +1,4 @@
+{"id": "asst-projects-01", "module": "projects", "message": "what is linked to project PS26-0001?", "expect": {"entity": "project_related_record"}}
+{"id": "asst-projects-02", "module": "projects", "message": "any complaints or stock inquiries on the Fake Tower Phase 1 project?", "expect": {"entity": "project_related_record"}}
+{"id": "asst-projects-03", "module": "projects", "message": "which project imports are still waiting for review?", "expect": {"entity": "project_import_run"}}
+{"id": "asst-projects-04", "message": "show the last project import run", "module": "projects", "expect": {"entity": "project_import_run"}}
