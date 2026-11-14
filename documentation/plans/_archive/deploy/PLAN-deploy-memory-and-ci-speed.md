@@ -1,9 +1,9 @@
 # Deploy memory budget + CI speed
 
-Status: in progress (2026-09-10)
+Status: implemented (PR #826 merged and deployed 2026-09-10, run 34486480226)
 Owner: captain (Fable) / coder (Sonnet)
 Lane: `feat/deploy-memory-and-ci-speed` (`.claude/worktrees/deploy-memory-ci-speed`)
-UAC: `deploy-memory-and-ci-speed-acceptance-criteria.md`
+UAC: `deploy-memory-and-ci-speed-acceptance-criteria.md` (alongside, archived together)
 Supersedes nothing. Extends `documentation/plans/ZERO-DOWNTIME-DEPLOY-PLAN.md` (implemented as
 `scripts/blue_green_deploy.sh`), which assumed the host could hold two colours.
 
@@ -182,3 +182,4 @@ Mirror the same edits into the local gitignored copy so the two do not drift.
   (F4), UAC-18 billable-minutes note (F12).
 - 2026-09-10: merging `origin/main` into the lane next (one commit ahead, #814, no file
   overlap expected).
+- 2026-09-10 14:23 UTC: first main deploy on the new pipeline. Run 21 min (was 36), build-and-deploy 3 min (was 15), server step 2 min (was 5). Backend colour after deploy 1.43 GB (was 4.7); host used 4.8 GB, available 11.2 GB (was 9.6 / 6.4). Swap 6G + oom_score_adj applied by the owner. UAC-19 (cache-dance second-run timing) stays open; #820 is the remaining critical path.
