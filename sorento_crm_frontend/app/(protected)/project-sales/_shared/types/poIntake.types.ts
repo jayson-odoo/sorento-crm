@@ -177,6 +177,19 @@ export interface POVersion {
   approved_at?: string | null;
   countersigned_by_name?: string | null;
   countersigned_at?: string | null;
+  /** Additive: present on a confirm response only. */
+  confirm_result?: POConfirmResult | null;
+}
+
+/** What a confirm wrote, and whether the codes picked on the document were remembered. */
+export interface POConfirmResult {
+  line_count: number;
+  po_amount: string;
+  model_mismatch_count: number;
+  price_mismatch_count: number;
+  /** `issuer_not_linked`: the chosen issuer has no customer, so nothing was remembered. */
+  codes_not_remembered?: 'issuer_not_linked' | null;
+  codes_not_remembered_party?: string | null;
 }
 
 /**

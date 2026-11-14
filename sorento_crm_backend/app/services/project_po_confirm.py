@@ -26,6 +26,7 @@ from app.models.project_so import (
 )
 from app.models.projects import (
     Project,
+    ProjectParty,
     ProjectPurchaseOrder,
     ProjectPurchaseOrderLine,
     ProjectQuotation,
@@ -217,9 +218,17 @@ class POConfirmationMixin:
 
         po = self.get_po(version.purchase_order_id)
         # Whose codes this PO teaches: the issuer's customer, else the project lead's buyer.
-        # A confirm with neither would agree to lines and learn from nobody (crew pass 2).
+        # Refused only when nobody is named at all. A chosen issuer that is not linked to a
+        # customer confirms, learns nothing, and the result says why (lead decision: no
+        # extra refusals).
         customer_id = customer_code_map.customer_id_for_po(self.db, po)
-        if not customer_id:
+        codes_not_remembered: Optional[str] = None
+        codes_not_remembered_party: Optional[str] = None
+        if not customer_id and po.issuing_party_id:
+            party = self.db.get(ProjectParty, po.issuing_party_id)
+            codes_not_remembered = "issuer_not_linked"
+            codes_not_remembered_party = party.name if party is not None else None
+        elif not customer_id:
             raise AppException(
                 status_code=422,
                 message=(
@@ -308,7 +317,7 @@ class POConfirmationMixin:
         # Every product a person chose on this document (accepted or picked by hand) is
         # remembered for the customer now that the customer is known. Exact-code and map
         # lines already resolve by themselves and are left as they are.
-        for line in live:
+        for line in live if customer_id else []:
             if line.resolution_source in ("accepted", "manual") and line.resolved_product_id:
                 customer_code_map.remember_code(
                     self.db,
@@ -339,6 +348,9 @@ class POConfirmationMixin:
             "po_amount": po.po_amount,
             "model_mismatch_count": sum(1 for line in written if line.model_mismatch),
             "price_mismatch_count": sum(1 for line in written if line.price_mismatch),
+            # Null both when a customer is known and the codes were remembered.
+            "codes_not_remembered": codes_not_remembered,
+            "codes_not_remembered_party": codes_not_remembered_party,
         }
 
     def _bind_quotation_version(

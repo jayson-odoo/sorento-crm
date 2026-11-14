@@ -156,10 +156,20 @@ export function usePOIntakeController(
       settle(next);
       invalidatePo();
       toast.success('Confirmed. These lines are now the PO.');
+      const outcome = next?.confirm_result;
+      if (outcome?.codes_not_remembered === 'issuer_not_linked') {
+        toast.warning(
+          `Codes were not remembered: ${
+            outcome.codes_not_remembered_party ?? 'the issuer'
+          } is not linked to a customer. Link it under Parties.`,
+        );
+      }
     },
-    // The qty-over soft stop is not a failure: the screen asks for the reason instead.
+    // The qty-over soft stop is not a failure: the screen asks for the reason instead. The
+    // issuer refusal is said once, under the "Issued by" picker, not again as a toast.
     onError: (error: Error) => {
-      if (!isQtyOver(error)) toast.error(error.message);
+      const code = (error as { code?: string | null }).code;
+      if (!isQtyOver(error) && code !== ISSUER_REQUIRED) toast.error(error.message);
     },
   });
 

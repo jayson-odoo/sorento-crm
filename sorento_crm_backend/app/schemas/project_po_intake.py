@@ -210,6 +210,16 @@ class POVersionConfirmResult(BaseModel):
     po_amount: Decimal = Decimal("0")
     model_mismatch_count: int = 0
     price_mismatch_count: int = 0
+    codes_not_remembered: Optional[str] = Field(
+        None,
+        description=(
+            "issuer_not_linked when the chosen issuer is not linked to a customer, so the "
+            "codes picked on this document were not remembered. Null when they were."
+        ),
+    )
+    codes_not_remembered_party: Optional[str] = Field(
+        None, description="The issuer's name, when codes_not_remembered is set."
+    )
 
 
 class POVersionDetailResponse(BaseModel):

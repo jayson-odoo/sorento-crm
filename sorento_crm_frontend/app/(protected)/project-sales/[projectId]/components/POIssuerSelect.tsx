@@ -2,7 +2,6 @@
 
 import * as React from 'react';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { useProjectParties } from '../../_shared/hooks/useProjects';
 import { listParties } from '../../_shared/services/projectService';
 
 const PAGE_SIZE = 50;
@@ -13,8 +12,8 @@ const PAGE_SIZE = 50;
  * first. One component for the PO header card and the PO intake confirm screen.
  *
  * `issuerName` is the current issuer's name as the record carries it, so the box names it
- * even when it is not on a fetched page. Only when a record carries an issuer but no name is
- * the first page looked up for it.
+ * even when it is not on a fetched page. The parties list is asked only when a person opens
+ * or searches the box, never just to find a name.
  */
 export function POIssuerSelect({
   id,
@@ -45,15 +44,7 @@ export function POIssuerSelect({
     [],
   );
 
-  const needsName = Boolean(value) && !issuerName;
-  const firstPage = useProjectParties(
-    { limit: PAGE_SIZE },
-    { enabled: needsName },
-  );
-  const label =
-    issuerName ??
-    firstPage.data?.data?.find((party) => party.id === value)?.name ??
-    'Selected party';
+  const label = issuerName || 'Selected party';
 
   return (
     <SearchableSelect

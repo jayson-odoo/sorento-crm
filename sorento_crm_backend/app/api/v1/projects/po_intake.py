@@ -420,6 +420,8 @@ def confirm_purchase_order_version(
             "po_amount": result["po_amount"],
             "model_mismatch_count": result["model_mismatch_count"],
             "price_mismatch_count": result["price_mismatch_count"],
+            "codes_not_remembered": result["codes_not_remembered"],
+            "codes_not_remembered_party": result["codes_not_remembered_party"],
         }
         db.commit()
         # After the response: the alert fans out per recipient and must not hold Confirm.
