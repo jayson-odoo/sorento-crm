@@ -22,3 +22,30 @@ Phase B1 = files #2349 does not touch. Phase B2 (after #2349 merges) wires them 
 - AC-7.3 Never hide (owner Q4): every icon gets a position (positions.length === count). If the grid needs more height than the box, icons shrink down to a minimum readable size (4 mm), then the grid grows: height_mm exceeds the box and `overflow` is true (the canvas will show a warning in B2).
 - AC-7.4 `align` applies per row (left, center, right); rows are stacked from the top with `gap_mm` between them.
 - AC-7.5 `featureIconRow` keeps its current behaviour for existing callers until B2 switches them.
+
+## Phase B2 (after #2349 merges; red tests may land earlier in new test files)
+
+### AC-3 Accessory photo per main product + accessory link (owner Q1 c)
+- AC-3.1 Migration adds nullable `product_accessories.photo_attachment_id` (FK attachments.id, ON DELETE SET NULL). One column: a library asset and a product photo both resolve to an attachment.
+- AC-3.2 `PUT /api/v1/products/{product_id}/accessories` row payload accepts `photo_attachment_id` (null clears it) for both kinds of row (library accessory and catalogue product); the list GET returns it. An attachment the caller cannot see is refused (404, same gate as product photos and kit assets).
+- AC-3.3 Tag data: a row with `photo_attachment_id` set prints that photo as the card picture (`image` and `images[0]`) for both kinds of row, ahead of the per-row `image_id` and the product's lead photo; cleared, it falls back exactly as today.
+- AC-3.4 Designer: right-click an accessory card on the canvas -> "Change photo" opens "Choose an image" (product photos of the accessory product, asset library, upload); the pick saves to that main product's list row. "Reset to product photo" appears only when an override is set and clears it. Every tag of that main product shows the new photo after reload.
+
+### AC-5 Accessories box rows, AC-7.6 Spec icons box rows
+- AC-5.1 Accessories box props gain `rows?: 'auto' | 1 | 2 | 3 | 4` beside `columns`; the inspector shows "Columns" and "Rows" selects (Auto, 1-4); the old "One column or row" label is gone. Backend layer schema accepts `rows`.
+- AC-5.2 Columns Auto + Rows 2 with 5 cards: 2 rows (3 + 2), filled left to right. Columns 2 + Rows Auto with 5 cards: 3 rows (2, 2, 1).
+- AC-5.3 Never hide (owner Q4): every card is laid out; cards shrink to a minimum readable size, then the box grows; a card that would cross the tag edge shows a visible warning on the canvas naming it. No silent drop.
+- AC-7.6 Spec icons box gains the same Columns/Rows selects and lays out with `featureIconGrid` on the canvas and the print page; an overflow shows the same canvas warning.
+
+### AC-8 Spec icon choice per product on each tag (owner Q2 b)
+- AC-8.1 Spec icons layer props gain `hiddenIconIds?: string[]` (asset ids); the backend layer schema accepts it.
+- AC-8.2 The inspector lists the icons this tag's product would show, each with a checkbox (ticked = shown). Unticking hides that icon on this tag only; other tags of the same template are unaffected.
+- AC-8.3 Canvas and print skip hidden icons; the remaining icons close up.
+
+### AC-1.6 to 1.8 Font per word wired
+- AC-1.6 The Inspector's description/content editor passes the inspector's font list (`library.fontOptions`, uploaded fonts included) as `fontOptions`.
+- AC-1.7 Print parity: the print page draws a run's fontFamily and fontSize exactly as the canvas (`runFace`); a 14pt Montserrat word prints in Montserrat 14pt.
+- AC-1.8 Accessory cards scale run sizes with the card (a card scaled to 50 % draws a 14pt run at 7pt).
+
+### AC-6.3 One box per picked image
+- AC-6.3 Adding an image from the canvas toolbar opens the picker with `onPickMany`; picking 3 images adds 3 image boxes, each placed below the previous one, all selected. Replacing an existing box's image stays single-pick.
