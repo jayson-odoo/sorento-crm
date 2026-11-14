@@ -140,3 +140,39 @@ def test_M3_an_asker_with_no_agent_naming_someone_else_keeps_that_filter(db, ask
 
     assert args.get("agent") == "Agent B", args
     assert "Left out" not in (reply.get("message") or ""), reply
+
+
+# ------------------------------------------------------------------ review round 6: an asker with an agent is untouched
+
+
+@pytest.mark.parametrize("text,form", [
+    ("am I on target this year?", "agent"),
+    ("am I on target this year?", "owner_filter"),
+], ids=["agent", "owner_filter"])
+def test_M4_an_asker_with_an_agent_asking_am_i_on_target_keeps_the_own_name(db, asker, monkeypatch, text, form):
+    """Lead decision (review round 6): the own-name strip runs only for an asker with no sales agent of their own.
+    "am I on target" says no "my", yet an agent asking it means themself: the filter on their own name reaches the
+    query unchanged (dropping it gave a full-view user everyone's rows), and no "Left out" note."""
+    _own_agent(db, asker)
+    query = {"entity": ENTITY, "period": "this_year"}
+    if form == "agent":
+        query["agent"] = ASKER
+    else:
+        query["filters"] = [{"field": "owner", "op": "eq", "value": ASKER}]
+    args, reply = _ask(db, asker, query, text, monkeypatch)
+
+    assert ASKER in _names(args), f"the asker's own name was dropped: {args}"
+    assert "Left out" not in (reply.get("message") or ""), reply
+
+
+def test_M5_an_asker_with_an_agent_whose_own_name_the_model_adds_keeps_it(db, asker, monkeypatch):
+    """Lead decision: an asker with an agent keeps today's live behaviour (the strip was never reached on crm_query
+    for anyone), so a name the model adds to "payout per dealer" is kept too."""
+    _own_agent(db, asker)
+    query = {"entity": ENTITY, "period": "this_year", "agent": ASKER,
+             "filters": [{"field": "owner_kind", "op": "eq", "value": "dealer"}]}
+    args, reply = _ask(db, asker, query, "payout per dealer this year", monkeypatch)
+
+    assert args.get("agent") == ASKER, args
+    assert {"field": "owner_kind", "op": "eq", "value": "dealer"} in args["filters"]
+    assert "Left out" not in (reply.get("message") or ""), reply
