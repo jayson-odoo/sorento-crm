@@ -668,30 +668,37 @@ def _achieved_invoiced(
     if not credit_rows:
         return out
 
-    pv = values(
-        column("period_id", _UUID),
-        column("target_id", _UUID),
-        column("credit_group", Integer),
-        column("pstart", Date),
-        column("pend", Date),
-        column("metric", String),
-        column("product_scope", String),
-        name="ipv",
-    ).data(
-        [
-            (s.period_id, s.target_id, group_of[s.period_id], s.period_start, s.period_end,
-             s.metric, s.product_scope)
-            for s in specs
-        ]
-    )
-    cr = values(
-        column("credit_group", Integer),
+    # The credit rows crossed with their periods here, in Python: one row per (credit row, period of
+    # its group) with the window both allow. A VALUES list has no statistics, so a join on top of a
+    # VALUES join is planned on a guessed row count: met in two joins (the credit rows, then the
+    # periods on a date range), the first was guessed at one row and the planner nested the periods
+    # under every credited document (sorento_prod_1112, 14 Nov: 42,456 x 260 comparisons, 9 s; the
+    # hashed plan 0.15 s). One list, met on a hash of (kind, key), compares a document with its own
+    # key's periods only, and finds the same (document, credit row, period) triples.
+    periods_of: Dict[int, List[PeriodSpec]] = {}
+    for s in specs:
+        periods_of.setdefault(group_of[s.period_id], []).append(s)
+    windows = []
+    for group, kind, key, valid_from, valid_to in credit_rows:
+        for s in periods_of[group]:
+            start, end = max(valid_from, s.period_start), min(valid_to, s.period_end)
+            if start <= end:
+                windows.append(
+                    (kind, key, start, end, s.period_id, s.target_id, s.metric, s.product_scope)
+                )
+    if not windows:
+        return out
+    cw = values(
         column("ckind", Integer),
         column("credit_key", _UUID),
-        column("valid_from", Date),
-        column("valid_to", Date),
-        name="icr",
-    ).data(credit_rows)
+        column("wstart", Date),
+        column("wend", Date),
+        column("period_id", _UUID),
+        column("target_id", _UUID),
+        column("metric", String),
+        column("product_scope", String),
+        name="icw",
+    ).data(windows)
 
     doc_date = BillingDocument.doc_date
     span = doc_date.between(min(s.period_start for s in specs), max(s.period_end for s in specs))
@@ -729,24 +736,17 @@ def _achieved_invoiced(
     )
     docs_credited = (
         select(
-            pv.c.period_id, pv.c.target_id, pv.c.metric, pv.c.product_scope,
+            cw.c.period_id, cw.c.target_id, cw.c.metric, cw.c.product_scope,
             docs.c.doc_id, docs.c.amount,
             (docs.c.customer_id if split else null().cast(_UUID)).label("customer_id"),
         )
         .select_from(docs)
         .join(
-            cr,
+            cw,
             and_(
-                cr.c.ckind == docs.c.ckind,
-                cr.c.credit_key == docs.c.credit_key,
-                docs.c.doc_date.between(cr.c.valid_from, cr.c.valid_to),
-            ),
-        )
-        .join(
-            pv,
-            and_(
-                pv.c.credit_group == cr.c.credit_group,
-                docs.c.doc_date.between(pv.c.pstart, pv.c.pend),
+                cw.c.ckind == docs.c.ckind,
+                cw.c.credit_key == docs.c.credit_key,
+                docs.c.doc_date.between(cw.c.wstart, cw.c.wend),
             ),
         )
         .cte("inv_credited")

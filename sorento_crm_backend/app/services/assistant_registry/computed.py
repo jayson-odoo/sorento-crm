@@ -40,6 +40,8 @@ from app.services.assistant_registry.types import EntityDef, FieldDef
 WINDOW_ALIASES = frozenset({"period_start", "period_end", "start_date", "end_date", "date"})
 #: The most periods one call reads before its filters: past it the window is too wide to compute in a turn.
 MAX_COMPUTED_ROWS = 2000
+#: A computed entity's statement timeout: no advice to narrow (its filters run after the service, see `run_computed`).
+COMPUTE_TIMEOUT = "The question took too long to answer."
 #: The widest date window one call computes (security review, wave 2: "all payouts ever" is not a chat question).
 MAX_WINDOW_DAYS = 731
 
@@ -342,9 +344,17 @@ def run_computed(db, user_id: str, entity: EntityDef, own_only: bool, slugs: set
     from app.services.assistant_registry.query import timed
 
     # The service runs under the same statement timeout as a SQL query; it refuses a window over the cap itself,
-    # BEFORE computing (a count first).
+    # BEFORE computing (a count first). Its filters (agent, owner kind, ...) are applied to the computed rows
+    # below, after the service, so a filtered retry computes the same periods: the refusal never suggests one
+    # (lane TARGET-ACHIEVED-PERF, 14 Nov: three this-year questions, each retried with an agent filter).
+    def compute():
+        return timed(
+            db, lambda: entity.compute(db, user_id, own_only, date_from, date_to, limit=MAX_COMPUTED_ROWS),
+            timeout_message=COMPUTE_TIMEOUT,
+        )
+
     try:
-        computed = timed(db, lambda: entity.compute(db, user_id, own_only, date_from, date_to, limit=MAX_COMPUTED_ROWS))
+        computed = compute()
     except QueryRefused as exc:
         if exc.code != "timeout" or not defaulted:
             raise
@@ -355,7 +365,7 @@ def run_computed(db, user_id: str, entity: EntityDef, own_only: bool, slugs: set
         notes = [n for n in notes if not n.startswith("No period named")]
         notes.insert(0, f"No period named and too many periods this year: the periods containing today "
                         f"({_display_date(date_from.isoformat(), 'date')}).")
-        computed = timed(db, lambda: entity.compute(db, user_id, own_only, date_from, date_to, limit=MAX_COMPUTED_ROWS))
+        computed = compute()
     tests, named_agents = _exact_agents(entity, rest, tests, computed)
     if named_agents:
         notes.insert(0, named_agents)

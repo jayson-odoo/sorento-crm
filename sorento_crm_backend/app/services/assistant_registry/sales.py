@@ -48,7 +48,7 @@ def _target_rows(db, user_id: str, own_only: bool, date_from: date, date_to: dat
     if periods > limit:
         from app.services.assistant_registry.query import QueryRefused
 
-        raise QueryRefused("timeout", f"More than {limit} target periods in that window; narrow it (a month, an agent).")
+        raise QueryRefused("timeout", f"More than {limit} target periods in that window; narrow it (a month).")
     targets = (
         db.query(SalesTarget).filter(SalesTarget.id.in_(overlapping), *mine).order_by(SalesTarget.target_no).all()
     )
