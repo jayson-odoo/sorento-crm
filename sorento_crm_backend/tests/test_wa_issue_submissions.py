@@ -578,9 +578,9 @@ def test_P1_an_idea_missing_nothing_has_no_missing_intro_and_no_empty_line(env, 
     reply = out["reply_text"]
     assert "\n\n" not in reply and not reply.endswith("\n"), repr(reply)
     lines = reply.split("\n")
-    assert len(lines) == 2, lines
-    assert IDEA_NUMBER in lines[0] and TITLE in lines[0]
-    assert lines[1] == f"{CRM}/ideas/{idea_id}"
+    assert len(lines) == 3, lines
+    assert TITLE in lines[0] and IDEA_NUMBER in lines[1]
+    assert lines[2] == f"{CRM}/ideas/{idea_id}"
 
 
 def test_P2_an_idea_whose_photos_all_failed_still_asks_for_photos(env, photos):  # noqa: F811

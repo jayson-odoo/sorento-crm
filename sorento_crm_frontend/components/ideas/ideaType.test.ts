@@ -7,7 +7,7 @@ const asIdea = (over: Record<string, unknown>) => over as unknown as Idea;
 
 describe('ideaType helper (B-4)', () => {
   it('labels are Feature request and Issue', () => {
-    expect(IDEA_TYPE_LABEL).toEqual({ idea: 'Feature request', issue: 'Issue' });
+    expect(IDEA_TYPE_LABEL).toEqual({ idea: 'Feature request', issue: 'Problem report' });
   });
   it('reads issue and idea as sent', () => {
     expect(ideaType(asIdea({ type: 'issue' }))).toBe('issue');

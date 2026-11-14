@@ -131,13 +131,13 @@ describe('B-1 Type column', () => {
     const titles = Array.from(document.querySelectorAll('table th')).map((th) => th.textContent?.trim());
     expect(titles).toContain('Type');
     expect(within(rowOf('ZZT idea A')).getByText('Feature request')).toBeInTheDocument();
-    expect(within(rowOf('ZZT idea B')).getByText('Issue')).toBeInTheDocument();
+    expect(within(rowOf('ZZT idea B')).getByText('Problem report')).toBeInTheDocument();
     expect(within(rowOf('ZZT idea C')).getByText('Feature request')).toBeInTheDocument();
   });
 
   it('is one line (truncate, no wrapping)', async () => {
     await open();
-    const cell = within(rowOf('ZZT idea B')).getByText('Issue');
+    const cell = within(rowOf('ZZT idea B')).getByText('Problem report');
     const cls = `${cell.className} ${cell.parentElement?.className ?? ''}`;
     expect(cls).toMatch(/truncate|whitespace-nowrap/);
   });
@@ -159,7 +159,7 @@ describe('B-2 Type multi-select filter', () => {
     await open();
     const box = await typeBox(user);
     expect(box.hasAttribute('multiple')).toBe(true);
-    expect(within(box).getByText('Issue')).toBeInTheDocument();
+    expect(within(box).getByText('Problem report')).toBeInTheDocument();
   });
 
   it('ticking Issue shows only issues', async () => {

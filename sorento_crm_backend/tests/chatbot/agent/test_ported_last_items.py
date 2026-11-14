@@ -166,7 +166,7 @@ def test_a_non_panel_idea_confirm_says_exactly_what_main_says(db, monkeypatch):
     action_id = str(uuid.uuid4())
     waiting = type("W", (), {"id": action_id})()
     out = agent_loop._decide(db, ctx, agent_loop.CONFIRM_ACTION, {"action_id": action_id}, "t1", [], waiting=waiting)
-    assert out.message == "The idea's number and link are added to your reply automatically. Do not write them.", (
+    assert out.message == "The feedback's number and link are added to your reply automatically. Do not write them.", (
         out.message
     )
 
@@ -287,7 +287,7 @@ def test_ordinary_text_with_accents_chinese_and_an_emoji_is_not_refused(db, fiel
 
 
 TICKET_LINE = "The ticket link is added to your reply automatically. Do not write it."
-IDEA_LINE = "The idea's number and link are added to your reply automatically. Do not write them."
+IDEA_LINE = "The feedback's number and link are added to your reply automatically. Do not write them."
 
 
 def _decide_on_panel(db, w, action, notes):

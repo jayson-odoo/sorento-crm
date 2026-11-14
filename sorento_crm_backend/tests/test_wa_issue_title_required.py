@@ -97,7 +97,7 @@ def test_R13_a_malay_issue_with_no_extracted_title_is_filed_with_a_title(env):  
     assert "\n\n" not in reply and not reply.startswith("\n"), repr(reply)
     lines = _lines(reply)
     assert any(IDEA_NUMBER in line for line in lines)
-    assert expected in lines, lines
+    assert f"Maklum balas anda telah direkodkan: Laporan masalah - {expected}" in lines, lines
     assert f"{CRM}/ideas/{idea_id}" in lines
 
 

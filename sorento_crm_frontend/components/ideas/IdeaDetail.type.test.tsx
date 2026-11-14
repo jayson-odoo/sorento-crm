@@ -115,7 +115,7 @@ describe('B-3 detail metadata Type', () => {
   it('an issue shows "Type" and "Issue"', async () => {
     await show(makeIdea({ type: 'issue' }));
     expect(screen.getByText(/Type/)).toBeInTheDocument();
-    expect(document.body.textContent).toMatch(/Type\s*:?\s*Issue/);
+    expect(document.body.textContent).toMatch(/Type\s*:?\s*Problem report/);
   });
 
   it('a feature request shows the Feature request label', async () => {

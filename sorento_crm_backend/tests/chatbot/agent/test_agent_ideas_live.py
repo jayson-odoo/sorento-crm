@@ -619,7 +619,7 @@ def test_fr3_c3_a_non_numeric_number_in_the_already_captured_line_is_left_out(db
     outcome = confirm(db, w, row)
 
     text = reply_of(outcome)
-    assert "already captured" in text and "say yes now" not in text
+    assert "already logged as feedback" in text and "say yes now" not in text
 
 
 # ------------------------------------------------------------------ fix round (S6 review)
