@@ -7,6 +7,8 @@ import { useAccountProfileForHeader } from '@/hooks/useAccountProfileForHeader';
 import { UiVersionContext, type ThemeMode, type UiVersion, type UiVersionState } from './context';
 import { putThemeMode, putUiVersion } from './uiVersionService';
 
+const PROFILE_REFRESH_MS = 5 * 60 * 1000;
+
 /**
  * Holds the UI version for the whole protected app (UAC B-7..B-9). It reads the version once,
  * from the existing /me profile query; a missing field or a failed /me means v1. While v2 is the
@@ -28,6 +30,20 @@ export function UiVersionProvider({ children }: { children: ReactNode }) {
   }, [uiVersion]);
 
   useEffect(() => () => document.documentElement.removeAttribute('data-ui'), []);
+
+  // An open v2 tab must hear that the kill switch went on or the preview was revoked: re-read /me on
+  // window focus and every 5 minutes while v2 is the effective version. A v1 tab has nothing to lose.
+  const keyForRefresh = JSON.stringify(queryKey);
+  useEffect(() => {
+    if (uiVersion !== 'v2') return;
+    const refresh = () => void queryClient.invalidateQueries({ queryKey: JSON.parse(keyForRefresh) });
+    window.addEventListener('focus', refresh);
+    const timer = setInterval(refresh, PROFILE_REFRESH_MS);
+    return () => {
+      window.removeEventListener('focus', refresh);
+      clearInterval(timer);
+    };
+  }, [uiVersion, queryClient, keyForRefresh]);
 
   const keyString = JSON.stringify(queryKey);
   const patchProfile = useCallback(

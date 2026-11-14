@@ -206,14 +206,14 @@ export function NotificationsSheet({ trigger }: { trigger: ReactNode }) {
             (a span with type="button" fails axe aria-allowed-attr); the dot sits beside it. */}
         <span className="relative inline-flex">
           <SheetTrigger asChild>{trigger}</SheetTrigger>
-            {showUnreadDot && (
-              <span
-                className="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-medium text-destructive-foreground"
-                aria-label={`${unreadCount} unread notifications`}
-              >
-                {unreadCount > 99 ? '99+' : unreadCount}
-              </span>
-            )}
+          {showUnreadDot && (
+            <span
+              className="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-medium text-destructive-foreground"
+              aria-label={`${unreadCount} unread notifications`}
+            >
+              {unreadCount > 99 ? '99+' : unreadCount}
+            </span>
+          )}
         </span>
         {/* Passive utility panel: no scrim (D8). */}
         <SheetContent overlay={false} className="p-0 gap-0 sm:w-[500px] sm:max-w-none inset-5 start-auto h-auto rounded-lg p-0 sm:max-w-none [&_[data-slot=sheet-close]]:top-4.5 [&_[data-slot=sheet-close]]:end-5">

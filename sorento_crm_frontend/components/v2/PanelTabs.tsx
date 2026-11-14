@@ -1,6 +1,6 @@
 'use client';
 
-import { useId, useState, type ReactNode } from 'react';
+import { useId, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 import { useIsPhone } from './shell/useViewport';
 
@@ -41,9 +41,23 @@ export function PanelTabs({ panels }: { panels: Panel[] }) {
   const tabId = (id: string) => `${base}-tab-${id}`;
   const panelId = (id: string) => `${base}-panel-${id}`;
 
+  // ARIA tabs pattern: arrows move (wrapping), Home/End jump, and the focused tab is the active one.
+  const onTabKeyDown = (event: ReactKeyboardEvent) => {
+    const index = panels.findIndex((p) => p.id === active.id);
+    let next = index;
+    if (event.key === 'ArrowRight') next = (index + 1) % panels.length;
+    else if (event.key === 'ArrowLeft') next = (index - 1 + panels.length) % panels.length;
+    else if (event.key === 'Home') next = 0;
+    else if (event.key === 'End') next = panels.length - 1;
+    else return;
+    event.preventDefault();
+    setActiveId(panels[next].id);
+    document.getElementById(tabId(panels[next].id))?.focus();
+  };
+
   return (
     <div className="flex min-w-0 flex-col">
-      <div role="tablist" className="flex gap-1 overflow-x-auto border-b px-1">
+      <div role="tablist" onKeyDown={onTabKeyDown} className="flex gap-1 overflow-x-auto border-b px-1">
         {panels.map((panel) => {
           const selected = panel.id === active.id;
           return (

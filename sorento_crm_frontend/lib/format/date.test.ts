@@ -10,7 +10,7 @@
  *   lib/helpers.ts date helpers delegate to these, with identical output (F-2).
  */
 import { describe, expect, it } from 'vitest';
-import { formatDate, formatDateRange, formatDateTime, formatTime } from './date';
+import { formatDate, formatDateRange, formatDateTime, formatTime, normaliseApiDateString } from './date';
 import * as helpers from '@/lib/helpers';
 
 describe('formatDate', () => {
@@ -73,5 +73,14 @@ describe('lib/helpers date functions return the same strings as lib/format/date 
   it('helpers.formatDateRange === formatDateRange', () => {
     expect(helpers.formatDateRange('2026-01-01', '2026-03-31')).toBe(formatDateRange('2026-01-01', '2026-03-31'));
     expect(helpers.formatDateRange(null, null, '-')).toBe(formatDateRange(null, null, '-'));
+  });
+});
+
+describe('normaliseApiDateString', () => {
+  it('turns the API space separator and microseconds into an ISO string every browser parses', () => {
+    expect(normaliseApiDateString('2026-11-10 01:42:00.123456')).toBe('2026-11-10T01:42:00.123');
+  });
+  it('leaves an ISO string alone', () => {
+    expect(normaliseApiDateString('2026-11-10T01:42:00Z')).toBe('2026-11-10T01:42:00Z');
   });
 });

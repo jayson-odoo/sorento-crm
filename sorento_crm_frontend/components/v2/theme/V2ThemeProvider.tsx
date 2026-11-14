@@ -56,10 +56,26 @@ export function V2ThemeProvider({
     }
     const { tokens } = generateTheme(hex, effective);
     for (const name of THEME_VARIABLES) html.style.setProperty(name, tokens[name.slice(2) as keyof typeof tokens]);
-    html.classList.toggle('dark', effective === 'dark');
-    html.classList.toggle('light', effective === 'light');
-    html.style.colorScheme = effective;
+    const assert = () => {
+      html.classList.toggle('dark', effective === 'dark');
+      html.classList.toggle('light', effective === 'light');
+      html.style.colorScheme = effective;
+    };
+    assert();
     setApplied(true);
+
+    // next-themes can still be mounted in the app and rewrite these (a system theme change, another
+    // tab). Re-apply the v2 state when it drifts. Re-applying only writes when something differs, so
+    // the observer's own mutations settle at once and cannot loop.
+    const drifted = () =>
+      html.classList.contains('dark') !== (effective === 'dark') ||
+      html.classList.contains('light') !== (effective === 'light') ||
+      html.style.colorScheme !== effective;
+    const observer = new MutationObserver(() => {
+      if (drifted()) assert();
+    });
+    observer.observe(html, { attributes: true, attributeFilter: ['class', 'style'] });
+    return () => observer.disconnect();
   }, [hex, effective]);
 
   useLayoutEffect(

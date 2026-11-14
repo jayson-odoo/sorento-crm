@@ -18,7 +18,7 @@
  */
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render } from '@testing-library/react';
+import { cleanup, render, waitFor } from '@testing-library/react';
 
 import { V2ThemeProvider } from './V2ThemeProvider';
 
@@ -156,5 +156,33 @@ describe('V2ThemeProvider', () => {
       expect(v(n)).toBe('');
     }
     expect(html().style.getPropertyValue('--unrelated')).toBe('1px');
+  });
+
+  it('re-applies the v2 mode when something else (next-themes) changes <html> while mounted', async () => {
+    render(
+      <V2ThemeProvider theme={blue} mode="light">
+        <p>child</p>
+      </V2ThemeProvider>,
+    );
+    expect(html().classList.contains('dark')).toBe(false);
+
+    html().classList.add('dark');
+    await waitFor(() => expect(html().classList.contains('dark')).toBe(false));
+    expect(html().classList.contains('light')).toBe(true);
+
+    html().style.colorScheme = 'dark';
+    await waitFor(() => expect(html().style.colorScheme).toBe('light'));
+  });
+
+  it('stops watching <html> once it unmounts', async () => {
+    const { unmount } = render(
+      <V2ThemeProvider theme={blue} mode="light">
+        <p>child</p>
+      </V2ThemeProvider>,
+    );
+    unmount();
+    html().classList.add('dark');
+    await new Promise((r) => setTimeout(r, 20));
+    expect(html().classList.contains('dark')).toBe(true);
   });
 });

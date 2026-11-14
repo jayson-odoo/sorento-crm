@@ -128,4 +128,41 @@ describe('PanelTabs (E-6)', () => {
       cleanup();
     }
   });
+
+  describe('keyboard (ARIA tabs pattern)', () => {
+    const THREE = [...PANELS, { id: 'notes', label: 'Notes', content: <div>Notes body</div> }];
+    const selected = () => screen.getAllByRole('tab').find((t) => t.getAttribute('aria-selected') === 'true')?.textContent;
+
+    it('ArrowRight and ArrowLeft move and activate, wrapping at the ends', () => {
+      setViewport(360);
+      render(<PanelTabs panels={THREE} />);
+      const tablist = screen.getByRole('tablist');
+      fireEvent.keyDown(tablist, { key: 'ArrowRight' });
+      expect(selected()).toBe('Changes 5');
+      expect(screen.getByRole('tab', { name: 'Changes 5' })).toHaveFocus();
+      fireEvent.keyDown(tablist, { key: 'ArrowRight' });
+      expect(selected()).toBe('Notes');
+      fireEvent.keyDown(tablist, { key: 'ArrowRight' });
+      expect(selected()).toBe('Quick Info');
+      fireEvent.keyDown(tablist, { key: 'ArrowLeft' });
+      expect(selected()).toBe('Notes');
+    });
+
+    it('Home and End jump to the first and last tab', () => {
+      setViewport(360);
+      render(<PanelTabs panels={THREE} />);
+      const tablist = screen.getByRole('tablist');
+      fireEvent.keyDown(tablist, { key: 'End' });
+      expect(selected()).toBe('Notes');
+      fireEvent.keyDown(tablist, { key: 'Home' });
+      expect(selected()).toBe('Quick Info');
+    });
+
+    it('only the selected tab is in the tab order', () => {
+      setViewport(360);
+      render(<PanelTabs panels={THREE} />);
+      const tabs = screen.getAllByRole('tab');
+      expect(tabs.map((t) => t.getAttribute('tabindex'))).toEqual(['0', '-1', '-1']);
+    });
+  });
 });

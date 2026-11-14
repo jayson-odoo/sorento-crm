@@ -2,8 +2,7 @@
 
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiFetch } from '@/lib/api';
-import { apiError } from '@/lib/api-client';
+import { saveCompanyTheme } from '@/components/v2/theme/themeService';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import { contrastRatio } from '@/lib/theme/contrast';
@@ -72,15 +71,8 @@ export default function AppearancePage() {
   const passes = ratio >= AA;
 
   const mutation = useMutation({
-    mutationFn: async () => {
-      const response = await apiFetch('/api/user-management/settings/general', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ theme: { preset, custom_hex: customValid ? custom.toLowerCase() : null } }),
-      });
-      if (!response.ok) throw await apiError(response, 'Could not save the brand colour');
-      return response;
-    },
+    mutationFn: () =>
+      saveCompanyTheme({ preset, custom_hex: customValid ? custom.toLowerCase() : null }),
     onSuccess: () => {
       toast.success('Brand colour saved');
       void queryClient.invalidateQueries({ queryKey: ['system-settings'] });

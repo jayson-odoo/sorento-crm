@@ -31,9 +31,21 @@ export function viewportClass(width: number): PageViewItem['viewport'] {
 
 const routeOf = (path: string) => path.split(/[?#]/)[0] || '/';
 
-/** First contentful paint as a stand-in for "time to first data" on the first route; null after. */
+/** The first route must be recorded this soon after the document started, or the shell was mounted later. */
+const FIRST_ROUTE_WINDOW_MS = 10_000;
+/** Set once per document: only the document's first navigation has a first paint to report. */
+let firstDataReported = false;
+
+/**
+ * First contentful paint as a stand-in for "time to first data", for the document's first navigation
+ * only. A shell mounted later (a switch from v1, a re-mount) would report a paint from long before it
+ * existed, so it sends null instead.
+ */
 function firstDataMs(isFirst: boolean): number | null {
-  if (!isFirst || typeof performance === 'undefined' || !performance.getEntriesByType) return null;
+  if (!isFirst || firstDataReported) return null;
+  firstDataReported = true;
+  if (typeof performance === 'undefined' || !performance.getEntriesByType) return null;
+  if (performance.now() > FIRST_ROUTE_WINDOW_MS) return null;
   const fcp = performance.getEntriesByType('paint').find((e) => e.name === 'first-contentful-paint');
   if (!fcp) return null;
   const ms = Math.round(fcp.startTime);

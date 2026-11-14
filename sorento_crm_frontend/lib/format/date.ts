@@ -15,6 +15,11 @@ const MALAYSIA_TZ = 'Asia/Kuala_Lumpur';
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 const ZONED = /(Z|[+-]\d{2}:?\d{2})$/i;
 
+/** "2026-11-10 01:42:00.123456" -> "2026-11-10T01:42:00.123"; Safari rejects the space and >3 fraction digits. */
+export function normaliseApiDateString(s: string): string {
+  return s.replace(/^(\d{4}-\d{2}-\d{2}) (\d)/, '$1T$2').replace(/(\.\d{3})\d+/, '$1');
+}
+
 /** Parse an API value as an instant; Invalid Date when it cannot be read. */
 export function toInstant(input: DateInput): Date {
   if (input == null) return new Date(NaN);
@@ -24,8 +29,7 @@ export function toInstant(input: DateInput): Date {
   if (!s) return new Date(NaN);
   // A calendar day: midnight UTC lands on the same day in Malaysia (UTC+8).
   if (DATE_ONLY.test(s)) return new Date(`${s}T00:00:00Z`);
-  // "2026-11-10 01:42:00.123456" -> "2026-11-10T01:42:00.123"; Safari rejects the space and >3 fraction digits.
-  s = s.replace(/^(\d{4}-\d{2}-\d{2}) (\d)/, '$1T$2').replace(/(\.\d{3})\d+/, '$1');
+  s = normaliseApiDateString(s);
   return new Date(ZONED.test(s) ? s : `${s}Z`);
 }
 

@@ -141,6 +141,9 @@
 
 
 .dark {
+  /* D9: re-declared here so the pair resolves against the DARK primary, not the one :root computed (v1). */
+  --toggle-selected-bg: var(--primary);
+  --toggle-selected-fg: var(--primary-foreground);
   --background: var(--color-zinc-950);
   --foreground: var(--color-zinc-50);
   --card: var(--color-zinc-900);
