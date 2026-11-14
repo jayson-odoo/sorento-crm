@@ -736,7 +736,10 @@ def test_AC_RC_11_the_update_tool_tells_the_model_to_use_only_what_the_user_said
 
 # ------------------------------------------------------------------ AC-RC-12 the proposed message stays as it was
 
-PROPOSED_MESSAGE = "Proposed, not done. The user must confirm in a later message."
+PROPOSED_MESSAGE = (
+    "Proposed, not done. In this reply, ask the user to confirm in your own words: say what will change,"
+    " then ask them to reply yes or say what to change."
+)  # owner 14 Nov 20:05: the agent writes its own confirm question
 
 
 def _proposed_message(db, w, call):
