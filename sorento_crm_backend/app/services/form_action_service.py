@@ -192,7 +192,9 @@ def _reader_facing_error(exc: Exception, row: "SlaFormAction") -> str:
     handler with something specific to say raises an AppException with a 4xx; anything
     else that escapes is a defect, and a defect's message is not copy.
     """
-    subject = (row.source_entity_type or "record").replace("_", " ")
+    from app.services.form_sla_service import form_type_words
+
+    subject = form_type_words(row.source_entity_type, "record")
     deleting = str(row.action_key or "").endswith(".delete")
 
     if isinstance(exc, AppException) and 400 <= int(getattr(exc, "status_code", 500)) < 500:

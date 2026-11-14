@@ -18,7 +18,8 @@ from __future__ import annotations
 
 import logging
 import uuid as uuid_module
-from typing import Optional
+from dataclasses import dataclass
+from typing import Any, Callable, Optional
 
 from fastapi import UploadFile
 from fastapi.concurrency import run_in_threadpool
@@ -27,6 +28,7 @@ from sqlalchemy.orm import Session
 
 from app.models.entity_attachment import EntityAttachmentLink
 from app.models.order import SalesOrderLine
+from app.models.project_so import OrderInquiryRow
 from app.models.resources import Attachment, AttachmentType
 from app.services.audit_service import log_audit
 from app.services.entity_attachment_service import EntityAttachmentService
@@ -79,13 +81,61 @@ _MAX_BYTES = 10 * 1024 * 1024
 _MAX_FILES_PER_REQUEST = 10
 
 
-def _line_or_404(db: Session, line_id: str) -> SalesOrderLine:
+@dataclass(frozen=True)
+class Target:
+    """What the files hang off: the link's ``entity_type``, the company-scoped model whose
+    id the link names (it is what narrows a lookup to the caller's company), the word a 404
+    uses, and where the audit row goes (``entity_type, entity_id, extra values``)."""
+
+    entity_type: str
+    model: Any
+    label: str
+    audit: Callable[[Any], tuple]
+
+
+#: The first caller: a CORE sales-order line (module docstring).
+SO_LINE = Target(
+    entity_type=ENTITY_TYPE,
+    model=SalesOrderLine,
+    label="Sales order line",
+    audit=lambda line: ("sales_order_line", str(line.id), {}),
+)
+#: SPARE-PART-ORDER-REQUEST (UAC R4): a spare part request's line is an order inquiry row,
+#: and its photos are filed on the inquiry so the OI History tab shows them.
+OI_ROW = Target(
+    entity_type="order_inquiry_row",
+    model=OrderInquiryRow,
+    label="Order inquiry row",
+    audit=lambda row: (
+        "project_order_inquiries",
+        str(row.order_inquiry_id),
+        {"row_id": str(row.id), "item_code": row.item_code},
+    ),
+)
+
+
+def _line_or_404(db: Session, line_id: str, target: Target = SO_LINE):
     """Scoped by ``CompanyScopedMixin`` (the session's active company scope) - a line
     id outside the caller's company reads exactly like an unknown one (AC-A4)."""
-    line = db.query(SalesOrderLine).filter(SalesOrderLine.id == line_id).first()
+    line = db.query(target.model).filter(target.model.id == line_id).first()
     if line is None:
-        raise handle_not_found("Sales order line", line_id)
+        raise handle_not_found(target.label, line_id)
     return line
+
+
+def _audit(db: Session, target: Target, line, actor_id: Optional[str], **values) -> None:
+    entity_type, entity_id, extra = target.audit(line)
+    old = {k: v for k, v in values.items() if k == "attachment_removed"}
+    new = {k: v for k, v in values.items() if k == "attachment_added"}
+    log_audit(
+        db,
+        entity_type,
+        entity_id,
+        "UPDATE",
+        old_values={**extra, **old} if old else None,
+        new_values={**extra, **new} if new else None,
+        user_id=actor_id,
+    )
 
 
 def _type_row(db: Session) -> AttachmentType:
@@ -145,8 +195,8 @@ def _serialize(link: EntityAttachmentLink) -> dict:
     }
 
 
-def _line_attachments(db: Session, line_id: str) -> list[dict]:
-    by_line = EntityAttachmentService(db).list_links_for_entities(ENTITY_TYPE, [line_id])
+def _line_attachments(db: Session, line_id: str, target: Target = SO_LINE) -> list[dict]:
+    by_line = EntityAttachmentService(db).list_links_for_entities(target.entity_type, [line_id])
     return [_serialize(link) for link in by_line.get(line_id, [])]
 
 
@@ -156,7 +206,7 @@ def _err_message(exc: Exception) -> str:
     return str(exc)
 
 
-def lookup(db: Session, line_ids: list[str]) -> dict[str, list[dict]]:
+def lookup(db: Session, line_ids: list[str], target: Target = SO_LINE) -> dict[str, list[dict]]:
     """Every listed line's files, keyed by line id - for exactly the lines that both
     hold files AND are visible in the caller's company scope (AC-A5). One read for a
     whole grid, never one per row.
@@ -170,11 +220,11 @@ def lookup(db: Session, line_ids: list[str]) -> dict[str, list[dict]]:
     ids = [str(i) for i in line_ids]
     visible_ids = [
         str(row[0])
-        for row in db.query(SalesOrderLine.id).filter(SalesOrderLine.id.in_(ids)).all()
+        for row in db.query(target.model.id).filter(target.model.id.in_(ids)).all()
     ]
     if not visible_ids:
         return {}
-    by_line = EntityAttachmentService(db).list_links_for_entities(ENTITY_TYPE, visible_ids)
+    by_line = EntityAttachmentService(db).list_links_for_entities(target.entity_type, visible_ids)
     return {line_id: [_serialize(link) for link in links] for line_id, links in by_line.items()}
 
 
@@ -184,6 +234,7 @@ async def upload(
     line_id: str,
     files: list[UploadFile],
     actor_id: Optional[str],
+    target: Target = SO_LINE,
 ) -> list[dict]:
     """Store each file and link it to the line, in upload order (AC-A1). Returns the
     line's FULL list afterwards, this upload included - never just the files this call
@@ -199,7 +250,7 @@ async def upload(
             400, f"Upload up to {_MAX_FILES_PER_REQUEST} files at a time."
         )
 
-    line = _line_or_404(db, line_id)
+    line = _line_or_404(db, line_id, target)
     attachment_type = _type_row(db)
     entity_svc = EntityAttachmentService(db)
 
@@ -232,7 +283,9 @@ async def upload(
         s3_key: Optional[str] = None
         thumbnail_path: Optional[str] = None
         try:
-            entity_svc.check_quota(attachment_type, ENTITY_TYPE, str(line.id), len(content), ext)
+            entity_svc.check_quota(
+                attachment_type, target.entity_type, str(line.id), len(content), ext
+            )
 
             object_key = f"{TYPE_CODE}/{line.id}/{uuid_module.uuid4()}-{original_filename}"
             s3_key, _ = await run_in_threadpool(
@@ -264,21 +317,14 @@ async def upload(
             # the same call every other upload path in this codebase makes.
             attachment = AttachmentService(db).create_attachment(attachment_data, actor_id)
             entity_svc.link_existing_attachment(
-                entity_type=ENTITY_TYPE,
+                entity_type=target.entity_type,
                 entity_id=str(line.id),
                 attachment_id=str(attachment.id),
                 created_by=actor_id,
             )
             # AC-A7: one audit row per file, on the LINE (not the attachment - that
             # already carries its own declarative INSERT audit).
-            log_audit(
-                db,
-                "sales_order_line",
-                str(line.id),
-                "UPDATE",
-                new_values={"attachment_added": original_filename},
-                user_id=actor_id,
-            )
+            _audit(db, target, line, actor_id, attachment_added=original_filename)
             db.commit()
         except Exception as exc:
             db.rollback()
@@ -299,23 +345,29 @@ async def upload(
 
         landed.append(original_filename)
 
-    return _line_attachments(db, str(line.id))
+    return _line_attachments(db, str(line.id), target)
 
 
-def delete(db: Session, line_id: str, link_id: str, actor_id: Optional[str]) -> None:
+def delete(
+    db: Session,
+    line_id: str,
+    link_id: str,
+    actor_id: Optional[str],
+    target: Target = SO_LINE,
+) -> None:
     """Removes the link, the attachment row and the stored bytes.
 
     Scoped to ``line_id`` (mirrors ``shipment_line_photos.delete_photo``'s own review
     finding): a link id under another line answers 404 rather than being trusted, and
     nothing is deleted on that path (AC-A6).
     """
-    line = _line_or_404(db, line_id)
+    line = _line_or_404(db, line_id, target)
 
     link = (
         db.query(EntityAttachmentLink)
         .filter(
             EntityAttachmentLink.id == link_id,
-            EntityAttachmentLink.entity_type == ENTITY_TYPE,
+            EntityAttachmentLink.entity_type == target.entity_type,
         )
         .first()
     )
@@ -326,14 +378,7 @@ def delete(db: Session, line_id: str, link_id: str, actor_id: Optional[str]) -> 
     filename = getattr(attachment, "original_filename", None)
     # AC-A7: the removal's own audit row, before the delete - `old_values` states what
     # is about to be gone.
-    log_audit(
-        db,
-        "sales_order_line",
-        str(line.id),
-        "UPDATE",
-        old_values={"attachment_removed": filename},
-        user_id=actor_id,
-    )
+    _audit(db, target, line, actor_id, attachment_removed=filename)
 
     objects: list[tuple[str, str]] = []
     if attachment is not None:

@@ -27,16 +27,24 @@ from typing import Any
 
 from sqlalchemy import and_
 
-from app.models.project_so import INQUIRY_CANCELLED, INQUIRY_LINK_STATES, OrderInquiryRow
+from app.models.project_so import (
+    INQUIRY_CANCELLED,
+    INQUIRY_DRAFT,
+    INQUIRY_LINK_STATES,
+    OrderInquiryRow,
+)
 
 
 def live_row_clause(row: Any = OrderInquiryRow):
-    """SQL: the row is live. `row` is the mapped class or an alias of it."""
-    return and_(row.state != INQUIRY_CANCELLED, row.redirected_to_pool.isnot(True))
+    """SQL: the row is live. `row` is the mapped class or an alias of it. A `draft` row
+    (a spare part request not approved yet) is nobody's work, so it is not live either."""
+    return and_(
+        row.state.notin_((INQUIRY_CANCELLED, INQUIRY_DRAFT)), row.redirected_to_pool.isnot(True)
+    )
 
 
 def is_live_row(row: OrderInquiryRow) -> bool:
-    return row.state != INQUIRY_CANCELLED and not bool(row.redirected_to_pool)
+    return row.state not in (INQUIRY_CANCELLED, INQUIRY_DRAFT) and not bool(row.redirected_to_pool)
 
 
 def reservable_row_clause(row: Any = OrderInquiryRow):
