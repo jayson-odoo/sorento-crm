@@ -2610,3 +2610,92 @@ def test_cp2_e_confirm_does_not_rewrite_code_or_map_matched_lines(seeded, matche
         .all()
     )
     assert [(row.customer_code, row.confirmed_by) for row in rows] == [("BBT-M-1", teacher)]
+
+
+# ======================================================== PO-UPLOAD-MATCHING B: variant sibling
+#
+# PLAN-po-upload-matching-b-14nov.md section 2 (line 46 of the crew pass): an exact catalogue
+# code is settled only when no other product of the SAME company carries that code plus a
+# variant suffix (`<code>-<suffix>`) that the line's description names. Otherwise the line
+# goes to the matcher with the bare code and those siblings among its candidates.
+
+
+def _variant_read(db, project, owner, matcher, number: str, *, code: str, description: str):
+    po, _customer_row = _customer_po(db, project, owner, number)
+    version = _version(db, po)
+    service = ProjectPOExtractionService(db)
+    service.persist_pages(
+        version, [_page(1, lines=[_row(1, code=code, description=description)])]
+    )
+    return service, version, _lines(service, version)[1]
+
+
+def test_b_a_described_variant_sibling_sends_the_exact_code_to_the_matcher(seeded, matcher):
+    db, project, owner = seeded
+    ids = _products(db, project.company_id, "SRTWB243", "SRTWB243-35MM")
+    matcher.answers[1] = {
+        "product_code": None,
+        "confidence": "low",
+        "options": ["SRTWB243", "SRTWB243-35MM"],
+    }
+
+    _service, version, line = _variant_read(
+        db, project, owner, matcher, "ZZT-B-VAR1",
+        code="SRTWB243", description="WALL HUNG BASIN 35MM",
+    )
+
+    assert line.resolution_source != "code", "the exact step must not settle a named variant"
+    assert 1 in matcher.sent_line_nos()
+    offered = {c["code"] for c in matcher.item_for(1)["candidates"]}
+    assert {"SRTWB243", "SRTWB243-35MM"} <= offered, offered
+    assert line.resolved_product_id is None
+    assert line.resolution_source is None
+    assert set(_match(version, 1).get("options") or []) == {
+        ids["SRTWB243"],
+        ids["SRTWB243-35MM"],
+    }
+
+
+def test_b_no_suffix_named_keeps_the_exact_code(seeded, matcher):
+    db, project, owner = seeded
+    ids = _products(db, project.company_id, "SRTWB243", "SRTWB243-35MM")
+
+    _service, _version_row, line = _variant_read(
+        db, project, owner, matcher, "ZZT-B-VAR2",
+        code="SRTWB243", description="WALL HUNG BASIN",
+    )
+
+    assert line.resolution_source == "code"
+    assert line.resolved_product_id == ids["SRTWB243"]
+    assert 1 not in matcher.sent_line_nos()
+
+
+def test_b_a_sibling_of_another_company_does_not_demote_the_exact_code(seeded, matcher):
+    db, project, owner = seeded
+    ids = _products(db, project.company_id, "SRTWB243")
+    _named_product(db, _other_company(db), "SRTWB243-35MM", f"{MARKER} other co basin 35mm")
+
+    _service, _version_row, line = _variant_read(
+        db, project, owner, matcher, "ZZT-B-VAR3",
+        code="SRTWB243", description="WALL HUNG BASIN 35MM",
+    )
+
+    assert line.resolution_source == "code"
+    assert line.resolved_product_id == ids["SRTWB243"]
+    assert 1 not in matcher.sent_line_nos()
+
+
+def test_b_a_sibling_whose_suffix_the_description_does_not_name_keeps_the_exact_code(
+    seeded, matcher
+):
+    db, project, owner = seeded
+    ids = _products(db, project.company_id, "SRTWB248", "SRTWB248-RG")
+
+    _service, _version_row, line = _variant_read(
+        db, project, owner, matcher, "ZZT-B-VAR4",
+        code="SRTWB248", description="SORENTO WALL HUNG BASIN (430x360x150MM) SRTW",
+    )
+
+    assert line.resolution_source == "code"
+    assert line.resolved_product_id == ids["SRTWB248"]
+    assert 1 not in matcher.sent_line_nos()
