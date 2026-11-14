@@ -265,3 +265,62 @@ def test_t2g_lock_another_n_after_a_one_product_answer_still_pages_the_carried_b
     c.state["focus"]["set_page"] = {"set_key": {**_TRAP_SPEC, "shown": 10, "total": 141}}
     c.say("another 10", reply(demand_qty=10))
     assert "set_count_answered" in c.turn_traces[-1].rules_fired, c.turn_traces[-1].rules_fired
+
+
+# --------------------------------------------------------------------------- crew pass 2: a browse page is recorded only when the fetch listed it
+_TRAP_BROWSE = {
+    "qualifying_total": 141,
+    "require": {"stock": True},
+    "set_noun": "water closets",
+    "class_labels": ["Water Closet"],
+    "description": ["S trap"],
+    "set_key": {"specs": [{"key": "trap_type", "value": "s_trap"}], "product_ids": []},
+}
+
+
+def _resolver_also_counts_the_trap_browse(monkeypatch):
+    """The offline catalogue cannot count 141 closets: add the spec browse to the resolver's real answer."""
+    import dataclasses
+
+    from app.services.chatbot import turn_runtime
+
+    real = turn_runtime.resolve_kinds
+
+    def with_browse(*args, **kwargs):
+        out = real(*args, **kwargs)
+        ents = ((kwargs.get("ctx") or {}).get("parse") or {}).get("output", {}).get("entities") or []
+        if any(isinstance(e, dict) and e.get("hint") == "specification" for e in ents):
+            out = dataclasses.replace(out, predicate=dict(_TRAP_BROWSE), spec_tier=True)
+        return out
+
+    monkeypatch.setattr(turn_runtime, "resolve_kinds", with_browse)
+
+
+def _s_trap_pick(c):
+    from tests.chatbot._turn_helpers import entity
+
+    c.say("qwc604-rl x 2", stock(product("qwc604-rl", 2)))
+    spec = entity("S trap", hint="specification", spec_key="trap_type", spec_value="s_trap")
+    return c.say("S trap", reply(entities=[spec], reference_target="dym", reference_positions=[2], open_question_answer=answer("pick", picked=[2])))
+
+
+def _slots(c):
+    return [(s["label"], s["value"]) for t in c.state["focus"]["tasks"] for s in t["slots"]]
+
+
+def test_t2h_a_pick_whose_fetch_listed_only_the_picked_parts_records_no_browse_page(session_factory, monkeypatch, stub_access):  # noqa: F811
+    c = _owner_world(session_factory, monkeypatch, stub_access)
+    _resolver_also_counts_the_trap_browse(monkeypatch)
+    _s_trap_pick(c)
+    assert c.state["focus"].get("set_page") is None, c.state["focus"].get("set_page")
+    assert sorted(v for _, v in _slots(c)) == [2, 2], _slots(c)
+
+
+def test_t2h_end_to_end_a_bare_four_after_the_pick_revises_both_parts(session_factory, monkeypatch, stub_access):  # noqa: F811
+    c = _owner_world(session_factory, monkeypatch, stub_access)
+    _resolver_also_counts_the_trap_browse(monkeypatch)
+    _s_trap_pick(c)
+    text = c.say("4", reply(demand_qty=4, entity_op="reuse", anaphora={"backward_reference": True}))
+    for code in (S_PAN, CISTERN):
+        assert f"{code} x 4: {TICK} Got stock." in _lines(text), (code, text)
+    assert "set_count_answered" not in c.turn_traces[-1].rules_fired, c.turn_traces[-1].rules_fired
