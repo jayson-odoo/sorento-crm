@@ -708,7 +708,7 @@ def test_a_sum_the_model_made_is_sent_back_once_then_marked_not_verified(db, con
     verdict = _payload(_tool_msgs(provider.seen[2]["messages"])[-1])
     assert verdict["status"] == "invalid"
     assert "13" in verdict["message"]
-    assert "(not verified)" in result.reply_text
+    assert "could not check" in result.reply_text
     assert "13" not in result.reply_text
 
 
@@ -726,7 +726,7 @@ def test_a_repair_that_cites_the_real_rows_is_accepted(db, contact, resolver):
     )
     result = run(db, contact, provider, Rec(result={"items": [{"qty": 5}, {"qty": 7}], "has_result": True}))
     assert result.reply_text == "Two rows: 5 and 7 units."
-    assert "(not verified)" not in result.reply_text
+    assert "could not check" not in result.reply_text
 
 
 def test_a_number_no_tool_result_holds_is_a_violation(db, contact, resolver):
@@ -739,7 +739,7 @@ def test_a_number_no_tool_result_holds_is_a_violation(db, contact, resolver):
     )
     # Round 6: figures are informational, so a number is unbacked only when no result holds it.
     result = run(db, contact, provider, Rec(result={"items": [{"qty": 5}], "has_result": True}))
-    assert "(not verified)" in result.reply_text
+    assert "could not check" in result.reply_text
 
 
 def test_a_number_absent_from_every_result_is_a_violation_even_when_cited(db, contact, resolver):
@@ -748,7 +748,7 @@ def test_a_number_absent_from_every_result_is_a_violation_even_when_cited(db, co
     )
     provider = Provider([asks(call(STOCK, {"query": "x"}, "c1")), bad("a1"), bad("a2")])
     result = run(db, contact, provider, Rec(result={"items": [{"qty": 5}], "has_result": True}))
-    assert "(not verified)" in result.reply_text
+    assert "could not check" in result.reply_text
 
 
 @pytest.mark.parametrize(
@@ -770,7 +770,7 @@ def test_a_number_that_only_appears_in_a_key_a_uuid_or_a_date_does_not_count(db,
         ]
     )
     result = run(db, contact, provider, Rec(result={"items": [row], "has_result": True}))
-    assert "(not verified)" in result.reply_text
+    assert "could not check" in result.reply_text
     assert number not in result.reply_text
 
 
@@ -856,7 +856,7 @@ def test_a_plain_text_reply_with_a_number_stays_unverified_if_the_tool_is_never_
     assert len(provider.seen) == 2
     nudge = provider.seen[1]["messages"][-1]["content"].lower()
     assert any(p in nudge for p in ("answer tool", "`answer`", "'answer'", '"answer"', "answer function"))
-    assert "(not verified)" in result.reply_text
+    assert "could not check" in result.reply_text
     assert "12" not in result.reply_text
 
 

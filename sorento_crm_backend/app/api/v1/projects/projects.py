@@ -36,6 +36,7 @@ from app.schemas.projects import (
     TakeoverRequestDecision,
     TakeoverRequestResponse,
 )
+from app.services import project_notify_service as notify
 from app.services import project_reference_service as refs
 from app.services import project_service as svc
 from app.services.error_handler import AppException, handle_internal_error
@@ -523,12 +524,14 @@ def update_project(
             permissions=permissions,
         )
         db.commit()
+        notify.send_queued_reassigned(db)
         db.refresh(project)
         return svc.serialize_project(
             db, project, actor_user_id=current_user["id"], permissions=permissions
         )
     except Exception as exc:
         db.rollback()
+        notify.drop_queued_reassigned(db)
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 
@@ -555,6 +558,7 @@ def submit_project(
             permissions=permissions,
         )
         db.commit()
+        notify.send_queued_reassigned(db)
         db.refresh(project)
         registrations.notify(db, project, "resubmitted" if resubmitted else "submitted")
         return svc.serialize_project(
@@ -562,6 +566,7 @@ def submit_project(
         )
     except Exception as exc:
         db.rollback()
+        notify.drop_queued_reassigned(db)
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 
@@ -1051,8 +1056,6 @@ def create_takeover_request(
         db.commit()
         db.refresh(request)
         if request.kind == svc.TAKEOVER_DISPUTE:
-            from app.services import project_notify_service as notify
-
             notify.notify_interest_registered(
                 db, project=project, request=request, requester_user_id=current_user["id"]
             )
@@ -1083,7 +1086,7 @@ def decide_takeover_request(
     try:
         validate_uuid_path(project_id, resource="Project")
         validate_uuid_path(request_id, resource="Request")
-        from app.models.projects import Project, ProjectTakeoverRequest
+        from app.models.projects import ProjectTakeoverRequest
         from app.services.error_handler import AppException
 
         request = (
@@ -1100,7 +1103,6 @@ def decide_takeover_request(
                 message="Request not found on this project.",
                 code="project_takeover_not_found",
             )
-        previous_owner = db.query(Project.owner_user_id).filter(Project.id == project_id).scalar()
         svc.decide_takeover_request(
             db,
             request=request,
@@ -1110,18 +1112,11 @@ def decide_takeover_request(
             decision_note=payload.decision_note,
         )
         db.commit()
+        # An approved secondary lead moved the owner (reassign_project_owner queued the notice).
+        notify.send_queued_reassigned(db)
         db.refresh(request)
-        if request.kind == svc.TAKEOVER_DISPUTE and request.status == svc.TAKEOVER_APPROVED:
-            from app.services import project_notify_service as notify
-
-            notify.notify_reassigned(
-                db,
-                project=db.get(Project, project_id),
-                request=request,
-                previous_owner_id=previous_owner,
-                new_owner_id=request.requester_user_id,
-            )
         return _takeover_payload(db, [request])[0]
     except Exception as exc:
         db.rollback()
+        notify.drop_queued_reassigned(db)
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))

@@ -68,10 +68,38 @@ If they have no number yet, type it: when you click **Open WhatsApp** it is save
 person, so next time it is there. A number already on file is never changed from here. To send to
 another party, pick them and click **Open WhatsApp** again.
 
-## Secondary leads on a project
+## Leads on a project (primary and secondary)
 
-On the project's **Access** card, secondary leads are listed as a table: **Salesperson**,
-**Date**, **How they found it**, **Status**. Managers can **Reassign** or **Dismiss** each one.
+The project's **Overview** tab shows its cards one under the other, full width.
+
+The **Access** card lists every lead on the project in one table:
+
+* **Salesperson**, with icons after the name (hover or tab to one to see its word):
+  * a star: **Primary**, the salesperson who found and registered the project first;
+  * a person with a plus: **Secondary**, anyone who registered as a secondary lead later;
+  * a crown: **Owner**, the salesperson who owns the project now.
+* **Date**: when they found it. For the primary, this is the date the lead was raised, or the
+  registration date if the project had no lead.
+* **How they found it**: the lead source for the primary, or the note a secondary lead wrote.
+* **Status**: **Pending** or **Dismissed** for a secondary lead not yet reassigned to.
+
+If the project's owner is someone who is neither the primary nor a secondary lead, they get a row of
+their own with only the crown.
+
+On a phone the table shows only the salesperson, their icons and the **...** button; open the
+project on a wider screen to see the date, how they found it and the status.
+
+**Managers:** click a row's **...** button, or right-click the row, and choose
+**Reassign to {name}**. Both show the same choices. The reassign window opens with that person
+already picked; click **Reassign**. You can move the project to any of the listed leads and back
+again, for example back to the primary after a change of decision. On a pending secondary lead the
+menu also has **Dismiss**. The owner's own row has no **...** button.
+
+Each reassignment:
+
+* keeps the previous owner on the project as a collaborator;
+* adds a line to the **Activity** tab, *Reassigned from {name} to {name}*;
+* notifies the new owner and the previous owner.
 
 ## See everything linked to a project (Related tab)
 
