@@ -83,7 +83,21 @@ Codes below are the shapes from crew's masked dev rows (codes are business data)
 - AC-29 Dealer `CB2515SS check ETA`: offer of up to 3 close codes, no refer line, a number answers incoming (AC-12).
 - AC-30 Guard: `Srtwt1866ss x ss3 / Have stock` still gives today's numbered list of 3.
 
-## Parser-corrected codes (crew ruling 13 Nov, owner rulings 12 Nov 15:10 and 13 Nov ~17:40)
+## Parser-picked codes, round 10 (owner 14 Nov ~10:05, crew re-scope 14 Nov 10:20): SUPERSEDES AC-32..35 below
+
+No letter, fuzzy or word-list rule decides answer vs offer; the model judges. Stock and incoming asks, dealer and staff:
+- AC-36 Prompt without the `code_match` field (prod v72 today): a parser code whose `turn_state.token_key` differs from
+  the typed code's is OFFERED "Did you mean X?", never answered: `SRTUB668-BACK INLT`/`INELT`/`INLETT`/`INLLET` ->
+  INLET, `SRTWT8259 gold` -> -GLD, `grey` -> -GRY, `gun metal` -> -GM (one "yes" until lane B's prompt).
+  Equal but for case, dashes and spaces (`srtwc 8354 sh uf`): answered.
+- AC-37 With `code_match` on the product entity: `as_typed` or `named` -> answered; `guessed` -> offered
+  "Did you mean X?" (plus up to 2 more close codes from retrieval). Missing or unknown value -> AC-36.
+- AC-38 Unchanged by round 10: a typed code that is no catalogue code but starts one is offered (AC-6, D5); a raw
+  matching several codes asks which one with all of them (D3, `8259 stock`); retrieval and ranking (AC-14, 15).
+- AC-39 No function decides answer vs offer from edit distance, letters in order, punctuation or word shape
+  (`answer.corrects_or_completes` removed).
+
+## Parser-corrected codes (crew ruling 13 Nov, owner rulings 12 Nov 15:10 and 13 Nov ~17:40), SUPERSEDED by AC-36..39
 
 The parser may hand a code it completed or corrected. The typed text is compared with that code, part by part
 (parts = split at dashes, spaces and letter/digit changes), with no word list:
