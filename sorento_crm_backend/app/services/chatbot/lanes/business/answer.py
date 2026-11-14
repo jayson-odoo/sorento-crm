@@ -5160,53 +5160,6 @@ def holds_every_typed_part(typed: Any, code: Any) -> bool:
     return bool(parts)
 
 
-def corrects_or_completes(typed: Any, code: Any) -> bool:
-    """CHATBOT-CLOSE-CODES B1 (crew ruling (a), 13 Nov 2026): does `code` correct or complete
-    what the customer `typed`, rather than restate it? Read part by part (`typed_code_parts`):
-    every code part typed as is is accounted for. A part left over that a typed part nearly
-    spells is a correction: within `turn_runtime.osa_distance` (a letter changed, added or
-    dropped, or two neighbouring letters swapped, each one edit) of at most half the part's
-    length, and at least one (INLT, INELT, INXXT for INLET; SWTWC for SRTWC; GDL for GLD). A
-    letters-only part is said in words (lead ruling, AC-33; crew ruling, round 6), not a
-    correction, when a whole space-separated typed word (every leading and trailing character
-    that is not a letter or digit stripped, Unicode included: "gold,", "(gold)", curly-quoted
-    or "gold…") of letters only is longer than it,
-    holds its letters in order, and does not start with them ("gold" for GLD, "grey" for GRY).
-    A run inside the typed code token (a digit run, SRTWTC for SRTWC) never says a part in
-    words, and a word that is the part with letters added after it (INLETT for INLET) is a
-    change to the code, so both stay corrections. A part left over that
-    nothing typed accounts for, with no typed word left either, is a completion (SRTWC287-S for
-    SRTWC287-S-150). A part reached only from typed words left over that spell no part ("gun
-    metal" for GM) is the same code said in words, and a code equal but for case, dashes and
-    spaces is the code: neither is a correction. Reads no word list and no company's letters."""
-    from app.services.chatbot.turn_runtime import osa_distance
-
-    if token_key(jsc.nullish_str(typed)) == token_key(jsc.nullish_str(code)):
-        return False
-    left = typed_code_parts(typed)
-    missing: list[str] = []
-    for part in typed_code_parts(code):
-        if part in left:
-            left.remove(part)
-        else:
-            missing.append(part)
-    stripped = (w.strip("".join(ch for ch in w if not ch.isalnum())) for w in jsc.nullish_str(typed).split())
-    words = {w.casefold() for w in stripped if w.isalpha()}
-
-    def said_in(part: str, word: str) -> bool:
-        if not (part.isalpha() and word in words and len(word) > len(part)) or word.startswith(part):
-            return False
-        letters = iter(word)
-        return all(ch in letters for ch in part)
-
-    missing = [part for part in missing if not any(said_in(part, t) for t in left)]
-    if not missing:
-        return False
-    if any(osa_distance(t, part) <= max(1, len(part) // 2) for part in missing for t in left):
-        return True
-    return not any(t.isalpha() for t in left)
-
-
 def did_you_mean_head(typed: str) -> str:
     """MULTI-CODE-DYM: the single-code numbered did-you-mean's own opening sentence, for
     one missed product code beside others (`turn/compose.py` prints it; the `turn`

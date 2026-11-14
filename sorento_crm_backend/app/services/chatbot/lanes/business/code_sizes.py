@@ -184,9 +184,9 @@ def _product_codes(parser: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _named_codes(parser: dict[str, Any]) -> set[str]:
     """The codes the message's product entities name whole, folded by `turn_state.token_key`:
-    each one's raw, and the parser's `canonical_code` unless it corrects or completes that raw
-    (CHATBOT-CLOSE-CODES B1, crew ruling (a): `answer.corrects_or_completes`)."""
-    from app.services.chatbot.lanes.business.answer import corrects_or_completes
+    each one's raw, and the parser's `canonical_code` when `grounding.picked_code_verdict`
+    answers it (CHATBOT-CLOSE-CODES AC-36/37, the one decision)."""
+    from app.services.chatbot.head.grounding import ANSWER, picked_code_verdict
     from app.services.chatbot.turn.state import token_key
 
     out: set[str] = set()
@@ -194,7 +194,7 @@ def _named_codes(parser: dict[str, Any]) -> set[str]:
         raw, canonical = e.get("raw"), e.get("canonical_code")
         if raw:
             out.add(token_key(raw))
-        if canonical and not (raw and corrects_or_completes(raw, canonical)):
+        if canonical and picked_code_verdict(e) == ANSWER:
             out.add(token_key(canonical))
     return out - {""}
 

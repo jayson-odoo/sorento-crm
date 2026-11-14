@@ -525,9 +525,10 @@ def pick_near_code_first(parser: dict[str, Any], resolved: dict[str, Any]) -> No
     (`NEAR_PICK_KEY`), which D1 reads first. Never into `matches`: the gate reads those as found
     entities and D1 drops what the gate found. In place.
 
-    CHATBOT-CLOSE-CODES B1 (crew ruling (a)): a pick the raw itself resolved to (a narrowing, a
-    lone prefix: `grounding._pick_as_trgm_neighbour`'s `offer_resolved`) is taken out of that
-    resolution's matches, so the raw is a miss offered the pick, never a found product. The
+    CHATBOT-CLOSE-CODES AC-36/37: a pick the raw itself resolved to (a narrowing, a lone
+    prefix, or one of the codes a part of the raw reaches: `grounding._pick_as_trgm_neighbour`'s
+    `offered`, decided by `grounding.picked_code_verdict`) is taken out of that resolution's
+    matches, so the raw is a miss offered the pick, never a found product. The
     one-token AND shape becomes that token's miss in the per-token shape, under the entity's
     own token (`code_sizes._single_substring_is_an_offer` writes the same shape)."""
     from app.services.chatbot.head.grounding import NEAR_PICK_KEY
@@ -540,8 +541,9 @@ def pick_near_code_first(parser: dict[str, Any], resolved: dict[str, Any]) -> No
             row = entity.get(NEAR_PICK_KEY) if isinstance(entity, dict) else None
             pick = token_key(str((row or {}).get("canonical_code") or "")) if isinstance(row, dict) else ""
             hits = resolved["intersection"]
-            # The pick alone, only when it is the raw's single match (several stay the which-one).
-            if pick and [token_key(str(m.get("canonical_code") or "")) for m in hits if isinstance(m, dict)] == [pick]:
+            # The pick alone when the raw reached it (a raw that reaches several codes as typed was
+            # set aside by the grounding and carries no pick).
+            if pick and pick in [token_key(str(m.get("canonical_code") or "")) for m in hits if isinstance(m, dict)]:
                 token = _token_of(entity)
                 resolved.update({
                     "match_mode": "or", "intersection": [], "by_entity_type": {},
@@ -566,8 +568,9 @@ def pick_near_code_first(parser: dict[str, Any], resolved: dict[str, Any]) -> No
         for res in resolutions:
             if isinstance(res, dict) and res.get("token") == token:
                 held = [m for m in res.get("matches") or [] if isinstance(m, dict)]
-                if [token_key(str(m.get("canonical_code") or "")) for m in held] == [pick]:
-                    # The raw's single match is the pick: a miss offered it (several stay matches).
+                if pick in [token_key(str(m.get("canonical_code") or "")) for m in held]:
+                    # The raw reached the pick: a miss offered it (a raw that reaches several codes
+                    # as typed was set aside by the grounding and carries no pick).
                     res.update({"matches": [], "resolved": False, "ambiguous": False})
                     unresolved = resolved.setdefault("unresolved_tokens", [])
                     if token not in unresolved:

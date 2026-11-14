@@ -52,11 +52,11 @@ def _words(text: str) -> list[str]:
 
 
 def _is_filler(word: str) -> bool:
-    from app.services.chatbot.turn_runtime import osa_distance
+    from app.services.chatbot.turn_runtime import _osa_distance
 
     if word in _SWITCH_FILLER:
         return True
-    return len(word) >= 4 and any(len(f) >= 4 and osa_distance(word, f) <= 1 for f in _SWITCH_FILLER)
+    return len(word) >= 4 and any(len(f) >= 4 and _osa_distance(word, f) <= 1 for f in _SWITCH_FILLER)
 
 
 def is_open_order_list(focus: Any) -> bool:

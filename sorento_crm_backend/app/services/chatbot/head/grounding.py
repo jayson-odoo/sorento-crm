@@ -474,13 +474,48 @@ logger = logging.getLogger(__name__)
 #: product entity whose canonical_code was dropped; `resolve_gate.pick_near_code_first` offers it
 #: first in the did-you-mean the raw then asks.
 NEAR_PICK_KEY = "near_pick"
-#: `_pick_as_trgm_neighbour`'s answer for a pick that corrects the raw while the raw reaches
-#: several codes: the pick is set aside (the raw is asked as typed), nothing is offered alone.
+#: `_pick_as_trgm_neighbour`'s answer for an offered pick while the raw as typed reaches several
+#: codes: the pick is set aside (the raw is asked as typed), nothing is offered alone.
 SET_ASIDE: dict[str, Any] = {}
-#: CHATBOT-CLOSE-CODES (lead ruling, 13 Nov 2026): the asks whose parser-corrected code is offered
-#: even when the raw resolved to it, and whose lone prefix hit is offered (`code_sizes`): stock and
+#: CHATBOT-CLOSE-CODES (lead ruling, 13 Nov 2026): the asks whose parser code is answered or
+#: offered by `picked_code_verdict`, and whose lone prefix hit is offered (`code_sizes`): stock and
 #: incoming. Every other ask keeps today's answer.
 CLOSE_CODE_ASKS = frozenset({"inventory", "incoming"})
+#: The parser's own `code_match` values that answer its `canonical_code` (AC-37); "guessed" offers it.
+_CODE_MATCH_ANSWERS = frozenset({"as_typed", "named"})
+_CODE_MATCH_OFFERS = frozenset({"guessed"})
+ANSWER, OFFER = "answer", "offer"
+
+
+def picked_code_verdict(entity: Any, name: str | None = None) -> str:
+    """CHATBOT-CLOSE-CODES AC-36/37 (owner ruling 14 Nov 2026: the model judges answer vs offer):
+    `ANSWER` or `OFFER` for a product entity's parser `canonical_code`, the ONE decision the
+    grounding (`ground`, stock and incoming asks) and `code_sizes._named_codes` read.
+
+    The parser's `code_match` on the entity decides: "as_typed" or "named" answers, "guessed"
+    offers. With no known value (prod prompt today), the code is answered only when it IS what
+    was typed: its `turn_state.token_key` equals the raw's, or that of a run of the raw's
+    adjacent words (`_types_the_code_whole`), or the raw is the picked product's own catalogue
+    `name` (or a run of its words, when the caller read it); any other code is offered. An
+    exact compare of folded keys, nothing else: no spelling, distance or word rule
+    second-guesses the model."""
+    from app.services.chatbot.turn.state import token_key
+
+    if not isinstance(entity, dict):
+        return OFFER
+    match = str(entity.get("code_match") or "").strip().lower()
+    if match in _CODE_MATCH_ANSWERS:
+        return ANSWER
+    if match in _CODE_MATCH_OFFERS:
+        return OFFER
+    raw, canonical = str(entity.get("raw") or "").strip(), str(entity.get("canonical_code") or "").strip()
+    if not canonical:
+        return OFFER
+    if token_key(raw) == token_key(canonical) or _types_the_code_whole(raw, canonical):
+        return ANSWER
+    if raw and name and _types_the_code_whole(name, raw):
+        return ANSWER
+    return OFFER
 
 
 def _product_resolution(db: "Session", raw: str) -> dict[str, Any]:
@@ -504,7 +539,7 @@ def _product_resolution(db: "Session", raw: str) -> dict[str, Any]:
 
 
 def _pick_as_trgm_neighbour(
-    db: "Session", raw: str, pick: str, *, offer_resolved: bool = False
+    db: "Session", raw: str, pick: str, *, offered: dict[str, Any] | None = None
 ) -> dict[str, Any] | None:
     """The resolver's own row for the parser's `pick` when it is a trigram neighbour of the typed
     `raw`, else None: the raw is resolved once (`_product_resolution`).
@@ -516,11 +551,14 @@ def _pick_as_trgm_neighbour(
     resolver too (the pick's own resolution), offered as that trigram neighbour. A raw that
     resolved (a narrowing to one prefix match included) answers as today.
 
-    `offer_resolved` (CHATBOT-CLOSE-CODES B1, crew ruling (a), stock and incoming asks): a raw
-    that resolved to the pick is still offered it when the pick corrects or completes what was
-    typed (`answer.corrects_or_completes`: INLT for INLET, SRTWC287-S for SRTWC287-S-150) and is
-    the raw's only match; `SET_ASIDE` when the raw reaches several codes. A pick that restates
-    the raw (dashes and spaces, or words the parser mapped) answers as today."""
+    `offered` (CHATBOT-CLOSE-CODES AC-36/37, stock and incoming asks): the product entity
+    `picked_code_verdict` already said to offer, so no trigram floor decides. A raw the resolver
+    read whole (its resolution's token is the raw, folded) that reaches several codes is
+    `SET_ASIDE` (asked as typed, every code it reaches listed). A raw that resolved to the pick,
+    alone or as one of the codes a part of the raw reaches (the parser read the rest), is
+    offered it; a raw that resolved to other codes only answers as today. A raw that resolved
+    nothing is offered the pick from the pick's own resolution however far it scores, unless
+    the raw is that product's own catalogue name (`picked_code_verdict` with the name)."""
     # Measured (23 Oct, lane catalogue): code typos show the pick as a trgm neighbour of the raw (11/11); name asks never do.
     from sqlalchemy import text
 
@@ -542,16 +580,16 @@ def _pick_as_trgm_neighbour(
         ):
             return dict(row)
     if resolution.get("resolved") is True or resolution.get("matches"):
-        from app.services.chatbot.lanes.business.answer import corrects_or_completes
-
+        if offered is None:
+            return None
         held = [
             token_key(str(m.get("canonical_code") or "")) for m in resolution.get("matches") or [] if isinstance(m, dict)
         ]
-        if not (offer_resolved and wanted in held and corrects_or_completes(raw, pick)):
+        if wanted not in held:
             return None
-        if held != [wanted]:
-            # Several codes the raw reaches: the parser's pick is never offered alone, and never
-            # answered; the raw asks which one, every code listed, as main does for the raw.
+        if len(held) > 1 and token_key(str(resolution.get("token") or "")) == token_key(raw):
+            # The raw as typed reaches several codes: the parser's pick is never offered alone,
+            # and never answered; the raw is asked as typed, every code listed.
             return SET_ASIDE
 
     token = str(_token_of({"raw": raw, "hint": _PRODUCT_HINT}) or "")
@@ -561,7 +599,7 @@ def _pick_as_trgm_neighbour(
             score = db.execute(
                 text(f"SELECT similarity({_norm_sql('CAST(:code AS text)')}, :pn)"), {"code": pick, "pn": pn}
             ).scalar()
-        if score is None or float(score) < ENTITY_MISS_SUGGEST_FLOOR:
+        if offered is None and (score is None or float(score) < ENTITY_MISS_SUGGEST_FLOOR):
             return None
         own = _product_resolution(db, pick)
     except Exception:  # noqa: BLE001 - a failed lookup answers as today
@@ -571,13 +609,16 @@ def _pick_as_trgm_neighbour(
 
     for row in own.get("matches") or []:
         if isinstance(row, dict) and token_key(str(row.get("canonical_code") or "")) == wanted:
+            name = str((row.get("display") or {}).get("product_name") or "")
+            if offered is not None and picked_code_verdict(offered, name) == ANSWER:
+                return None
             # Owner Q3 / AC-20: a pick the chat may not offer (inactive or discontinued) is set
             # aside but never offered (`resolve_gate.pick_near_code_first` reads the flag).
             if row.get("uuid") and not db.query(Product.id).filter(Product.id == str(row["uuid"]), offerable_products()).first():
                 row = {**row, "display": {**(row.get("display") or {}), "offerable": False}}
             # The resolver's row for the pick, offered as the raw's trigram neighbour with its score
             # (D1 and the probe planner never offer an `exact` row: it would have resolved).
-            return {**row, "match_tier": "trgm", "similarity": float(score)}
+            return {**row, "match_tier": "trgm", "similarity": float(score or 0.0)}
     return None
 
 
@@ -916,7 +957,9 @@ def ground(
     (`_pick_as_trgm_neighbour`) keeps its raw and loses its canonical, so the did-you-mean asks, the
     pick first (`NEAR_PICK_KEY`). A raw that is one of the options, a raw that types the canonical
     whole beside other words (`_types_the_code_whole`), a turn answering the stored question by
-    position or pick (`answers_question`) and a carried entity are never corrections."""
+    position or pick (`answers_question`) and a carried entity are never corrections. On stock
+    and incoming asks (`CLOSE_CODE_ASKS`) `picked_code_verdict` alone decides whether the pick is
+    offered (CHATBOT-CLOSE-CODES AC-36/37), no trigram floor."""
     entities = verdict.get("entities")
     if not isinstance(entities, list) or not entities:
         return verdict, []
@@ -1024,10 +1067,18 @@ def ground(
             from app.services.chatbot.turn.state import token_key
 
             typed = token_key(raw)
-            if typed != token_key(canonical) and typed not in roster_codes and not _types_the_code_whole(raw, canonical):
-                near = _pick_as_trgm_neighbour(
-                    db, raw, canonical, offer_resolved=verdict.get("domain_hint") in CLOSE_CODE_ASKS
+            # AC-36/37: on stock and incoming asks the one verdict decides answer vs offer. Words
+            # naming a class (made a category below) keep today's check: no product code is
+            # answered or offered for them.
+            close_ask = verdict.get("domain_hint") in CLOSE_CODE_ASKS and not _names_a_class_not_a_code(raw, vocab)
+            if close_ask:
+                corrected = typed not in roster_codes and picked_code_verdict(entity) == OFFER
+            else:
+                corrected = (
+                    typed != token_key(canonical) and typed not in roster_codes and not _types_the_code_whole(raw, canonical)
                 )
+            if corrected:
+                near = _pick_as_trgm_neighbour(db, raw, canonical, offered=entity if close_ask else None)
                 if near is SET_ASIDE:
                     notes.append({"from": hint, "raw": raw, "to": f"which one: {canonical} set aside (the raw reaches several codes)"})
                     entity = {**entity, "canonical_code": None}

@@ -379,9 +379,11 @@ def narrow_code_tokens(
         else:
             picked = _pick(family, descriptor)
         if picked is None:
-            if _fold(token) != code_word:
+            if folded != code_word and folded not in variants:
                 # "Srtwc7604ptrap" whose words picked nothing: the code alone, rather
-                # than a folded phrase no product is coded as.
+                # than a folded phrase no product is coded as. A token that IS one of the
+                # family's codes (the parser's code the grounding answered, "SRTWT8259-GLD"
+                # for "SRTWT8259 gold": CHATBOT-CLOSE-CODES AC-37) stays that code.
                 replaced[i] = [code_word]
             continue
         codes, terms = picked

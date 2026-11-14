@@ -421,9 +421,9 @@ _TYPED_SO_NUMBER_RE = re.compile(r"(?<![0-9A-Za-z])SO[\s-]*\d{4,}(?:-\d+)?", re.
 
 def says_outstanding(text: str) -> bool:
     """Does the message type "outstanding" (typo-tolerant)?"""
-    from app.services.chatbot.turn_runtime import osa_distance
+    from app.services.chatbot.turn_runtime import _osa_distance
 
-    return any(len(w) >= 8 and osa_distance(w, "outstanding") <= 2 for w in _WORDS_RE.findall((text or "").casefold()))
+    return any(len(w) >= 8 and _osa_distance(w, "outstanding") <= 2 for w in _WORDS_RE.findall((text or "").casefold()))
 
 
 def names_sales_orders(text: str) -> bool:
