@@ -52,8 +52,9 @@ class RespondContactResponse(RespondContactBase):
     access_types: List[RespondContactAccessTypeRef] = []
     # Linked customer codes, sorted; filled by the list endpoint (one query per page).
     customer_codes: List[str] = []
-    # The distinct companies of those customers, by name, sorted; filled by the list endpoint.
-    customer_companies: List[str] = []
+    # The contact's company access, by name, sorted (the detail page's Companies); list rows only,
+    # filled for a viewer who may read it, else empty (CONTACT-COMPANIES-COL).
+    companies: List[str] = []
     # CONTACT-TAGS: `[{id, name}]` ordered by tag sort_order then name.
     tags: List[dict] = []
     # CONTACT-TAGS S2: `{status: matches|differs|none, differ_count, differ_labels}` (list rows).
