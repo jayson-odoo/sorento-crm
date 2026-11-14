@@ -54,6 +54,11 @@ When the typed code is close to a set but not the same:
 - If several sets hold every part that was typed (`cwc604-rl` is close to CWC604-P-RL, CWC604-S-RL and their -NEW
   versions), the bot offers those sets, up to three, so the person picks which one they meant.
 
+When a dealer types a set WITH a quantity (`CWC604-P-RL x 2`), the bot answers each part of the set at that
+quantity, one line per part, the same way it answers a single code ("CWCX604-P-RL x 2: Got stock.", "CWCY604 x 2: Only
+1 got stock."). A part that counts more than once in the set is asked at that multiple. A part also typed on its own in
+the same message is asked at the total. With no quantity, the bot still asks how many units are needed.
+
 Picking a set gives the same answer as typing the set code. A set with a member the dealer may not see is never
 offered or answered.
 
