@@ -163,3 +163,12 @@ def test_f4_a_letter_added_to_a_spaced_code_with_a_quantity_names_the_typed_code
     text = c.say(f"{raw} x 2 stock", stock({**product(raw, 2), "canonical_code": pick}))
     assert "Couldn't find" in text and raw in text.upper(), f"the miss line does not name {raw!r}: {text!r}"
     assert "ZZUB668BACK" not in text.upper(), f"the miss line names the folded token: {text!r}"
+    if pick is None:
+        # Lead ruling, round 12: the offer of the close code (AC-6), never a bare miss with the refer line; "yes"
+        # then answers INLET at the typed 2.
+        assert f"Couldn't find {raw}" in text, f"the miss line does not name {raw!r} as typed: {text!r}"
+        assert "Did you mean" in text and INLET in text.split("Did you mean", 1)[1], f"no offer of {INLET}: {text!r}"
+        assert R not in text, f"referred while a close code exists: {text!r}"
+        after = c.say("yes", _yes())
+        assert f"{INLET} x 2" in after, f"'yes' did not answer {INLET} at 2: {after!r}"
+        assert R not in after, after
