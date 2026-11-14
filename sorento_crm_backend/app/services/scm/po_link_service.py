@@ -470,7 +470,8 @@ class PoLinkService:
         po_number = answer.get("docNo") or doc.get("DocNo") or (po.po_number if po is not None else None)
         message = answer.get("message") or ""
         if not message.strip() and answer.get("outcome") in ("refused", "vendor_error"):
-            message = self._plain_refusal(answer.get("errorCode"), po_number)
+            # Our own PO record is the PO that was sent; an answer's docNo is only the fallback.
+            message = self._plain_refusal(answer.get("errorCode"), po.po_number if po is not None else po_number)
         return {
             "sales_order_line_id": str(so_line.id) if so_line is not None else None,
             "so_number": so.so_number if so is not None else None,
