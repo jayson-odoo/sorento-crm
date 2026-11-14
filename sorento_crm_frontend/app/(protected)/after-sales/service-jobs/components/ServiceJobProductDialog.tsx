@@ -18,6 +18,7 @@ import {
 import { getKinds, testKindRules } from '../../warranty/services/warrantyConfigService';
 import { useServiceJobProductMutations } from '../hooks/useServiceJobProducts';
 import { getDefectOptions, searchCatalogueProducts } from '../services/serviceJobService';
+import { codeWithName } from '@/lib/product-display';
 import { ymd } from '../lib/jobDates';
 import type { ServiceJobProduct } from '../types/serviceJob.types';
 
@@ -34,7 +35,7 @@ function parseYmd(value: string | null | undefined): Date | undefined {
   return y && m && d ? new Date(y, m - 1, d) : undefined;
 }
 
-const productLabel = (p: { product_code: string; product_name: string }) => `${p.product_code} ${p.product_name}`.trim();
+const productLabel = (p: { product_code: string; product_name: string }) => codeWithName(p.product_code, p.product_name);
 
 export default function ServiceJobProductDialog({ open, onOpenChange, jobId, line }: Props) {
   const { add, update } = useServiceJobProductMutations(jobId);

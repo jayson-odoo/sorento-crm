@@ -18,6 +18,7 @@ import { searchCatalogueProducts } from '../../service-jobs/services/serviceJobS
 import { useTestKindRules } from '../hooks/useWarrantyConfig';
 import { formatMatchTypeLabel } from '../lib/warrantyLabels';
 import type { KindRuleTestResult } from '../types/warranty.types';
+import { codeWithName } from '@/lib/product-display';
 
 interface Props {
   open: boolean;
@@ -38,7 +39,7 @@ export function RuleTesterDialog({ open, onOpenChange }: Props) {
     staleTime: 30_000,
   });
   const options = useMemo(() => {
-    const list = found.map((p) => ({ value: p.id, label: `${p.product_code} ${p.product_name}`.trim() }));
+    const list = found.map((p) => ({ value: p.id, label: codeWithName(p.product_code, p.product_name) }));
     if (product && !list.some((o) => o.value === product.value)) list.unshift(product);
     return list;
   }, [found, product]);
