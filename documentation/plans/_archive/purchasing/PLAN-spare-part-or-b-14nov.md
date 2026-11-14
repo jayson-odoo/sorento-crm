@@ -1,6 +1,6 @@
 # PLAN: Spare-part order request slice 2 (history lightbox, OR <-> OI link column, OI approved qty)
 
-Status: Plan (discovery + behaviour card; build waits for crew's answers). Track M (UI on existing screens, reuse only). Lane SPARE-PART-OR-B, slice 2 of #2381.
+Status: Merged (#2412, 14 Nov 2026). Track L (one additive migration). Follow-up: SPARE-PART-OR-B C (`PLAN-spare-part-or-c-14nov.md`).
 
 ## Owner asks (14 Nov ~09:00)
 
