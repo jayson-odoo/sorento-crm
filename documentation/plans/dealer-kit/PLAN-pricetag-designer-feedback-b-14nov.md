@@ -128,3 +128,10 @@ Canvas files only: f0fd5814 CERT-TAB-FOLLOWUPS (#2353)
 ## SPEC-SHEET-PARITY / 2349
 No source/doc file mentions; git history only: 4a2d545c docs(user-guides): spec sheet designer parity slice B (#2349); 0cfd7718 SPEC-SHEET-DESIGNER-PARITY B hand test for PR #2349; ea7e8833/d622c3ac/8ad60125/7bdcb147/6ce64993 SPEC-SHEET-PARITY-B2 (v3 spec sheet editor; unrelated to price tag accessories).
 
+
+## B2 notes from the B1 review (14 Nov)
+
+- Print parity (standing rule "prints exactly as on screen"): `TagSheetRenderer.tsx:328-329` applies a run's family only for `code` and size only when `sizeFactor !== 1`; B2 must apply run fontFamily/fontSize the same way the canvas does through `runFace`.
+- Accessory cards scale and shrink text (`accessory-card.ts:659`, `fitCardTextProps` :684); absolute pt run sizes must scale with them in B2.
+- Size field applies on each keystroke (one undo step per keystroke); consider applying on blur/Enter in B2 when it is wired into the inspector.
+- List marker width uses the first run's face (`text-layout.ts` `widthOf(marker, 0)`); revisit with lists in B2.
