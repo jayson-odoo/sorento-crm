@@ -2384,6 +2384,15 @@ def _run(
                 elif name in portal_writes.PORTAL_READS:
                     out = portal_writes.run_read(db, ctx, name, args, seen_ids)
                 elif name in writes.USER_READS:
+                    if name == "crm_query" and isinstance(args, dict) and ctx.user_id:
+                        # The asker's own name is not an agent filter (crm_query runs here, as a user read).
+                        from app.models.user import User
+                        from app.services import own_scope
+                        from app.services.chatbot.agent.query_tools import strip_self_agent
+
+                        asker = db.query(User.name).filter(User.id == str(ctx.user_id)).scalar()
+                        has_agent = bool(own_scope.me(db, str(ctx.user_id)).agent_ids)
+                        args, self_note = strip_self_agent(args, asker, text, has_own_agent=has_agent)
                     out = writes.run_user_read(db, ctx, name, args, seen_ids)
                 elif name == CONFIRM_ACTION and (run.rounds > 1 or file_text or images):
                     out = ToolResult(
@@ -2395,12 +2404,6 @@ def _run(
                 elif name in (CONFIRM_ACTION, CANCEL_ACTION):
                     out = _decide(db, ctx, name, args, turn_id, confirm_notes, waiting)
                 else:
-                    if name == "crm_query" and isinstance(args, dict) and ctx.user_id:
-                        from app.models.user import User
-                        from app.services.chatbot.agent.query_tools import strip_self_agent
-
-                        asker = db.query(User.name).filter(User.id == str(ctx.user_id)).scalar()
-                        args, self_note = strip_self_agent(args, asker, text)
                     out = dispatch(
                         db, ctx, name, args,
                         call=mcp_call if mcp_call is not None else mcp_builder(seconds),
