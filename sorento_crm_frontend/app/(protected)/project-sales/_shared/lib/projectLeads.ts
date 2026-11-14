@@ -20,8 +20,8 @@ export interface ProjectLeadRow {
 }
 
 /**
- * The primary first, then every secondary lead (a dispute request, pending or decided) in the
- * order they came, plus the current owner when they are neither. A join request is not a lead.
+ * The primary first, then every secondary lead (a dispute request, pending or decided), earliest
+ * find first (an undated one last), plus the current owner when they are neither. A join request is not a lead.
  *
  * Primary Date is the lead raised date when the project came from a lead, else the registration
  * date; its "How they found it" is the lead source label. A secondary lead's are its request date
@@ -53,8 +53,16 @@ export function buildProjectLeads(
     });
   }
 
-  for (const request of requests) {
-    if (request.kind !== 'dispute') continue;
+  const secondaries = requests
+    .filter((request) => request.kind === 'dispute')
+    .map((request, index) => ({ request, index }))
+    .sort((a, b) => {
+      const at = a.request.created_at ? Date.parse(a.request.created_at) : Number.POSITIVE_INFINITY;
+      const bt = b.request.created_at ? Date.parse(b.request.created_at) : Number.POSITIVE_INFINITY;
+      return at === bt ? a.index - b.index : at - bt;
+    })
+    .map(({ request }) => request);
+  for (const request of secondaries) {
     rows.push({
       id: request.id,
       userId: request.requester_user_id,

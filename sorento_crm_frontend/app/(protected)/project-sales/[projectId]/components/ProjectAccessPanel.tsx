@@ -33,6 +33,7 @@ import {
 import type { ColumnDef } from '@tanstack/react-table';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { PanelDataGrid } from '@/components/common/PanelDataGrid';
+import { useIsMobile } from '@/hooks/use-mobile';
 import { getUserLookup } from '@/services/userSelectService';
 import type { Project } from '../../_shared/types/project.types';
 import { isProjectApproved } from '../../_shared/lib/projectApproval';
@@ -58,6 +59,8 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
   const [menuRow, setMenuRow] = React.useState<ProjectLeadRow | null>(null);
   const [reassignTo, setReassignTo] = React.useState<string | null>(null);
   const sourceLabel = useLeadSourceLabel(project.lead_source);
+  // A phone shows four columns: Date and How they found it stay one Columns click away (B4).
+  const narrow = useIsMobile();
   // The same active-people list the reassign dialog picks from: someone missing from it is
   // inactive, so their row says so and offers no Reassign.
   const people = useQuery({
@@ -86,6 +89,9 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
     (request) => request.status !== 'pending' && request.kind !== 'dispute',
   );
 
+  // Sizes are the grid's minimum width; a wider card stretches them in proportion. The four a
+  // phone shows sum to 292px (the card is about 299px there), Status keeps room for the whole
+  // Dismissed pill, and all six (580px) stretch to fill the card on a desktop.
   const columns = React.useMemo<ColumnDef<ProjectLeadRow>[]>(
     () => [
       {
@@ -100,7 +106,7 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
             </span>
           );
         },
-        size: 64,
+        size: 72,
         meta: { headerTitle: 'Salesperson' },
       },
       {
@@ -112,7 +118,7 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
             {row.original.lead ?? ''}
           </span>
         ),
-        size: 44,
+        size: 64,
         meta: { headerTitle: 'Lead' },
       },
       {
@@ -127,7 +133,7 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
             </span>
           );
         },
-        size: 52,
+        size: 88,
         meta: { headerTitle: 'Date' },
       },
       {
@@ -139,7 +145,7 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
             {row.original.foundBy ?? '-'}
           </span>
         ),
-        size: 76,
+        size: 200,
         meta: { headerTitle: 'How they found it' },
       },
       {
@@ -149,7 +155,7 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
         cell: ({ row }) => (
           <span className="block truncate text-sm">{row.original.isOwner ? 'Yes' : ''}</span>
         ),
-        size: 28,
+        size: 56,
         meta: { headerTitle: 'Owner' },
       },
       {
@@ -160,12 +166,12 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
           const status = row.original.status;
           if (!status) return null;
           return (
-            <Badge variant={status === 'pending' ? 'warning' : 'secondary'} appearance="light">
+            <Badge variant={status === 'pending' ? 'warning' : 'secondary'} appearance="light" size="sm">
               {status === 'pending' ? 'Pending' : 'Dismissed'}
             </Badge>
           );
         },
-        size: 36,
+        size: 100,
         meta: { headerTitle: 'Status' },
       },
     ],
@@ -254,6 +260,9 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
                 }}
               >
                 <PanelDataGrid<ProjectLeadRow>
+                  // Column visibility is read at mount, so the grid remounts once the width is known.
+                  key={narrow ? 'narrow' : 'wide'}
+                  initialColumnVisibility={narrow ? { date: false, found_by: false } : undefined}
                   columns={columns}
                   rows={leads}
                   getRowId={(row) => row.id}
