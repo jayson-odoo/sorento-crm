@@ -634,7 +634,8 @@ function sparePartLineColumns({
     id: 'order_inquiry',
     accessorFn: (row) => row.oi_no ?? '',
     header: ({ column }) => <DataGridColumnHeader title="OI" column={column} />,
-    size: 80,
+    // "OI-2611-0001" whole (fix round 1); the room comes out of State on this view.
+    size: 100,
     meta: { headerTitle: 'OI', skeleton: <Skeleton className="h-4 w-20" /> },
     cell: ({ row }) => {
       const line = lineOf(row.original);
@@ -649,6 +650,7 @@ function sparePartLineColumns({
           <OrderInquiryLinkCell
             rows={line.rows.filter((r) => Boolean(r.oi_no))}
             lineId={line.primary.id}
+            numberOnly
           />
         </div>
       );
@@ -772,8 +774,10 @@ function sparePartLineColumns({
       id: 'state',
       accessorFn: (row) => lineOf(row).state,
       header: ({ column }) => <DataGridColumnHeader title="State" column={column} />,
-      size: 162,
-      minSize: 162,
+      // The History icon moved to Qty; on the order request page State also gives the OI
+      // column its room (fix round 1), so both views sum to 950 px.
+      size: view === 'request' ? 142 : 162,
+      minSize: view === 'request' ? 142 : 162,
       meta: { headerTitle: 'State' },
       cell: ({ row }) => {
         const line = lineOf(row.original);

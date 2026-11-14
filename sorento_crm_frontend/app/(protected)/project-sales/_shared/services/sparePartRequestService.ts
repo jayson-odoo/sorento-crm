@@ -97,6 +97,8 @@ export interface SparePartRequestListItem {
   oi_no?: string | null;
   state: string;
   revision_state?: string | null;
+  /** The open revision's state when there is one, else `state` (pill and filter). */
+  effective_state?: string | null;
   currency: string | null;
   requested_by?: string | null;
   requested_by_name: string | null;

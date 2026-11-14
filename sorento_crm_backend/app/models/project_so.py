@@ -1101,6 +1101,19 @@ def next_inquiry_no(bind, company_id, ref_date, inquiry_type: str = INQUIRY_TYPE
     """
     prefix = _inquiry_no_prefix(ref_date, inquiry_type)
     table = OrderInquiry.__table__
+    # Two writers minting in the same company and month take turns: the read-highest-plus-one
+    # below is serialised per (company, prefix) for the rest of the transaction, so a
+    # concurrent approval and SO raise cannot both read the same highest number. The schema
+    # is part of the key (one in production): a scratch test schema never waits on another.
+    bind.execute(
+        select(
+            func.pg_advisory_xact_lock(
+                func.hashtext(
+                    func.concat(func.current_schema(), f":order_inquiry_no:{company_id}:{prefix}")
+                )
+            )
+        )
+    )
     # SPARE-PART-OR-B (U2.4): the OI- series is also issued as a spare part request's
     # `oi_no`, so both columns count; the OR- series lives in `inquiry_no` only.
     columns = [table.c.inquiry_no]

@@ -6485,14 +6485,18 @@ class ProjectOrderInquiryService:
         Moved: the SAME row takes the new figures, keeps the old ones in `previous_qty` /
         `previous_delivery_date` for the Was / Now table, appends "Was N ..." to
         `base_note`, goes back to purchasing as CHANGED when they had acknowledged it
-        (`_amended_by_cs`), and the handover email prints one line old -> new. A new date
-        of None is no date move. Returns what moved (`handover_moves`); empty means the
-        row was left exactly as it was and nobody is told."""
+        (`_amended_by_cs`), and the handover email prints one line old -> new. Its links
+        follow the new qty as an SO settle's do (`_settle_row_in_place`): more linked than
+        the new qty gives the excess back (`_trim_links`), then `refresh_link_state`
+        re-reads the row's state. A new date of None is no date move. Returns what moved
+        (`handover_moves`); empty means the row was left exactly as it was and nobody is
+        told."""
         previous_qty = _dec(row.qty)
         previous_date = row.delivery_date
         moves = handover_moves(previous_qty, previous_date, qty, delivery_date)
         if not moves:
             return moves
+        self._trim_links(row, qty)
         row.qty = qty
         if "delivery_date" in moves:
             row.delivery_date = delivery_date
@@ -6505,6 +6509,8 @@ class ProjectOrderInquiryService:
         )
         row.note = f"{base_note}; {was_note}" if base_note else was_note
         self._amended_by_cs(row)
+        self.refresh_link_state([row])
+        self.db.flush()
         self._record_handover(
             row, kind="settled", was=dict(moves), actor_user_id=actor_user_id,
             borrow_hole=borrow_hole,

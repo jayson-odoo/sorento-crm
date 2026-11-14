@@ -59,13 +59,24 @@ export function SparePartRequestRecord({ id }: { id: string }) {
   const [historyLine, setHistoryLine] = useState<OrderInquiryLine | null>(null);
   const request = requestQuery.data;
   const revisionState = request?.revision_state ?? null;
-  // U4.6: while a revision is open this page reads its qtys (the request's own `lines[].qty`);
-  // the rows themselves, and the order inquiry, keep the approved qty.
+  // U4.6: while a revision is open this page reads its qtys and totals (the request's own
+  // `lines[]`), measured against the APPROVED qty (the row's own `qty`, which the order
+  // inquiry keeps reading): the History icon and the Approve popup's changes compare the
+  // revision with what was approved, not with the first submission.
   const lines = useMemo(() => {
     const rows = linesQuery.data ?? NO_ROWS;
     if (!revisionState || !request) return rows;
-    const revised = new Map(request.lines.map((line) => [line.id, line.qty]));
-    return rows.map((row) => (revised.has(row.id) ? { ...row, qty: revised.get(row.id) } : row));
+    const revised = new Map(request.lines.map((line) => [line.id, line]));
+    return rows.map((row) => {
+      const line = revised.get(row.id);
+      if (!line) return row;
+      return {
+        ...row,
+        qty: line.qty,
+        submitted_qty: row.qty,
+        line_total: line.total ?? row.line_total,
+      };
+    });
   }, [linesQuery.data, request, revisionState]);
   // The same key FormSLATrackingTab reads, so the tab and the banner share one request.
   const { data: slaTrackers } = useQuery({

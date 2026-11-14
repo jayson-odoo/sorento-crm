@@ -228,7 +228,8 @@ def can_write_photos(db: Session, inquiry: OrderInquiry, user_id: Optional[str])
     """Row photos: the requester while it is a draft or rejected, a decider while it is
     pending. A requester's photo change while pending would skip the approval restart a
     pending edit makes (G5), so it waits for the edit form's save."""
-    if inquiry.inquiry_type != KIND:
+    if inquiry.inquiry_type != KIND or in_revision(inquiry):
+        # A revision changes qtys only (U4.3): no photo writes while one is open.
         return False
     return _can_edit_draft(inquiry, user_id) or can_decide(db, inquiry, user_id)
 
@@ -358,14 +359,26 @@ def _rows(db: Session, inquiry: OrderInquiry) -> List[OrderInquiryRow]:
     )
 
 
-def _line_total(row: OrderInquiryRow) -> Decimal:
-    return Decimal(row.qty or 0) * Decimal(row.unit_price or 0)
+def _line_total(row: OrderInquiryRow, *, revised: bool = False) -> Decimal:
+    """qty x unit price; `revised`: the open revision's qty (the order request page, U4.6)."""
+    qty = _revised(row) if revised else Decimal(row.qty or 0)
+    return qty * Decimal(row.unit_price or 0)
 
 
-def request_total(db: Session, inquiry: OrderInquiry) -> str:
-    """The request's amount: qty x unit price over its lines still standing, server-side."""
+def request_total(db: Session, inquiry: OrderInquiry, *, revised: bool = False) -> str:
+    """The request's amount: qty x unit price over its lines still standing, server-side.
+    `revised`: at the open revision's qtys (the order request page); purchasing's reads keep
+    the approved qty."""
     rows = _rows(db, inquiry)
-    return _num(sum((_line_total(r) for r in rows if r.state != INQUIRY_CANCELLED), _ZERO)) or "0"
+    return (
+        _num(
+            sum(
+                (_line_total(r, revised=revised) for r in rows if r.state != INQUIRY_CANCELLED),
+                _ZERO,
+            )
+        )
+        or "0"
+    )
 
 
 def detail(db: Session, inquiry: OrderInquiry, user_id: Optional[str]) -> Dict[str, Any]:
@@ -385,8 +398,8 @@ def detail(db: Session, inquiry: OrderInquiry, user_id: Optional[str]) -> Dict[s
             db.query(Product).filter(Product.id.in_(product_ids)).all() if product_ids else []
         )
     }
-    total = request_total(db, inquiry)
     revising = in_revision(inquiry)
+    total = request_total(db, inquiry, revised=revising)
     lines = []
     for row in rows:
         product = products.get(str(row.product_id)) if row.product_id else None
@@ -402,7 +415,7 @@ def detail(db: Session, inquiry: OrderInquiry, user_id: Optional[str]) -> Dict[s
                 "stock_location": row.stock_location,
                 "qty": _num(qty) or "0",
                 "unit_price": _num(row.unit_price) if show_prices else None,
-                "total": (_num(_line_total(row)) or "0") if show_prices else None,
+                "total": (_num(_line_total(row, revised=revising)) or "0") if show_prices else None,
                 "requested_qty": _num(row.requested_qty),
                 "requested_unit_price": _num(row.requested_unit_price) if show_prices else None,
                 "state": row.state,
@@ -511,11 +524,18 @@ def list_requests(
     q = db.query(OrderInquiry).filter(OrderInquiry.inquiry_type == KIND, or_(*seen))
     wanted = [s for s in (states or []) if s]
     if wanted:
-        q = q.filter(OrderInquiry.state.in_(wanted))
+        # F6: a request filters by its effective state, an open revision's own first.
+        q = q.filter(func.coalesce(OrderInquiry.revision_state, OrderInquiry.state).in_(wanted))
     text = _text(query, 200)
     if text:
         like = f"%{text}%"
-        q = q.filter(or_(OrderInquiry.inquiry_no.ilike(like), OrderInquiry.reason.ilike(like)))
+        q = q.filter(
+            or_(
+                OrderInquiry.inquiry_no.ilike(like),
+                OrderInquiry.oi_no.ilike(like),
+                OrderInquiry.reason.ilike(like),
+            )
+        )
     total = q.count()
     key = sort if sort in _LIST_SORTS else "submitted_at"
     column = sort_columns.get(key)
@@ -557,6 +577,7 @@ def list_requests(
                 "oi_no": inquiry.oi_no,
                 "state": inquiry.state,
                 "revision_state": inquiry.revision_state,
+                "effective_state": inquiry.revision_state or inquiry.state,
                 "currency": inquiry.currency,
                 "requested_by": inquiry.requested_by,
                 "requested_by_name": names.get(str(inquiry.requested_by)) if inquiry.requested_by else None,
@@ -853,6 +874,8 @@ def submit(db: Session, inquiry: OrderInquiry, actor: str) -> OrderInquiry:
     revision (U4.4) goes to approval the same way, once a qty has changed."""
     if not is_requester(inquiry, actor):
         raise _forbidden("Only the requester can submit this request.")
+    # Read the state under the row lock: a concurrent decision or revise is seen, not raced.
+    inquiry = _lock(db, inquiry)
     if in_revision(inquiry):
         return _submit_revision(db, inquiry, actor)
     if inquiry.state not in _EDITABLE:
@@ -874,6 +897,8 @@ def _submit_revision(db: Session, inquiry: OrderInquiry, actor: str) -> OrderInq
     if inquiry.revision_state not in _EDITABLE:
         raise _conflict("This revision is already waiting for approval.")
     rows = _live_rows(db, inquiry)
+    if not rows:
+        return _close_empty_revision(db, inquiry, actor)
     if not any(_revised(row) != Decimal(row.qty or 0) for row in rows):
         raise _invalid("lines", "Nothing changed. Change a quantity before submitting.")
     if not any(_revised(row) > 0 for row in rows):
@@ -886,6 +911,23 @@ def _submit_revision(db: Session, inquiry: OrderInquiry, actor: str) -> OrderInq
         actor,
     )
     _start_approval(db, inquiry, rows, actor, "Submitted again", revision=True)
+    return inquiry
+
+
+def _close_empty_revision(db: Session, inquiry: OrderInquiry, actor: str) -> OrderInquiry:
+    """Lead rule (fix round 1): purchasing cancelled every line while the revision was open,
+    so there is nothing left to revise. Submit closes it quietly: nothing goes to approval
+    and nobody is told; History says why."""
+    for row in _rows(db, inquiry):
+        row.revised_qty = None
+    inquiry.revision_state = None
+    inquiry.reject_reason = None
+    _void_stages(db, inquiry, "Revision closed: no lines left")
+    _audit(
+        db, inquiry, "SPR_REVISION_CLOSED",
+        "Revision closed: every line was cancelled, nothing to submit", actor,
+    )
+    db.flush()
     return inquiry
 
 
@@ -1300,10 +1342,11 @@ def _approve_revision(
                 row, cause="revised_to_zero", stamp="Revised to 0", actor_user_id=str(actor)
             )
             continue
-        had_link = bool(oi._links_of(row.id))  # noqa: SLF001
         oi.restate_row(row, new_qty, None, base_note=row.note, actor_user_id=str(actor))
-        db.flush()
-        oi._dispatch_changed_with_links(inquiry, row, had_link=had_link)  # noqa: SLF001
+        # What the row still holds after the trim, as the SO settle reads it.
+        oi._dispatch_changed_with_links(  # noqa: SLF001
+            inquiry, row, had_link=bool(oi._links_of(row.id))  # noqa: SLF001
+        )
     for row in _rows(db, inquiry):
         row.revised_qty = None
     inquiry.revision_state = None

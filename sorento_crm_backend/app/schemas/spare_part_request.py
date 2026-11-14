@@ -108,6 +108,8 @@ class SparePartRequestListItem(BaseModel):
     oi_no: Optional[str] = None
     state: str
     revision_state: Optional[str] = None
+    #: F6: the open revision's state when there is one, else `state` (the pill and filter).
+    effective_state: Optional[str] = None
     currency: Optional[str] = None
     requested_by: Optional[str] = None
     requested_by_name: Optional[str] = None

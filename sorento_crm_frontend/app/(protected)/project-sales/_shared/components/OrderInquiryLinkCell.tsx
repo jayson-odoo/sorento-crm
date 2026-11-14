@@ -70,12 +70,36 @@ export function orderInquiryLinkEntries(
   return entries;
 }
 
-function InquiryEntryView({ entry, testId }: { entry: InquiryEntry; testId: string }) {
+function InquiryEntryView({
+  entry,
+  testId,
+  numberOnly = false,
+}: {
+  entry: InquiryEntry;
+  testId: string;
+  numberOnly?: boolean;
+}) {
   const { line } = entry;
   const [open, setOpen] = React.useState(false);
   const href = entry.inquiryId
     ? `/project-sales/order-inquiries/${entry.inquiryId}?row=${line.primary.id}`
     : null;
+  if (numberOnly) {
+    return href ? (
+      <Link
+        href={href}
+        className="tabular-nums font-medium text-primary hover:underline"
+        title={entry.inquiryNo}
+        data-testid={testId}
+      >
+        {entry.inquiryNo}
+      </Link>
+    ) : (
+      <span className="tabular-nums" title={entry.inquiryNo} data-testid={testId}>
+        {entry.inquiryNo}
+      </span>
+    );
+  }
   // The pill's own rule: only when the pill IS the Rejected button does it keep that lightbox.
   const rejected = lineShowsRejectedBadge(line);
   const reserve = reserveTextOfRows(line.liveRows);
@@ -151,18 +175,22 @@ export function OrderInquiryLinkCell({
   rows,
   lineId,
   testIdPrefix = 'oi-link',
+  numberOnly = false,
 }: {
   rows: OrderInquiryWorklistRow[] | null | undefined;
   lineId: string;
   /** The cell's test ids, `<prefix>-<lineId>[-more-N]`. */
   testIdPrefix?: string;
+  /** The OI number link alone, no status pill or documents lightbox: an order request's
+   *  line already shows its state beside it (SPARE-PART-OR-B fix round 1). */
+  numberOnly?: boolean;
 }) {
   const entries = React.useMemo(() => orderInquiryLinkEntries(rows), [rows]);
   if (entries.length === 0) return <span className="text-muted-foreground">-</span>;
   const [first, ...rest] = entries;
   return (
     <div className="flex min-w-0 items-center gap-1.5 overflow-hidden">
-      <InquiryEntryView entry={first} testId={`${testIdPrefix}-${lineId}`} />
+      <InquiryEntryView entry={first} testId={`${testIdPrefix}-${lineId}`} numberOnly={numberOnly} />
       {rest.length > 0 ? (
         <Popover>
           <PopoverTrigger asChild>
@@ -188,6 +216,7 @@ export function OrderInquiryLinkCell({
                   key={`${entry.inquiryId ?? entry.inquiryNo}-${entry.line.primary.id}`}
                   entry={entry}
                   testId={`${testIdPrefix}-${lineId}-more-${index}`}
+                  numberOnly={numberOnly}
                 />
               ))}
             </PopoverContent>

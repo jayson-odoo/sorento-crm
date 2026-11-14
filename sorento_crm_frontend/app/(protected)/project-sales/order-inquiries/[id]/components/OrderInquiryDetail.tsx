@@ -996,7 +996,10 @@ export function OrderInquiryDetail({ id }: { id: string }) {
                 </DetailActionsMenu>
               }
               primary={
+                // SPARE-PART-OR-B: a revision is submitted and decided on the order request
+                // page only; here purchasing keeps working the approved request.
                 isSparePartInquiry(header) &&
+                !header.revision_state &&
                 (header.can_decide || header.can_edit || header.can_revise) ? (
                   <SparePartRequestActions header={header} rows={lines} />
                 ) : canAcknowledge || (canReserve && (Boolean(openReserveRequest) || stagedCount > 0)) ? (
