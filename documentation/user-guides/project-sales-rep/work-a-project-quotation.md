@@ -197,6 +197,10 @@ and quotations sent before the cover page existed keep their old layout.
   the same product, rate, text, notes and every area quantity. The copy's product picker is
   ready: start typing a product code to change it. The new product's description, brand and UOM
   follow it, and its rate starts at the series price (or blank) like a new line.
+* **Line note** (the note icon on a line) is shown to the customer: it prints in the **REMARK**
+  column of the PDF, the sign link and the Excel export, under *Non-cancellable* when the line
+  is Non-cancellable. A long note wraps in full. Leave it empty and nothing extra prints. Do not
+  write anything there that is only for your team.
 * **Remove line** takes the line out at once. There is no question and no struck-through row.
 * **Undo** and **Redo** (the curved arrows on the table, or Cmd+Z / Ctrl+Z and Shift+Cmd+Z /
   Shift+Ctrl+Z) step back and forward through your line changes: a removed or duplicated line,
@@ -330,7 +334,8 @@ The link opens a sign page that matches the PDF:
 * Each section's table has the same columns as that section in the PDF, in the same order and
   with the same headings: **ITEM**, **PRODUCT IMAGE** (only when a line in that section has a
   photo, as in the PDF), **TECHNICAL SPEC** (the line's drawing), **DESCRIPTION**, **BRAND**,
-  **PRODUCT CODE**, **QTY**, **UNIT RATE (RM)**, **COMPLETE SET** and **GRAND TOTAL**. The
+  **PRODUCT CODE**, **QTY**, **UNIT RATE (RM)**, **COMPLETE SET**, **REMARK** (only when a line
+  in that section is Non-cancellable or has a line note) and **GRAND TOTAL**. The
   customer sees the photos and drawings without signing in. On a phone they scroll the table
   sideways; no column is left out.
 * To accept, the customer types **Your name**, ticks *I have read and agree to the Terms and
