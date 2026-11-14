@@ -662,8 +662,8 @@ describe('QuotationsPanel on a project waiting for approval (review round 3)', (
  */
 describe('QuotationsPanel: Prepared by column', () => {
   const byAlice = () => quotationDocument({ id: 'd-a', our_ref: 'SRT/Q/2026/0141 (R2)', prepared_by: 'Sales Rep Alpha' });
-  const byBeta = () =>
-    draftDocument({ id: 'd-b', our_ref: 'SRT/Q/2026/0150', prepared_by: 'Sales Rep Beta' });
+  const byBeta = (overrides: Partial<QuotationDocument> = {}) =>
+    draftDocument({ id: 'd-b', our_ref: 'SRT/Q/2026/0150', prepared_by: 'Sales Rep Beta', ...overrides });
   const byNobody = () =>
     draftDocument({ id: 'd-c', our_ref: 'SRT/Q/2026/0160', document_no: 'SRT/Q/2026/0160', prepared_by: null });
 
@@ -691,6 +691,19 @@ describe('QuotationsPanel: Prepared by column', () => {
         .map((node) => node.textContent);
     await waitFor(() => expect(order()).toEqual(['Sales Rep Alpha', 'Sales Rep Beta']));
     fireEvent.click(screen.getByRole('button', { name: 'Prepared by' }));
+    await waitFor(() => expect(order()).toEqual(['Sales Rep Beta', 'Sales Rep Alpha']));
+  });
+
+  it('Value sorts by amount, not as text', async () => {
+    listQuotationDocuments.mockResolvedValue([
+      byAlice(),
+      byBeta({ grand_total: '12000.00' }),
+    ]);
+    renderPanel();
+
+    await screen.findByText('Sales Rep Beta');
+    fireEvent.click(screen.getByRole('button', { name: 'Value' }));
+    const order = () => screen.getAllByText(/^Sales Rep /).map((node) => node.textContent);
     await waitFor(() => expect(order()).toEqual(['Sales Rep Beta', 'Sales Rep Alpha']));
   });
 
