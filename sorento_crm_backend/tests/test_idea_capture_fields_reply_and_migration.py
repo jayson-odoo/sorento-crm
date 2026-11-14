@@ -76,7 +76,8 @@ def _facts(missing: list[str], link: str | None = LINK) -> dict:
 def test_ac20_en_complete_reply_lists_each_missing_field_on_its_own_line():
     reply = render_reply("complete", _facts(MISSING_3), user_message="x", language="en")
     assert reply == (
-        "Idea IDEA-0123 is in: Retyping WhatsApp orders into CRM\n"
+        "Your feedback has been logged: Feature request - Retyping WhatsApp orders into CRM\n"
+        "Number: IDEA-0123\n"
         "Open it to add what I didn't catch:\n"
         "- Desired outcome\n"
         "- Use cases\n"
@@ -88,7 +89,8 @@ def test_ac20_en_complete_reply_lists_each_missing_field_on_its_own_line():
 def test_ac20_single_missing_field_is_one_bullet():
     reply = render_reply("complete", _facts(["Photos or files"]), user_message="x", language="en")
     assert reply.splitlines() == [
-        "Idea IDEA-0123 is in: Retyping WhatsApp orders into CRM",
+        "Your feedback has been logged: Feature request - Retyping WhatsApp orders into CRM",
+        "Number: IDEA-0123",
         "Open it to add what I didn't catch:",
         "- Photos or files",
         LINK,
@@ -100,10 +102,10 @@ def test_ac20_ac21_every_language_has_the_same_line_structure_with_english_names
     missing = ["Desired outcome", "Use cases", "Current workaround", "Photos or files"]
     reply = render_reply("complete", _facts(missing), user_message="x", language=lang)
     lines = reply.splitlines()
-    assert len(lines) == 2 + len(missing) + 1, lines
-    assert "IDEA-0123" in lines[0] and "Retyping WhatsApp orders into CRM" in lines[0]
-    assert lines[1].strip() and not lines[1].startswith("- ")
-    assert lines[2:-1] == [f"- {name}" for name in missing]
+    assert len(lines) == 3 + len(missing) + 1, lines
+    assert "Retyping WhatsApp orders into CRM" in lines[0] and "IDEA-0123" in lines[1]
+    assert lines[2].strip() and not lines[2].startswith("- ")
+    assert lines[3:-1] == [f"- {name}" for name in missing]
     assert lines[-1] == LINK
     assert " · " not in reply
     assert ", " not in "\n".join(lines[1:-1])
@@ -128,9 +130,9 @@ def test_ac20_shipped_copy_keeps_the_missing_token_on_its_own_lines(lang):
 
 
 EXPECTED_NO_LINK = {
-    "en": "Idea IDEA-0123 is in: Retyping WhatsApp orders into CRM",
-    "ms": "Idea IDEA-0123 sudah diterima: Retyping WhatsApp orders into CRM",
-    "zh": "创意 IDEA-0123 已收到：Retyping WhatsApp orders into CRM",
+    "en": "Your feedback has been logged: Feature request - Retyping WhatsApp orders into CRM\nNumber: IDEA-0123",
+    "ms": "Maklum balas anda telah direkodkan: Permintaan ciri - Retyping WhatsApp orders into CRM\nNombor: IDEA-0123",
+    "zh": "您的反馈已记录：功能需求 - Retyping WhatsApp orders into CRM\n编号：IDEA-0123",
 }
 
 

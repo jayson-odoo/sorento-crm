@@ -347,8 +347,8 @@ def test_I3_the_issue_reply_is_one_fact_per_line_in_english(env):  # noqa: F811
     idea_id = env.created()
     out = env.turn(_issue(env, language="en"))
     lines = _lines(out["reply_text"])
-    assert f"Logged as issue {IDEA_NUMBER}" in lines
-    assert TITLE in lines
+    assert f"Your feedback has been logged: Problem report - {TITLE}" in lines
+    assert f"Number: {IDEA_NUMBER}" in lines
     assert f"{CRM}/ideas/{idea_id}" in lines
     # No photos sent: no Photos line at all.
     assert not any(line.startswith("Photos") for line in lines)
@@ -364,7 +364,8 @@ def test_I3_an_idea_keeps_todays_reply_and_payload(env):  # noqa: F811
     out = env.turn(text)
     assert out["status"] == "complete"
     assert out["reply_text"] == (
-        f"Idea {IDEA_NUMBER} is in: {TITLE}\n"
+        f"Your feedback has been logged: Feature request - {TITLE}\n"
+        f"Number: {IDEA_NUMBER}\n"
         "Open it to add what I didn't catch:\n"
         "- Desired outcome\n- Use cases\n- Current workaround\n- Photos or files\n"
         f"{CRM}/ideas/{idea_id}"
@@ -380,9 +381,9 @@ def test_I3_a_malay_issue_is_answered_in_malay(env):  # noqa: F811
     assert out["status"] == "complete"
     assert out["language"] == "ms"
     lines = _lines(out["reply_text"])
-    assert not any("Logged as issue" in line for line in lines), "the English line in a Malay reply"
+    assert not any("Your feedback has been logged" in line for line in lines), "the English line in a Malay reply"
     assert any(IDEA_NUMBER in line for line in lines)
-    assert TITLE in lines
+    assert f"Maklum balas anda telah direkodkan: Laporan masalah - {TITLE}" in lines
     assert f"{CRM}/ideas/{idea_id}" in lines
     (payload,) = env.create_calls
     assert payload["type"] == "issue"
@@ -502,7 +503,7 @@ def test_P2_a_failed_upload_never_fails_the_filing(env, photos):
     assert out["status"] == "complete"
     assert len(photos.uploads) == 2
     lines = _lines(out["reply_text"])
-    assert f"Logged as issue {IDEA_NUMBER}" in lines
+    assert f"Your feedback has been logged: Problem report - {TITLE}" in lines
     assert "Photos: 1" in lines
 
 
@@ -607,7 +608,7 @@ def test_P2_any_error_in_the_photo_step_never_fails_the_filing(env, photos, monk
     out = env.turn(_issue(env))
     assert out["status"] == "complete"
     lines = _lines(out["reply_text"])
-    assert f"Logged as issue {IDEA_NUMBER}" in lines
+    assert f"Your feedback has been logged: Problem report - {TITLE}" in lines
     assert not any(line.startswith("Photos") for line in lines)
     assert photos.uploads == []
 

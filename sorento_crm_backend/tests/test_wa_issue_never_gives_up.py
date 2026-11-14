@@ -119,7 +119,8 @@ def test_R14_an_issue_flow_files_the_answer_to_its_ask_and_never_gives_up(env, s
     assert _words(problem) <= said, (problem, _words(problem) - said)
 
     lines = _lines(second["reply_text"])
-    assert f"Logged as issue {IDEA_NUMBER}" in lines, second["reply_text"]
+    assert f"Number: {IDEA_NUMBER}" in lines, second["reply_text"]
+    assert lines[0].startswith("Your feedback has been logged: Problem report - "), second["reply_text"]
     assert IDEATION_CAPTURE_GIVE_UP["en"] not in second["reply_text"]
     assert "couldn't find an idea" not in second["reply_text"].lower()
 

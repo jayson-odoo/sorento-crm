@@ -408,7 +408,7 @@ def test_D3_an_unlinked_dealer_filing_an_issue_gets_a_user_and_files_as_it(env):
     assert payload["submitter_crm_user_id"] == user.id
     assert payload["type"] == "issue"
     assert all(c["submitter_crm_user_id"] == user.id for c in env.similar_calls)
-    assert f"Logged as issue {IDEA_NUMBER}" in _lines(out["reply_text"])
+    assert f"Your feedback has been logged: Problem report - {TITLE}" in _lines(out["reply_text"])
 
 
 def test_D3_a_contact_with_a_linked_staff_user_gets_no_new_user(env):

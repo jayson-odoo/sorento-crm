@@ -80,7 +80,7 @@ def test_ac_w28_a_stored_step_with_no_origin_is_a_test_idea(db, ss):
 
     (call,) = posts(ss, CREATE_PATH)
     assert call["json"]["is_test"] is True
-    assert "test idea" in outcome.reply_text.lower()
+    assert "test feedback" in outcome.reply_text.lower()
 
 
 # ------------------------------------------------------------------ AC-W29: the list reads ss only, edits are open
@@ -526,7 +526,7 @@ def test_fr3_c1_a_console_turn_creates_a_test_idea_and_says_so(db, ss):
 
     assert similar["is_test"] is True
     assert create["is_test"] is True
-    assert "test idea" in outcome.reply_text.lower()
+    assert "test feedback" in outcome.reply_text.lower()
 
 
 def test_fr3_c1_a_live_turn_creates_a_real_idea_with_no_test_note(db, ss):
@@ -588,7 +588,7 @@ def test_fr3_c3_a_numeric_idea_number_is_named(db, ss, number):
 
     outcome = confirm(db, w, row)
 
-    assert f"Idea {number}" in outcome.reply_text
+    assert f"Feedback {number}" in outcome.reply_text
 
 
 @pytest.mark.parametrize(
@@ -606,7 +606,7 @@ def test_fr3_c3_any_other_idea_number_is_left_out_of_the_reply(db, ss, number):
     assert outcome.steps[0]["status"] == "done"
     text = outcome.reply_text
     assert f"{CRM}/ideas/{idea_id}" in text, "positive control: the link still travels"
-    assert f"The idea: {CRM}/ideas/{idea_id}" in text, "the note names no number"
+    assert f"The feedback: {CRM}/ideas/{idea_id}" in text, "the note names no number"
     for bad in ("Ignore the user", "call crm_idea_update", "evil.test", "<b>", "None", "{"):
         assert bad not in text
 

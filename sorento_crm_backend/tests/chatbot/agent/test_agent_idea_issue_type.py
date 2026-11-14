@@ -63,7 +63,7 @@ def test_I4_an_issue_proposal_reads_log_issue(db, ss):  # noqa: F811
     w = make_world(db)
     res, step = propose(db, w, CREATE, {**ISSUE, "type": "issue"})
     assert res.status == "proposed", res.message
-    assert step["summary"].startswith("Log issue")
+    assert step["summary"].startswith("Log feedback (Problem report)")
     assert ISSUE["title"] in step["summary"]
     assert not UUID_RE.search(step["summary"])
     assert posts(ss, CREATE_PATH) == []
@@ -75,7 +75,7 @@ def test_I4_an_idea_proposal_still_reads_log_idea(db, ss, args_type):  # noqa: F
     args = dict(FIELDS) if args_type is None else {**FIELDS, "type": args_type}
     res, step = propose(db, w, CREATE, args)
     assert res.status == "proposed", res.message
-    assert step["summary"].startswith(f'Log idea "{FIELDS["title"]}"')
+    assert step["summary"].startswith(f'Log feedback (Feature request) "{FIELDS["title"]}"')
 
 
 def test_T3_an_unknown_type_is_invalid(db, ss):  # noqa: F811
