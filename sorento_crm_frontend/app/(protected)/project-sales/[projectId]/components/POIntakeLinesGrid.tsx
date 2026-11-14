@@ -981,6 +981,13 @@ export const POIntakeLinesGrid = React.forwardRef<
     enableRowSelection: !readOnly,
   });
 
+  // A view switch clears the ticks, so the bulk button never acts on lines the reader can
+  // no longer see (PO-UPLOAD-MATCHING B review).
+  React.useEffect(() => {
+    table.resetRowSelection();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view]);
+
   // Bulk cancel / put back (PO-UPLOAD-MATCHING B): the ticked lines, in line order.
   const rowSelection = table.getState().rowSelection;
   const ticked = React.useMemo(

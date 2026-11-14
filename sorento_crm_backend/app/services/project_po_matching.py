@@ -345,7 +345,9 @@ def named_variant_siblings(
         if not product_code.startswith(f"{code}-"):
             continue
         suffix = product_code[len(code) + 1 :]
-        if suffix and re.search(rf"(?<![A-Z0-9]){re.escape(suffix)}(?![A-Z0-9])", text):
+        # A one-character suffix ("-S", "-W") is not a variant a description names: "S TRAP"
+        # and "W/O COVER" would otherwise hold back a perfectly exact code.
+        if len(suffix) > 1 and re.search(rf"(?<![A-Z0-9]){re.escape(suffix)}(?![A-Z0-9])", text):
             named.append(product)
     return named
 
@@ -462,7 +464,10 @@ def suggest_matches(
             confidence = answer.get("confidence")
             entry = dict(matches.get(str(line_no)) or {})
             entry["confidence"] = confidence if confidence in CONFIDENCES else "low"
-            entry["options"] = options
+            # Options already recorded (a held-back exact code: bare code, named variant) stay
+            # first; the model's own options follow.
+            recorded = [o for o in entry.get("options") or [] if o]
+            entry["options"] = recorded + [o for o in options if o not in recorded]
             matches[str(line_no)] = entry
             if picked is not None:
                 line.resolved_product_id = picked
