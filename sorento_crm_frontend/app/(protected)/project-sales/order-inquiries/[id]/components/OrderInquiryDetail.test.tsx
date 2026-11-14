@@ -924,6 +924,29 @@ describe('Document view gear: one Link PO... item and Remove link in CRM', () =>
     expect(screen.queryByText(/Tick lines of one product/)).toBeNull();
   });
 
+  // Crew db3 pass on b452cd26a (14 Nov): two lines ticked, one not in AutoCount, gave a greyed
+  // "Link PO... (2)" with no reason on screen. Same as the lines list: the line in AutoCount goes,
+  // the count reads "1 of 2".
+  it('one line in AutoCount and one not: Link PO... (1 of 2) is enabled and sends only the AutoCount line', async () => {
+    const notInAc = doc('row-e', 'ZZT-EEE', false, { product_id: 'prod-2', in_autocount: false });
+    await gear([A, notInAc], ['ZZT-AAA', 'ZZT-EEE']);
+    const item = screen.getByRole('menuitem', { name: /^Link PO\.\.\. \(1 of 2\)$/ });
+    expect(item).not.toHaveAttribute('aria-disabled', 'true');
+    fireEvent.click(item);
+    await screen.findByRole('dialog');
+    await waitFor(() => expect(poOptionsSpy).toHaveBeenCalled());
+    expect(optionsKey()).toContain('row-a');
+  });
+
+  it('a greyed Link PO... shows its reason on screen', async () => {
+    const e1 = doc('row-e', 'ZZT-EEE', false, { in_autocount: false });
+    const f1 = doc('row-f', 'ZZT-FFF', false, { in_autocount: false });
+    await gear([e1, f1], ['ZZT-EEE', 'ZZT-FFF']);
+    const item = screen.getByRole('menuitem', { name: /^Link PO\.\.\./ });
+    expect(item).toHaveAttribute('aria-disabled', 'true');
+    expect(item).toHaveTextContent(/Tick one line to link it by hand\./);
+  });
+
   it('Link PO... opens the shared popup titled Link PO for exactly the ticked row ids', async () => {
     await gear([A, B, C], ['ZZT-AAA', 'ZZT-BBB']);
     fireEvent.click(screen.getByRole('menuitem', { name: /^Link PO\.\.\./ }));
