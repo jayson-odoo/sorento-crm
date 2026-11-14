@@ -315,18 +315,15 @@ export function OrderInquiryDetail({ id }: { id: string }) {
   // link) is about.
   const chooseDocumentLine =
     selectedIds.length === 1 ? (activeLines.find((l) => l.id === selectedIds[0]) ?? null) : null;
-  const poProducts = new Set(selectedLines.map((l) => l.product_id ?? l.item_code));
   // The AutoCount link needs the switch, the grant and every ticked line in AutoCount.
   const poViaAutocount =
     canLinkPo && selectedLines.length > 0 && selectedLines.every((l) => l.in_autocount !== false);
   const poWhyNot =
     selectedLines.length === 0
       ? 'Tick the lines to link to a PO.'
-      : poProducts.size > 1
-        ? 'Tick lines of one product.'
-        : !poViaAutocount && selectedLines.length !== 1
-          ? 'Tick one line to link it by hand.'
-          : undefined;
+      : !poViaAutocount && selectedLines.length !== 1
+        ? 'Tick one line to link it by hand.'
+        : undefined;
   const crmOnlyLinked = selectedLinked.filter((l) => !(canLinkPo && l.in_autocount_link));
 
   // AC-RS-23: enabled only when EVERY selected row is requestable; disabled otherwise,

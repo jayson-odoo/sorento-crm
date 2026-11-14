@@ -1194,8 +1194,7 @@ export function OrderInquiriesClient({
   const selectedLinked = selectedRows.filter(
     (row) => row.state === 'placed' || row.state === 'partly_linked',
   );
-  // OI-PO-LINK: ONE Link PO item (link, change or unlink is chosen in its popup), one product at a time.
-  const tickedProducts = new Set(selectedRows.map((row) => row.product_id ?? row.item_code));
+  // OI-PO-LINK: ONE Link PO item (link, change or unlink is chosen in its popup), any products.
   // Rows with no AutoCount sales order line cannot be linked: the count says "2 of 3".
   const poLinkEligible = selectedRows.filter((row) => row.in_autocount !== false).length;
   const poLinkWhyNot =
@@ -1203,9 +1202,7 @@ export function OrderInquiriesClient({
       ? 'Tick the rows to link to a PO.'
       : poLinkEligible === 0
         ? 'Not in AutoCount yet'
-        : tickedProducts.size > 1
-          ? 'Tick rows of one product.'
-          : undefined;
+        : undefined;
   // Link PO... goes through AutoCount when it can (switch, grant, a row in AutoCount); where
   // it cannot, ONE ticked row opens the CRM placement dialog with PO lines only.
   const poViaAutocount = canLinkPo && poLinkEligible > 0;

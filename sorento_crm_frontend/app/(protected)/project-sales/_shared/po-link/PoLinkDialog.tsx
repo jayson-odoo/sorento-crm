@@ -60,6 +60,8 @@ export interface PoLinkDialogProps {
   poLines: PoLinkOption[];
   /** sales_order_line_id -> its AutoCount book: a PO line links only within its own book. */
   soBooks?: Record<string, string>;
+  /** sales_order_line_id -> its product id: a row offers only the PO lines of its own product. */
+  soProducts?: Record<string, string>;
   /** Order Inquiry: ticked rows left out, named with the reason. */
   skipped?: PoLinkSkippedRow[];
   onClose: () => void;
@@ -112,6 +114,7 @@ function qtyCap(line: PoLinkLine, po: PoLinkOption | undefined): number {
   return po ? Math.min(needs, Math.floor(po.free_qty)) : needs;
 }
 
+const NO_PO_FOR_PRODUCT = 'No PO line has stock free for this product.';
 const OTHER_BOOK = 'In another AutoCount book from this sales order';
 
 /** One Link row's message: the typed qty against what the line still needs and the PO line has free,
@@ -798,6 +801,7 @@ function ManageDialog({
   capabilities,
   poLines,
   soBooks,
+  soProducts,
   skipped,
   onClose,
 }: PoLinkDialogProps) {
@@ -833,6 +837,14 @@ function ManageDialog({
       return book && po.book && po.book !== book ? OTHER_BOOK : undefined;
     },
     [soBooks],
+  );
+  /** The PO lines of the row's own product (every line when the row's product is not known). */
+  const poLinesFor = React.useCallback(
+    (line: PoLinkLine): PoLinkOption[] => {
+      const product = soProducts?.[line.sales_order_line_id];
+      return product ? poLines.filter((po) => !po.product_id || po.product_id === product) : poLines;
+    },
+    [poLines, soProducts],
   );
   /** Action of a linked row: '' is Keep, 'unlink', or `change:<po line id>`. */
   const [action, setAction] = React.useState<Record<string, string>>({});
@@ -878,6 +890,8 @@ function ManageDialog({
 
   const tick = (rowId: string, on: boolean) => setRowSelection((prev) => ({ ...prev, [rowId]: on }));
 
+  const hasNew = rows.some((row) => row.kind === 'new');
+  const hasLinked = rows.some((row) => row.kind === 'linked');
   const columns = React.useMemo<ColumnDef<ManageRow>[]>(() => {
     const wrongBook = (row: ManageRow, po: PoLinkOption) => bookNote(row.line, po);
     const changeReason = !capabilities.split_link.enabled
@@ -941,21 +955,26 @@ function ManageDialog({
                   setPicked((prev) => ({ ...prev, [r.id]: value }));
                   tick(r.id, Boolean(value));
                 }}
-                options={poLines.map((po) => {
+                options={poLinesFor(r.line).map((po) => {
                   const note = !capabilities.split_link.enabled
                     ? (capabilities.split_link.reason ?? 'Waiting for AutoCount')
                     : wrongBook(r, po);
                   return { value: po.po_line_id, label: labelOf(po), ...(note ? { disabled: true, description: note } : {}) };
                 })}
               />
+              {soProducts?.[r.line.sales_order_line_id] && poLinesFor(r.line).length === 0 ? (
+                <p className="mt-1 truncate text-xs text-muted-foreground" title={NO_PO_FOR_PRODUCT}>
+                  {NO_PO_FOR_PRODUCT}
+                </p>
+              ) : null}
             </>
           );
         },
       },
       {
-        id: 'action',
-        header: 'Action',
-        size: 240,
+        id: 'qty',
+        header: 'Qty',
+        size: 120,
         cell: ({ row }) => {
           const r = row.original;
           if (r.kind === 'new') {
@@ -986,6 +1005,16 @@ function ManageDialog({
               </>
             );
           }
+          return null;
+        },
+      },
+      {
+        id: 'action',
+        header: 'Action',
+        size: 240,
+        cell: ({ row }) => {
+          const r = row.original;
+          if (r.kind !== 'linked') return null;
           const options: SearchableSelectOption[] = [
             {
               value: 'unlink',
@@ -994,7 +1023,7 @@ function ManageDialog({
                 ? {}
                 : { disabled: true, description: capabilities.unlink_row.reason ?? 'Waiting for AutoCount' }),
             },
-            ...poLines
+            ...poLinesFor(r.line)
               .filter((po) => po.po_line_id !== r.poLineId)
               .map((po) => {
                 const note = changeReason ?? wrongBook(r, po);
@@ -1031,9 +1060,9 @@ function ManageDialog({
           );
         },
       },
-    ];
+    ].filter((col) => (col.id === 'qty' ? hasNew : col.id === 'action' ? hasLinked : true));
     // Cells read live values through `stateRef` (the RequestReserveDialog G6 lesson).
-  }, [capabilities, poLines, poById, labelOf, bookNote]);
+  }, [capabilities, poLinesFor, poById, labelOf, bookNote, hasNew, hasLinked, soProducts]);
 
   const table = useReactTable({
     columns,

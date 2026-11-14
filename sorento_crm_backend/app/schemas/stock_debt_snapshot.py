@@ -194,6 +194,8 @@ class PoLinkOption(BaseModel):
     supplier_name: Optional[str] = None
     #: The AutoCount book (database) the PO line lives in.
     book: Optional[str] = None
+    #: The product of the PO line (Order Inquiry rows of several products).
+    product_id: Optional[str] = None
 
 
 class PoLinkOptions(BaseModel):
@@ -201,6 +203,8 @@ class PoLinkOptions(BaseModel):
     po_lines: List[PoLinkOption]
     #: sales_order_line_id -> its AutoCount book: a PO line links only within its own book.
     so_books: Dict[str, str] = {}
+    #: sales_order_line_id -> its product id: a PO line links only to a line of its own product.
+    so_products: Dict[str, str] = {}
 
 
 class PoLinkLineIn(BaseModel):

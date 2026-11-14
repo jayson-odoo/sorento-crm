@@ -169,10 +169,12 @@ def actor_of(db: Session, current_user: dict) -> Dict[str, Any]:
 
 @dataclass
 class PoLinkScope:
-    """What one press may touch: the product, the public SO lines a write may name, the book."""
+    """What one press may touch: the product(s), the public SO lines a write may name, the book."""
 
     product_id: str
     so_line_ids: set
+    #: Every product the press may touch (OI rows of several products); empty = just `product_id`.
+    product_ids: set = field(default_factory=set)
     company_code: str = ""
     #: The refusal text for an SO line outside `so_line_ids` (it names the screen's own unit).
     outside_message: str = "That sales order line is not in this snapshot row."
@@ -198,7 +200,8 @@ def scope_for_snapshot_row(db: Session, snapshot_id: str, row_id: str) -> PoLink
         raise handle_not_found("Snapshot row", row_id)
     ids = {str(l.get("sales_order_line_id")) for l in (row.lines or []) if l.get("sales_order_line_id")}
     return PoLinkScope(
-        product_id=row.product_id, so_line_ids=ids, company_code=_scope_company_code(db, ids)
+        product_id=row.product_id, so_line_ids=ids, company_code=_scope_company_code(db, ids),
+        product_ids={str(row.product_id)},
     )
 
 
@@ -206,7 +209,7 @@ NOT_IN_AUTOCOUNT = "Not in AutoCount yet"
 
 
 def scope_for_oi_rows(db: Session, row_ids: Sequence[str]) -> PoLinkScope:
-    """Ticked Order Inquiry rows -> their AutoCount SO lines (one product), the rest named."""
+    """Ticked Order Inquiry rows -> their AutoCount SO lines (any products), the rest named."""
     from app.models.project_so import OrderInquiry, OrderInquiryRow, ProjectSalesOrderLine
 
     rows = (
@@ -233,12 +236,11 @@ def scope_for_oi_rows(db: Session, row_ids: Sequence[str]) -> PoLinkScope:
         ids.add(str(line.id))
         products.add(str(line.product_id))
         in_scope.append(str(row.id))
-    if len(products) > 1:
-        raise AppException(status_code=422, message="Tick rows of one product.")
     if not ids:
         raise AppException(status_code=422, message="None of the ticked rows is in AutoCount yet.")
     return PoLinkScope(
-        product_id=products.pop(),
+        product_id=sorted(products)[0] if products else "",
+        product_ids=products,
         so_line_ids=ids,
         company_code=_scope_company_code(db, ids),
         outside_message="That sales order line is not among the ticked rows.",
@@ -304,8 +306,16 @@ class PoLinkService:
             .all()
         )
 
+    def _product_ids(self) -> set:
+        return {str(p) for p in (self.scope.product_ids or {self.scope.product_id})}
+
     def options(self) -> Dict[str, Any]:
-        rows = [r for r in self._open_lines(self.scope.product_id) if _keys(r[0].source_ref)]
+        rows = [
+            r
+            for pid in sorted(self._product_ids())
+            for r in self._open_lines(pid)
+            if _keys(r[0].source_ref)
+        ]
         numbers = _line_numbers(self.db, {po.id for _l, po, _c, _s in rows})
         po_lines = []
         for line, po, code, supplier in rows:
@@ -325,6 +335,7 @@ class PoLinkService:
                     # The AutoCount book the line lives in: only a line of the SO line's own
                     # book can be linked to it (never shown; the picker greys the others).
                     "book": _keys(line.source_ref)[0],
+                    "product_id": str(line.product_id),
                 }
             )
         po_lines.sort(key=lambda l: (l["delivery_date"] is None, l["delivery_date"] or "", l["po_number"], l["po_line_no"] or 0))
@@ -335,10 +346,17 @@ class PoLinkService:
             .all()
             if (keys := _keys(ref)) is not None
         }
+        so_products = {
+            str(line_id): str(pid)
+            for line_id, pid in self.db.query(SalesOrderLine.id, SalesOrderLine.product_id)
+            .filter(SalesOrderLine.id.in_(sorted(self.scope.so_line_ids)))
+            .all()
+        }
         return {
             "capabilities": self.capabilities(self.scope.company_code),
             "po_lines": po_lines,
             "so_books": so_books,
+            "so_products": so_products,
         }
 
     def lines(self) -> List[Dict[str, Any]]:
@@ -413,7 +431,7 @@ class PoLinkService:
             .filter(PurchaseOrderLine.id == po_line_id, *ProjectSupplyService.open_po_line_clauses())
             .first()
         )
-        if pair is None or str(pair[0].product_id) != str(self.scope.product_id) or _keys(pair[0].source_ref) is None:
+        if pair is None or str(pair[0].product_id) not in self._product_ids() or _keys(pair[0].source_ref) is None:
             raise AppException(status_code=422, message="That PO line is not an open AutoCount line for this product.")
         return pair
 
@@ -670,6 +688,11 @@ class PoLinkService:
         self.db.flush()
         return linked_by_dtl if isinstance(so_ref, dict) else linked_line
 
+    @staticmethod
+    def _same_product(so_line, po_line, po) -> None:
+        if str(so_line.product_id) != str(po_line.product_id):
+            raise AppException(status_code=422, message=f"PO {po.po_number} line is a different product.")
+
     def link(self, lines: List[Dict[str, Any]]) -> Dict[str, Any]:
         plan = []
         asked: Dict[str, Decimal] = {}
@@ -685,6 +708,7 @@ class PoLinkService:
                     status_code=422,
                     message=f"PO {po.po_number} is in a different AutoCount book from {so.so_number}.",
                 )
+            self._same_product(so_line, po_line, po)
             qty = Decimal(str(item["qty"]))
             # Over-link (crew, round 3): what the SO line still needs once the POs already
             # linked to it, and the earlier lines of this request, are taken off.
@@ -734,6 +758,8 @@ class PoLinkService:
         "QTY_INVALID": "the quantity is not valid",
         "QTY_ABOVE_FREE": "the PO line does not have that much free",
     }
+
+    _PO_GONE_CODES = ("PO_ROW_NOT_FOUND", "PO_NOT_FOUND", "PO_LINE_NOT_FOUND", "DOC_NOT_FOUND")
 
     def _send_group(self, po_line, po, members: List[Tuple]) -> List[Dict[str, Any]]:
         """All the links of one PO line in ONE Shared Service batch call (`po-links/batch`, all
@@ -785,7 +811,7 @@ class PoLinkService:
             for l in (answer.get("links") or []) if str(l.get("soDtlKey", "")).isdigit()
         }
         skipped = {
-            int(k.get("soDtlKey")): str(k.get("code") or "")
+            int(k.get("soDtlKey")): k
             for k in (answer.get("skipped") or []) if str(k.get("soDtlKey", "")).isdigit()
         }
         results = []
@@ -794,9 +820,16 @@ class PoLinkService:
             if not per_line or (done and dtl in taken):
                 line_answer = answer
             else:
-                code = skipped.get(dtl, "")
+                entry = skipped.get(dtl) or {}
+                code = str(entry.get("code") or "")
+                own = str(entry.get("message") or "").strip().rstrip(".")
                 so_label = f"{so.so_number} line {so_line.line_no}" if so_line.line_no is not None else so.so_number
-                why = self._SKIP_WHY.get(code, "AutoCount did not accept it")
+                if own:
+                    why = own
+                elif code in self._PO_GONE_CODES:
+                    why = f"PO {po.po_number} is not in AutoCount"
+                else:
+                    why = self._SKIP_WHY.get(code, "AutoCount did not accept it")
                 line_answer = {
                     **answer, "outcome": "skipped", "errorCode": None, "warnings": [],
                     "message": f"{so_label} was not linked: {why}.",
@@ -945,6 +978,7 @@ class PoLinkService:
                 raise AppException(status_code=422, message=f"{so_label} is already covered by that PO line.")
             if new_line.from_so_line_ref or new_line.from_so_external:
                 raise AppException(status_code=422, message=f"PO {new_po.po_number} line is already linked.")
+            self._same_product(so_line, new_line, new_po)
             if _keys(new_line.source_ref)[0] != _keys(so_line.source_ref)[0]:
                 raise AppException(
                     status_code=422,

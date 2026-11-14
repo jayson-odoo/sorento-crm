@@ -77,6 +77,7 @@ export function OiPoLinkHost({
       capabilities={data.capabilities}
       poLines={data.po_lines}
       soBooks={data.so_books}
+      soProducts={data.so_products}
       skipped={data.skipped}
       onClose={onClose}
     />
