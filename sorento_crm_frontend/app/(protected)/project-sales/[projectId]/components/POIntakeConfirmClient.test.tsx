@@ -874,7 +874,12 @@ describe('POIntakeConfirmClient issuer', () => {
   it('puts the previous issuer back when the save is refused (review round 3, R5)', async () => {
     getPOVersion.mockResolvedValue(
       version({
-        purchase_order: { po_number: 'HQ/26/01/041', issuing_party_id: 'pty2' },
+        purchase_order: {
+          po_number: 'HQ/26/01/041',
+          issuing_party_id: 'pty2',
+          // The server always sends the issuer's name with its id.
+          issuing_party_name: 'ZZT Developer Bhd',
+        },
       } as Partial<POVersion>),
     );
     updatePurchaseOrder.mockRejectedValueOnce(new Error('ZZT refused'));

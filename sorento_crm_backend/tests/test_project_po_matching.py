@@ -2533,6 +2533,7 @@ def test_cp2_c_route_confirm_with_an_unlinked_issuer_returns_the_reason(monkeypa
         project = _project(db, company_id, owner)
         _products(db, company_id, "CKS903")
         party, _none = _issuer(db, project, linked=False)
+        party_name = party.name  # read while the session is open
         po = po_svc.create_po(
             db,
             project=project,
@@ -2563,7 +2564,7 @@ def test_cp2_c_route_confirm_with_an_unlinked_issuer_returns_the_reason(monkeypa
         return outcome.get(name, body.get(name))
 
     assert field("codes_not_remembered") == "issuer_not_linked"
-    assert field("codes_not_remembered_party") == party.name
+    assert field("codes_not_remembered_party") == party_name
 
 
 def test_cp2_d_a_project_customer_lets_confirm_through_and_learns_for_it(seeded, matcher):
