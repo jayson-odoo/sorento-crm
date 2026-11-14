@@ -613,3 +613,157 @@ def test_P1_the_fallback_prompt_no_longer_contradicts_the_tools():
     assert "with crm_resolve before any other tool" not in text
     # The loop refuses a second sales basis in a turn: the prompt never asks for three.
     assert "show invoiced, delivered and ordered" not in text
+
+
+# ------------------------------------------------------------------ live-run round (UAC 10, 11): same total everywhere
+
+
+ZERO_FIELDS = ["owner_kind", "target_value", "achieved_value", "achieved_pct", "remaining_value", "payout"]
+
+
+def _set_period_targets(db, target_id, values):
+    """The target's quarters in order get `values` (as the owner types a figure per period on the target page)."""
+    from app.models.sales import SalesTargetPeriod
+
+    periods = (db.query(SalesTargetPeriod).filter(SalesTargetPeriod.target_id == target_id)
+               .order_by(SalesTargetPeriod.period_start).all())
+    assert len(periods) == len(values)
+    for period, value in zip(periods, values):
+        period.target_value = Decimal(str(value))
+    db.flush()
+
+
+@pytest.fixture
+def zero_quarter(api, grant):
+    """Live diagnostic (sorento_prod_1112): 15 quarterly dealer targets with a target of 0 on one to three quarters.
+    "ZZT ZERO Q2": quarters 100,000 / 0 / 100,000 / 100,000 with sales of 50,000 (Feb), 40,000 (May, the quarter of
+    0) and 70,000 (Aug), tiers on Q1 and Q3. "ZZT NORMAL Q": 50,000 every quarter, 30,000 sold in Aug."""
+    client, db, company_id = api
+    grant("sales.targets.view")
+    pid = _product_id(db, company_id)
+    zero = _customer(db, company_id, "ZZT ZERO Q2", level=1)
+    normal = _customer(db, company_id, "ZZT NORMAL Q", level=1)
+    for customer, sold, on in ((zero, "50000", date(2026, 2, 10)), (zero, "40000", date(2026, 5, 10)),
+                               (zero, "70000", date(2026, 8, 10)), (normal, "30000", date(2026, 8, 11))):
+        _sale(db, company_id, customer, sold, on, product_id=pid)
+    res = client.post(BASE, json=_dealer_body([zero], name="ZZT zero Q2", tiers=[
+        {"period_start": "2026-01-01", "threshold": 40000, "rate": 1},
+        {"period_start": "2026-07-01", "threshold": 60000, "rate": 1},
+    ]))
+    assert res.status_code == 201, res.text
+    zero_target = res.json()
+    _set_period_targets(db, zero_target["id"], [100000, 0, 100000, 100000])
+    res = client.post(BASE, json=_dealer_body([normal], name="ZZT normal"))
+    assert res.status_code == 201, res.text
+    normal_target = res.json()
+    _set_period_targets(db, normal_target["id"], [50000, 50000, 50000, 50000])
+    return db, client, company_id, {"zero": zero_target, "normal": normal_target}
+
+
+def _tab_row(db, target_id):
+    """The Targets > Dealers tab's own row for the target (`list_all_targets`)."""
+    from app.services.sales import target_service
+
+    return next(r for r in target_service.list_all_targets(db, subject="dealer")["rows"] if r["target_id"] == target_id)
+
+
+def _summary_dealers(db, **extra):
+    spec = {"entity": SUMMARY, "period": YEAR, "fields": ZERO_FIELDS, "limit": 50,
+            "filters": [{"field": "owner_kind", "op": "eq", "value": "dealer"}], **extra}
+    return run(db, spec)
+
+
+def test_Z1_a_quarter_with_a_target_of_0_still_counts_its_sales_as_the_targets_tab_does(zero_quarter):
+    """UAC 10: achieved over every period of the target in the window, the quarter of 0 included (it adds 0 to
+    the target); the row equals the Dealers tab's row for the same periods."""
+    db, _client, _company_id, t = zero_quarter
+    out = _summary_dealers(db)
+    by = {r["label"]: r for r in out["rows"]}
+    row, tab = by["ZZT ZERO Q2"], _tab_row(db, t["zero"]["id"])
+    assert row["achieved_value"] == 160000.0, row  # 50,000 + 40,000 (the quarter of 0) + 70,000
+    assert row["target_value"] == 300000.0, row  # 100,000 x 3, the quarter of 0 adds 0
+    assert (row["target_value"], row["achieved_value"], row["achieved_pct"]) == (
+        tab["target_value"], tab["achieved_value"], tab["achieved_pct"])
+    assert row["remaining_value"] == 140000.0, row
+
+
+def test_Z1b_a_target_without_a_quarter_of_0_is_unchanged(zero_quarter):
+    db, _client, _company_id, t = zero_quarter
+    row = {r["label"]: r for r in _summary_dealers(db)["rows"]}["ZZT NORMAL Q"]
+    tab = _tab_row(db, t["normal"]["id"])
+    assert (row["target_value"], row["achieved_value"]) == (200000.0, 30000.0)
+    assert (row["target_value"], row["achieved_value"], row["achieved_pct"]) == (
+        tab["target_value"], tab["achieved_value"], tab["achieved_pct"])
+    assert row["remaining_value"] == 170000.0
+
+
+def test_Z1c_the_payout_is_unchanged_and_the_note_never_says_sales_are_left_out(zero_quarter):
+    """A quarter of 0 pays nothing; the payout is still the target page's. The note may name the target with a
+    quarter of 0, never say its achieved is left out."""
+    from tests.chatbot.agent.test_agent_commission_all import _page_payout
+
+    db, _client, _company_id, t = zero_quarter
+    out = _summary_dealers(db)
+    row = {r["label"]: r for r in out["rows"]}["ZZT ZERO Q2"]
+    assert row["payout"] == _page_payout(db, t["zero"]["id"], date(2026, 1, 1), date(2026, 12, 31))
+    note = (out.get("scope_note") or "").lower()
+    assert "left out" not in note, note
+
+
+def test_Z1d_target_list_already_equals_the_targets_tab(zero_quarter):
+    """target_list reads `list_all_targets` itself: held equal (no gap to fix there)."""
+    db, _client, _company_id, t = zero_quarter
+    out = run(db, {"entity": TARGET_LIST, "period": YEAR, "limit": 50,
+                   "fields": ["target_value", "achieved_value", "achieved_pct", "remaining_value"],
+                   "filters": [{"field": "subject_kind", "op": "eq", "value": "dealer"}]})
+    for key in ("zero", "normal"):
+        tab = _tab_row(db, t[key]["id"])
+        [row] = [r for r in out["rows"] if r["label"].startswith(t[key]["target_no"])]
+        assert (row["target_value"], row["achieved_value"], row["achieved_pct"]) == (
+            tab["target_value"], tab["achieved_value"], tab["achieved_pct"])
+
+
+def test_Z2_totals_carry_target_achieved_and_remaining_over_every_matching_row(zero_quarter):
+    """UAC 11: one query answers "sales vs target": the totals sum target, achieved and remaining over ALL
+    matching rows next to the payout, also when only some rows are shown (live: 88 rows, a 3-row sample, totals of
+    payout only, then 5 crm_query calls in one turn)."""
+    db, _client, _company_id, _t = zero_quarter
+    whole = _summary_dealers(db)
+    rows = whole["rows"]
+    assert len(rows) == 2
+    for out in (whole, _summary_dealers(db, limit=1)):
+        totals = out.get("totals") or {}
+        for field in ("target_value", "achieved_value", "remaining_value"):
+            assert field in totals, f"totals carry no {field}: {totals}"
+            assert totals[field] == round(sum(r[field] for r in rows), 2), (field, totals)
+    assert whole["totals"]["target_value"] == 500000.0 and whole["totals"]["achieved_value"] == 190000.0
+    assert whole["totals"]["remaining_value"] == 310000.0
+
+
+def test_Z2b_the_model_gets_those_totals_with_its_sample(zero_quarter):
+    """The model reads a sample and the totals of a long result (`query_tools.as_card`): the sales-vs-target
+    totals reach it, not only the payout."""
+    from app.services.chatbot.agent.query_tools import SAMPLE_ROWS, query_result
+
+    db, _client, _company_id, _t = zero_quarter
+    out = _summary_dealers(db)
+    long = {**out, "rows": out["rows"] * 6, "total": len(out["rows"]) * 6}
+    data = query_result(long, panel=True).data
+    assert len(data.get("sample") or []) <= SAMPLE_ROWS
+    assert {"target_value", "achieved_value", "remaining_value", "payout"} <= set(data.get("totals") or {}), data
+
+
+def test_Z2c_units_are_never_summed_with_rm(zero_quarter):
+    """A quantity target has no RM figure on its row (target and achieved empty): the RM totals are the amount rows'
+    only, never units added to RM (the pinned reading of "never summed across units")."""
+    db, client, company_id, _t = zero_quarter
+    units = _customer(db, company_id, "ZZT UNITS Q", level=1)
+    _sale(db, company_id, units, "9000", date(2026, 8, 12), product_id=_product_id(db, company_id))
+    res = client.post(BASE, json=_dealer_body([units], name="ZZT units", metric="quantity"))
+    assert res.status_code == 201, res.text
+    out = _summary_dealers(db)
+    row = {r["label"]: r for r in out["rows"]}["ZZT UNITS Q"]
+    assert not isinstance(row["target_value"], float) and not isinstance(row["achieved_value"], float), row
+    totals = out.get("totals") or {}
+    assert totals.get("target_value") == 500000.0, totals
+    assert totals.get("achieved_value") == 190000.0, totals
