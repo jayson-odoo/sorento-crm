@@ -727,3 +727,43 @@ describe('POIntakeLinesGrid suggestions', () => {
     expect(screen.queryByRole('menuitem', { name: 'Accept suggestion' })).toBeNull();
   });
 });
+
+/**
+ * PO-UPLOAD-MATCHING review (non-blocking): the "Suggested" view empties itself once every
+ * suggestion is accepted, but a line with no qty can still hold Confirm. The grid then falls
+ * back to "Need attention" and shows that line, never "Nothing left to fix".
+ */
+describe('POIntakeLinesGrid suggested view after accept all', () => {
+  it('falls back to Need attention and shows the empty-qty line', async () => {
+    const suggestedLine = line({
+      id: 'l1',
+      line_no: 1,
+      resolution_source: 'suggested',
+      match_confidence: 'high',
+      match_options: [],
+      qty_suggested: false,
+    } as Partial<POVersionLine>);
+    const emptyQty = line({
+      id: 'l2',
+      line_no: 2,
+      qty: '',
+      arithmetic_ok: false,
+      resolution_source: 'code',
+    } as Partial<POVersionLine>);
+    const { rerenderWith } = renderGrid([suggestedLine, emptyQty], {
+      defaultFlaggedOnly: true,
+      suggestionCount: 1,
+    });
+
+    fireEvent.click(await screen.findByText('Suggested (1)'));
+    expect(screen.queryByLabelText('Code on line 2')).toBeNull();
+
+    rerenderWith([{ ...suggestedLine, resolution_source: 'accepted' }, emptyQty], {
+      defaultFlaggedOnly: true,
+      suggestionCount: 0,
+    });
+
+    expect(await screen.findByLabelText('Code on line 2')).toBeInTheDocument();
+    expect(screen.queryByText('Nothing left to fix')).toBeNull();
+  });
+});
