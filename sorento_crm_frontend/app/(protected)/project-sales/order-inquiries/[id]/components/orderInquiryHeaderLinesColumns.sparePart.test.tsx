@@ -156,18 +156,22 @@ describe('F3 / UAC A3: the approver edits qty and unit price in place while pend
     expect(inputValues()).toEqual([]);
   });
 
-  it('shows "was 10" beside a qty the approver changed from the submitted 10', () => {
-    renderGrid([spareRow()], PENDING_DECIDER);
-    expect(within(screen.getByTestId('line')).getByText(/was 10\b/)).toBeInTheDocument();
+  // SPARE-PART-OR-B (U1.1 / U1.3, owner 14 Nov): the "was" mark is gone; a qty the approver
+  // moved off the submitted 10 colours the line's History icon on the order request page.
+  it('a qty the approver changed from the submitted 10 colours the History icon, no "was"', () => {
+    renderGrid([spareRow()], { ...PENDING_DECIDER, sparePartView: 'request' });
+    const line = screen.getByTestId('line');
+    expect(within(line).queryByText(/was 10\b/)).toBeNull();
+    expect(within(line).getByRole('button', { name: 'History' })).toHaveAttribute('data-changed', 'true');
   });
 
-  it('purchasing sees the same "was" mark once raised', () => {
+  it('purchasing sees no "was" mark once raised', () => {
     renderGrid([spareRow({ state: 'raised' })], {
       inquiryType: 'spare_part_request',
       headerState: 'raised',
       canDecide: false,
     });
-    expect(within(screen.getByTestId('line')).getByText(/was 10\b/)).toBeInTheDocument();
+    expect(within(screen.getByTestId('line')).queryByText(/was 10\b/)).toBeNull();
   });
 
   it('an unchanged qty shows no "was" mark', () => {

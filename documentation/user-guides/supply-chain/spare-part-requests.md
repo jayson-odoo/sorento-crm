@@ -53,7 +53,7 @@ The requester and the approvers see this; other users do not.
 The approver team of the current level is notified; the notification opens the request. You can also open it from **Procurement > Supply Chain > Order Requests**, which lists the requests waiting for you and the ones you have decided on. The request page has **Lines**, **General**, **History** and **SLA Tracking** tabs and the previous / next arrows. Go to the **Lines** tab; it shows the **Product code** and the **Description** in separate columns.
 
 1. Where needed, change the **Qty** (0 drops the line), the **Unit price**, or add or remove photos. You cannot add or remove lines.
-2. A value you changed shows what the requester submitted, for example "was 10", under it.
+2. A line you changed shows its **History** icon beside **Qty** in colour (it stays grey on lines nobody changed). Click it to see each change, old value to new value, who and when.
 3. Click **Approve**. A popup titled with the request number lists **Your changes**, with an optional **Note**. Click **Approve** again to confirm, or **Back** to leave.
 4. To send it back, click **Reject**. A **Reason** is required. The requester edits it and submits again, starting from level 1.
 
@@ -62,14 +62,21 @@ You can never approve your own request. If every line is at 0 you cannot approve
 ## What purchasing sees
 
 * A request appears in **Order Inquiries** only after the last approval. Before that (draft, waiting for approval, rejected) purchasing does not see it in the list, counts, exports or notifications.
-* On final approval, purchasing gets one notification titled with the request number, for example "Order request OR-2611-0001".
+* On final approval the request gets an order inquiry number, for example `OI-2611-0021`, and purchasing gets one notification. Purchasing's list and the order inquiry page show the `OI-` number; the request page keeps its `OR-` number.
+* On the request page, each line's **OI** column shows that number; click it to open the order inquiry at that line. On the order inquiry page, the line under the number says **Order request OR-...**; click it to go back to the request.
 * The list has a **Type** column and a **Type** filter. These requests read **Order request**, and **S/O no** shows "-".
-* The page has the same tabs as any order inquiry. **General** adds a **Request** card and an **Approval** card. **Lines** shows unit price, total, location, photos and any "was ..." values.
+* The page has the same tabs as any order inquiry. **General** adds a **Request** card and an **Approval** card. **Lines** shows the approved quantity only (not what the requester first asked for), with unit price, total, location and photos.
 * Purchasing works it as usual: **Acknowledge**, reject a single line, and link a purchase order.
 
 ## Revise after approval (requester)
 
-Until purchasing acknowledges a line, the request has a **Revise** button. It goes back to draft and leaves purchasing's list. Change what you need and **Submit**; approval runs again from level 1. Once any line is acknowledged, **Revise** is no longer offered.
+An approved request has a **Revise** button, also after purchasing has started on it. Revise lets you change the **Qty** of its lines (not the products, prices or the list of lines). While the change waits for approval, purchasing keeps seeing and working the request as it was approved. Click **Submit**; approval runs again from level 1.
+
+When the last level approves the change:
+
+* Each line whose quantity moved is updated on the order inquiry, and purchasing gets the same order inquiry email a sales order change sends, with the old and new quantity. A line purchasing had already acknowledged goes back to **To order** for them to confirm again. A line set to 0 is cancelled.
+* Lines whose quantity did not move stay exactly as they were.
+* The order inquiry number stays the same.
 
 ## Who sees prices
 
@@ -77,17 +84,17 @@ Unit price and total are visible to the requester, the approvers (also after the
 
 ## History
 
-The **History** tab records the submit, each approval, every change an approver made (old value to new value, who and when), a reject with its reason, a revise, and the final raise to purchasing.
+The **History** tab, on the request page and on the order inquiry page alike, shows the whole life of the request: the submit, each approval, every change the requester or an approver made (old value to new value, who and when), a reject with its reason, a revise, the raise to purchasing, and what purchasing did after that. The **History** icon beside a line's **Qty** opens the same history for that one line. On the order inquiry page that icon is in colour only when the quantity changed after approval.
 
 ## What gets created
 
-* One order inquiry with its own monthly number, `OR-` instead of `OI-` (for example `OR-2611-0001`), type **Order request**, no sales order. Order requests count separately from sales-order inquiries, so the two series never skip a number for each other.
+* One record with two numbers: the request's own monthly `OR-` number (for example `OR-2611-0001`) from the start, and an `OI-` order inquiry number from the final approval, taken from the same series as sales-order inquiries. Type **Order request**, no sales order.
 * The requester's submitted quantity and price are kept on each line next to the approver's values.
 
 ## How you'll be notified
 
 * The approver team of the current level is notified when a request is submitted or reaches their level.
-* Purchasing gets the notification once, on the last approval.
+* Purchasing gets the notification once, on the last approval, and the order inquiry email again only when an approved quantity changes through **Revise**.
 
 ## See also
 

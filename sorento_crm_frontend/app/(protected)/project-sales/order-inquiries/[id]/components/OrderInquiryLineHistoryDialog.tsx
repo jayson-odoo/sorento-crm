@@ -222,7 +222,9 @@ export function OrderInquiryLineHistoryDialog({
             className="text-sm"
           />
           <DialogDescription className="sr-only">
-            Every event, row, decision and reserve behind this sales order line
+            {line.primary.inquiry_type === 'spare_part_request'
+              ? 'Every event, row, decision and reserve behind this order request line'
+              : 'Every event, row, decision and reserve behind this sales order line'}
           </DialogDescription>
         </DialogHeader>
         <DialogBody className="min-w-0 flex-1 overflow-y-auto">
