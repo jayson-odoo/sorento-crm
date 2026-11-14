@@ -95,6 +95,39 @@ def test_t2b_a_one_number_bound_by_position_applies_to_every_part_listed(session
         assert f"{code} x 4: {TICK} Got stock." in _lines(text), (code, text)
 
 
+# Crew pass 2 (14 Nov): live, the parser echoes one listed line back with BOTH its position and its code.
+_ECHOED = [([(1, S_PAN, 4)], d) for d in (True, False)] + [([(2, CISTERN, 4)], d) for d in (True, False)]
+
+
+@pytest.mark.parametrize(
+    "items,with_demand",
+    _ECHOED,
+    ids=[f"pos{i[0][0]}-and-code-{'demand_qty' if d else 'no_demand_qty'}" for i, d in _ECHOED],
+)
+def test_t2f_a_number_bound_to_a_shown_line_with_its_own_code_applies_to_every_part(session_factory, monkeypatch, stub_access, items, with_demand):  # noqa: F811
+    c = _owner_world(session_factory, monkeypatch, stub_access)
+    asked = c.say("QWC604-S-RL stock", stock(product(S_RL)))
+    assert "How many units for each?" in asked, asked
+    extra = {"demand_qty": 4} if with_demand else {}
+    text = c.say("4", reply(open_question_answer=answer("fill", items=items), **extra))
+    for code in (S_PAN, CISTERN):
+        assert f"{code} x 4: {TICK} Got stock." in _lines(text), (code, text)
+    assert "How many units for each?" not in text, text
+
+
+# Locks: (a) a code-only item is test_t2b_lock_a_number_bound_by_code_fills_only_that_line, (c) a code typed with a
+# number is test_t2c_t2e_lock_a_code_typed_with_a_number_fills_only_that_line. (b) is below.
+@pytest.mark.parametrize("with_demand", [False, True], ids=["no_demand_qty", "demand_qty"])
+def test_t2f_lock_a_position_and_code_naming_different_lines_fills_only_the_codes_line(session_factory, monkeypatch, stub_access, with_demand):  # noqa: F811
+    c = _owner_world(session_factory, monkeypatch, stub_access)
+    asked = c.say("QWC604-S-RL stock", stock(product(S_RL)))
+    assert "How many units for each?" in asked, asked
+    extra = {"demand_qty": 4} if with_demand else {}
+    text = c.say("4", reply(open_question_answer=answer("fill", items=[(1, CISTERN, 4)]), **extra))
+    assert f"{S_PAN} x 4" not in text, ("the number spread to the other part", text)
+    assert f"{CISTERN} x 4: {TICK} Got stock." in _lines(text), text
+
+
 @pytest.mark.parametrize("with_demand", [False, True], ids=["no_demand_qty", "demand_qty"])
 def test_t2b_lock_a_number_bound_by_code_fills_only_that_line(session_factory, monkeypatch, stub_access, with_demand):  # noqa: F811
     c = _owner_world(session_factory, monkeypatch, stub_access)
