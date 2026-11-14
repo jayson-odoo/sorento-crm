@@ -14,8 +14,8 @@ people access, and to change or remove access.
 
 ### Filters
 
-Open **Filter** to narrow the list. Filters stay in the page address, so a copied link opens the
-same view.
+Open **Filter** to narrow the list. Filters and the search text stay in the page address, so a
+copied link opens the same view.
 
 - **My customers** is on by default: only people linked to your own customers. Turn it off to see
   every dealer contact of an active customer in your companies, yours or not.
@@ -45,8 +45,10 @@ or remove the row and save again.
 - "Ali Contoh already has access.": this number already belongs to a person on the list. Click
   **Edit Ali Contoh** to change their access, or **Show Ali Contoh** to see it when they are not
   yours to change.
-- "This number already has access in another company.": the number belongs to a company you do
-  not work in. Ask the office.
+- "This number already has access.": the number is linked to a customer in your company that the
+  list does not show (for example a closed account). Ask the office.
+- "This number already has access in another company.": the number belongs only to a company you
+  do not work in. Ask the office.
 - A staff member's number, or the same number twice in one form, is also refused.
 
 ### Respond.io
@@ -55,7 +57,11 @@ After saving, each new person is found in Respond.io, or added there, straight a
 can answer their first message. If Respond.io cannot be reached, the access is still saved and
 the form says "Access given. Not yet in Respond.io:" with the reason. Click **Try again**.
 
-A person Respond.io does not have yet shows **Not in Respond.io yet** on the list. Open the row's
+If Respond.io does not answer at all, the form does not keep asking it for the other people: they
+all get the same reason, and **Try again** asks again for each.
+
+A person Respond.io does not have yet shows **Not in Respond.io yet** in the **Respond.io** column
+(on a phone, under their access). Open the row's
 **...** menu and click **Try again in Respond.io**.
 
 ## Change or remove access

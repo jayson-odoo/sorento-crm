@@ -50,6 +50,13 @@ def plain_error(exc: BaseException) -> str:
     return "Respond.io gave an unexpected answer."
 
 
+def is_unreachable(exc: BaseException) -> bool:
+    """Respond.io did not answer at all (a timeout or no connection): the next call would wait the same way."""
+    import httpx
+
+    return isinstance(exc, (httpx.TimeoutException, httpx.ConnectError))
+
+
 def _log(db: Session, contact_id: str, identifier: str, method: str, endpoint: str, payload: dict, **kw) -> None:
     from app.services.integration_service import log_respond_send
 
@@ -60,7 +67,7 @@ def _log(db: Session, contact_id: str, identifier: str, method: str, endpoint: s
 
 
 def ensure_in_respond(db: Session, contact_id: str, *, raise_errors: bool = False) -> dict:
-    """`{status, error, respond_io_id}`. `status` is `found` / `created` / `backend_id` (in Respond.io, `error`
+    """`{status, error, respond_io_id, unreachable}`. `status` is `found` / `created` / `backend_id` (in Respond.io, `error`
     None), a `skipped_*` reason, or `failed`. A failed HTTP call is logged, then returned as `failed` with a plain
     `error`, or re-raised with `raise_errors` (the worker, so RQ retries)."""
     import httpx
@@ -72,8 +79,8 @@ def ensure_in_respond(db: Session, contact_id: str, *, raise_errors: bool = Fals
     from app.services.integration_service import RespondClient
     from app.services.respond_sync_handler import _internal_contact_url
 
-    def out(status: str, error: str | None = None, respond_io_id: str | None = None) -> dict:
-        return {"status": status, "error": error, "respond_io_id": respond_io_id}
+    def out(status: str, error: str | None = None, respond_io_id: str | None = None, unreachable: bool = False) -> dict:
+        return {"status": status, "error": error, "respond_io_id": respond_io_id, "unreachable": unreachable}
 
     with company_scope(db, None):
         contact = db.query(RespondContact).filter(RespondContact.id == str(contact_id)).first()
@@ -94,25 +101,28 @@ def ensure_in_respond(db: Session, contact_id: str, *, raise_errors: bool = Fals
         respond_id = contact.respond_io_id
         status = "backend_id"
         by_phone = f"{client.base_url}/v2/contact/phone:{phone}"
-        step = ("GET", by_phone, {"phone": phone})
+        # (name for the app log, method, url, payload). The app log names the step and the contact only, never the
+        # phone; the integration log row keeps the request.
+        step = ("lookup", "GET", by_phone, {"phone": phone})
         try:
             if not respond_id:
                 try:
                     payload = client.get_contact_by_phone(phone)
-                    _log(db, contact_id, phone, *step, response=payload)
                     status = "found"
                 except httpx.HTTPStatusError as exc:
                     if exc.response is None or exc.response.status_code != 404:
                         raise
-                    _log(db, contact_id, phone, *step, exc=exc)  # the 404 that leads to the create
-                    step = ("POST", by_phone, {"phone": phone, "firstName": contact.first_name or contact.name or None})
-                    payload = client.create_contact(phone, contact.first_name or contact.name or None)
-                    _log(db, contact_id, phone, *step, response=payload)
+                    # The expected 404 before a create: the lookup did its job, logged as success.
+                    _log(db, contact_id, phone, *step[1:], response={"status_code": 404, "result": "not in Respond.io"})
+                    first = contact.first_name or contact.name or None
+                    step = ("create", "POST", by_phone, {"phone": phone, "firstName": first})
+                    payload = client.create_contact(phone, first)
                     status = "created"
                 parsed = parse_respond_contact_payload(payload or {})
                 respond_id = parsed.get("respond_io_id")
                 if not respond_id:
-                    raise RuntimeError(NO_ID)
+                    raise RuntimeError(NO_ID)  # logged once, failed, below
+                _log(db, contact_id, phone, *step[1:], response=payload)
                 holder = db.query(RespondContact.id).filter(
                     RespondContact.respond_io_id == respond_id, RespondContact.id != contact.id
                 ).first()
@@ -129,14 +139,14 @@ def ensure_in_respond(db: Session, contact_id: str, *, raise_errors: bool = Fals
                         setattr(contact, key, parsed[key])
                 db.commit()
             body = {"custom_fields": [{"name": "backend_id", "value": _internal_contact_url(str(contact_id))}]}
-            step = ("PUT", f"{client.base_url}/v2/contact/id:{respond_id}", body)
+            step = ("backend_id", "PUT", f"{client.base_url}/v2/contact/id:{respond_id}", body)
             response = client.update_contact(f"id:{respond_id}", body)
-            _log(db, contact_id, str(respond_id), *step, response=response)
+            _log(db, contact_id, str(respond_id), *step[1:], response=response)
         except Exception as exc:  # noqa: BLE001 - logged, then reported (screen) or re-raised (worker)
-            logger.warning("ensure_in_respond: %s %s failed for contact %s", step[0], step[1], contact_id)
+            logger.warning("ensure_in_respond: the %s step failed for contact %s", step[0], contact_id)
             db.rollback()
-            _log(db, contact_id, str(respond_id or phone), *step, exc=exc)
+            _log(db, contact_id, str(respond_id or phone), *step[1:], exc=exc)
             if raise_errors:
                 raise
-            return out("failed", plain_error(exc), respond_id)
+            return out("failed", plain_error(exc), respond_id, unreachable=is_unreachable(exc))
     return out(status, None, str(respond_id))

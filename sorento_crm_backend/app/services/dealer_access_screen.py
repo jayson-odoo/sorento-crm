@@ -4,8 +4,12 @@ Reads: my own accounts and the people who hold access to them. Writes: ONE path,
 (DEALER-ACCESS-PORTAL, #2268): `contact_grant.plan` / `contact_grant._execute` to add people and
 `writes._contact_plan` / `writes._contact_execute` to change or remove one. Nothing here writes a contact, link, tag
 or access type itself, so the checks, texts and audit rows are the agent's. "Own accounts" are the active customers
-of the user's own active sales agents (`writes._own_agent_ids`) in the companies the user is granted. Another
-salesperson's account is never returned, named or counted beyond the `other_account` boolean.
+of the user's own active sales agents (`writes._own_agent_ids`) in the companies the user is granted.
+
+DEALER-ACCESS-NAMES N1-N5: the list also shows the dealer contacts of every active customer of the user's granted
+companies (`mine=False`). Each account is marked `mine`, and only my own accounts carry their link id; a row is
+`editable` by `writes.contact_in_scope`. Add people refuses a phone that already has any customer link, and asks
+Respond.io inside the request through `respond_contact_ensure.ensure_in_respond` (the worker task's own function).
 """
 from __future__ import annotations
 
@@ -20,6 +24,7 @@ from app.services.error_handler import AppException, handle_not_found
 
 PICK_OWN = "Pick one of your accounts."
 OTHER_COMPANY = "This number already has access in another company."
+HAS_ACCESS = "This number already has access."
 CUSTOMERS_MAX = 50
 _PHONE_QUERY = re.compile(r"[\d\s+\-()]+")
 
@@ -75,16 +80,6 @@ def my_accounts(db: Session, user_id: str, company: str) -> list[dict]:
         {"id": str(c.id), "code": c.customer_code, "name": c.customer_name}
         for c in _own_customers(db, user_id, {str(row.id)})
     ]
-
-
-def _picked(db: Session, user_id: str, company: str, account_ids: list[str]) -> list:
-    """The picked accounts, every one my own of this company; one answer for a foreign and an unknown id (S4)."""
-    row = _company_row(db, user_id, company)
-    own = {str(c.id): c for c in _own_customers(db, user_id, {str(row.id)})}
-    ids = list(dict.fromkeys(str(i) for i in account_ids or []))
-    if not ids or any(i not in own for i in ids):
-        raise _refuse(PICK_OWN)
-    return [own[i] for i in ids]
 
 
 def _user(db: Session, user_id: str) -> dict:
@@ -313,11 +308,14 @@ def _has_access(db: Session, user_id: str, phone: str, codes: list[str]) -> dict
     visible = {code_of.get(str(cid)) for cid, active in linked if active and str(cid) in granted}
     visible.discard(None)
     if not visible:
-        return {"error": OTHER_COMPANY, "contact": None}
+        # Not on my list: no name, no id. A link in one of my companies (an inactive customer) is not "another
+        # company".
+        mine_company = any(str(cid) in granted for cid, _active in linked)
+        return {"error": HAS_ACCESS if mine_company else OTHER_COMPANY, "contact": None}
     order = [*codes, *COMPANY_ORDER, *sorted(visible)]
     company = next(c for c in order if c in visible)
     return {
-        "error": f"{name} already has access." if name else "This number already has access.",
+        "error": f"{name} already has access." if name else HAS_ACCESS,
         "contact": {
             "id": str(contact.id), "name": name, "company": company,
             "editable": writes.contact_in_scope(db, user_id, str(contact.id)),
@@ -326,17 +324,22 @@ def _has_access(db: Session, user_id: str, phone: str, codes: list[str]) -> dict
 
 
 def _respond_outcome(db: Session, contact_id: str) -> dict:
-    """N5.1 / N5.3: the shared Respond.io function, its answer as `{respond, respond_error}`; never raises."""
+    """N5.1 / N5.3: the shared Respond.io function, its answer as `{respond, respond_error}` (plus `unreachable`
+    when Respond.io did not answer at all); never raises."""
     from app.services import respond_contact_ensure
 
     try:
         result = respond_contact_ensure.ensure_in_respond(db, str(contact_id))
     except Exception:  # noqa: BLE001 - the access is saved; the failure is reported, never silent
         db.rollback()
-        return {"respond": "failed", "respond_error": "Respond.io gave an unexpected answer."}
+        return {"respond": "failed", "respond_error": "Respond.io gave an unexpected answer.", "unreachable": False}
     if result["status"] in respond_contact_ensure.OK_STATUSES:
-        return {"respond": "ok", "respond_error": None}
-    return {"respond": "failed", "respond_error": result.get("error") or "Respond.io gave an unexpected answer."}
+        return {"respond": "ok", "respond_error": None, "unreachable": False}
+    return {
+        "respond": "failed",
+        "respond_error": result.get("error") or "Respond.io gave an unexpected answer.",
+        "unreachable": bool(result.get("unreachable")),
+    }
 
 
 def grant(db: Session, user_id: str, companies, account_ids: list[str], people: list[dict]) -> dict:
@@ -395,15 +398,26 @@ def grant(db: Session, user_id: str, companies, account_ids: list[str], people: 
             created = created or bool(done["after"]["created"])
             contact_id = str(done["id"])
         out.append({"index": index, "contact_id": contact_id, "created": created})
+    # Respond.io that did not answer at all (timeout, no connection) is not asked again for the rest of the form:
+    # each would wait the same way. Their access is saved; their rows carry the same reason (Try again later).
+    down: str | None = None
     for row in out:
-        row.update(_respond_outcome(db, row["contact_id"]))
+        if down is not None:
+            row.update({"respond": "failed", "respond_error": down})
+            continue
+        outcome = _respond_outcome(db, row["contact_id"])
+        if outcome.pop("unreachable"):
+            down = outcome["respond_error"]
+        row.update(outcome)
     return {"rows": out}
 
 
 def respond_retry(db: Session, user_id: str, contact_id: str) -> dict:
     """N5.5: "Try again in Respond.io" for a contact I may change (404 otherwise): the same shared function."""
     _editable(db, user_id, contact_id)
-    return _respond_outcome(db, contact_id)
+    outcome = _respond_outcome(db, contact_id)
+    outcome.pop("unreachable")
+    return outcome
 
 
 # ------------------------------------------------------------------ S5 update

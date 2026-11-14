@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import {
   ColumnDef,
@@ -51,8 +51,17 @@ import DealerAccessFormDialog, { ACCESS_OPTIONS, notInRespondText } from './Deal
 
 const rowKey = (row: DealerAccessRow) => `${row.contact_id}:${row.company}`;
 
-/** The Access cell: the owner tag as a pill, or "Employee", and a marker while Respond.io lacks them. */
-function AccessCell({ row }: { row: DealerAccessRow }) {
+/** "Not in Respond.io yet" while Respond.io lacks the person (N5.4); nothing otherwise. */
+function RespondCell({ row }: { row: DealerAccessRow }) {
+  return row.in_respond ? null : (
+    <span className="block truncate text-xs text-muted-foreground" title="Not in Respond.io yet">
+      Not in Respond.io yet
+    </span>
+  );
+}
+
+/** The Access cell: the owner tag as a pill, or "Employee". The phone card adds the Respond.io marker below. */
+function AccessCell({ row, withRespond = false }: { row: DealerAccessRow; withRespond?: boolean }) {
   const label = row.access === 'owner' ? (row.owner_tag ?? 'Business Owner') : 'Employee';
   return (
     <span className="flex min-w-0 flex-col items-start gap-0.5">
@@ -63,11 +72,7 @@ function AccessCell({ row }: { row: DealerAccessRow }) {
       ) : (
         <span>{label}</span>
       )}
-      {row.in_respond ? null : (
-        <span className="max-w-full truncate text-xs text-muted-foreground" title="Not in Respond.io yet">
-          Not in Respond.io yet
-        </span>
-      )}
+      {withRespond ? <RespondCell row={row} /> : null}
     </span>
   );
 }
@@ -90,7 +95,8 @@ function AccountPills({ row }: { row: DealerAccessRow }) {
         <ul className="flex flex-col gap-1 text-sm">
           {items.map((item) => (
             <li key={item.key} className="truncate" title={item.title}>
-              {item.label} <span className="text-muted-foreground">{item.title}</span>
+              {/* A twin's label already carries its code (N1.2): the code shows once. */}
+              {item.title && !item.label.includes(item.title) ? `${item.label} (${item.title})` : item.label}
             </li>
           ))}
         </ul>
@@ -100,13 +106,13 @@ function AccountPills({ row }: { row: DealerAccessRow }) {
 }
 
 export default function DealerAccessView() {
+  const params = useSearchParams();
   const {
     value: searchQuery,
     setValue: setSearchQuery,
     debouncedValue: debouncedSearch,
     isSettling,
-  } = useDebouncedSearch();
-  const params = useSearchParams();
+  } = useDebouncedSearch(params.get('q') ?? '');
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   // Every filter lives in the address bar (N2.7); "My customers" is on unless `mine=0`.
   const [mine, setMineState] = useState(() => params.get('mine') !== '0');
@@ -133,6 +139,10 @@ export default function DealerAccessView() {
     replaceUrlSearch({ customer: joinMulti(value) });
   };
   const searchCustomers = useDealerAccessCustomerSearch(mine, companies);
+  // The settled search text rides the address bar too, as `q`.
+  useEffect(() => {
+    replaceUrlSearch({ q: debouncedSearch });
+  }, [debouncedSearch]);
   const [form, setForm] = useState<{ open: boolean; person: DealerAccessRow | null }>({
     open: false,
     person: null,
@@ -269,6 +279,13 @@ export default function DealerAccessView() {
         size: 200,
         cell: ({ row }) => <AccessCell row={row.original} />,
         meta: { headerTitle: 'Access', skeleton: <Skeleton className="h-5 w-24" /> },
+      },
+      {
+        id: 'respond',
+        header: 'Respond.io',
+        size: 160,
+        cell: ({ row }) => <RespondCell row={row.original} />,
+        meta: { headerTitle: 'Respond.io', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         id: 'actions',
@@ -519,7 +536,7 @@ function PeopleCards({
               ) : null}
             </div>
             <div className="mt-1.5">
-              <AccessCell row={row} />
+              <AccessCell row={row} withRespond />
             </div>
             <div className="mt-1.5">
               <AccountPills row={row} />
