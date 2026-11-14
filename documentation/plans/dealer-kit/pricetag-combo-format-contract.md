@@ -26,8 +26,10 @@ def plain_text(value: str | None) -> str | None
 
 Sanitiser rules (UAC AC-5..AC-8): attributes all dropped except `style`; within `style` keep only
 `color` and `background-color` whose value matches `^#[0-9a-fA-F]{3}$|^#[0-9a-fA-F]{6}$|^rgb\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*\)$`
-(on `span`, `mark`) and `text-align: left|center|right` (on `p h1 h2 h3 li`). Kept declarations are
-re-emitted lower-case as `prop: value` joined by `; `. A tag left with an empty style has no style attribute.
+(on `span`, `mark`), `text-align: left|center|right` (on `p h1 h2 h3 li`), and on `span` only
+`font-family` (one plain family name, `^["']?[A-Za-z0-9][A-Za-z0-9 -]*["']?$`, re-emitted unquoted with its
+case kept) and `font-size` (`<number>pt`, 4 to 200; designer feedback B AC-1.5). Kept declarations are
+re-emitted lower-case (except a family name) as `prop: value` joined by `; `. A tag left with an empty style has no style attribute.
 `script style iframe object embed` dropped with content; other unknown tags dropped, text kept and escaped.
 Comments, doctype, processing instructions dropped. Unclosed allowed tags are closed at the end. Text is
 always escaped (`& < > "`). Idempotent.
@@ -160,7 +162,8 @@ always escaped (`& < > "`). Idempotent.
   `ProductUpdate` only, never on `ProductBase` / `ProductResponse`, so a response can never fail on length.
   `import_price_tag_descriptions.py` refuses (reports) a row that sanitises over 5000.
 - R15 (reviewer re-check N1, 5 Nov): pasted HTML loses only the `color`, `background-color`, `background`
-  and `text-align` declarations; every other declaration (font-weight, font-style, text-decoration, ...)
+  and `text-align` declarations (and, since designer feedback B, `font-family` and `font-size`: a font comes
+  only from the toolbar picker); every other declaration (font-weight, font-style, text-decoration, ...)
   stays so tiptap's Bold / Italic / Underline / Strike paste rules keep working (Google Docs wraps a paste in
   `<b style="font-weight:normal">`).
 - R16 (reviewer re-check R1): the canvas inline editor (double-click a layer, `contentFor` / `editingContent`

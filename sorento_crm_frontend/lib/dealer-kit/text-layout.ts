@@ -269,13 +269,14 @@ export type LayoutRun = RichRun & {
 export type RichLine = LayoutRun[];
 
 /** The face a run draws in: the layer's, plus the run's bold / italic / code and its block's
- * size factor. Family and base size are never taken from the description. */
+ * size factor. A run's own font family and size (pt, used as given, no heading factor) win
+ * over the layer's when set. */
 export function runFace(props: TextLayerProps, run: RichRun, sizeFactor: number, blockBold = false): TextFace {
   const baseWeight = props.fontWeight || 400;
   const bold = !!run.bold || blockBold;
   return textFace({
-    fontFamily: run.code ? MONOSPACE : props.fontFamily,
-    fontSize: props.fontSize * sizeFactor,
+    fontFamily: run.code ? MONOSPACE : run.fontFamily || props.fontFamily,
+    fontSize: run.fontSize ? run.fontSize : props.fontSize * sizeFactor,
     fontWeight: bold ? Math.max(700, baseWeight) : baseWeight,
     italic: !!props.italic || !!run.italic,
     letterSpacing: props.letterSpacing,
@@ -394,11 +395,17 @@ export function richLayerLines(
     }
     endLine();
 
-    const lineHeight = props.lineHeight * textFace({ ...props, fontSize: props.fontSize * factor }).fontSize_mm * px;
+    const blockSize_mm = textFace({ ...props, fontSize: props.fontSize * factor }).fontSize_mm;
     for (let at = 0; at < lineSets.length; at += 1) {
+      const pieces = lineSets[at];
+      // A line is as tall as its tallest run (a run's own size can exceed the layer's).
+      const tallest_mm = pieces.length
+        ? Math.max(...pieces.map((piece) => faces[piece.run].fontSize_mm))
+        : blockSize_mm;
+      const lineSize_mm = at === 0 && entry.kind === 'li' && entry.marker ? Math.max(tallest_mm, blockSize_mm) : tallest_mm;
+      const lineHeight = props.lineHeight * lineSize_mm * px;
       // Always draw the first line; later ones only while they fit the box.
       if (measurable && lines.length > 0 && top + lineHeight > maxHeight) return lines;
-      const pieces = lineSets[at];
       const merged: Array<{ run: number; text: string; width: number }> = [];
       for (const piece of pieces) {
         const last = merged[merged.length - 1];

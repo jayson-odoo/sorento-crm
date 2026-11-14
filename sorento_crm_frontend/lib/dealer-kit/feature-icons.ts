@@ -153,6 +153,91 @@ export function featureIconRow(
   return Array.from({ length: shown }, (_, i) => start + i * (size + gap));
 }
 
+/** The smallest an icon shrinks to before the grid grows past its box instead. */
+export const FEATURE_ICON_MIN_MM = 4;
+
+export type FeatureIconGridProps = Pick<FeatureIconsLayerProps, 'iconSize_mm' | 'gap_mm' | 'align'> & {
+  /** Icons per row; unset = as many as fit. */
+  columns?: number;
+  /** Row count (icons per row = ceil(count / rows)); ignored when `columns` is set. */
+  rows?: number;
+};
+
+export type FeatureIconGrid = {
+  /** Top-left of each icon (mm, inside the layer box), row-major, left to right. */
+  positions: { x_mm: number; y_mm: number }[];
+  iconSize_mm: number;
+  /** Bottom of the last row. */
+  height_mm: number;
+  /** The grid needs more room than the box, even at the minimum icon size. */
+  overflow: boolean;
+};
+
+/**
+ * Spec icons in rows. Never hides an icon (owner Q4): when the grid does not fit the box the
+ * icons shrink, down to `FEATURE_ICON_MIN_MM`, then the grid grows past the box and reports
+ * `overflow`. `align` applies to each row on its own; rows stack from the top, `gap_mm` apart.
+ */
+export function featureIconGrid(
+  count: number,
+  props: FeatureIconGridProps,
+  boxWidth_mm: number,
+  boxHeight_mm: number,
+): FeatureIconGrid {
+  const total = Math.max(0, Math.floor(count));
+  const gap = Math.max(0, props.gap_mm);
+  const wanted = props.iconSize_mm;
+  if (total === 0 || !(wanted > 0)) {
+    return { positions: [], iconSize_mm: wanted > 0 ? wanted : 0, height_mm: 0, overflow: false };
+  }
+  // Tolerate float noise so an icon that exactly fills the row or the box is kept.
+  const EPS = 1e-9;
+  const columns = props.columns && props.columns > 0 ? Math.floor(props.columns) : null;
+  const fixedRows = !columns && props.rows && props.rows > 0 ? Math.floor(props.rows) : null;
+  const sizeFor = (perRow: number, rowCount: number) =>
+    Math.min(
+      wanted,
+      (boxWidth_mm - (perRow - 1) * gap) / perRow,
+      (boxHeight_mm - (rowCount - 1) * gap) / rowCount,
+    );
+
+  // The largest icon (never above the asked size) that fits the box.
+  let size: number;
+  if (columns || fixedRows) {
+    const perRow = Math.min(total, columns ?? Math.ceil(total / (fixedRows as number)));
+    size = sizeFor(perRow, Math.ceil(total / perRow));
+  } else {
+    size = -Infinity;
+    for (let rowCount = 1; rowCount <= total; rowCount += 1) {
+      size = Math.max(size, sizeFor(Math.ceil(total / rowCount), rowCount));
+      if (size >= wanted) break;
+    }
+  }
+  size = Math.max(size, Math.min(FEATURE_ICON_MIN_MM, wanted));
+
+  const perRow = columns
+    ? columns
+    : fixedRows
+      ? Math.ceil(total / fixedRows)
+      : Math.max(1, Math.floor((boxWidth_mm + gap) / (size + gap) + EPS));
+  const rowCount = Math.ceil(total / perRow);
+  const positions: FeatureIconGrid['positions'] = [];
+  let widest = 0;
+  for (let row = 0; row < rowCount; row += 1) {
+    const inRow = Math.min(perRow, total - row * perRow);
+    const rowWidth = inRow * size + (inRow - 1) * gap;
+    widest = Math.max(widest, rowWidth);
+    const free = Math.max(0, boxWidth_mm - rowWidth);
+    const start = props.align === 'center' ? free / 2 : props.align === 'right' ? free : 0;
+    for (let i = 0; i < inRow; i += 1) {
+      positions.push({ x_mm: start + i * (size + gap), y_mm: row * (size + gap) });
+    }
+  }
+  const height_mm = rowCount * size + (rowCount - 1) * gap;
+  const overflow = height_mm > boxHeight_mm + EPS || widest > boxWidth_mm + EPS;
+  return { positions, iconSize_mm: size, height_mm, overflow };
+}
+
 /**
  * How many of `count` icons fit ENTIRELY inside the box, and how many do not. The one count
  * `featureIconRow` draws from, so a warning about dropped icons can never disagree with the row

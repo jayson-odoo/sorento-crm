@@ -2,8 +2,8 @@
 
 `product_combos.description` and `products.price_tag_description` hold either legacy plain
 text or the HTML the shared rich text editor emits. Every write path runs the value through
-`sanitise_tag_html`, so nothing but the allow-listed elements and colour / alignment styles
-is ever stored; every non-tag reader goes through `plain_text`.
+`sanitise_tag_html`, so nothing but the allow-listed elements and colour / alignment / font
+styles is ever stored; every non-tag reader goes through `plain_text`.
 
 Built on the standard library's `html.parser` (no new dependency). A value is "rich" only when
 it starts with an allowed block tag; anything else is plain text, which is kept as typed apart
@@ -31,6 +31,12 @@ _COLOUR_PROPS = {"color", "background-color"}
 _COLOUR_RE = re.compile(
     r"^#[0-9a-fA-F]{3}$|^#[0-9a-fA-F]{6}$|^rgb\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*\)$"
 )
+_FONT_TAGS = {"span"}
+#: One plain family name, optionally quoted: no comma list, escape, comment or function.
+_FONT_FAMILY_RE = re.compile(r"""^["']?([A-Za-z0-9][A-Za-z0-9 -]*)["']?$""")
+_FONT_SIZE_RE = re.compile(r"^(\d+(?:\.\d+)?)pt$", re.IGNORECASE)
+_FONT_SIZE_MIN_PT = 4
+_FONT_SIZE_MAX_PT = 200
 _RICH_RE = re.compile(r"^\s*<(?:p|h1|h2|h3|ul|ol|blockquote)(?=[\s>])", re.IGNORECASE)
 
 
@@ -61,6 +67,14 @@ def _style_for(tag: str, raw: Optional[str]) -> str:
             kept.append(f"{prop}: {value.lower()}")
         elif prop == "text-align" and tag in _ALIGN_TAGS and value.lower() in _ALIGN_VALUES:
             kept.append(f"text-align: {value.lower()}")
+        elif prop == "font-family" and tag in _FONT_TAGS:
+            family = _FONT_FAMILY_RE.match(value)
+            if family:
+                kept.append(f"font-family: {family.group(1).strip()}")
+        elif prop == "font-size" and tag in _FONT_TAGS:
+            size = _FONT_SIZE_RE.match(value)
+            if size and _FONT_SIZE_MIN_PT <= float(size.group(1)) <= _FONT_SIZE_MAX_PT:
+                kept.append(f"font-size: {size.group(1)}pt")
     return "; ".join(kept)
 
 

@@ -76,7 +76,20 @@ interface AssetPickerDialogProps {
   onDone?: (assetIds: string[]) => void;
   onCancel: () => void;
   onPick?: (source: ImageSource) => void;
+  /**
+   * Pick several (product photos and library artwork alike): a tile click toggles a tick, the
+   * footer counts the picks, and Done hands them back in the order they were made. An upload
+   * joins the selection. Cancel, the X and a click away discard it.
+   */
+  onPickMany?: (sources: ImageSource[]) => void;
 }
+
+const MAX_UPLOAD_MB = 20;
+
+const sameSource = (a: ImageSource, b: ImageSource) =>
+  a.type === 'asset'
+    ? b.type === 'asset' && a.assetId === b.assetId
+    : b.type === 'product_attachment' && a.attachmentId === b.attachmentId;
 
 export function AssetPickerDialog({
   open,
@@ -90,8 +103,10 @@ export function AssetPickerDialog({
   onDone,
   onCancel,
   onPick,
+  onPickMany,
 }: AssetPickerDialogProps) {
   const selecting = onDone !== undefined;
+  const many = !selecting && onPickMany !== undefined;
   const uploadKind = libraryKind ?? uploadKindProp;
   const [tab, setTab] = useState(allowProductPhotos ? 'product' : 'library');
   const [assets, setAssets] = useState<KitAsset[]>([]);
@@ -101,9 +116,17 @@ export function AssetPickerDialog({
   const [files, setFiles] = useState<File[]>([]);
   const [uploading, setUploading] = useState(false);
   const [selection, setSelection] = useState<string[]>([]);
+  const [picks, setPicks] = useState<ImageSource[]>([]);
 
   const toggle = (id: string) =>
     setSelection((ids) => (ids.includes(id) ? ids.filter((other) => other !== id) : [...ids, id]));
+  const togglePick = (source: ImageSource) =>
+    setPicks((current) =>
+      current.some((pick) => sameSource(pick, source))
+        ? current.filter((pick) => !sameSource(pick, source))
+        : [...current, source],
+    );
+  const isPicked = (source: ImageSource) => picks.some((pick) => sameSource(pick, source));
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -130,6 +153,7 @@ export function AssetPickerDialog({
     setTab(allowProductPhotos ? 'product' : 'library');
     setFiles([]);
     setSelection(selectedIds ?? []);
+    setPicks([]);
     // Seeded on open only: the host's list changes on Done, never while the dialog is open.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, allowProductPhotos]);
@@ -138,19 +162,25 @@ export function AssetPickerDialog({
     if (open) void load();
   }, [open, load]);
 
+  // One file in plain pick mode is uploaded and used at once; otherwise every file joins the
+  // library (and the selection, when there is one) so the next can be added straight away.
+  const uploadAndUse = !libraryKind && !selecting && !many && files.length <= 1;
+
   const handleUpload = useCallback(async () => {
-    const file = files[0];
-    if (!file) return;
+    if (files.length === 0) return;
     setUploading(true);
-    try {
-      const asset = await uploadAsset({
-        file,
-        kind: uploadKind,
-        tags: uploadKind === 'decorative' ? undefined : [uploadKind],
-      });
-      setFiles([]);
-      toast.success(`${asset.name} added to the library`);
-      if (libraryKind || selecting) {
+    const failed: File[] = [];
+    const added: KitAsset[] = [];
+    // One request per file, in order: the endpoint takes a single file.
+    for (const file of files) {
+      try {
+        const asset = await uploadAsset({
+          file,
+          kind: uploadKind,
+          tags: uploadKind === 'decorative' ? undefined : [uploadKind],
+        });
+        added.push(asset);
+        if (uploadAndUse) continue;
         setAssets((rows) => [
           ...rows.filter((row) => row.id !== asset.id),
           asset,
@@ -158,15 +188,35 @@ export function AssetPickerDialog({
         if (selecting) {
           setSelection((ids) => (ids.includes(asset.id) ? ids : [...ids, asset.id]));
         }
-      } else {
-        onPick?.({ type: 'asset', assetId: asset.id });
+        if (many) {
+          const source: ImageSource = { type: 'asset', assetId: asset.id };
+          setPicks((current) =>
+            current.some((pick) => sameSource(pick, source)) ? current : [...current, source],
+          );
+        }
+      } catch (error) {
+        failed.push(file);
+        toast.error(`${file.name}: ${error instanceof Error ? error.message : 'Upload failed'}`);
       }
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Upload failed');
-    } finally {
-      setUploading(false);
     }
-  }, [files, uploadKind, libraryKind, selecting, onPick]);
+    setFiles(failed);
+    setUploading(false);
+    if (added.length === 0) return;
+    toast.success(
+      added.length === 1
+        ? `${added[0].name} added to the library`
+        : `${added.length} images added to the library`,
+    );
+    if (uploadAndUse) onPick?.({ type: 'asset', assetId: added[0].id });
+  }, [files, uploadKind, uploadAndUse, selecting, many, onPick]);
+
+  const rejectFile = useCallback((file: File, reason: 'type' | 'size' | 'extra') => {
+    toast.error(
+      reason === 'size'
+        ? `${file.name} is over ${MAX_UPLOAD_MB} MB`
+        : `${file.name} is not a PNG, JPG, WebP or SVG`,
+    );
+  }, []);
 
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onCancel()}>
@@ -193,30 +243,37 @@ export function AssetPickerDialog({
                   </p>
                 ) : (
                   <div className="grid max-h-80 grid-cols-4 gap-2 overflow-auto">
-                    {productImages.map((image) => (
-                      <button
-                        key={image.attachment_id}
-                        type="button"
-                        className="group relative aspect-square overflow-hidden rounded border hover:ring-2 hover:ring-primary"
-                        onClick={() =>
-                          onPick?.({
-                            type: 'product_attachment',
-                            attachmentId: image.attachment_id,
-                          })
-                        }
-                      >
-                        <img
-                          src={image.url}
-                          alt=""
-                          className="size-full object-contain"
-                        />
-                        {image.is_primary && (
-                          <span className="absolute left-1 top-1 rounded bg-primary px-1 text-2xs text-primary-foreground">
-                            Primary
-                          </span>
-                        )}
-                      </button>
-                    ))}
+                    {productImages.map((image) => {
+                      const source: ImageSource = {
+                        type: 'product_attachment',
+                        attachmentId: image.attachment_id,
+                      };
+                      const picked = many && isPicked(source);
+                      return (
+                        <button
+                          key={image.attachment_id}
+                          type="button"
+                          className={cn(
+                            'group relative aspect-square overflow-hidden rounded border hover:ring-2 hover:ring-primary',
+                            picked && 'border-primary ring-2 ring-primary',
+                          )}
+                          onClick={() => (many ? togglePick(source) : onPick?.(source))}
+                          aria-pressed={many ? picked : undefined}
+                        >
+                          {many && <PickTick picked={picked} />}
+                          <img
+                            src={image.url}
+                            alt=""
+                            className="size-full object-contain"
+                          />
+                          {image.is_primary && (
+                            <span className="absolute left-1 top-1 rounded bg-primary px-1 text-2xs text-primary-foreground">
+                              Primary
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
               </TabsContent>
@@ -258,7 +315,11 @@ export function AssetPickerDialog({
                   {assets.map((asset) => {
                     // A rendition for the grid, never 200 originals.
                     const preview = asset.thumb_url ?? asset.url;
-                    const picked = selecting && selection.includes(asset.id);
+                    const source: ImageSource = { type: 'asset', assetId: asset.id };
+                    const ticked = selecting || many;
+                    const picked = selecting
+                      ? selection.includes(asset.id)
+                      : many && isPicked(source);
                     return (
                       <div key={asset.id} className="relative">
                         <button
@@ -272,24 +333,14 @@ export function AssetPickerDialog({
                           onClick={() =>
                             selecting
                               ? toggle(asset.id)
-                              : onPick?.({ type: 'asset', assetId: asset.id })
+                              : many
+                                ? togglePick(source)
+                                : onPick?.(source)
                           }
-                          aria-pressed={selecting ? picked : undefined}
+                          aria-pressed={ticked ? picked : undefined}
                           title={asset.name}
                         >
-                          {selecting && (
-                            <span
-                              className={cn(
-                                'absolute end-1 top-1 z-10 flex size-5 items-center justify-center rounded-full border',
-                                picked
-                                  ? 'border-primary bg-primary text-primary-foreground'
-                                  : 'border-border bg-background/90 text-transparent',
-                              )}
-                              aria-hidden
-                            >
-                              <Check className="size-3" />
-                            </span>
-                          )}
+                          {ticked && <PickTick picked={picked} />}
                           <span className="flex aspect-square w-full items-center justify-center overflow-hidden">
                             {preview ? (
                               <img
@@ -316,9 +367,11 @@ export function AssetPickerDialog({
               <div className="flex flex-col gap-2 border-t pt-3">
                 <FileDropzone
                   accept=".png,.jpg,.jpeg,.webp,.svg"
+                  multiple
                   files={files}
                   onFilesChange={setFiles}
-                  maxSizeMb={20}
+                  onReject={rejectFile}
+                  maxSizeMb={MAX_UPLOAD_MB}
                   title="Upload artwork"
                 />
                 <div className="flex justify-end">
@@ -333,7 +386,7 @@ export function AssetPickerDialog({
                     ) : (
                       <Upload className="mr-1 size-3.5" />
                     )}
-                    {libraryKind || selecting ? 'Upload' : 'Upload and use'}
+                    {uploadAndUse ? 'Upload and use' : 'Upload'}
                   </Button>
                 </div>
               </div>
@@ -341,14 +394,41 @@ export function AssetPickerDialog({
           </Tabs>
         </DialogBody>
         <DialogFooter>
+          {many && (
+            <span className="me-auto self-center text-xs text-muted-foreground">
+              {picks.length} selected
+            </span>
+          )}
           <Button variant="outline" onClick={onCancel}>
-            {selecting ? 'Cancel' : closeLabel}
+            {selecting || many ? 'Cancel' : closeLabel}
           </Button>
           {selecting && (
             <Button onClick={() => onDone(selection)}>Done</Button>
           )}
+          {many && (
+            <Button disabled={picks.length === 0} onClick={() => onPickMany(picks)}>
+              Done
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** The selectable-tile tick of the catalogue picker (`dealer-kit/components/TileGrid.tsx`). */
+function PickTick({ picked }: { picked: boolean }) {
+  return (
+    <span
+      className={cn(
+        'absolute end-1 top-1 z-10 flex size-5 items-center justify-center rounded-full border',
+        picked
+          ? 'border-primary bg-primary text-primary-foreground'
+          : 'border-border bg-background/90 text-transparent',
+      )}
+      aria-hidden
+    >
+      <Check className="size-3" />
+    </span>
   );
 }

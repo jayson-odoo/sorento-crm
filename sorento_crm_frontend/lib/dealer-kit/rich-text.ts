@@ -20,6 +20,10 @@ export type RichRun = {
   code?: boolean;
   color?: string | null;
   highlight?: string | null;
+  /** A span's own `font-family` (one plain family name), else the layer's. */
+  fontFamily?: string | null;
+  /** A span's own `font-size` in pt, used as given (no heading factor), else the layer's. */
+  fontSize?: number | null;
 };
 
 export type RichAlign = 'left' | 'center' | 'right';
@@ -64,6 +68,22 @@ export function validColour(value: string | undefined): string | null {
   return value && COLOUR.test(value) ? value : null;
 }
 
+/** One plain family name (optionally quoted), as the server sanitiser keeps it. */
+const FONT_FAMILY = /^["']?([A-Za-z0-9][A-Za-z0-9 -]*)["']?$/;
+const FONT_SIZE_PT = /^(\d+(?:\.\d+)?|\.\d+)pt$/i;
+
+function fontFamilyOf(value: string | undefined): string | null {
+  const match = value ? FONT_FAMILY.exec(value.trim()) : null;
+  return match ? match[1].trim() : null;
+}
+
+function fontSizeOf(value: string | undefined): number | null {
+  const match = value ? FONT_SIZE_PT.exec(value.trim()) : null;
+  if (!match) return null;
+  const size = Number(match[1]);
+  return size >= 4 && size <= 200 ? size : null;
+}
+
 function alignOf(el: Element): RichAlign | null {
   const value = declarations(el)['text-align']?.toLowerCase();
   return value === 'left' || value === 'center' || value === 'right' ? value : null;
@@ -83,6 +103,10 @@ function marksFor(el: Element, inherited: Marks): Marks {
     const background = validColour(css['background-color']);
     if (color) marks.color = color;
     if (background) marks.highlight = background;
+    const family = fontFamilyOf(css['font-family']);
+    const size = fontSizeOf(css['font-size']);
+    if (family) marks.fontFamily = family;
+    if (size !== null) marks.fontSize = size;
   }
   return marks;
 }
@@ -95,7 +119,9 @@ function sameMarks(a: RichRun, b: RichRun): boolean {
     !!a.strike === !!b.strike &&
     !!a.code === !!b.code &&
     (a.color ?? null) === (b.color ?? null) &&
-    (a.highlight ?? null) === (b.highlight ?? null)
+    (a.highlight ?? null) === (b.highlight ?? null) &&
+    (a.fontFamily ?? null) === (b.fontFamily ?? null) &&
+    (a.fontSize ?? null) === (b.fontSize ?? null)
   );
 }
 
