@@ -3383,6 +3383,7 @@ def _narrowed_payload(
     exact_kept: list[str] | None = None,
     spec_none: list[dict[str, Any]] | None = None,
     answered: frozenset[str] = frozenset(),
+    keep_unplaced: bool = False,
 ) -> "ResolveReferenceRequest":
     """The typed codes narrowed to the variants the message picks, two ways: by the words on
     the code's line (`narrow_code_tokens`, PR #833) and by grounded spec values
@@ -3402,6 +3403,7 @@ def _narrowed_payload(
     narrowed = narrow_code_tokens(
         db, query=payload.query or "", tokens=payload.tokens, allowed_types=payload.allowed_entity_types,
         **({"answered": answered} if answered else {}),
+        **({"keep_unplaced": True} if keep_unplaced else {}),
     )
     if narrowed is not None:
         payload = payload.model_copy(
@@ -3552,6 +3554,7 @@ def resolve_reference_post(
     db: Session = Depends(get_db),
     alternatives_offerable_only: bool = Depends(_not_from_a_request),
     answered_codes: frozenset[str] = Depends(_no_codes_from_a_request),
+    close_code_ask: bool = Depends(_not_from_a_request),
 ):
     """POST variant for external callers that send JSON body (e.g. n8n HTTP node).
 
@@ -3564,13 +3567,15 @@ def resolve_reference_post(
 
     `answered_codes` (CHATBOT-CLOSE-CODES AC-37): the folded codes the chat's grounding answered
     on a stock or incoming ask, kept as typed by the code narrowing (`narrow_code_tokens`).
-    Passed in process the same way; no request sets it."""
+    Passed in process the same way; no request sets it. `close_code_ask` (CHATBOT-CLOSE-CODES
+    F4, the same way): the chat's stock or incoming ask, whose typed code that is no catalogue
+    code is never narrowed to a bare family prefix (`narrow_code_tokens`'s `keep_unplaced`)."""
     typed_tokens = list(payload.tokens or [])
     exact_kept: list[str] = []
     spec_none: list[dict[str, Any]] = []
     # A direct Python call that omits it holds the `Depends` marker, never a frozenset.
     answered = answered_codes if isinstance(answered_codes, frozenset) else frozenset()
-    payload = _narrowed_payload(db, payload, exact_kept, spec_none, answered)
+    payload = _narrowed_payload(db, payload, exact_kept, spec_none, answered, close_code_ask is True)
     picked_variants = (
         _picked_variants(typed_tokens, payload.tokens)
         if (payload.match_mode or "").strip().lower() == "or"

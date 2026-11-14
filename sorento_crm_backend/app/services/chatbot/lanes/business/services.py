@@ -188,10 +188,15 @@ def _resolve_entity(db: Session) -> ResolveEntityFn:
         # The chat's own resolver flag is no request field (`references.resolve_reference`).
         offerable_only = bool(body.get("alternatives_offerable_only"))
         answered = frozenset(body.get("answered_codes") or ())
-        body = {k: v for k, v in body.items() if k not in ("alternatives_offerable_only", "answered_codes")}
+        close_code_ask = body.get("close_code_ask") is True
+        body = {
+            k: v for k, v in body.items() if k not in ("alternatives_offerable_only", "answered_codes", "close_code_ask")
+        }
         extra: dict[str, Any] = {"alternatives_offerable_only": True} if offerable_only else {}
         if answered:
             extra["answered_codes"] = answered
+        if close_code_ask:
+            extra["close_code_ask"] = True
         result = resolve_reference_post(ResolveReferenceRequest(**body), current_user=principal, db=db, **extra)
         return without_denied_kinds(db, result)
 

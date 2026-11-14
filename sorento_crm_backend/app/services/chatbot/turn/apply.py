@@ -856,9 +856,43 @@ def _answer_pending(state: State, decision: Decision, trace: Trace, verdict: dic
         # ELP3754?" is a yes/no over its one option. A yes picks it (the carried quantity
         # rides on the pick, `_spend_stock_pick`); a no refers the dealer to their
         # salesman, with nothing left open - a dealer's stock ask is never escalated.
+        suggested = _suggested_position(pending)
         if decision.answers and decision.why == "affirmative" and len(pending.options) == 1:
             decision = replace(decision, positions=(pending.options[0].get("position"),))
             trace.rules_fired.append("stock_pick_yes")
+        elif decision.answers and decision.why == "affirmative" and not decision.positions and suggested is not None:
+            # CHATBOT-CLOSE-CODES F2: the which-one lists the parser's own code first
+            # (`task.SUGGESTED`); a "yes" over it is that code.
+            decision = replace(decision, positions=(suggested,))
+            trace.rules_fired.append("stock_pick_yes_suggested")
+        elif (
+            decision.answers
+            and decision.why == "affirmative"
+            and not decision.positions
+            and len(pending.options) > 1
+            and not pending.payload.get("did_you_mean")
+        ):
+            # CHATBOT-CLOSE-CODES F2: a "yes" over a which-one list names no code: the list
+            # is asked again as it was, nothing fetched, never referred.
+            groups = pending.payload.get("groups")
+            trace.rules_fired.append("stock_pick_yes_reasked")
+            if isinstance(groups, list) and groups:
+                trace.task_question = task_mod.picks_question(list(pending.options), groups)
+            else:
+                trace.task_question = task_mod.pick_question(
+                    str(pending.payload.get("typed") or ""),
+                    [str(o.get("label")) for o in pending.options if o.get("label")],
+                    pending.payload.get("stock_qty"),
+                    pending.payload.get("count"),
+                    start=min((o.get("position") or 1) for o in pending.options),
+                )
+            focus.domains = ["inventory"]
+            return (
+                focus,
+                pending,
+                Plan(domains=["inventory"], fetch=[], ask=None, denied=[], trace=trace),
+                False,
+            )
         elif (
             decision.answers
             and decision.why == "affirmative"
@@ -2985,6 +3019,21 @@ def _stock_pick_refuses_all(state: State, verdict: dict[str, Any], decision: Any
         ideation=state.ideation,
     )
     return asked, Plan(domains=["inventory"], fetch=[], ask=None, denied=[], trace=trace)
+
+
+def _suggested_position(pending: Any) -> int | None:
+    """The position of the code a one-list stock pick suggests (`task.SUGGESTED` on its only
+    group), else None."""
+    groups = pending.payload.get("groups") if pending is not None else None
+    if not (isinstance(groups, list) and len(groups) == 1 and isinstance(groups[0], dict)):
+        return None
+    wanted = str(groups[0].get(task_mod.SUGGESTED) or "").strip().casefold()
+    if not wanted:
+        return None
+    for option in pending.options:
+        if str(option.get("code") or option.get("label") or "").strip().casefold() == wanted:
+            return option.get("position")
+    return None
 
 
 def _stock_pick_requantified(state: State, verdict: dict[str, Any], trace: Trace):

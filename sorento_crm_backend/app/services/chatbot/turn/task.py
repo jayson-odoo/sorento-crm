@@ -262,9 +262,14 @@ class StockQtyTask:
         if verdict.get(ONLY_THESE_LINES) is True:
             slots = [replace(slot, value=None) for slot in slots]
         by_code: dict[str, int] = {}
-        for entity in verdict.get("entities") or []:
-            if not isinstance(entity, dict):
-                continue
+        # A carried entity (`current_message` False) is the parser restating an earlier
+        # product, not a quantity this message placed on it (CHATBOT-CLOSE-CODES F1).
+        current = [
+            entity
+            for entity in verdict.get("entities") or []
+            if isinstance(entity, dict) and entity.get("current_message") is not False
+        ]
+        for entity in current:
             quantity = _number(entity.get("quantity"))
             if quantity is None:
                 continue
@@ -304,7 +309,7 @@ class StockQtyTask:
             if bare is not None:
                 index = slots.index(still_missing[0])
                 slots[index] = replace(still_missing[0], value=bare)
-        elif still_missing and bare is not None and not by_code and not verdict.get("entities"):
+        elif still_missing and bare is not None and not by_code and not current:
             # Owner ruling 26 Sep 2026 (hand test F2, "okay"): one bare number after a
             # question about several products applies to each product still owed.
             # Round 6 (owner console test of round 4, "they can just say one number
@@ -990,6 +995,11 @@ def after_reply(
         ][:MAX_SLOTS]
         if len(labelled) < 2:
             continue
+        # CHATBOT-CLOSE-CODES F2: the parser's code grounding set aside for this token
+        # (`grounding.SET_ASIDE_PICK_KEY`) is listed first; order only.
+        suggested = str(entity.get("set_aside_pick") or "").strip().casefold() if isinstance(entity, dict) else ""
+        lead = [pair for pair in labelled if suggested and pair[1].casefold() == suggested]
+        labelled = [*lead, *(pair for pair in labelled if pair not in lead)]
         in_family.update(id(row) for row in group)
         quantity = _number(entity.get("quantity"))
         if quantity is None and len(families) == 1:
@@ -1011,6 +1021,7 @@ def after_reply(
                 "qty": quantity,
                 "count": len(group),
                 "positions": list(range(start, len(options) + 1)),
+                **({SUGGESTED: lead[0][1]} if lead else {}),
             }
         )
 
@@ -1040,6 +1051,9 @@ def after_reply(
 #: yet (`{"options", "groups"}`, the numbers kept), handed on by
 #: `turn/apply.py::_spend_stock_pick` and asked again by `engine._stock_ask_reply`.
 NEXT_PICKS = "next_picks"
+#: CHATBOT-CLOSE-CODES F2: on a which-one list (`groups[]`), the parser's own code listed first,
+#: which a "yes" over a one-list pick answers (`apply._suggested_position`).
+SUGGESTED = "suggested"
 #: The pick's own quantity per code, one per list (`after_reply`), for `_spend_stock_pick`.
 QTY_BY_CODE = "qty_by_code"
 #: Codes still owed a quantity while a pick is open (`{"key", "label"}` each): asked by
