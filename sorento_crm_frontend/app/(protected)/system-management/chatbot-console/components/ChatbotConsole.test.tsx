@@ -371,7 +371,9 @@ describe('ChatbotConsole - the prompt version defaults to the one production ser
     fireEvent.change(textarea(), { target: { value: 'hello' } });
     fireEvent.keyDown(textarea(), { key: 'Enter' });
     await waitFor(() => expect(postConsoleTurn).toHaveBeenCalledTimes(1));
-    expect(postConsoleTurn.mock.calls[0][0]).toMatchObject({ prompt_version_id: 'v-62' });
+    // The serving row is shown as picked but sent as no pin: a pinned parser id would also pin
+    // the span prompt published with it, which a live turn never does.
+    expect(postConsoleTurn.mock.calls[0][0].prompt_version_id).toBeNull();
   });
 
   it('the option label reads version, base and label, never a UUID', async () => {
