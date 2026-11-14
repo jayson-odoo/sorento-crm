@@ -323,3 +323,27 @@ describe('a renamed font family follows on a spec sheet page (review S2)', () =>
     expect((latest.layers[0].props as { fontFamily: string }).fontFamily).toBe('Sorento Display Pro');
   });
 });
+
+describe('a spec sheet page reports the picked cell to its host (row height follow-up)', () => {
+  it('clicking a cell of a table on the page calls embedded.onTableCell with that cell', () => {
+    const onTableCell = vi.fn();
+    render(
+      <TagCanvasEditor
+        doc={{ width_mm: 80, height_mm: 60, layers: [tableLayer()] }}
+        onChange={vi.fn()}
+        docId="sheet:k1"
+        specSheet
+        embedded={{
+          pxPerMm: CANVAS_PX_PER_MM,
+          selectedLayerId: null,
+          onSelect: () => undefined,
+          controllerRef: { current: null },
+          active: true,
+          onTableCell,
+        }}
+      />,
+    );
+    pick(2, 1);
+    expect(onTableCell).toHaveBeenLastCalledWith({ layerId: 'tbl', row: 2, col: 1 });
+  });
+});
