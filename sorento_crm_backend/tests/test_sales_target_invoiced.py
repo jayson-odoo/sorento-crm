@@ -299,3 +299,109 @@ def test_chat_progress_line_counts_invoiced_and_is_not_provisional(db, monkeypat
     assert by_no[invoiced.target_no]["achieved_value"] == 1190.75
     assert by_no[invoiced.target_no]["provisional"] is False
     assert by_no[ordered.target_no]["provisional"] is True
+
+
+# --------------------------------------------------------------------------------------- #
+# TARGET-ACHIEVED-PERF (14 Nov): the period join is hashed, never nested per document
+# --------------------------------------------------------------------------------------- #
+
+#: The statement that timed out on sorento_prod_1112 met 25,208 documents, 122 credit rows (dealer
+#: accounts) and 260 periods; 60 dealers x 2 accounts x 4 quarters x 30 documents is that shape.
+DEALERS, ACCOUNTS, DOCS_PER_PERIOD = 60, 2, 30
+QUARTERS = [
+    (date(2026, 1, 1), date(2026, 3, 31)), (date(2026, 4, 1), date(2026, 6, 30)),
+    (date(2026, 7, 1), date(2026, 9, 30)), (date(2026, 10, 1), date(2026, 12, 31)),
+]
+
+
+def _invoiced_plan(db, specs):
+    """The executed plan of the Invoiced achievement statement, with the figures it returned
+    (EXPLAIN through the session, so the blank schema's translate map applies)."""
+    from app.services.sales import achievement_service as ach
+    from tests.test_invoiced_channel_perf import _Explain
+
+    captured = []
+    real = db.execute
+
+    def spy(stmt, *args, **kwargs):
+        captured.append(stmt)
+        return real(stmt, *args, **kwargs)
+
+    db.execute = spy
+    try:
+        figures = ach.achieved_by_period_and_account(db, specs, DEFAULT_COMPANY_ID)
+    finally:
+        db.execute = real
+    dialect = db.get_bind().dialect
+    statements = [
+        s for s in captured
+        if not isinstance(s, str) and "inv_docs" in str(s.compile(dialect=dialect))
+    ]
+    assert len(statements) == 1, "one Invoiced achievement statement"
+    (plan,) = db.execute(_Explain(statements[0])).scalar_one()
+    return figures, plan["Plan"]
+
+
+def test_dealer_invoiced_never_compares_each_document_with_every_period(db):
+    """The owner's dealer tab (8.7 s) and the agent's this-year question (5 s timeout) on
+    sorento_prod_1112. The documents met the credit rows (one VALUES list) and then the periods (a
+    second VALUES list) on a date range. A VALUES list has no statistics, so the first join was
+    estimated at ONE row, and on that guess the planner nested the 260 periods under every credited
+    document: 42,456 x 260 comparisons, 10,998,391 rows removed by the join filter, 9.0 s (the hashed
+    plan, 0.15 s, costs within the planner's 1% fuzz of the nested one, so a lower start-up cost
+    decides; which plan a given volume gets is a coin flip, not something a fixture reproduces).
+
+    So the statement joins ONE VALUES list: the credit rows already crossed with their periods,
+    met on a hash of (kind, key) by documents whose count the planner reads from the table's own
+    statistics. Each document is then compared only with its own key's periods, never every
+    target's: the rows the plan's join filters remove stay within (credited documents x periods
+    of one target). The figures are the shared sales total per quarter and account."""
+    from datetime import timedelta
+
+    targets, rows = [], []
+    for _ in range(DEALERS):
+        accounts = [cust(db) for _ in range(ACCOUNTS)]
+        for account in accounts:
+            # Outside 2026: never read, never joined.
+            days = [date(2025, 6, 1)] + [
+                start + timedelta(days=3 * n) for start, _end in QUARTERS for n in range(DOCS_PER_PERIOD)
+            ]
+            rows += [
+                dict(
+                    id=_uid(), company_id=DEFAULT_COMPANY_ID, document_type="invoice",
+                    doc_no=f"ZZT-IV-{uuid.uuid4().hex[:12]}", doc_date=day, customer_id=account.id,
+                    status="posted", currency_rate=D("1"), net_total=D("100.00"), tax_total=D("0"),
+                    total=D("100.00"), local_net_total=D("100.00"), source_ref=f"SRT_DB:{uuid.uuid4().hex}",
+                )
+                for day in days
+            ]
+        targets.append((_target(db, "dealer", accounts=accounts, periods=QUARTERS), accounts))
+    db.execute(sa.insert(BillingDocument), rows)
+    # Production's billing tables carry planner statistics (autovacuum analyzes them after a sync).
+    db.execute(sa.text("analyze billing_documents"))
+    db.execute(sa.text("analyze billing_document_lines"))
+    pairs = [pair for target, _ in targets for pair in _pairs(db, target)]
+    specs = target_service._specs(db, DEFAULT_COMPANY_ID, pairs)
+    from tests.test_invoiced_channel_perf import _nodes
+
+    figures, plan = _invoiced_plan(db, specs)
+
+    for target, accounts in targets:
+        for _t, period in _pairs(db, target):
+            assert figures[period.id] == {a.id: D("3000.00") for a in accounts}
+            assert sum(figures[period.id].values(), D("0")) == _shared_total(
+                db, accounts, period.period_start, period.period_end
+            )
+    credited = DEALERS * ACCOUNTS * len(QUARTERS) * DOCS_PER_PERIOD
+    nodes = list(_nodes(plan))
+    values = [n for n in nodes if n["Node Type"] == "Values Scan"]
+    assert len(values) == 1, (
+        f"{len(values)} VALUES lists joined: a join on top of a VALUES join is planned on a guessed "
+        "row count (one on prod), which nested the periods under every document"
+    )
+    assert values[0]["Actual Loops"] == 1, "the period list is re-read per document"
+    removed = sum(n.get("Rows Removed by Join Filter", 0) for n in nodes)
+    assert removed <= credited * len(QUARTERS), (
+        f"{removed} rows removed by join filters for {credited} credited documents: "
+        "each document is compared with every target's periods"
+    )

@@ -377,12 +377,17 @@ def _user_named(args: dict, user_text: str | None) -> bool:
     return any(isinstance(v, str) and v.strip() and " ".join(v.split()).lower() in said for v in values)
 
 
-def strip_self_agent(args: dict, user_name: str | None, user_text: str) -> tuple[dict, str | None]:
+def strip_self_agent(
+    args: dict, user_name: str | None, user_text: str, *, has_own_agent: bool = True,
+) -> tuple[dict, str | None]:
     """The asking user's own name is not an agent filter unless they said "my" (or named themselves): crew live
-    round 4, "payout per dealer" was first filtered by the asker's own name and found nothing."""
+    round 4, "payout per dealer" was first filtered by the asker's own name and found nothing. An asker with no
+    sales agent of their own (`has_own_agent` False): "my" cannot mean an agent, so their name is left out then too
+    (TARGET-ACHIEVED-PERF UAC 14, crew trace f0c0f4c8: "my dealers" filtered by the asker's name found nothing)."""
     own = " ".join(str(user_name or "").split()).lower()
     said = " ".join(str(user_text or "").split()).lower()
-    if not own or re.search(r"\b(my|me|mine|myself|saya)\b", said):
+    said_my = bool(re.search(r"\b(my|me|mine|myself|saya)\b", said))
+    if not own or (said_my and has_own_agent):
         return args, None
 
     words = set(own.split())
@@ -407,6 +412,11 @@ def strip_self_agent(args: dict, user_name: str | None, user_text: str) -> tuple
         out["filters"] = keep
     if not dropped:
         return args, None
+    if said_my:
+        return out, (
+            f"Left out {', '.join(dropped)}: that is your own name and you have no sales agent of your own, so the "
+            "question covers everyone you can see."
+        )
     return out, f"Left out {', '.join(dropped)}: that is your own name and the question did not name it or say 'my'."
 
 

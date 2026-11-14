@@ -33,10 +33,12 @@ def test_S1_payout_per_agent_and_dealer_this_year_ranked_with_totals(targets):
     assert a["target_no"] == t["ta"]["target_no"] and a["target_value"] == 60000.0 and a["achieved_value"] == 21000.0
     assert a["achieved_pct"] == 35.0 and a["payout"] == 540.0
     assert out["rows"][0]["target_no"] == t["dealer"]["target_no"]
-    assert out["totals"] == {"payout": 3500.0 + 540.0 + 180.0}
+    assert out["totals"] == {"payout": 3500.0 + 540.0 + 180.0, "target_value": 240000.0, "achieved_value": 105000.0,
+                             "remaining_value": 135000.0}
     assert out["period_display"] == "Period 01/01/2026 to 31/12/2026"
-    # The dealer target has no figure (0): its sales stay out of target and achieved, its payout counts.
-    assert out["scope_note"] == f"No period named: this year, 01/01/2026 to 31/12/2026. No target set on {t['dealer']['target_no']}: left out of target and achieved."
+    # UAC 10 (14 Nov): the dealer target's quarters of 0 sit inside a target above 0, so its sales count in achieved
+    # as on the Targets tab and the note no longer names it; UAC 11: the totals carry target, achieved and remaining.
+    assert out["scope_note"] == "No period named: this year, 01/01/2026 to 31/12/2026."
 
 
 def test_S1b_a_wider_window_is_still_one_row_per_agent(targets):

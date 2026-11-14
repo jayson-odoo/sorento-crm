@@ -569,9 +569,14 @@ def _run(db, stmt) -> list:
     return timed(db, lambda: _execute(db, stmt))
 
 
-def timed(db, work):
+#: A table query's filters reach its SQL, so a narrower question is a cheaper one.
+TIMEOUT_NARROW = "The question took too long to answer. Narrow it with a filter (a date range, a status)."
+
+
+def timed(db, work, *, timeout_message: str = TIMEOUT_NARROW):
     """`work()` under the statement timeout, inside a savepoint: a timeout rolls back to it (and with it the
-    `SET LOCAL`), so the caller's transaction stays usable. Also wraps a computed entity's service call."""
+    `SET LOCAL`), so the caller's transaction stays usable. Also wraps a computed entity's service call, with
+    its own `timeout_message`."""
     savepoint = db.begin_nested()
     try:
         previous = db.execute(text("SHOW statement_timeout")).scalar() or "0"
@@ -581,9 +586,7 @@ def timed(db, work):
     except DBAPIError as exc:
         savepoint.rollback()
         if getattr(getattr(exc, "orig", None), "pgcode", None) == _QUERY_CANCELED:
-            raise QueryRefused(
-                "timeout", "The question took too long to answer. Narrow it with a filter (a date range, a status)."
-            ) from exc
+            raise QueryRefused("timeout", timeout_message) from exc
         if str(getattr(getattr(exc, "orig", None), "pgcode", "") or "").startswith(_DATA_EXCEPTION):
             raise QueryRefused("invalid", "A filter value does not fit its field (a date is YYYY-MM-DD).") from exc
         raise
