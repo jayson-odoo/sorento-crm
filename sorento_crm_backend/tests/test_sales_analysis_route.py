@@ -459,7 +459,8 @@ def test_ac_s1_7_n_cuts_after_the_count_and_the_totals(db, queue, monkeypatch):
     with _client(db, _actor(db), [DEFAULT_COMPANY_ID]) as client:
         body = client.get(ROUTE, params=_q(contact, n=3, date_from="2026-01-01")).json()
     assert [r["label"] for r in body["rows"]] == ["FEB", "APR", "MAR"]  # total desc, label asc
-    assert body["total_count"] == 12
+    # The period is Jan to 26 Sep: nine months of the year, not twelve (REPORT-PIVOT-MONTHS).
+    assert body["total_count"] == 9
     assert body["totals"]["total"] == "116.00"
 
 

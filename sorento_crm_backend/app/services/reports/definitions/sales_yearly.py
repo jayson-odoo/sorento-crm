@@ -6,8 +6,9 @@ The whole report is this file plus the sales dataset: it runs on the reports ker
 sponsorship report uses (Owner ruling 26 Sep 06:27 (Lavish) 1 and 2), so the screen, the
 Excel and the chatbot share one query.
 
-- Rows are the period's years, columns JAN to DEC, whether a month has sales or not; a
-  month after the as-at date is blank, never 0 (AC-S1-9).
+- Rows are the period's years, columns JAN to DEC (the months the period touches, so all
+  twelve for a period of a year or more), whether a month has sales or not; a month after
+  the as-at date is blank, never 0 (AC-S1-9).
 - VARIANCE is the last year minus the one before, over the months the last year has, so
   its total is this year to date against the same months last year (G5 (a), AC-S1-10).
 - Channel is the sales type (SALES-UNIFIED 2.4): on Invoiced, the class of the sales orders

@@ -925,12 +925,18 @@ def _axis_values(
 ) -> List[str]:
     """The values an axis prints, in order.
 
-    A FIXED axis (months of the year, the period's years, the period's months) prints
-    every value whether the data holds it or not; any other axis prints what is present,
-    ranked naturally. The blank bucket is kept and sorts last either way.
+    A FIXED axis (the months of the year the period touches, the period's years, the
+    period's months) prints every value whether the data holds it or not; any other axis
+    prints what is present, ranked naturally. The blank bucket is kept and sorts last
+    either way.
     """
     fixed: Optional[List[str]] = None
-    if column.fixed_values is not None:
+    if column.fixed_values == reg.MONTHS_OF_YEAR:
+        # Months of the year are the months the PERIOD touches, in JAN..DEC order: two
+        # weeks of November is one column, a year (or more) is all twelve.
+        in_period = {key[5:] for key in ctx.period.months}
+        fixed = [value for value, _label in column.fixed_values if value in in_period]
+    elif column.fixed_values is not None:
         fixed = [value for value, _label in column.fixed_values]
     elif column.period_years:
         fixed = _period_years(ctx)
