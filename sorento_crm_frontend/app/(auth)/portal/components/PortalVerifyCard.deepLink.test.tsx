@@ -70,7 +70,13 @@ function verifiedWith(secret?: string) {
 }
 
 async function enterCode(withConfirm = false) {
-  if (withConfirm) fireEvent.click(await screen.findByTestId('confirm-identity-send'));
+  if (withConfirm) {
+    fireEvent.click(await screen.findByTestId('confirm-identity-send'));
+  } else {
+    // SIGNIN-2FA-NOT-ROLE AC-10: nothing sends on mount; the user presses Send code first.
+    fireEvent.click(await screen.findByRole('button', { name: /^send code$/i }));
+    await waitFor(() => expect(mockRequestOtp).toHaveBeenCalledTimes(1));
+  }
   const input = await screen.findByLabelText(/verification code/i);
   fireEvent.change(input, { target: { value: '123456' } });
 }

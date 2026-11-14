@@ -619,6 +619,10 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
    * on every row before this plan.
    */
   line_cancelled?: boolean;
+  /** The row's sales order line is in AutoCount, so Link to PO can act on it. */
+  in_autocount?: boolean;
+  /** A PO link of the row is tied to its AutoCount SO line: Unlink... goes through AutoCount. */
+  in_autocount_link?: boolean;
   /**
    * OI-WHOLE-SO-CANCEL v2: the row's SO line has a change CS has not confirmed yet
    * (AC-V2-2), the sales order itself is cancelled or deleted (AC-V2-5), and the line's
@@ -1118,6 +1122,8 @@ export interface OrderInquiryPoCandidate {
   /** The PO line's id, or the SPO allocation's. Exactly one of the two is set. */
   po_line_id?: string | null;
   spo_allocation_id?: string | null;
+  /** AutoCount ties this PO line to another sales order line than the row's own. */
+  tied_elsewhere?: boolean;
   po_number: string;
   /** `L3` when the book numbered the line. */
   line_label?: string | null;

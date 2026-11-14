@@ -581,6 +581,11 @@ GATED_IDS = [g[0] for g in GATED]
 #: parameters (measured): 200 for a list, 422 for a route with a required parameter, 404 for an
 #: unknown number. Anything else (a 500 above all) is a defect, not "passed the gate".
 EMPTY_DB_STATUS = {"crm_procurement_grn_summary": 422, "crm_purchase_request_by_number": 404}
+#: COST-ACCESS-UNIFIED (#2354): PO costs also need `products.cost.view` for any staff reader (a
+#: session or an identity read); a plain key keeps its own gate. The route's view slug alone is
+#: not enough, so these callers hold the cost slug as well.
+COST_VIEW = "products.cost.view"
+EXTRA_PERMS = {"crm_procurement_po_last_cost_list": [COST_VIEW]}
 
 
 @pytest.mark.parametrize("tool,path,slugs", GATED, ids=GATED_IDS)
@@ -592,15 +597,23 @@ def test_ac13_identity_staff_holding_nothing_is_403(env, tool, path, slugs):
 
 @pytest.mark.parametrize("tool,path,slugs", GATED, ids=GATED_IDS)
 def test_ac13_identity_staff_holding_the_slug_passes_the_gate(env, tool, path, slugs):
-    staff = mk_user(env.db, "holder", perms=slugs[:1])
+    staff = mk_user(env.db, "holder", perms=slugs[:1] + EXTRA_PERMS.get(tool, []))
     resp = env.client.get(path, headers=env.ident(staff))
     assert resp.status_code == EMPTY_DB_STATUS.get(tool, 200), f"{tool}: {resp.status_code} {resp.text[:200]}"
+
+
+def test_ac13_po_last_cost_needs_the_cost_slug_on_top_of_the_view_slug(env):
+    """COST-ACCESS-UNIFIED: the PO view slug alone does not open costs, by session or identity."""
+    viewer = mk_user(env.db, "po-viewer", perms=["scm.purchase_orders.view"])
+    path = "/api/v1/procurement/purchase-orders/last-cost"
+    assert env.client.get(path, headers=env.ident(viewer)).status_code == 403
+    assert env.client.get(path, headers=env.session(viewer)).status_code == 403
 
 
 @pytest.mark.parametrize("tool,path,slugs", GATED, ids=GATED_IDS)
 def test_ac13_session_and_plain_key_behave_as_today(env, tool, path, slugs):
     """Regression: no new gate for a session or a plain key (passes today)."""
-    nobody = mk_user(env.db, "nobody")
+    nobody = mk_user(env.db, "nobody", perms=EXTRA_PERMS.get(tool, []))
     expected = EMPTY_DB_STATUS.get(tool, 200)
     assert env.client.get(path, headers=env.session(nobody)).status_code == expected, f"{tool} session"
     assert env.client.get(path, headers=env.plain()).status_code == expected, f"{tool} plain key"
@@ -806,7 +819,7 @@ def test_ac16_purchase_orders_rows_match_the_session(env):
         ))
         codes[tag] = prod.product_code
     db.flush()
-    _rows_parity(env, "/api/v1/procurement/purchase-orders/last-cost", codes["a"], codes["b"], ["scm.purchase_orders.view"])
+    _rows_parity(env, "/api/v1/procurement/purchase-orders/last-cost", codes["a"], codes["b"], ["scm.purchase_orders.view", COST_VIEW])
 
 
 def test_ac17_a_staff_member_with_no_grants_reads_nothing(env, probe):

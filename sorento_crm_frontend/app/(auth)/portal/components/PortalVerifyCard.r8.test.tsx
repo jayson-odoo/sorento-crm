@@ -47,6 +47,14 @@ beforeEach(() => {
   mockRequestOtp.mockResolvedValue({ sent_to: '+60••••1234', expires_at: 'x' });
 });
 
+/** SIGNIN-2FA-NOT-ROLE AC-10: no send on mount; one press of Send code sends exactly one. */
+async function pressSendCode() {
+  const send = await screen.findByRole('button', { name: /^send code$/i });
+  expect(mockRequestOtp).not.toHaveBeenCalled();
+  fireEvent.click(send);
+  await waitFor(() => expect(mockRequestOtp).toHaveBeenCalledTimes(1));
+}
+
 async function renderOtpCard() {
   // returns the RTL render() result
   mockSlugInfo.mockResolvedValue({
@@ -57,7 +65,8 @@ async function renderOtpCard() {
     whatsapp_number: '60123456789',
   });
   const result = render(<PortalVerifyCard slug="SLUG123456" />);
-  await waitFor(() => expect(mockRequestOtp).toHaveBeenCalledTimes(1));
+  // SIGNIN-2FA-NOT-ROLE AC-10: nothing sends on mount; the user presses Send code.
+  await pressSendCode();
   return result;
 }
 
@@ -172,7 +181,7 @@ describe('PortalVerifyCard - legacy token route (AC-V4)', () => {
 
     render(<PortalVerifyCard />);
 
-    await waitFor(() => expect(mockRequestOtp).toHaveBeenCalledTimes(1));
+    await pressSendCode();
     expect(screen.getByText('Verify your identity')).toBeInTheDocument();
     expect(screen.getByLabelText('Verification code')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^Resend/ })).toBeInTheDocument();

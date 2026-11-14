@@ -620,6 +620,10 @@ class OrderInquiryWorklistRow(BaseModel):
     #: Purchased/Incoming still count it when it holds a link. Declared here because
     #: `response_model` silently drops a field it has not been told about.
     line_cancelled: bool = False
+    #: The row's sales order line is in AutoCount, so Link to PO can act on it.
+    in_autocount: bool = False
+    #: A PO link of the row is tied to its AutoCount SO line (Unlink... goes through AutoCount).
+    in_autocount_link: bool = False
     #: OI-WHOLE-SO-CANCEL v2: AC-V2-2 / AC-V2-5 / AC-V2-4b.
     waiting_for_cs: bool = False
     #: What the waiting change is: {kind: so_cancelled|line_removed|date|qty|product|location, was, now}.
@@ -1082,6 +1086,8 @@ class OrderInquiryPoCandidate(BaseModel):
 
     #: `po` or `spo`. An `spo` candidate is offered to an ORDER BACK row and nothing else.
     kind: str = "po"
+    #: OI-PO-LINK: AutoCount ties this PO line to another sales order line than the row's own.
+    tied_elsewhere: bool = False
     #: The purchase order line, or the SPO allocation. Exactly one is set.
     po_line_id: Optional[str] = None
     spo_allocation_id: Optional[str] = None

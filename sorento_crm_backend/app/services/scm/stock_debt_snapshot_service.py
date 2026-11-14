@@ -10,7 +10,7 @@ Plan: documentation/plans/scm/PLAN-stock-debt-snapshot-15oct.md.
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Dict, List, Optional, Sequence
 
 from fastapi.encoders import jsonable_encoder
@@ -438,9 +438,16 @@ class StockDebtSnapshotService:
     ) -> Dict[str, Any]:
         """The stored lines of one row (one bucket when `month` is given), each with the
         live `now` read at this moment."""
-        self._get_snapshot(snapshot_id)
+        snapshot = self._get_snapshot(snapshot_id)
         row = self._get_row(snapshot_id, row_id, with_lines=True)
         lines = [dict(l) for l in row.lines if month is None or l["bucket"] == month]
+        # STOCKDEBT-LIVE-ACTIONS (owner, 11 Nov): the quantities stay frozen, the cover is
+        # today's, so a link / unlink / move made from Decide shows on the next read.
+        live = self._live_cover(snapshot, row)
+        for line in lines:
+            cover = live.get(line["sales_order_line_id"])
+            if cover is not None:
+                line.update(cover)
         lines.sort(key=lambda l: (l["required_date"] is None, l["required_date"] or "", l["so_number"]))
         core_ids = sorted({l["sales_order_line_id"] for l in lines})
         # OI-UX-FILTER-SNAPSHOT: customer and project, read off the order now, so a snapshot
@@ -507,6 +514,60 @@ class StockDebtSnapshotService:
                 )
             line["oi_rows"] = oi_rows
         return {"data": lines}
+
+    def _live_cover(
+        self, snapshot: StockDebtSnapshot, row: StockDebtSnapshotRow
+    ) -> Dict[str, Dict[str, Any]]:
+        """`{core line id: cover fields}` from today's walk of the row's product, under the
+        snapshot's own filters (the same `_assignments` call `_board` makes).
+
+        Short mixes both halves: the FROZEN outstanding less what covers the line in time
+        today (`live open - live short`), clamped to `[0, frozen open]`. A line not in today's
+        walk (delivered, cancelled, out of the filters) is left out and keeps its frozen cover.
+        """
+        filters = snapshot.filters or {}
+
+        def day(value: Any) -> Optional[date]:
+            return date.fromisoformat(value[:10]) if isinstance(value, str) and value else None
+
+        svc = StockDebtService(self.db)
+        warehouses = svc._narrow_locations(
+            svc._warehouses(filters.get("group"), filters.get("book") or "all"),
+            filters.get("location"),
+            filters.get("exclude_location"),
+        )
+        product_id = str(row.product_id)
+        assignments = svc._assignments(
+            [(product_id, row.product_code, row.product_name)],
+            warehouses,
+            date_from=None if filters.get("projected") else day(filters.get("date_from")),
+            date_to=day(filters.get("date_to")),
+            view=True,
+        )
+        result = assignments.get(product_id)
+        if result is None:
+            return {}
+        frozen_open = {
+            str(l["sales_order_line_id"]): float(l.get("open_qty") or 0) for l in row.lines or []
+        }
+        order_ids = {line.line.key: line.line.sales_order_id for line in result.lines}
+        out: Dict[str, Dict[str, Any]] = {}
+        for line in result.lines:
+            line_id = str(line.line.key)
+            if line_id not in frozen_open:
+                continue
+            demand = svc._demand_row(line, order_ids)
+            covered_in_time = float(demand["open_qty"] or 0) - float(demand["short_qty"] or 0)
+            short = min(max(frozen_open[line_id] - covered_in_time, 0.0), frozen_open[line_id])
+            out[line_id] = {
+                "assigned_qty": demand["assigned_qty"],
+                "assigned_source": demand["assigned_source"],
+                "assigned_from": demand["assigned_from"],
+                "status": demand["status"],
+                "short_qty": round(short, 4),
+                "lent_qty": demand["lent_qty"],
+            }
+        return jsonable_encoder(out)
 
     def _line_now(self, core_ids: Sequence[str]) -> Dict[str, Dict[str, Any]]:
         out: Dict[str, Dict[str, Any]] = {}

@@ -1,6 +1,8 @@
 'use client';
 
 import * as React from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { Crown, Star, UserCog, UserPlus, X, type LucideIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -14,7 +16,17 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu';
 import { Label } from '@/components/ui/label';
+import { cn } from '@/lib/utils';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import type { RecordAction } from '@/components/common/recordActions';
+import { RowActionsMenu } from '@/components/common/RowActionsMenu';
 import { Textarea } from '@/components/ui/textarea';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { formatDateInMalaysia } from '@/lib/helpers';
@@ -26,9 +38,14 @@ import {
 import type { ColumnDef } from '@tanstack/react-table';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { PanelDataGrid } from '@/components/common/PanelDataGrid';
-import type { Project, TakeoverRequest } from '../../_shared/types/project.types';
+import { useIsMobile } from '@/hooks/use-mobile';
+import { getUserLookup } from '@/services/userSelectService';
+import type { Project } from '../../_shared/types/project.types';
 import { isProjectApproved } from '../../_shared/lib/projectApproval';
 import { projectCodeLabel } from '../../_shared/lib/projectCode';
+import { buildProjectLeads, type ProjectLeadRow } from '../../_shared/lib/projectLeads';
+import { useLeadSourceLabel } from '../../_shared/hooks/useLeadSourceLabel';
+import { ReassignProjectDialog } from './ReassignProjectDialog';
 
 /**
  * Who may work this project, and the recorded history of how that was decided.
@@ -44,10 +61,33 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
   const { decide } = useTakeoverMutations(project.id);
   const canManage = useHasPermission('projects.projects.manage');
   const [requesting, setRequesting] = React.useState<'join' | 'dispute' | null>(null);
+  const [menuRow, setMenuRow] = React.useState<ProjectLeadRow | null>(null);
+  const [reassignTo, setReassignTo] = React.useState<string | null>(null);
+  const sourceLabel = useLeadSourceLabel(project.lead_source);
+  // A phone shows the Salesperson (with its role icons) and the "..." column: Date, How they
+  // found it and Status stay one Columns click away (B4).
+  const narrow = useIsMobile();
+  // The same active-people list the reassign dialog picks from: someone missing from it is
+  // inactive, so their row says so and offers no Reassign.
+  const people = useQuery({
+    queryKey: ['user-lookup', 'project-owner'],
+    queryFn: () => getUserLookup(),
+  });
+  const activeUserIds = React.useMemo(
+    () =>
+      Array.isArray(people.data) && people.data.length > 0
+        ? new Set(people.data.map((person) => person.id))
+        : null,
+    [people.data],
+  );
 
-  // A secondary lead is the existing dispute request, shown to everyone as a table (pending
-  // and decided); join requests stay under Open requests for the owner to rule on.
-  const secondaryLeads = (requests.data ?? []).filter((request) => request.kind === 'dispute');
+  // Every lead on the project in one list: the primary, every secondary lead (a dispute
+  // request, pending or decided), and the current owner when they are neither. Join requests
+  // stay under Open requests for the owner to rule on.
+  const leads = React.useMemo(
+    () => buildProjectLeads(project, requests.data ?? [], sourceLabel, activeUserIds),
+    [project, requests.data, sourceLabel, activeUserIds],
+  );
   const pending = (requests.data ?? []).filter(
     (request) => request.status === 'pending' && request.kind !== 'dispute',
   );
@@ -55,64 +95,114 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
     (request) => request.status !== 'pending' && request.kind !== 'dispute',
   );
 
-  const columns = React.useMemo<ColumnDef<TakeoverRequest>[]>(
+  // By person, not by row: the owner can also hold a secondary-lead row that is not the one
+  // marked Owner, and it must not offer "Reassign to <owner>".
+  const ownerUserId = project.owner_user_id;
+  // The mutation's own fields, not the result object (a new one every render): the grid's
+  // columns depend on this builder, and a new column set every render remounts the open "...".
+  const { mutate: decideMutate, isPending: deciding } = decide;
+  /**
+   * THE row actions, for a manager only: the "..." menu and the right-click menu both render
+   * this array, so neither can offer something the other does not.
+   */
+  const leadRowActions = React.useCallback(
+    (row: ProjectLeadRow): RecordAction[] => {
+      if (!canManage) return [];
+      const actions: RecordAction[] = [];
+      if (row.userId !== ownerUserId && !row.inactive) {
+        actions.push({
+          key: 'project_lead.reassign',
+          label: `Reassign to ${row.name}`,
+          icon: UserCog,
+          run: () => setReassignTo(row.userId),
+        });
+      }
+      if (row.status === 'pending' && row.requestId) {
+        const requestId = row.requestId;
+        actions.push({
+          key: 'project_lead.dismiss',
+          label: 'Dismiss',
+          icon: X,
+          disabled: deciding,
+          run: () => decideMutate({ id: requestId, approve: false }),
+        });
+      }
+      return actions;
+    },
+    [canManage, ownerUserId, decideMutate, deciding],
+  );
+
+  // Sizes are the grid's minimum width; a wider card stretches them in proportion. A phone shows
+  // Salesperson and "..." (248px, the card is about 299px there); Status keeps room for the whole
+  // Dismissed pill, and all five (688px) stretch to fill the card on a desktop.
+  const columns = React.useMemo<ColumnDef<ProjectLeadRow>[]>(
     () => [
       {
-        id: 'requester_name',
-        accessorFn: (row) => row.requester_name ?? '',
+        id: 'name',
+        accessorFn: (row) => row.name,
         header: ({ column }) => <DataGridColumnHeader title="Salesperson" column={column} />,
         cell: ({ row }) => {
-          const name = row.original.requester_name ?? 'Someone';
+          const lead = row.original;
+          const name = lead.inactive ? `${lead.name} (inactive)` : lead.name;
+          // One line: the name truncates, the role icons after it never do.
           return (
-            <span className="truncate text-sm font-medium" title={name}>
-              {name}
-            </span>
+            <div className="flex min-w-0 items-center gap-1.5">
+              <span className="truncate text-sm font-medium" title={name}>
+                {name}
+              </span>
+              {lead.lead === 'Primary' && (
+                // The Stakeholders tab's primary-contact star, same look.
+                <RoleIcon icon={Star} label="Primary" iconClassName="fill-amber-400 text-amber-500" />
+              )}
+              {lead.lead === 'Secondary' && <RoleIcon icon={UserPlus} label="Secondary" />}
+              {lead.isOwner && <RoleIcon icon={Crown} label="Owner" />}
+            </div>
           );
         },
-        size: 160,
+        size: 200,
         meta: { headerTitle: 'Salesperson' },
       },
       {
-        id: 'created_at',
-        accessorFn: (row) => row.created_at ?? '',
+        id: 'date',
+        accessorFn: (row) => row.date ?? '',
         header: ({ column }) => <DataGridColumnHeader title="Date" column={column} />,
-        cell: ({ row }) => (
-          <span className="truncate text-sm">
-            {row.original.created_at ? formatDateInMalaysia(row.original.created_at) : '-'}
-          </span>
-        ),
-        size: 120,
+        cell: ({ row }) => {
+          const date = row.original.date ? formatDateInMalaysia(row.original.date) : '-';
+          return (
+            <span className="block truncate text-sm" title={date}>
+              {date}
+            </span>
+          );
+        },
+        size: 96,
         meta: { headerTitle: 'Date' },
       },
       {
-        id: 'reason',
-        accessorFn: (row) => row.reason,
+        id: 'found_by',
+        accessorFn: (row) => row.foundBy ?? '',
         header: ({ column }) => <DataGridColumnHeader title="How they found it" column={column} />,
         cell: ({ row }) => (
-          <span className="truncate text-sm" title={row.original.reason}>
-            {row.original.reason}
+          <span className="block truncate text-sm" title={row.original.foundBy ?? undefined}>
+            {row.original.foundBy ?? '-'}
           </span>
         ),
-        size: 260,
+        size: 240,
         meta: { headerTitle: 'How they found it' },
       },
       {
         id: 'status',
-        accessorFn: (row) => row.status,
+        accessorFn: (row) => row.status ?? '',
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
         cell: ({ row }) => {
           const status = row.original.status;
-          const label =
-            status === 'pending' ? 'Pending' : status === 'approved' ? 'Reassigned' : 'Dismissed';
-          const variant =
-            status === 'pending' ? 'warning' : status === 'approved' ? 'success' : 'secondary';
+          if (!status) return null;
           return (
-            <Badge variant={variant} appearance="light">
-              {label}
+            <Badge variant={status === 'pending' ? 'warning' : 'secondary'} appearance="light" size="sm">
+              {status === 'pending' ? 'Pending' : 'Dismissed'}
             </Badge>
           );
         },
-        size: 120,
+        size: 104,
         meta: { headerTitle: 'Status' },
       },
       ...(canManage
@@ -121,35 +211,29 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
               id: 'actions',
               header: () => null,
               enableSorting: false,
-              cell: ({ row }: { row: { original: TakeoverRequest } }) =>
-                row.original.status === 'pending' ? (
-                  <div className="flex gap-2">
-                    <Button
-                      type="button"
-                      size="sm"
-                      disabled={decide.isPending}
-                      onClick={() => decide.mutate({ id: row.original.id, approve: true })}
-                    >
-                      Reassign to {row.original.requester_name ?? 'requester'}
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      disabled={decide.isPending}
-                      onClick={() => decide.mutate({ id: row.original.id, approve: false })}
-                    >
-                      Dismiss
-                    </Button>
-                  </div>
-                ) : null,
-              size: 300,
-            } satisfies ColumnDef<TakeoverRequest>,
+              enableHiding: false,
+              cell: ({ row }: { row: { original: ProjectLeadRow } }) => (
+                <RowActionsMenu actions={leadRowActions(row.original)} ariaLabel={row.original.name} />
+              ),
+              size: 48,
+              // Grid chrome, not a column a reader reorders: no drag grip on its header.
+              meta: { draggable: false },
+            } satisfies ColumnDef<ProjectLeadRow>,
           ]
         : []),
     ],
-    [canManage, decide],
+    [canManage, leadRowActions],
   );
+
+  const rowAt = (target: EventTarget) => {
+    const id = (target as Element).closest?.('[data-lead-row-id]')?.getAttribute('data-lead-row-id');
+    return id ? leads.find((row) => row.id === id) : undefined;
+  };
+  /** The row under the pointer, when it has anything to offer this user; else undefined. */
+  const menuRowAt = (target: EventTarget) => {
+    const hit = rowAt(target);
+    return hit && leadRowActions(hit).length > 0 ? hit : undefined;
+  };
 
   return (
     <>
@@ -199,16 +283,58 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
             </div>
           )}
 
-          <PanelDataGrid
-            title="Secondary leads"
-            columns={columns}
-            rows={secondaryLeads}
-            getRowId={(row) => row.id}
-            listingKey="projects.projects.view::project-secondary-leads"
-            isLoading={requests.isLoading}
-            error={requests.isError ? requests.error : undefined}
-            emptyTitle="No secondary leads"
-          />
+          {/* Managers only: the right-click menu (long-press on touch) and the row's "..."
+              (owner, 14 Nov hand test) both render leadRowActions, the one action list. */}
+          <ContextMenu modal={false}>
+            <ContextMenuTrigger asChild>
+              <div
+                // Capture phase: a right-click with nothing to offer stops here, so the
+                // browser's own menu shows instead of an empty one.
+                onContextMenuCapture={(event) => {
+                  const hit = menuRowAt(event.target);
+                  if (!hit) {
+                    event.stopPropagation();
+                    return;
+                  }
+                  setMenuRow(hit);
+                }}
+                onPointerDownCapture={(event) => {
+                  if (event.pointerType !== 'mouse') setMenuRow(menuRowAt(event.target) ?? null);
+                }}
+              >
+                <PanelDataGrid<ProjectLeadRow>
+                  // Column visibility is read at mount, so the grid remounts once the width is known.
+                  key={narrow ? 'narrow' : 'wide'}
+                  initialColumnVisibility={
+                    narrow ? { date: false, found_by: false, status: false } : undefined
+                  }
+                  columns={columns}
+                  rows={leads}
+                  getRowId={(row) => row.id}
+                  listingKey="projects.projects.view::project-leads"
+                  isLoading={requests.isLoading}
+                  error={requests.isError ? requests.error : undefined}
+                  onRetry={() => void requests.refetch()}
+                  rowAttributes={(row) => ({ 'data-lead-row-id': row.id })}
+                  sortable
+                  emptyTitle="No leads"
+                />
+              </div>
+            </ContextMenuTrigger>
+            <ContextMenuContent className="w-56" hidden={!menuRow}>
+              {menuRow &&
+                leadRowActions(menuRow).map((action) => (
+                  <ContextMenuItem
+                    key={action.key}
+                    disabled={action.disabled}
+                    onSelect={() => void action.run()}
+                  >
+                    {action.icon && <action.icon className="size-4" aria-hidden />}
+                    {action.label}
+                  </ContextMenuItem>
+                ))}
+            </ContextMenuContent>
+          </ContextMenu>
 
           <div>
             <p className="text-xs text-muted-foreground">Open requests</p>
@@ -289,6 +415,14 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
         </CardContent>
       </Card>
 
+      {reassignTo && (
+        <ReassignProjectDialog
+          project={project}
+          initialUserId={reassignTo}
+          onDone={() => setReassignTo(null)}
+        />
+      )}
+
       {requesting && (
         <RequestDialog
           project={project}
@@ -297,6 +431,33 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
         />
       )}
     </>
+  );
+}
+
+/** A role next to a salesperson's name (Primary, Secondary, Owner): an icon named by its word. */
+function RoleIcon({
+  icon: Icon,
+  label,
+  iconClassName,
+}: {
+  icon: LucideIcon;
+  label: string;
+  iconClassName?: string;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          role="img"
+          aria-label={label}
+          tabIndex={0}
+          className="inline-flex shrink-0 text-muted-foreground"
+        >
+          <Icon className={cn('size-3.5', iconClassName)} aria-hidden />
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
   );
 }
 

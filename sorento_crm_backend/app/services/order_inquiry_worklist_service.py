@@ -643,6 +643,8 @@ _LATEST_ANSWERED_QTY = (
 #: line is cancelled, NULL-safe - a row whose mirror names no core line reads False here,
 #: not NULL, so `~_LINE_CANCELLED` in a WHERE clause still matches it instead of silently
 #: dropping it.
+_LINK_PSOL = aliased(ProjectSalesOrderLine)
+_LINK_SOL = aliased(SalesOrderLine)
 _LINE_CANCELLED = case(
     (SalesOrderLine.line_status == "cancelled", True), else_=False
 )
@@ -1123,6 +1125,23 @@ _COLUMNS = (
     # PLAN-oi-cancelled-line-used-confirm.md (AC-CL-1): off the SAME `SalesOrderLine`
     # outer join the location fallback already uses - no second join for this.
     _LINE_CANCELLED.label("line_cancelled"),
+    # OI-PO-LINK: the row's SO line carries an AutoCount ref (`{db}:{DocKey}:{DtlKey}`), so the
+    # PO link can act on it. Same outer join, no extra read.
+    case((func.btrim(SalesOrderLine.source_ref).op("~")(r"^[^:]+:[0-9]+:[0-9]+$"), True), else_=False).label("in_autocount"),
+    # OI-PO-LINK: a PO link of this row that AutoCount ties to the row's own SO line
+    # (`from_so_line_ref` equals its ref), so Unlink... goes through AutoCount for it.
+    select(OrderInquiryLink.id)
+    .select_from(OrderInquiryLink)
+    .join(PurchaseOrderLine, PurchaseOrderLine.id == OrderInquiryLink.po_line_id)
+    .join(_LINK_PSOL, _LINK_PSOL.id == OrderInquiryRow.so_line_id)
+    .join(_LINK_SOL, _LINK_SOL.id == _LINK_PSOL.core_sales_order_line_id)
+    .where(
+        OrderInquiryLink.row_id == OrderInquiryRow.id,
+        func.btrim(PurchaseOrderLine.from_so_line_ref) == func.btrim(_LINK_SOL.source_ref),
+    )
+    .correlate(OrderInquiryRow)
+    .exists()
+    .label("in_autocount_link"),
     _WAITING_FOR_CS.label("waiting_for_cs"),
     _SO_CANCELLED.label("so_cancelled"),
     _PREVIOUS_SO_LINE_QTY.label("previous_so_line_qty"),
@@ -2965,6 +2984,8 @@ class OrderInquiryWorklistService:
             # PLAN-oi-cancelled-line-used-confirm.md (AC-CL-1): true only when the line
             # itself is cancelled - `closed` and `open` both read false.
             "line_cancelled": bool(row.line_cancelled),
+            "in_autocount": bool(row.in_autocount),
+            "in_autocount_link": bool(row.in_autocount_link),
             # OI-WHOLE-SO-CANCEL v2 (AC-V2-2/4b/5).
             "waiting_for_cs": bool(row.waiting_for_cs),
             "so_cancelled": bool(row.so_cancelled),

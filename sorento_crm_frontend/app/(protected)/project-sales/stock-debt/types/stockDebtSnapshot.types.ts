@@ -107,6 +107,8 @@ export interface SnapshotPoLink {
   po_number: string;
   po_line_no: number | null;
   qty: number;
+  /** Still to arrive on the PO line: what Change PO moves (received stays with the old PO). */
+  open_qty?: number | null;
   location_code: string | null;
 }
 
@@ -145,6 +147,8 @@ export interface PoLinkOption {
   supplier_name: string | null;
   /** The AutoCount book the PO line lives in (never shown). */
   book?: string | null;
+  /** The product of the PO line (Order Inquiry rows of several products). */
+  product_id?: string | null;
 }
 
 export interface PoLinkOptions {
@@ -152,6 +156,7 @@ export interface PoLinkOptions {
   po_lines: PoLinkOption[];
   /** sales_order_line_id -> its AutoCount book: a PO line links only within its own book. */
   so_books?: Record<string, string>;
+  so_products?: Record<string, string>;
 }
 
 export type PoLinkOutcome =
@@ -159,6 +164,7 @@ export type PoLinkOutcome =
   | 'refused'
   | 'mismatch'
   | 'pending_verification'
+  | 'skipped'
   | 'vendor_error'
   | 'recovered'
   | 'needs_attention';
@@ -178,4 +184,9 @@ export interface PoLinkResult {
   company_code: string | null;
   /** The PO line a follow-up (Move location, Resume) acts on. Never shown. */
   po_line_id: string | null;
+  /** Change PO only: which half of the change this answer is. */
+  action?: 'link' | 'unlink' | null;
+  /** Change PO only, on a link that was not done: the PO already unlinked, so the line is
+   *  now uncovered. */
+  unlinked_po?: string | null;
 }

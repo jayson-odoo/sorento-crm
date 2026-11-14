@@ -264,6 +264,15 @@ async function getCachedAuthToken(basePath: string): Promise<string | null> {
   return _tokenInFlight;
 }
 
+/**
+ * The staff session's Bearer token (cached, deduped), or null with no session. For a call that
+ * must not go through apiFetch's sign-out interceptor (the portal's CRM-session bridge, where a
+ * refusal only means "verify instead").
+ */
+export function getAuthToken(): Promise<string | null> {
+  return getCachedAuthToken(process.env.NEXT_PUBLIC_BASE_PATH || '');
+}
+
 /** Clear the cached auth token. Call on logout / session switch. */
 export function clearCachedAuthToken(): void {
   _cachedToken = null;
