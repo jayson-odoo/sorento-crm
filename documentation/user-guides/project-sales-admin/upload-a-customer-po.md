@@ -29,7 +29,7 @@ Hover the **Suggested** pill to see why the line was suggested.
 
 ## Cancelling lines
 
-To cancel several lines at once, tick them (Shift-click a second box to tick every line in between), then click **Cancel lines (N)**. If the ticked lines are already cancelled, the button reads **Put back (N)** instead. Cancelled lines stay on the PO, marked cancelled, and are left out of the total. A line that could not be changed is named in the message that follows; the others still go through. Right-click a single line to cancel or put back just that one.
+To cancel several lines at once, tick them (Shift-click a second box to tick every line in between), then click **Cancel lines (N)**. If the ticked lines are already cancelled, the button reads **Put back (N)** instead. Cancelled lines stay on the PO, marked cancelled, and are left out of the total. A line that could not be changed is named in the message that follows; the others still go through. To cancel or put back just one line, use the button at the end of that line.
 
 ## Which customer the codes belong to
 
