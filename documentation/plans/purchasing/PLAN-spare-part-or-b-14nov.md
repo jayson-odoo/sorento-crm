@@ -32,3 +32,7 @@ The order request (OR) and the purchasing inquiry are ONE row today: `projects.o
 | Number minting | `next_inquiry_no` `project_so.py:1070` | reuse for the OI- number at final approval (Q1 a) |
 
 Behaviour card: crew-ask on PR #2412.
+
+## Crew decisions and data (14 Nov 15:50)
+- Q1 (a), Q3 (a), Q5 (a) decided by crew; Q2, Q4 to the owner. R5 built assuming Q2 (a); R4 ack_state part held.
+- Prod-copy data (11 spare part requests): 6 raised with OR- numbers, 4 legacy ones numbered OI-2611-0082..0089 before the OR- series, 1 test-pinned. Approver qty edits are common (10 -> 6, 5 -> 3, 100 -> 200 -> 300). SPR_REVISED never used yet. Backfill: OR- raised rows get a fresh OI- number; legacy OI- rows reuse their own number (UAC U2.2b).
