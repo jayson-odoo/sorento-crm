@@ -7,6 +7,7 @@ from decimal import Decimal
 from typing import Annotated, Any, Literal, Optional, Union
 
 from pydantic import (
+    AfterValidator,
     BaseModel,
     ConfigDict,
     Field,
@@ -46,12 +47,40 @@ class LinePartIn(BaseModel):
     candidates: list[str] = Field(default_factory=list, max_length=50)
 
 
+#: PRICETAG-ALA-CARTE review: a product may now repeat on a request, so nothing else bounds how
+#: many lines (or parts) one save writes. One constant per limit, read by create, update and
+#: portal revise alike.
+MAX_LINES_PER_REQUEST = 500
+LINES_LIMIT_MESSAGE = f"A request holds at most {MAX_LINES_PER_REQUEST} lines."
+MAX_PARTS_PER_LINE = 100
+PARTS_LIMIT_MESSAGE = f"A line holds at most {MAX_PARTS_PER_LINE} parts."
+
+
+def _check_parts(value):
+    if value is not None and len(value) > MAX_PARTS_PER_LINE:
+        raise ValueError(PARTS_LIMIT_MESSAGE)
+    return value
+
+
+def _check_lines(value):
+    if value is not None and len(value) > MAX_LINES_PER_REQUEST:
+        raise ValueError(LINES_LIMIT_MESSAGE)
+    return value
+
+
+_LineParts = Annotated[list[LinePartIn], AfterValidator(_check_parts)]
+
+
 #: PRICETAG-UPGRADE-VARIANTS: a product id as a line's unticked member (a UUID is 36 characters);
 #: anything longer is a 422 at the boundary, never a database error.
 _VariantId = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=36)]
 
 
 class PriceTagRequestLineCreate(BaseModel):
+    # PRICETAG-ALA-CARTE AC-12: a line loaded from the server sends its own id back, so a
+    # re-save carries marketing's tags and the template pick by line, not by product (the same
+    # product may sit on several lines). None for a new line; an unknown id is ignored.
+    id: Optional[str] = Field(default=None, max_length=36)
     line_type: str = Field(..., pattern=r"^(product|product_set)$")
     product_id: Optional[str] = None
     product_set_id: Optional[str] = None
@@ -63,7 +92,7 @@ class PriceTagRequestLineCreate(BaseModel):
     # display order (D2). `alternatives` is gone - the OR-choices field it carried
     # is what the open part row replaced.
     combo_id: Optional[str] = None
-    parts: list[LinePartIn] = Field(default_factory=list)
+    parts: _LineParts = Field(default_factory=list)
     included_accessories: Optional[str] = None
     # Free-text note on the line (D6, r7).
     remarks: Optional[str] = None
@@ -89,6 +118,9 @@ class PriceTagRequestLineCreate(BaseModel):
     excluded_variant_ids: list[_VariantId] = Field(default_factory=list, max_length=500)
 
 
+_RequestLines = Annotated[list[PriceTagRequestLineCreate], AfterValidator(_check_lines)]
+
+
 class PriceTagReviseLineIn(BaseModel):
     """One ``products[]`` entry in a revise payload (D1/D5, R6/security
     review) - the revise composer sends every field
@@ -101,17 +133,22 @@ class PriceTagReviseLineIn(BaseModel):
     (create, update, the CRM line PATCH) uses.
 
     ``extra="ignore"``, not ``"forbid"``: the composer's payload carries
-    ``combo_id`` / ``parts`` / ``included_accessories`` / ``product_class`` /
-    ``line_type`` too - ``_convert_ptag_revise_line`` already reads only the
-    fields declared here and drops the rest by design (they are carried over
-    from the OLD line instead, Gap D), so this model is not the composer's
-    full contract, only the two fields that never had one.
+    ``included_accessories`` / ``product_class`` / ``line_type`` too -
+    ``_convert_ptag_revise_line`` already reads only the fields declared here
+    and drops the rest by design (they are carried over from the OLD line
+    instead, Gap D), so this model is not the composer's full contract.
     """
 
     model_config = ConfigDict(extra="ignore")
 
+    #: PRICETAG-ALA-CARTE AC-12: the saved line this entry edits, so its package, parts and
+    #: tags carry by line rather than by product. None or unknown = a new line.
+    id: Optional[str] = Field(default=None, max_length=36)
     product_id: Optional[str] = None
     product_set_id: Optional[str] = None
+    #: The line's package (None = ala carte) and its parts; absent = the old line's are kept.
+    combo_id: Optional[str] = None
+    parts: Optional[_LineParts] = None
     quantity: int = Field(default=1, ge=1)
     remarks: Optional[str] = None
     promotion_id: Optional[str] = None
@@ -371,7 +408,7 @@ class PriceTagRequestCreate(BaseModel):
     # SUBMIT by `validate_submittable` (not here - a draft may pick Selling
     # before it has a promotion, same as it may have no debtor yet).
     price_mode: Literal["list", "selling"] = "list"
-    lines: list[PriceTagRequestLineCreate] = Field(default_factory=list)
+    lines: _RequestLines = Field(default_factory=list)
 
     # Review round 2: the date input clears to "", not omission - Optional[date]
     # rejects that outright with a 422 instead of treating it as "no date".
@@ -416,7 +453,7 @@ class PriceTagRequestUpdate(BaseModel):
     # handles that regardless of what the default is; an explicit null is
     # now a 422, same as any other unknown price_mode value.
     price_mode: Literal["list", "selling"] = "list"
-    lines: Optional[list[PriceTagRequestLineCreate]] = None
+    lines: Optional[_RequestLines] = None
 
     # Review round 2: same "" -> None coercion as PriceTagRequestCreate.
     @field_validator("needed_by_date", mode="before")
@@ -600,6 +637,7 @@ class PriceTagRequestListItem(BaseModel):
     needed_by_date: Optional[date] = None
     notes: Optional[str] = None
     created_at: datetime
+    last_activity_at: Optional[datetime] = None
     # The four things the queue actually draws in its columns, and the four it
     # drew blank: the request row holds ids, and a listing may not show a UUID.
     # Resolved for the whole page in two set-based queries, never per row.

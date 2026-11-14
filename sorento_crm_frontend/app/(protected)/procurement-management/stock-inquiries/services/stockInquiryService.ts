@@ -15,9 +15,13 @@ import type { FormPdfExportOptions } from '@/lib/revision-export';
 
 
 export async function getStockInquiries(
-  params: DataGridApiFetchParams & { statuses?: string[] },
+  params: DataGridApiFetchParams & {
+    statuses?: string[];
+    lastActivityFrom?: string;
+    lastActivityTo?: string;
+  },
 ): Promise<DataGridApiResponse<StockInquiry>> {
-  const { pageIndex, pageSize, sorting, searchQuery, statuses } = params;
+  const { pageIndex, pageSize, sorting, searchQuery, statuses, lastActivityFrom, lastActivityTo } = params;
   const sortField = sorting?.[0]?.id || '';
   const sortDirection = sorting?.[0]?.desc ? 'desc' : 'asc';
   const queryParams = new URLSearchParams({
@@ -26,6 +30,8 @@ export async function getStockInquiries(
     ...(sortField ? { sort: sortField, dir: sortDirection } : {}),
     ...(searchQuery ? { query: searchQuery } : {}),
     ...(statuses && statuses.length ? { status: statuses.join(',') } : {}),
+    ...(lastActivityFrom ? { last_activity_from: lastActivityFrom } : {}),
+    ...(lastActivityTo ? { last_activity_to: lastActivityTo } : {}),
   });
   const response = await apiFetch(
     `/api/v1/procurement/stock-inquiries?${queryParams.toString()}`,

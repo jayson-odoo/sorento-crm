@@ -304,6 +304,8 @@ def test_a_phase_date_move_reaches_both_rows_of_a_split_main_part():
         )
         ocn = db.query(OrderChangeNotice).filter(OrderChangeNotice.id == created["ocn_id"]).one()
         ocn.approver_id = owner
+        # OCN-ORDER-CHANGE-NOTICE E3: publishing needs the notice approved through its chain.
+        ocn.status = ocn.approval_status = "approved"
         db.flush()
         body = service.publish_amendment(created["amendment_id"], actor_user_id=owner)
         assert body["applied_rows"] == 25

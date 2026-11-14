@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import type { ColumnDef, ExpandedState } from '@tanstack/react-table';
 import {
   ChevronDown,
@@ -96,6 +96,34 @@ export function PurchaseOrdersPanel({ project }: { project: Project }) {
     po: ProjectPurchaseOrder | null;
   } | null>(null);
   const [scheduleFor, setScheduleFor] = React.useState<ProjectPurchaseOrder | null>(null);
+
+  // The PO received stage button lands here with `upload=po` (PROJECT-STAGE-ACTIONS): open the
+  // upload dialog straight away, then drop the param so Cancel leaves the PO tab as it is and a
+  // refresh does not reopen it.
+  const searchParams = useSearchParams();
+  const uploadRequested = searchParams.get('upload') === 'po';
+  const canUpload = canWorkOnProject(project);
+  // Once per landing (StrictMode runs an effect twice), and read through refs so a new router or
+  // params object can never re-open the dialog the person just closed.
+  const uploadHandled = React.useRef(false);
+  const latest = React.useRef({ searchParams, router, projectId: project.id });
+  latest.current = { searchParams, router, projectId: project.id };
+  React.useEffect(() => {
+    // Re-armed once the param is gone, so a second PO received on the same open tab opens it
+    // again; StrictMode's second run happens while the param is still there, so it stays once.
+    if (!uploadRequested) {
+      uploadHandled.current = false;
+      return;
+    }
+    if (uploadHandled.current) return;
+    uploadHandled.current = true;
+    if (canUpload) setUploadingFor({ po: null });
+    const { searchParams: params, router: nav, projectId } = latest.current;
+    const next = new URLSearchParams(params.toString());
+    next.delete('upload');
+    const query = next.toString();
+    nav.replace(`/project-sales/${projectId}${query ? `?${query}` : ''}`, { scroll: false });
+  }, [uploadRequested, canUpload]);
   const [expanded, setExpanded] = React.useState<ExpandedState>({});
   const [menuPo, setMenuPo] = React.useState<ProjectPurchaseOrder | null>(null);
   const schedules = useDeliverySchedules(project.id);

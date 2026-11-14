@@ -155,7 +155,7 @@ describe('limited user, New Complaint renders the portal form', () => {
 
   it('defaults the complaint date to today and the salesperson to the signed-in contact (from /me)', async () => {
     mountForm(LIMITED);
-    await waitFor(() => expect((document.getElementById('complaint_date') as HTMLInputElement | null)?.value ?? '').toMatch(/^\d{4}-\d{2}-\d{2}$/));
+    await waitFor(() => expect((document.getElementById('complaint_date') as HTMLInputElement | null)?.value ?? '').toMatch(/^\d{2}\/\d{2}\/\d{4}$/)); // the shared DD/MM/YYYY picker
     await waitFor(() => expect((document.getElementById('salesperson') as HTMLInputElement | null)?.value).toBe('Ann Sales'));
     expect(urls((c) => c.url === '/api/v1/my-requests/me').length).toBeGreaterThan(0);
   });

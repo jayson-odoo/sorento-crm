@@ -37,7 +37,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 _SPLIT = re.compile(r"[^A-Za-z0-9]+")
@@ -68,6 +68,29 @@ def _code_word_for(token: str, message_words: list[str]) -> str | None:
     return best
 
 
+def _family_set_members(db: Session, family: str) -> list[str]:
+    """The member product ids of the registered sets the contact may be told about whose set
+    code's family (`product_family.family_code_for`) is `family`."""
+    from app.models.product_set import ProductSet, ProductSetMember
+    from app.services.entity_resolver import visible_set_clauses
+    from app.services.product_family import family_code_for
+
+    sets = [
+        product_set.id
+        for product_set in db.query(ProductSet)
+        .filter(ProductSet.set_code.ilike(f"{family}%"), *visible_set_clauses(db))
+        .limit(_FAMILY_CAP)
+        .all()
+        if family_code_for(product_set.set_code) == family
+    ]
+    if not sets:
+        return []
+    return [
+        str(pid)
+        for (pid,) in db.query(ProductSetMember.product_id).filter(ProductSetMember.product_set_id.in_(sets)).all()
+    ]
+
+
 def _family_rows(
     db: Session, code_word: str, *, loose: bool = False
 ) -> list[tuple[str, dict[str, Any], str]]:
@@ -82,18 +105,28 @@ def _family_rows(
     filter (`chat_searchable_products`), as the resolver's probe does; the word path does not."""
     from app.models.product import Product, chat_searchable_products
     from app.models.product_spec import ProductSpecifications
+    from app.services.product_family import family_code_for
 
     letters, rest = _CODE_WORD.match(code_word).groups()  # type: ignore[union-attr]
     boundary = "([^0-9]|$)" if not loose or rest[-1].isdigit() else ""
     body = f"({re.escape(letters)}|{re.escape(letters)}X){re.escape(rest)}{boundary}"
     folded_code = func.upper(func.regexp_replace(Product.product_code, "[^A-Za-z0-9]", "", "g"))
+    # CHATBOT-CODE-MATCH AC-24 (crew ruling, 12 Nov 2026): the family is ALSO what the catalogue
+    # says - a product whose stored `family_code` is the word's family (derived or set by hand,
+    # one column, `product_family.family_code_for`), and the members of a registered set of that
+    # family - beside the code pattern above, which stays as the fallback.
+    family = family_code_for(code_word)
+    by_data = [Product.family_code == family] if family else []
+    members = _family_set_members(db, family) if family else []
+    if members:
+        by_data.append(Product.id.in_(members))
 
     def fetch(pattern: str):
         return (
             db.query(Product, ProductSpecifications.values)
             .outerjoin(ProductSpecifications, ProductSpecifications.product_id == Product.id)
             .filter(Product.is_active.is_(True), *([chat_searchable_products()] if loose else []))
-            .filter(folded_code.op("~")(pattern))
+            .filter(or_(folded_code.op("~")(pattern), *by_data))
             .order_by(Product.product_code)
             .limit(_FAMILY_CAP)
             .all()

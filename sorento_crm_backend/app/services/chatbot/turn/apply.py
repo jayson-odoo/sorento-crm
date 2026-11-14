@@ -329,6 +329,27 @@ def _domain_of_kind(policy: Policy, kind: str | None) -> str | None:
     return None
 
 
+def _set_option_members(option: dict[str, Any]) -> list[dict[str, Any]]:
+    """A picked set option as the options of its member products (`option["members"]`,
+    `answer.set_members_of`), each carrying the set's code; any other option as itself."""
+    members = option.get("members") if option.get("entity_type") == "product_set" else None
+    if not isinstance(members, list) or not members:
+        return [option]
+    return [
+        {
+            "position": option.get("position"),
+            "label": m["code"],
+            "code": m["code"],
+            "entity_type": "product",
+            "uuid": m["uuid"],
+            "uuids": [m["uuid"]],
+            "set_code": option.get("code"),
+        }
+        for m in members
+        if isinstance(m, dict) and m.get("uuid") and m.get("code")
+    ] or [option]
+
+
 def _picks_a_member_option(pending: Pending, decision: Decision) -> bool:
     """Hand pass 12 round 3, owner ruling R3: a position pick landing on a MEMBER-typed
     option reaches the escalation-acceptance path (`_answer_offer`) even when the
@@ -838,6 +859,28 @@ def _answer_pending(state: State, decision: Decision, trace: Trace, verdict: dic
         if decision.answers and decision.why == "affirmative" and len(pending.options) == 1:
             decision = replace(decision, positions=(pending.options[0].get("position"),))
             trace.rules_fired.append("stock_pick_yes")
+        elif (
+            decision.answers
+            and decision.why == "affirmative"
+            and not decision.positions
+            and pending.payload.get("did_you_mean") is True
+            and len(pending.payload.get("groups") or []) > 1
+        ):
+            # CHATBOT-CODE-MATCH R7: a "yes" over several did-you-mean lists names no code,
+            # so they are asked again as they were (each code's quantity kept), nothing fetched.
+            from app.services.chatbot import dealer_stock as dealer_mod
+
+            trace.rules_fired.append("stock_pick_yes_reasked")
+            trace.task_question = dealer_mod.did_you_mean_lists(
+                list(pending.options), list(pending.payload["groups"]), pending.payload.get(task_mod.OWED)
+            )[0]
+            focus.domains = ["inventory"]
+            return (
+                focus,
+                pending,
+                Plan(domains=["inventory"], fetch=[], ask=None, denied=[], trace=trace),
+                False,
+            )
         elif not decision.positions and (
             decision.declined or (decision.negated and not decision.entities)
         ):
@@ -887,6 +930,9 @@ def _answer_pending(state: State, decision: Decision, trace: Trace, verdict: dic
                 Plan(domains=[], fetch=[], ask=pending, denied=[], trace=trace),
                 False,
             )
+        # CHATBOT-CODE-MATCH R3: a picked set is what its exact ask resolves to, its member
+        # products with the set's code on each (`gate.run_gate`'s set expansion).
+        matched = [m for o in matched for m in _set_option_members(o)]
         built: list[dict[str, Any]] = []
         for option in matched:
             uuids = option.get("uuids") or ([option["uuid"]] if option.get("uuid") else [])
@@ -931,6 +977,7 @@ def _answer_pending(state: State, decision: Decision, trace: Trace, verdict: dic
                     "uuid": u,
                     "current_message": True,
                     "confident": True,
+                    **({"set_code": option["set_code"]} if option.get("set_code") else {}),
                 }
                 # Hand pass 12, Group F: `name` only when this option is ONE identity
                 # (a single uuid) - the resolver's own name for the one row it matched.
@@ -2360,7 +2407,9 @@ def _normalise_demand_qty(verdict: dict[str, Any]) -> None:
         e["quantity"] = bare
 
 
-def _did_you_mean_keeps_quantity(focus: Focus, verdict: dict[str, Any], trace: Trace) -> None:
+def _did_you_mean_keeps_quantity(
+    focus: Focus, verdict: dict[str, Any], trace: Trace, pending: Pending | None = None
+) -> None:
     """Owner hand test 26 Sep, slice 6 (T15 -> T16): "ELP3753 10" missed and the reply
     offered ELP3754; the dealer typed "ELP3754" back and lost the 10, because the fetch
     reads only this message's quantities. The miss is still on the focus - a product
@@ -2379,6 +2428,31 @@ def _did_you_mean_keeps_quantity(focus: Focus, verdict: dict[str, Any], trace: T
     ]
     if len(named) != 1 or _stated_quantity(named[0].get("quantity")) is not None:
         return
+    if pending is not None and not (_row_codes(named[0]) & _option_codes(pending)):
+        # CHATBOT-CODE-MATCH AC-1c: an open question that did not offer this code says the
+        # code is not that miss retried; it is a new ask, at its own quantity.
+        return
+    missed = _missed_quantity(focus)
+    if missed is None:
+        return
+    named[0]["quantity"] = missed
+    trace.rules_fired.append("did_you_mean_keeps_quantity")
+
+
+def _option_codes(pending: Pending) -> set[str]:
+    """The codes (and labels) an open question offered, folded as `_row_codes` folds a row."""
+    return {
+        str(value).strip().casefold()
+        for o in pending.options or []
+        if isinstance(o, dict)
+        for value in (o.get("code"), o.get("label"))
+        if isinstance(value, str) and value.strip()
+    }
+
+
+def _missed_quantity(focus: Focus) -> int | None:
+    """The quantity of the product ask the resolver never placed (a focus row with no uuid),
+    when there is exactly one such quantity: the ask a did-you-mean answer retries."""
     missed = {
         _stated_quantity(row.get("quantity"))
         for row in (focus.products or [])
@@ -2386,10 +2460,7 @@ def _did_you_mean_keeps_quantity(focus: Focus, verdict: dict[str, Any], trace: T
         and not row.get("uuid")
         and _stated_quantity(row.get("quantity")) is not None
     }
-    if len(missed) != 1:
-        return
-    named[0]["quantity"] = next(iter(missed))
-    trace.rules_fired.append("did_you_mean_keeps_quantity")
+    return next(iter(missed)) if len(missed) == 1 else None
 
 
 def _bare_position_is_the_quantity(state: State, verdict: dict[str, Any], trace: Trace) -> None:
@@ -2997,6 +3068,10 @@ def _spend_stock_pick(
         for e in spec.entities:
             if not isinstance(e, dict) or not e.get("uuid") or not _row_codes(e) & labels:
                 continue
+            if e.get("set_code"):
+                # CHATBOT-CODE-MATCH R3: a picked set answers as its exact ask does, whose
+                # member rows carry no quantity of their own.
+                continue
             own = next((by_code[c] for c in _row_codes(e) if c in by_code), None)
             if own is None:
                 # AVAIL-MODE-REPLIES: each list of a several-list pick carries its own
@@ -3007,6 +3082,34 @@ def _spend_stock_pick(
         if stamped:
             spec.filters["requested_quantities"] = stamped
             trace.rules_fired.append("stock_pick_carries_quantity")
+
+
+def _picked_code_keeps_quantity(asked: Any, verdict: dict[str, Any], plan: Plan, trace: Trace) -> None:
+    """CHATBOT-CODE-MATCH AC-1b/AC-1c: one product picked off a staff did-you-mean (a product
+    roster, not a dealer's `stock_pick`, whose own carry is `_spend_stock_pick`) is asked at
+    the quantity typed beside the miss it was offered for, which the offer recorded per code
+    (`answer_bridge._offered_quantities`). None recorded: nothing is carried, and the reply
+    asks for one. Only when this message stated no quantity and the stock fetch is about
+    exactly that one picked product."""
+    if asked is None or _stock_pick(asked) or asked.kind not in ("product_pick", "product_set_pick"):
+        return
+    recorded = asked.payload.get(task_mod.QTY_BY_CODE)
+    if not isinstance(recorded, dict) or not recorded:
+        return
+    if "answer_pending" not in trace.rules_fired or _message_states_a_quantity(verdict):
+        return
+    offered = {str(u) for o in asked.options for u in (o.get("uuids") or [o.get("uuid")]) if u}
+    specs = [spec for spec in plan.fetch if spec.domain == "inventory" and not spec.filters.get("task")]
+    picked = [
+        e for spec in specs for e in spec.entities if isinstance(e, dict) and str(e.get("uuid") or "") in offered
+    ]
+    if len(specs) != 1 or len(picked) != 1 or len(specs[0].entities) != 1 or picked[0].get("set_code"):
+        return
+    quantity = next((recorded[c] for c in _row_codes(picked[0]) if c in recorded), None)
+    if _stated_quantity(quantity) is None or specs[0].filters.get("requested_quantities"):
+        return
+    specs[0].filters["requested_quantities"] = {str(picked[0]["uuid"]): _stated_quantity(quantity)}
+    trace.rules_fired.append("did_you_mean_keeps_quantity")
 
 
 def _hand_on_unanswered_lists(asked: Any, specs: list[Any], verdict: dict[str, Any], trace: Trace) -> None:
@@ -3038,6 +3141,8 @@ def _hand_on_unanswered_lists(asked: Any, specs: list[Any], verdict: dict[str, A
     verdict[task_mod.NEXT_PICKS] = {
         "options": [o for o in asked.options if o.get("position") in positions],
         "groups": open_groups,
+        # CHATBOT-CODE-MATCH R7: a did-you-mean's lists are asked again as one.
+        "did_you_mean": asked.payload.get("did_you_mean") is True,
     }
     trace.rules_fired.append("stock_pick_lists_still_open")
 
@@ -3198,7 +3303,7 @@ def _apply(
     # focus rules, the narrowing and the fetch all see one shape for "how many of this
     # product".
     _normalise_demand_qty(verdict)
-    _did_you_mean_keeps_quantity(state.focus, verdict, trace)
+    _did_you_mean_keeps_quantity(state.focus, verdict, trace, state.pending)
 
     if state.pending is not None and _fully_answered_roster(state.pending):
         # Defect 2 (owner hand pass 6, 17 Sep 2026): a roster every option of which is
@@ -3762,6 +3867,7 @@ def _apply(
         trace.rules_fired.append("new_ask_closes_stale_roster")
 
     _spend_stock_pick(state.pending, verdict, plan, new_state, trace)
+    _picked_code_keeps_quantity(state.pending, verdict, plan, trace)
 
     return new_state, plan
 

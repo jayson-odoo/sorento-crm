@@ -34,10 +34,12 @@ function line(over: Partial<OrderInquiryWorklistRow>): OrderInquiryWorklistRow {
   } as OrderInquiryWorklistRow;
 }
 
+// Owner F1 12 Nov: the State filter's values are the State column's words (the reserve words
+// keep their `reserve:*` URL values), so the pump line is Done (acknowledged), not `placed`.
 const LINES = [
   line({ id: 'r-req', item_code: 'ZZT-REQUESTED', core_line_id: 'cl-1', line_no: 1, reserve_state: 'requested' }),
   line({ id: 'r-plain', item_code: 'ZZT-PLAIN', core_line_id: 'cl-2', line_no: 2 }),
-  line({ id: 'r-pump', item_code: 'ZZT-PUMP', core_line_id: 'cl-3', line_no: 3, state: 'placed' }),
+  line({ id: 'r-pump', item_code: 'ZZT-PUMP', core_line_id: 'cl-3', line_no: 3, state: 'placed', ack_state: 'acknowledged' }),
 ];
 
 function renderTab() {
@@ -58,7 +60,7 @@ beforeEach(() => {
 
 describe('the lines view opens from the URL', () => {
   it('view_state applies the State filter (multi-select, comma-joined)', async () => {
-    searchParamsValue = 'view_state=reserve%3Arequested%2Cplaced';
+    searchParamsValue = 'view_state=reserve%3Arequested%2CDone';
     renderTab();
     await screen.findByText('ZZT-REQUESTED');
     expect(screen.getByText('ZZT-PUMP')).toBeInTheDocument();
@@ -84,7 +86,7 @@ describe('the lines view opens from the URL', () => {
   });
 
   it('view_state wins over a ?reserve= preselect', async () => {
-    searchParamsValue = 'reserve=needs_reserve&view_state=placed';
+    searchParamsValue = 'reserve=needs_reserve&view_state=Done';
     renderTab();
     await screen.findByText('ZZT-PUMP');
     expect(screen.queryByText('ZZT-REQUESTED')).not.toBeInTheDocument();

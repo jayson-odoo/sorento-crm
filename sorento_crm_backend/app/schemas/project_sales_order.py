@@ -442,6 +442,9 @@ class AmendmentPreviewRequest(BaseModel):
 
 class AmendmentCreateRequest(AmendmentPreviewRequest):
     reason: str = Field(..., description="Why the customer changed their mind.")
+    #: OCN-ORDER-CHANGE-NOTICE E2: an existing order change notice of the same project to link
+    #: instead of drafting a new one (one change, one notice).
+    ocn_id: Optional[str] = None
 
     _clean = field_validator("reason")(_require_reason)
 
@@ -543,8 +546,17 @@ class AmendmentDetail(BaseModel):
     ocn_reason: Optional[str] = None
     ocn_approver_name: Optional[str] = None
     ocn_approved_at: Optional[datetime] = None
+    ocn_status: Optional[str] = None
+    ocn_approval_status: Optional[str] = None
     published_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
+
+
+class AmendmentPublishRequest(BaseModel):
+    """Optional body of Publish (NON-CANCELLABLE-ITEMS): the reason an override holder gives
+    for cutting a Non-cancellable line. Absent for every other publish."""
+
+    non_cancellable_override_reason: Optional[str] = Field(None, max_length=2000)
 
 
 class AmendmentPublishResponse(BaseModel):

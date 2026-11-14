@@ -142,9 +142,11 @@ class ListQuerySearchService:
             definition_id=wf_def_id,
             state_code=st,
             query=req.quick_search,
-            sort_field=sort_field or "updated_at",
+            sort_field=sort_field or "last_activity_at",
             sort_dir=sort_dir or "desc",
             advanced_filter_clause=clause,
+            last_activity_from=req.last_activity_from,
+            last_activity_to=req.last_activity_to,
         )
         return {
             "data": raw["data"],

@@ -45,6 +45,7 @@ from app.models.base import (
     get_company_scope,
 )
 from app.services.error_handler import AppException, handle_conflict, handle_not_found
+from app.utils.date_format import fmt_datetime
 from app.services.form_action_registry import action_for
 
 logger = logging.getLogger(__name__)
@@ -112,6 +113,15 @@ def _handler_payload(payload: Optional[dict]) -> dict:
     handler = dict(payload or {})
     handler.pop(_SCOPE_PAYLOAD_KEY, None)
     return handler
+
+
+def _action_words(action_key: str) -> str:
+    """The action's own plain label for its History lines ("Revert import"), never the slug;
+    "Action" for one registered without a label, as these lines always read."""
+    from app.services.form_action_registry import get_action
+
+    action = get_action(action_key)
+    return (action.label if action is not None and action.label else None) or "Action"
 
 
 def _audit(
@@ -182,7 +192,9 @@ def _reader_facing_error(exc: Exception, row: "SlaFormAction") -> str:
     handler with something specific to say raises an AppException with a 4xx; anything
     else that escapes is a defect, and a defect's message is not copy.
     """
-    subject = (row.source_entity_type or "record").replace("_", " ")
+    from app.services.form_sla_service import form_type_words
+
+    subject = form_type_words(row.source_entity_type, "record")
     deleting = str(row.action_key or "").endswith(".delete")
 
     if isinstance(exc, AppException) and 400 <= int(getattr(exc, "status_code", 500)) < 500:
@@ -295,10 +307,12 @@ class FormActionService:
                 row,
                 "UPDATE",
                 user_id=actor_id,
+                # Plain words only: the History prints the description AND any value diff, so
+                # the action key and the raw commit time stay out of both (browser pass N3).
                 description=(
-                    f"Action requested ({action_key}); held {grace_seconds}s before applying"
+                    f"{_action_words(action_key)} requested; held {grace_seconds}s, "
+                    f"applies at {fmt_datetime(row.commit_at)}"
                 ),
-                new_values={"action_key": action_key, "commit_at": str(row.commit_at)},
             )
             return DispatchResult(
                 deferred=True,
@@ -535,7 +549,7 @@ class FormActionService:
             row,
             "UPDATE",
             user_id=row.requested_by_id,
-            description=f"Action applied ({row.action_key})",
+            description=f"{_action_words(row.action_key)} applied",
         )
         return result
 
@@ -590,7 +604,7 @@ class FormActionService:
             row,
             "UPDATE",
             user_id=actor_id,
-            description=f"Action withdrawn during its grace window ({row.action_key}); nothing was sent",
+            description=f"{_action_words(row.action_key)} withdrawn during its grace window; nothing was sent",
         )
         return row
 

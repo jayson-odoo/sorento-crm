@@ -576,7 +576,9 @@ def change_area_date(
         )
         for amendment in stale:
             # Never throw away review work: an amendment with row decisions, or whose
-            # notice already names an approver, stays and the new move is proposed beside it.
+            # notice has left draft (or names an approver), stays and the new move is proposed
+            # beside it. A notice raised by hand and picked for it is never the draft's to drop
+            # (OCN-ORDER-CHANGE-NOTICE E2).
             if amendment.row_decisions:
                 continue
             ocn_id = amendment.ocn_id
@@ -584,7 +586,11 @@ def change_area_date(
                 notice = (
                     db.query(OrderChangeNotice).filter(OrderChangeNotice.id == ocn_id).first()
                 )
-                if notice is not None and notice.approver_id:
+                if notice is not None and (
+                    notice.approver_id
+                    or (notice.status or "draft") != "draft"
+                    or (notice.source or "amendment") != "amendment"
+                ):
                     continue
             db.delete(amendment)
             db.flush()

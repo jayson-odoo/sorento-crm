@@ -681,10 +681,14 @@ export interface ConfirmSupplyBody {
 export interface CancelledLineBody {
   project_line_id: string;
   reason: string;
+  /** Set on the retry after a 409 `non_cancellable_line`, by a holder of the override permission. */
+  non_cancellable_override_reason?: string;
 }
 
 /** A line a press transferred to Cancel SO, as the server echoes it. */
 export interface CancelledLineEcho {
+  /** The mirror line this entry is about (set on `lines_retired`). */
+  project_line_id?: string | null;
   line_no?: number | null;
   /** AutoCount's own line number (the SO line number), `line_no` when it has none. */
   so_line_no?: number | null;
@@ -715,6 +719,8 @@ export interface ConfirmResult {
   confirmed_at?: string | null;
   review_state: string;
   inquiry_rows_created: number;
+  /** Purchasing handover lines the confirm queued (raised, changed, cancelled). */
+  inquiry_rows_handed_over?: number;
   exceptions: ConfirmException[];
   /**
    * The physical movements this confirmation raised, and how many it could NOT write
@@ -1371,6 +1377,8 @@ export interface BoardContribution {
    * path, which is why it counts toward Confirm (N) while carrying no decision of its own.
    */
   cancelled?: boolean;
+  /** The pending planning-change batch that names this line, when there is one. */
+  pending_change_batch_id?: string | null;
   /** SO-CANCEL-LINE: set when CS transferred the line to Cancel SO. `cancelled_by` is a name. */
   cancelled_at?: string | null;
   cancelled_by?: string | null;
@@ -2768,6 +2776,10 @@ export interface SimulatedLineError {
 
 /** One order's outcome. `ok` decides which half is populated. */
 export interface ConfirmManyOrderResult {
+  /** `non_cancellable_line` when the order was refused for a non-cancellable line. */
+  error_code?: string | null;
+  /** That refusal's `{ can_override, lines: [{label, from_qty, to_qty}] }`. */
+  error_details?: Record<string, unknown> | null;
   /** Simulate confirm only: the simulation adopted this never-planned order first. */
   adopted?: boolean | null;
   /** Simulate confirm only: lines that fail when run alone. */
@@ -2785,9 +2797,12 @@ export interface ConfirmManyOrderResult {
   lines_retired?: CancelledLineEcho[] | null;
   transfers?: PreviewTransfer[] | null;
   pso_id: string;
+  /** The core sales order number, so a result line can name an order the board dropped. */
+  so_number?: string | null;
   ok: boolean;
   decision_revision?: number | null;
   inquiry_rows_created?: number | null;
+  inquiry_rows_handed_over?: number | null;
   lines_decided?: number | null;
   lines_undecided?: number | null;
   /** The lines this order's press froze, and how many covered lines rode forward. */

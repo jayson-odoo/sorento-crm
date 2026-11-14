@@ -32,7 +32,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from decimal import Decimal
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from sqlalchemy.orm import Session
 
@@ -85,9 +85,9 @@ ALL_VERBS = (
 # order will not land before the delivery date. Arithmetic on dates, no judgement.
 RESERVE_WINDOW_DAYS = 60
 
+#: The notice numbering lives in ONE function, `order_change_notice_service.next_ocn_number`
+#: (OCN-ORDER-CHANGE-NOTICE, plan "Shared once"); this name is kept for its readers.
 OCN_NUMBERING_DOC_TYPE = "order_change_notice"
-_OCN_PREFIX = "OCN-"
-_OCN_DIGITS = 6
 
 # Per-row accept/decline (PLAN-so-book-diff-replanning.md 9.3). A row absent from
 # `row_decisions` is accepted by default -- that is today's all-or-nothing behaviour,
@@ -191,6 +191,21 @@ class ProjectSODeltaService:
 
     def __init__(self, db: Session):
         self.db = db
+        #: What to tell once the caller commits (a picked approved notice's reopen notices,
+        #: security review M4). The caller runs `run_after_commit()` after `db.commit()`; a
+        #: rollback simply drops this service and its list.
+        self._after_commit: List[Callable[[], None]] = []
+
+    def run_after_commit(self) -> None:
+        """Send what waited for the commit, best effort: a failed notice never undoes it."""
+        pending, self._after_commit = self._after_commit, []
+        for send in pending:
+            try:
+                send()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("amendment after-commit notice not sent (%s)", exc)
+                if not self.db.is_active:
+                    self.db.rollback()
 
     # ---------------------------------------------------------------- preview
 
@@ -589,11 +604,16 @@ class ProjectSODeltaService:
         schedule_version_id: Optional[str] = None,
         reason: str,
         actor_user_id: str,
+        ocn_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Persist the amendment and auto-draft its OCN from the SAME delta (D15).
 
         Both land in ``proposed``. Auto-drafting is what keeps the client's only trusted
         hard gate from becoming drag: nobody retypes the change table, they approve it.
+
+        ``ocn_id`` picks an existing notice instead (UAC E2, one change one notice): one of
+        the same project, not linked to another amendment, still open. It is linked and its
+        change table refreshed from the delta; no second notice is drafted.
         """
         order = self._order_or_404(pso_id)
         if order.status not in AUTHORED_LIVE_STATUSES:
@@ -636,6 +656,7 @@ class ProjectSODeltaService:
             source_document_kind="revised_schedule" if kind == "schedule" else "revised_po",
             reason=reason,
             actor_user_id=actor_user_id,
+            ocn_id=ocn_id,
         )
 
     def create_area_date_amendment(
@@ -702,6 +723,22 @@ class ProjectSODeltaService:
             actor_user_id=actor_user_id,
         )
 
+    def _notice_customer_and_po(self, order: ProjectSalesOrder):
+        """The drafted notice's customer and customer PO no., through the order's own links:
+        its PO's issuing party's customer record (the chain the order itself uses,
+        `ProjectSODraftService._customer_for`) and that PO's number. (None, None) when unlinked."""
+        from app.services.project_so_draft_service import ProjectSODraftService
+
+        po = (
+            self.db.query(ProjectPurchaseOrder)
+            .filter(ProjectPurchaseOrder.id == order.purchase_order_id)
+            .first()
+            if order.purchase_order_id
+            else None
+        )
+        customer = ProjectSODraftService(self.db)._customer_for(order) if po is not None else None
+        return customer, (po.po_number if po is not None else None)
+
     def _persist_amendment(
         self,
         order: ProjectSalesOrder,
@@ -711,7 +748,19 @@ class ProjectSODeltaService:
         source_document_kind: str,
         reason: str,
         actor_user_id: str,
+        ocn_id: Optional[str] = None,
     ) -> Dict[str, Any]:
+        from app.services import order_change_notice_service
+
+        picked = None
+        if ocn_id:
+            picked, to_tell = order_change_notice_service.assert_linkable(
+                self.db,
+                ocn_id,
+                project_id=order.project_id,
+                actor=order_change_notice_service.actor_for_user(self.db, actor_user_id),
+            )
+            self._after_commit.extend(to_tell)
         amendment = SOAmendment(
             company_id=order.company_id,
             project_sales_order_id=order.id,
@@ -725,24 +774,43 @@ class ProjectSODeltaService:
         self.db.add(amendment)
         self.db.flush()
 
-        ocn = OrderChangeNotice(
-            company_id=order.company_id,
-            ocn_number=self._next_ocn_number(order.company_id),
-            project_id=order.project_id,
-            purchase_order_id=order.purchase_order_id,
-            project_sales_order_id=order.id,
-            reason=reason,
-            source_document_kind=source_document_kind,
-            source_document_id=delta["to"]["id"],
-            change_table_json={
-                "rows": delta["rows"],
-                "phase_summary": delta["phase_summary"],
-                "unmatched": delta["unmatched"],
-                "verb_summary": delta["verb_summary"],
-            },
-            created_by=actor_user_id,
-        )
-        self.db.add(ocn)
+        change_table = {
+            "rows": delta["rows"],
+            "phase_summary": delta["phase_summary"],
+            "unmatched": delta["unmatched"],
+            "verb_summary": delta["verb_summary"],
+        }
+        if picked is not None:
+            ocn = picked
+            ocn.change_table_json = change_table
+            ocn.project_sales_order_id = ocn.project_sales_order_id or order.id
+            ocn.purchase_order_id = ocn.purchase_order_id or order.purchase_order_id
+        else:
+            customer, po_number = self._notice_customer_and_po(order)
+            ocn = OrderChangeNotice(
+                company_id=order.company_id,
+                ocn_number=self._next_ocn_number(order.company_id),
+                # From the order's explicit links only (never by matching text): blank when a
+                # link is missing, and Submit then names the field.
+                customer_id=customer.id if customer else None,
+                customer_name=customer.customer_name if customer else None,
+                customer_po_no=po_number,
+                project_id=order.project_id,
+                purchase_order_id=order.purchase_order_id,
+                project_sales_order_id=order.id,
+                reason=reason,
+                source_document_kind=source_document_kind,
+                source_document_id=delta["to"]["id"],
+                change_table_json=change_table,
+                created_by=actor_user_id,
+                source=order_change_notice_service.SOURCE_AMENDMENT,
+                status=order_change_notice_service.DRAFT,
+                ocn_date=order_change_notice_service.today_malaysia(),
+            )
+            # UAC I8: Requested by defaults to the amending user's linked contact, the notice's own
+            # create default (no key in the body).
+            order_change_notice_service.apply_requestor(self.db, ocn, {}, actor_user_id)
+            self.db.add(ocn)
         self.db.flush()
         amendment.ocn_id = ocn.id
         self.db.flush()
@@ -755,10 +823,17 @@ class ProjectSODeltaService:
 
     # --------------------------------------------------------------- publish
 
-    def publish_amendment(self, amendment_id: str, *, actor_user_id: str) -> Dict[str, Any]:
+    def publish_amendment(
+        self,
+        amendment_id: str,
+        *,
+        actor_user_id: str,
+        non_cancellable_override_reason: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Apply the delta, stamp the OCN, move the order to ``amended``.
 
-        Refuses without an approver on the OCN (AC-G4). Refuses too when a row cannot be
+        Refuses until the OCN is approved through its own chain (AC-G4, OCN-ORDER-CHANGE-NOTICE
+        E3: approval_status approved and not voided). Refuses too when a row cannot be
         applied without inventing something -- a new product with no price, a re-point with
         no destination -- because an amendment that does not do what its own change table
         says is worse than one that stopped and asked.
@@ -788,12 +863,14 @@ class ProjectSODeltaService:
             if amendment.ocn_id
             else None
         )
-        if ocn is None or not ocn.approver_id:
+        from app.services import order_change_notice_service
+
+        if not order_change_notice_service.is_approved(ocn):
             raise AppException(
                 status_code=409,
                 message=(
-                    "This amendment's order change notice has no approver yet. Every "
-                    "amendment to a published sales order needs one."
+                    "This amendment's order change notice is not approved yet. Every "
+                    "amendment to a published sales order needs an approved one."
                 ),
                 code="amendment_ocn_unapproved",
             )
@@ -801,6 +878,18 @@ class ProjectSODeltaService:
         order = self._order_or_404(amendment.project_sales_order_id)
         delta = amendment.delta_json or {}
         accepted_rows, _declined_rows = self._decided_rows(amendment, delta)
+        # NON-CANCELLABLE-ITEMS: an accepted row that cuts a Non-cancellable line needs an
+        # override with a reason. Declining the row is the other way out.
+        from app.services import non_cancellable_service as non_cancellable
+
+        non_cancellable.assert_may_reduce(
+            self.db,
+            reductions=self._non_cancellable_cuts(order, accepted_rows),
+            user_id=actor_user_id,
+            override_reason=non_cancellable_override_reason,
+            action="so_amendment_publish",
+            company_id=order.company_id,
+        )
         applied = self._apply_rows(order, accepted_rows)
 
         # Section 9.3: only the accepted rows are the amendment from here on. The
@@ -820,8 +909,6 @@ class ProjectSODeltaService:
 
         amendment.status = AMENDMENT_PUBLISHED
         amendment.published_at = datetime.utcnow()
-        if ocn.approved_at is None:
-            ocn.approved_at = datetime.utcnow()
         order.status = SO_STATUS_AMENDED
         self._recompute(order)
         self.db.flush()
@@ -853,6 +940,47 @@ class ProjectSODeltaService:
             "ocn_number": ocn.ocn_number,
             "order_inquiry_id": inquiry.id,
         }
+
+    #: The verbs that write a line's quantity (`_apply_rows`); a lower `to_value` is a cut.
+    _QTY_VERBS = (VERB_CANCEL_BALANCE, VERB_ORDER, VERB_RESERVE_AND_ORDER)
+
+    def _cut_lines(
+        self, rows: Sequence[Dict[str, Any]]
+    ) -> List[Tuple[Dict[str, Any], ProjectSalesOrderLine]]:
+        out = []
+        for row in rows:
+            if row.get("verb") not in self._QTY_VERBS:
+                continue
+            line = self._line_or_none(row.get("so_line_id"))
+            if line is None:
+                continue
+            # The row's own from -> to (the product's total in its phase), not one line's qty:
+            # a model on two SO lines (30 + 23) cut 53 -> 40 is a cut although 40 > 23. A
+            # missing to_value reads 0, the same default `_apply_rows` writes.
+            before = _dec(row.get("from_value"), _dec(line.qty))
+            if _dec(row.get("to_value")) < before:
+                out.append((row, line))
+        return out
+
+    def _non_cancellable_cuts(
+        self, order: ProjectSalesOrder, rows: Sequence[Dict[str, Any]]
+    ) -> List[Any]:
+        from app.services import non_cancellable_service as non_cancellable
+
+        cuts = self._cut_lines(rows)
+        flagged = non_cancellable.so_lines_non_cancellable(self.db, [line for _r, line in cuts])
+        label_ref = order.autocount_doc_no or order.provisional_ref
+        return [
+            non_cancellable.Reduction(
+                label=f"{label_ref} line {line.line_no} {row.get('product_code') or ''}".strip(),
+                entity_type="project_sales_orders",
+                entity_id=str(order.id),
+                from_qty=_qty_str(_dec(row.get("from_value"), _dec(line.qty))),
+                to_qty=_qty_str(_dec(row.get("to_value"))),
+            )
+            for row, line in cuts
+            if str(line.id) in flagged
+        ]
 
     def _apply_rows(
         self, order: ProjectSalesOrder, rows: Sequence[Dict[str, Any]]
@@ -948,6 +1076,14 @@ class ProjectSODeltaService:
         )
         delta = dict(amendment.delta_json or {})
         annotated_rows, accepted_count, declined_count = self._annotated_rows(amendment, delta)
+        # NON-CANCELLABLE-ITEMS: say on each row whether its line is Non-cancellable, so the
+        # screen can mark it before Publish refuses it.
+        from app.services import non_cancellable_service as non_cancellable
+
+        lines = [self._line_or_none(row.get("so_line_id")) for row in annotated_rows]
+        flagged = non_cancellable.so_lines_non_cancellable(self.db, [l for l in lines if l])
+        for row, line in zip(annotated_rows, lines):
+            row["non_cancellable"] = bool(line is not None and str(line.id) in flagged)
         delta["rows"] = annotated_rows
         return {
             "id": amendment.id,
@@ -967,6 +1103,9 @@ class ProjectSODeltaService:
             "ocn_reason": ocn.reason if ocn else None,
             "ocn_approver_name": approver.name if approver else None,
             "ocn_approved_at": ocn.approved_at if ocn else None,
+            # OCN-ORDER-CHANGE-NOTICE E3: what Publish waits on.
+            "ocn_status": ocn.status if ocn else None,
+            "ocn_approval_status": ocn.approval_status if ocn else None,
             "published_at": amendment.published_at,
             "created_at": amendment.created_at,
         }
@@ -1463,24 +1602,6 @@ class ProjectSODeltaService:
         return row[0] if row else None
 
     def _next_ocn_number(self, company_id: str) -> str:
-        from app.services.numbering_service import NumberingService
+        from app.services.order_change_notice_service import next_ocn_number
 
-        configured = NumberingService(self.db).get_next_number(
-            OCN_NUMBERING_DOC_TYPE, commit_rule=False
-        )
-        if configured:
-            return configured
-        highest = 0
-        rows = (
-            self.db.query(OrderChangeNotice.ocn_number)
-            .filter(
-                OrderChangeNotice.company_id == company_id,
-                OrderChangeNotice.ocn_number.like(f"{_OCN_PREFIX}%"),
-            )
-            .all()
-        )
-        for (number,) in rows:
-            tail = (number or "")[len(_OCN_PREFIX) :]
-            if tail.isdigit():
-                highest = max(highest, int(tail))
-        return f"{_OCN_PREFIX}{highest + 1:0{_OCN_DIGITS}d}"
+        return next_ocn_number(self.db, company_id)

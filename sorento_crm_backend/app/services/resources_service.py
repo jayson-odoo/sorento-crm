@@ -3,6 +3,7 @@ import logging
 import re
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, func, or_
+from fastapi import HTTPException
 from typing import Any, Optional, List
 
 logger = logging.getLogger(__name__)
@@ -13,6 +14,7 @@ from app.schemas.resources import (
     AttachmentDirectoryCreate, AttachmentDirectoryUpdate,
 )
 from app.services.error_handler import (
+    AppException,
     handle_not_found,
     handle_conflict,
     handle_unprocessable,
@@ -22,6 +24,23 @@ from app.services.embedding_events import publish_embedding_event
 from app.services.storage_router import extract_key
 from app.services.entity_attachment_service import exclude_private_types, is_private_to_others
 from app.utils.multi_value import multi_values
+
+
+
+
+class BulkMoveResult(tuple):
+    """``(updated, not_moved)`` - unpacks as before - plus what the server renamed / replaced."""
+
+    def __new__(cls, updated: int, not_moved: list, renamed: int = 0, replaced: int = 0):
+        obj = super().__new__(cls, (updated, not_moved))
+        obj.updated, obj.not_moved, obj.renamed, obj.replaced = updated, not_moved, renamed, replaced
+        return obj
+
+
+def uuid_suffix() -> str:
+    import uuid as _uuid
+
+    return _uuid.uuid4().hex[:6]
 
 
 _UUID_RE = re.compile(
@@ -431,9 +450,14 @@ class AttachmentDirectoryService:
             synchronize_session=False,
         )
         attachment_service = AttachmentService(self.db)
-        restored = attachment_service.restore_attachments_in_directories(dir_ids)
+        restored, not_restored = attachment_service.restore_attachments_in_directories_report(dir_ids)
         self.db.commit()
-        return {"directories_restored": len(dir_ids), "attachments_restored": restored}
+        return {
+            "directories_restored": len(dir_ids),
+            "attachments_restored": restored,
+            # Files left in Trash because their folder holds their name again, in plain words.
+            "attachments_not_restored": not_restored,
+        }
 
     def permanent_delete_directory(self, directory_id: str, deleted_by: str) -> dict:
         """Permanently delete a deleted directory, its descendants, and all attachments in them. Cannot be undone."""
@@ -2133,6 +2157,8 @@ class AttachmentService:
                     get_company_scope(self.db)
                 )
 
+        # Same names in one folder are allowed (owner, 12 Nov): the upload route asks the user
+        # first (Keep both / Create copy / Replace), so the service just stores the row.
         attachment = Attachment(**attachment_dict)
         self.db.add(attachment)
         self.db.commit()
@@ -2168,11 +2194,161 @@ class AttachmentService:
         )
         return attachment
     
-    def update_attachment(self, attachment_id: str, attachment_data: AttachmentUpdate):
-        """Update an attachment. Recalculates full_directory_path when directory_id changes."""
+    # ---- FILES-MOVE-DUPLICATE: same names in a folder ---------------------------------------
+    #
+    # Two files may share a name in one folder (owner, 12 Nov; migration fmd_0001 dropped the
+    # old unique index). Every action that would put a second file of one visible name into a
+    # folder asks first: Keep both / Rename / Replace / Skip.
+
+    def _folder_clash(
+        self,
+        directory_id: Optional[str],
+        name: Optional[str],
+        exclude_id=None,
+        visible_name: Optional[str] = None,
+    ):
+        """The active file in ``directory_id`` whose VISIBLE name equals ``visible_name`` (or
+        ``name``), any case, or None.
+
+        The one check every action that puts a file into a folder goes through (move, bulk
+        move, drag, rename, restore, upload). Same names are allowed (owner, 12 Nov 17:35), so
+        a hit means "ask first" (Keep both / Rename / Replace / Skip), never "refuse". The
+        hidden original name no longer counts. Root (no folder) is never checked; deleted
+        files never count.
+        """
+        target = visible_name or name
+        if not directory_id or not target:
+            return None
+        q = self.db.query(Attachment).filter(
+            Attachment.directory_id == directory_id,
+            func.lower(Attachment.stored_filename) == target.lower(),
+            Attachment.is_deleted.is_(False),
+        )
+        if exclude_id:
+            q = q.filter(Attachment.id != str(exclude_id))
+        # Several files may share a name now: answer with the oldest, always the same one.
+        return q.order_by(Attachment.uploaded_at, Attachment.id).first()
+
+    def _folder_label(self, directory_id: Optional[str]) -> str:
+        name = (
+            self.db.query(AttachmentDirectory.name)
+            .filter(AttachmentDirectory.id == directory_id)
+            .scalar()
+            if directory_id
+            else None
+        )
+        return name or "this folder"
+
+    def _name_free(self, directory_id: str, display_name: str, exclude_id=None) -> bool:
+        """No active file in the folder shows ``display_name`` (any case)."""
+        return self._folder_clash(directory_id, display_name, exclude_id) is None
+
+    def _suggest_name(self, directory_id: str, display_name: str, exclude_id=None) -> str:
+        """``photo.jpg`` -> ``photo (1).jpg``, bumped until free in the folder."""
+        name = display_name or "file"
+        base, dot, ext = name.rpartition(".")
+        if not dot:
+            base, ext = name, ""
+        else:
+            ext = "." + ext
+        base = re.sub(r" \(\d+\)$", "", base) or base
+        for n in range(1, 1000):
+            suffix = f" ({n}){ext}"
+            # The name columns hold 255 characters: shorten the base, never the counter.
+            candidate = f"{base[: max(1, 255 - len(suffix))]}{suffix}"
+            if self._name_free(directory_id, candidate, exclude_id):
+                return candidate
+        return f"{base} ({uuid_suffix()}){ext}"
+
+    @staticmethod
+    def _clash_message(file_name: str, existing_name: Optional[str], folder_name: str, verb: str) -> str:
+        # The match is on the visible name, so the message is always the plain one.
+        return f"{file_name} already exists in {folder_name}."
+
+    def _clash_details(
+        self, file_name: str, existing, directory_id: str, exclude_id=None, viewer_id: Optional[str] = None
+    ) -> dict:
+        folder_name = self._folder_label(directory_id)
+        # A private file of someone else still holds its name in the folder (the index counts
+        # it), but its own name is never handed to a viewer who cannot see it.
+        existing_name = (
+            (existing.stored_filename or existing.original_filename)
+            if existing is not None and not is_private_to_others(existing, viewer_id)
+            else None
+        )
+        return {
+            "file_name": file_name,
+            "folder_name": folder_name,
+            "existing_file_name": existing_name,
+            "suggested_name": self._suggest_name(directory_id, file_name, exclude_id),
+        }
+
+    def _clash_error(
+        self, file_name: str, existing, directory_id: str, *, verb: str, exclude_id=None,
+        code: str = "ATTACHMENT_MOVE_NAME_CLASH", viewer_id: Optional[str] = None,
+    ) -> AppException:
+        details = self._clash_details(file_name, existing, directory_id, exclude_id, viewer_id)
+        return AppException(
+            status_code=409,
+            message=self._clash_message(file_name, details["existing_file_name"], details["folder_name"], verb),
+            code=code,
+            details=details,
+        )
+
+    def update_attachment(
+        self,
+        attachment_id: str,
+        attachment_data: AttachmentUpdate,
+        actor_id: Optional[str] = None,
+        replace_guard=None,
+    ):
+        """Update an attachment. Recalculates full_directory_path when directory_id changes.
+
+        A move or rename that would put a second file of the same visible name into a folder is a
+        409 (``_clash_error``) unless ``on_conflict`` says what to do: "keep" goes ahead (same
+        names are allowed), "replace" sends the file already there to Trash, "rename" moves under
+        ``stored_filename`` (DB only: the stored object and its URL never change).
+
+        ``replace_guard(row)`` is the caller's write check, run on the exact row Replace is about
+        to trash (locked FOR UPDATE), so the row checked is the row trashed.
+        """
         attachment = self.get_attachment(attachment_id)
         
         update_data = attachment_data.model_dump(exclude_unset=True)
+        on_conflict = update_data.pop("on_conflict", None)
+        if on_conflict == "rename" and not update_data.get("stored_filename"):
+            raise handle_validation_error("Type the new name for the file.")
+
+        # The clash check runs before anything is written.
+        target_dir = update_data["directory_id"] if "directory_id" in update_data else attachment.directory_id
+        moving = "directory_id" in update_data and str(target_dir or "") != str(attachment.directory_id or "")
+        file_name = update_data.get("stored_filename") or attachment.stored_filename
+        original_name = update_data.get("original_filename", attachment.original_filename)
+        replaced = None
+        renaming = "stored_filename" in update_data and (
+            (update_data["stored_filename"] or "").lower() != (attachment.stored_filename or "").lower()
+        )
+        if target_dir and (moving or renaming) and on_conflict != "keep":
+            clash = self._folder_clash(
+                target_dir, original_name, exclude_id=attachment.id, visible_name=file_name
+            )
+            if clash is not None:
+                if on_conflict == "replace":
+                    replaced = self._lock_replaceable(clash, target_dir)
+                    if replaced is None:
+                        pass  # trashed or moved meanwhile: nothing left to replace
+                    elif is_private_to_others(replaced, actor_id):
+                        raise handle_conflict(
+                            f"The file in {self._folder_label(target_dir)} with this name is "
+                            "private to another user, so it cannot be replaced. Choose Rename."
+                        )
+                    elif replace_guard is not None:
+                        replace_guard(replaced)
+                else:
+                    raise self._clash_error(
+                        file_name, clash, target_dir, verb="moved into", exclude_id=attachment.id,
+                        viewer_id=actor_id,
+                    )
         if "access_levels" in update_data and update_data["access_levels"]:
             from app.services.contact_access_type_service import ContactAccessTypeService
             access_svc = ContactAccessTypeService(self.db)
@@ -2187,33 +2363,18 @@ class AttachmentService:
             update_data["full_directory_path"] = dir_service.get_full_directory_path(new_directory_id)
 
         # Rename is DB-only and edits stored_filename (the user-facing label). original_filename
-        # is immutable (it is the object-key basename - uuid-segregated key, independent of the
-        # name, like portal submissions). The generic setattr loop applies stored_filename
-        # directly; no storage work. See docs/plans/PLAN-attachment-key-uuid-segregation.md.
+        # stays the name the file was uploaded under; the object key is frozen in file_path
+        # (PLAN-attachment-key-uuid-segregation.md), so no storage work either way.
         type_changed = "attachment_type_id" in update_data and str(attachment.attachment_type_id or "") != str(
             update_data["attachment_type_id"] or ""
         )
+        if replaced is not None:
+            # Replace: the file already in the folder goes to Trash (restorable, still in its
+            # folder; its stored object stays until a permanent delete).
+            self._trash(replaced, actor_id)
         for key, value in update_data.items():
             setattr(attachment, key, value)
-
-        # PLAN-shared-brand-attachments R10: a move never re-stamps the FILE's
-        # own company - only `Set company…` (AttachmentCompanyService) does
-        # that now. R19: moving a SHARED file into an owned folder instead
-        # pulls that folder's ancestor chain to shared, so the path it now
-        # lives under still resolves from every company. A shared FORM
-        # attachment's NULL is the pre-existing form-sharing convention
-        # (AC-G3), not a `Set company…` decision, so it is excluded here too.
-        changed_fields = list(update_data.keys())
-        if (
-            update_data.get("directory_id")
-            and attachment.company_id is None
-            and (attachment.entity_type or "").strip().lower() not in _SHARED_FORM_ENTITY_TYPES
-        ):
-            from app.services.attachment_company_service import share_ancestor_chain
-
-            share_ancestor_chain(self.db, update_data["directory_id"])
-
-        self.db.commit()
+        self._finish_update(attachment, update_data)
         self.db.refresh(attachment)
         if type_changed:
             self._queue_ai_reads([attachment])
@@ -2224,15 +2385,57 @@ class AttachmentService:
             source_key=attachment.original_filename,
             source_updated_at=attachment.created_at,
             event_type="attachment.updated",
-            changed_fields=changed_fields,
+            changed_fields=list(update_data.keys()),
         )
         return attachment
+
+    def _finish_update(self, attachment: Attachment, update_data: dict) -> None:
+        """Share the destination chain when needed, then commit (update_attachment's tail)."""
+        # PLAN-shared-brand-attachments R10: a move never re-stamps the FILE's
+        # own company - only `Set company…` (AttachmentCompanyService) does
+        # that now. R19: moving a SHARED file into an owned folder instead
+        # pulls that folder's ancestor chain to shared, so the path it now
+        # lives under still resolves from every company. A shared FORM
+        # attachment's NULL is the pre-existing form-sharing convention
+        # (AC-G3), not a `Set company…` decision, so it is excluded here too.
+        if (
+            update_data.get("directory_id")
+            and attachment.company_id is None
+            and (attachment.entity_type or "").strip().lower() not in _SHARED_FORM_ENTITY_TYPES
+        ):
+            from app.services.attachment_company_service import share_ancestor_chain
+
+            share_ancestor_chain(self.db, update_data["directory_id"])
+
+        self.db.commit()
     
     def bulk_move(self, attachment_ids: list[str], directory_id: Optional[str]) -> int:
-        """Move many attachments into the same folder in one transaction.
+        """Count-only form of ``bulk_move_report`` (the files moved)."""
+        return self.bulk_move_report(attachment_ids, directory_id)[0]
 
-        Resolves full_directory_path once for the target folder so all rows
-        share the same denormalised path. Skips ids that no longer exist.
+    def bulk_move_report(
+        self,
+        attachment_ids: list[str],
+        directory_id: Optional[str],
+        viewer_id: Optional[str] = None,
+        *,
+        check_only: bool = False,
+        resolutions: Optional[dict] = None,
+        replace_guard=None,
+        actor_id: Optional[str] = None,
+    ) -> tuple[int, list[dict]]:
+        """Move many attachments into the same folder; one clash never fails the batch.
+
+        ``check_only``: write nothing, return every conflict (a file whose original name is
+        already in the folder, or in an earlier file of this same batch). The client asks the
+        user about all of them before anything moves, so Cancel leaves everything in place.
+
+        ``resolutions`` ({attachment_id: {"action": "skip"|"replace"|"rename", "name"?}}) says
+        what to do with a file that clashes: skip (left where it is, named in the list),
+        replace (the file already there goes to Trash; ``replace_guard(row)`` runs on it and a
+        refusal skips only this file), rename (to ``name``, or a free "name (1)" style name;
+        visible name only, DB only), keep (moves in under the same name). A clashing file with
+        no resolution is skipped and named.
         """
         rows = (
             exclude_private_types(self.db.query(Attachment))
@@ -2240,12 +2443,74 @@ class AttachmentService:
             .all()
         )
         if not rows:
-            return 0
+            return BulkMoveResult(0, [])
+        position = {str(aid): i for i, aid in enumerate(attachment_ids)}
+        rows.sort(key=lambda r: position.get(str(r.id), len(position)))
+        if check_only:
+            return BulkMoveResult(0, self._bulk_move_conflicts(rows, directory_id, viewer_id))
+        resolutions = {str(k): (v or {}) for k, v in (resolutions or {}).items()}
         dir_service = AttachmentDirectoryService(self.db)
         full_path = dir_service.get_full_directory_path(directory_id) if directory_id else None
+        moved: list[Attachment] = []
+        not_moved: list[dict] = []
+        renamed_count = replaced_count = 0
         for row in rows:
+            row_id, file_name, original = str(row.id), row.stored_filename, row.original_filename
+            new_name: Optional[str] = None
+            replaced: Optional[Attachment] = None
+            resolution = resolutions.get(row_id) or {}
+            action = resolution.get("action")
+            if action == "skip":
+                # The user chose to leave it: it stays even if its clash went away meanwhile.
+                clash = (
+                    self._folder_clash(directory_id, original, exclude_id=row_id, visible_name=file_name)
+                    if directory_id
+                    else None
+                )
+                not_moved.append(self._not_moved_entry(row_id, file_name, clash, directory_id, viewer_id))
+                continue
+            if directory_id and str(row.directory_id or "") != str(directory_id):
+                clash = self._folder_clash(directory_id, original, exclude_id=row_id, visible_name=file_name)
+                if clash is not None:
+                    if action == "keep":
+                        pass  # same names are allowed: moves in as it is
+                    elif action == "rename":
+                        new_name = (resolution.get("name") or "").strip() or self._suggest_name(
+                            directory_id, file_name, row_id
+                        )
+                        taken = self._folder_clash(directory_id, new_name, exclude_id=row_id, visible_name=new_name)
+                        if taken is not None:
+                            not_moved.append(
+                                self._not_moved_entry(row_id, new_name, taken, directory_id, viewer_id)
+                            )
+                            continue
+                    elif action == "replace":
+                        locked = self._lock_replaceable(clash, directory_id)
+                        refusal = (
+                            self._replace_refusal(locked, directory_id, actor_id, replace_guard)
+                            if locked is not None
+                            else None
+                        )
+                        if refusal:
+                            entry = self._not_moved_entry(row_id, file_name, clash, directory_id, viewer_id)
+                            entry["message"] = refusal
+                            not_moved.append(entry)
+                            continue
+                        replaced = locked  # None: trashed or moved meanwhile, a plain move
+                    else:
+                        not_moved.append(self._not_moved_entry(row_id, file_name, clash, directory_id, viewer_id))
+                        continue
+            if replaced is not None:
+                self._trash(replaced, actor_id)
+            if new_name is not None:
+                row.stored_filename = new_name
             row.directory_id = directory_id
             row.full_directory_path = full_path
+            self.db.flush()
+            moved.append(row)
+            renamed_count += new_name is not None
+            replaced_count += replaced is not None
+        rows = moved
 
         # PLAN-shared-brand-attachments R10/R19: a move never re-stamps a
         # file's own company - only `Set company…` does that now. A SHARED
@@ -2276,7 +2541,74 @@ class AttachmentService:
                 event_type="attachment.updated",
                 changed_fields=changed_fields,
             )
-        return len(rows)
+        return BulkMoveResult(len(rows), not_moved, renamed_count, replaced_count)
+
+    def _bulk_move_conflicts(self, rows: list, directory_id: Optional[str], viewer_id: Optional[str]) -> list[dict]:
+        """Every file of this batch that would clash in ``directory_id``, nothing written.
+
+        A file clashes with a file already in the folder, or with an earlier file of the same
+        batch that would land there first (same original name, any case).
+        """
+        if not directory_id:
+            return []
+        claimed: dict[str, Attachment] = {}
+        conflicts: list[dict] = []
+        for row in rows:
+            if str(row.directory_id or "") == str(directory_id):
+                continue
+            key = (row.stored_filename or "").lower()
+            clash = self._folder_clash(
+                directory_id, row.original_filename, exclude_id=row.id, visible_name=row.stored_filename
+            ) or claimed.get(key)
+            if clash is not None:
+                conflicts.append(self._not_moved_entry(str(row.id), row.stored_filename, clash, directory_id, viewer_id))
+                continue
+            claimed[key] = row
+        return conflicts
+
+    def _lock_replaceable(self, clash, directory_id: str):
+        """Lock ``clash`` FOR UPDATE and re-read it; None when it is no longer the active file in
+        ``directory_id`` (trashed or moved meanwhile), so there is nothing to replace."""
+        locked = (
+            self.db.query(Attachment)
+            .filter(Attachment.id == clash.id)
+            .populate_existing()
+            .with_for_update()
+            .one_or_none()
+        )
+        if locked is None or locked.is_deleted or str(locked.directory_id or "") != str(directory_id):
+            return None
+        return locked
+
+    def _replace_refusal(self, locked, directory_id: str, actor_id: Optional[str], replace_guard) -> Optional[str]:
+        """Why Replace may not trash ``locked`` (a row from ``_lock_replaceable``), or None.
+        The row checked is the row trashed."""
+        if is_private_to_others(locked, actor_id):
+            return (
+                f"The file in {self._folder_label(directory_id)} with this name is private to "
+                "another user, so it cannot be replaced."
+            )
+        if replace_guard is not None:
+            try:
+                replace_guard(locked)
+            except HTTPException as exc:
+                detail = exc.detail
+                return (detail.get("message") if isinstance(detail, dict) else str(detail)) or (
+                    "You cannot replace that file."
+                )
+        return None
+
+    def _not_moved_entry(
+        self, attachment_id: str, file_name: str, existing, directory_id: str, viewer_id: Optional[str] = None
+    ) -> dict:
+        details = self._clash_details(file_name, existing, directory_id, attachment_id, viewer_id)
+        return {
+            "attachment_id": attachment_id,
+            "message": self._clash_message(
+                file_name, details["existing_file_name"], details["folder_name"], "moved into"
+            ),
+            **details,
+        }
 
     def reorder_attachments(self, attachment_ids: list[str], directory_id: Optional[str] = None):
         """Set sort_order to index for each attachment id (within the same directory)."""
@@ -2320,32 +2652,176 @@ class AttachmentService:
         self.db.commit()
         return {"message": f"{count} attachment(s) archived successfully", "archived_count": count}
 
-    def restore_attachment(self, attachment_id: str):
-        """Restore an archived attachment."""
+    def restore_attachment(
+        self,
+        attachment_id: str,
+        on_conflict: Optional[str] = None,
+        actor_id: Optional[str] = None,
+        replace_guard=None,
+    ):
+        """Restore an archived attachment.
+
+        When its folder now shows another file of the same name, a 409 asks first (the move
+        window) unless ``on_conflict`` says what to do: "keep" (same names are allowed),
+        "rename" (a free "name (1)"), "replace" (the file there goes to Trash).
+        """
         attachment = self.get_attachment(attachment_id)
+        directory_id = attachment.directory_id
+        if attachment.is_deleted and directory_id and on_conflict != "keep":
+            clash = self._folder_clash(directory_id, attachment.stored_filename, exclude_id=attachment.id)
+            if clash is not None:
+                if on_conflict == "rename":
+                    attachment.stored_filename = self._suggest_name(
+                        directory_id, attachment.stored_filename, attachment.id
+                    )
+                elif on_conflict == "replace":
+                    locked = self._lock_replaceable(clash, directory_id)
+                    if locked is not None:
+                        refusal = self._replace_refusal(locked, directory_id, actor_id, replace_guard)
+                        if refusal:
+                            raise handle_conflict(refusal)
+                        self._trash(locked, actor_id)
+                else:
+                    raise self._clash_error(
+                        attachment.stored_filename, clash, directory_id,
+                        verb="restored to", exclude_id=attachment.id, viewer_id=actor_id,
+                    )
         attachment.is_deleted = False
         attachment.deleted_at = None
         attachment.deleted_by = None
         self.db.commit()
         return {"message": "Attachment restored successfully"}
 
+    def _trash(self, row: Attachment, actor_id: Optional[str]) -> None:
+        """Replace's half: the file already in the folder goes to Trash, flushed on its own."""
+        from datetime import datetime
+
+        row.is_deleted = True
+        row.deleted_at = datetime.utcnow()
+        row.deleted_by = actor_id
+        self.db.flush()
+
+    def bulk_restore_report(
+        self,
+        attachment_ids: list[str],
+        *,
+        check_only: bool = False,
+        resolutions: Optional[dict] = None,
+        viewer_id: Optional[str] = None,
+        actor_id: Optional[str] = None,
+        replace_guard=None,
+    ) -> "BulkMoveResult":
+        """Restore many files from Trash; the move's rules (check first, then one call).
+
+        ``check_only``: write nothing, return every file whose folder now shows another file of
+        the same name (or an earlier file of this batch). ``resolutions`` per file: keep /
+        rename / replace / skip; a clashing file with none stays in Trash and is named.
+        """
+        rows = (
+            exclude_private_types(self.db.query(Attachment))
+            .filter(Attachment.id.in_(attachment_ids), Attachment.is_deleted.is_(True))
+            .all()
+        )
+        if not rows:
+            return BulkMoveResult(0, [])
+        position = {str(aid): i for i, aid in enumerate(attachment_ids)}
+        rows.sort(key=lambda r: position.get(str(r.id), len(position)))
+        if check_only:
+            claimed: dict[tuple[str, str], Attachment] = {}
+            conflicts: list[dict] = []
+            for row in rows:
+                if not row.directory_id:
+                    continue
+                key = (str(row.directory_id), (row.stored_filename or "").lower())
+                clash = self._folder_clash(row.directory_id, row.stored_filename, exclude_id=row.id) or claimed.get(key)
+                if clash is not None:
+                    conflicts.append(
+                        self._not_moved_entry(str(row.id), row.stored_filename, clash, str(row.directory_id), viewer_id)
+                    )
+                    continue
+                claimed[key] = row
+            return BulkMoveResult(0, conflicts)
+
+        resolutions = {str(k): (v or {}) for k, v in (resolutions or {}).items()}
+        restored = renamed = replaced_count = 0
+        not_moved: list[dict] = []
+        for row in rows:
+            row_id, file_name, directory_id = str(row.id), row.stored_filename, row.directory_id
+            action = (resolutions.get(row_id) or {}).get("action")
+            new_name: Optional[str] = None
+            to_trash: Optional[Attachment] = None
+            clash = (
+                self._folder_clash(directory_id, file_name, exclude_id=row_id) if directory_id else None
+            )
+            if action == "skip":
+                not_moved.append(self._not_moved_entry(row_id, file_name, clash, directory_id, viewer_id))
+                continue
+            if clash is not None:
+                if action == "keep":
+                    pass
+                elif action == "rename":
+                    new_name = ((resolutions[row_id].get("name") or "").strip()) or self._suggest_name(
+                        directory_id, file_name, row_id
+                    )
+                    taken = self._folder_clash(directory_id, new_name, exclude_id=row_id)
+                    if taken is not None:
+                        not_moved.append(self._not_moved_entry(row_id, new_name, taken, directory_id, viewer_id))
+                        continue
+                elif action == "replace":
+                    locked = self._lock_replaceable(clash, directory_id)
+                    refusal = (
+                        self._replace_refusal(locked, directory_id, actor_id, replace_guard)
+                        if locked is not None
+                        else None
+                    )
+                    if refusal:
+                        entry = self._not_moved_entry(row_id, file_name, clash, directory_id, viewer_id)
+                        entry["message"] = refusal
+                        not_moved.append(entry)
+                        continue
+                    to_trash = locked
+                else:
+                    not_moved.append(self._not_moved_entry(row_id, file_name, clash, directory_id, viewer_id))
+                    continue
+            if to_trash is not None:
+                self._trash(to_trash, actor_id)
+            if new_name is not None:
+                row.stored_filename = new_name
+            row.is_deleted = False
+            row.deleted_at = None
+            row.deleted_by = None
+            self.db.flush()
+            restored += 1
+            renamed += new_name is not None
+            replaced_count += to_trash is not None
+        self.db.commit()
+        return BulkMoveResult(restored, not_moved, renamed, replaced_count)
+
     def restore_attachments_in_directories(self, directory_ids: list[str]) -> int:
         """Restore all archived attachments whose directory_id is in the given list. Returns count."""
+        return self.restore_attachments_in_directories_report(directory_ids)[0]
+
+    def restore_attachments_in_directories_report(self, directory_ids: list[str]) -> tuple[int, list[str]]:
+        """Restore every archived file in these folders, in one bulk UPDATE.
+
+        No window here: while a folder sits in Trash nothing new can be filed into it, and
+        same names are allowed anyway (owner, 12 Nov). The empty list keeps the response shape.
+        """
         if not directory_ids:
-            return 0
-        q = self.db.query(Attachment).filter(
-            Attachment.directory_id.in_(directory_ids),
-            Attachment.is_deleted == True,
+            return 0, []
+        count = (
+            self.db.query(Attachment)
+            .filter(Attachment.directory_id.in_(directory_ids), Attachment.is_deleted == True)  # noqa: E712
+            .update(
+                {
+                    Attachment.is_deleted: False,
+                    Attachment.deleted_at: None,
+                    Attachment.deleted_by: None,
+                },
+                synchronize_session=False,
+            )
         )
-        count = q.update(
-            {
-                Attachment.is_deleted: False,
-                Attachment.deleted_at: None,
-                Attachment.deleted_by: None,
-            },
-            synchronize_session=False,
-        )
-        return count
+        return count, []
 
     def _s3_key_from_file_path(self, file_path: str) -> str:
         """Extract S3 key from file_path (URL or raw key)."""

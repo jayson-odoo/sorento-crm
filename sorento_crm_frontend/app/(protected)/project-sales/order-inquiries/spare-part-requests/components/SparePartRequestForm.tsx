@@ -1,0 +1,776 @@
+'use client';
+
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
+import { useRouter } from 'next/navigation';
+import { ChevronDown, ChevronRight, Plus } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu';
+import { Skeleton } from '@/components/ui/skeleton';
+import { DatePickerField } from '@/components/ui/date-picker';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { NumberInput } from '@/components/ui/number-input';
+import { Textarea } from '@/components/ui/textarea';
+import { FormSection } from '@/components/common/FormSection';
+import {
+  SearchableSelect,
+  type SearchableSelectOption,
+} from '@/components/common/SearchableSelect';
+import { BASE_CURRENCY, CURRENCY_NAMED_OPTIONS } from '@/lib/currencies';
+import { formatDateInMalaysia } from '@/lib/helpers';
+import { codeWithName } from '@/lib/product-display';
+import { searchProductOptions } from '@/app/(protected)/scm/services/scmOptionsService';
+import { toast } from '@/lib/toast';
+import { formatMoneyExact } from '../../../_shared/lib/money';
+import { OrderInquiryStockGrid } from '../../../_shared/components/OrderInquiryStockGrid';
+import { SoLineAttachmentsButton } from '../../../_shared/components/SoLineAttachmentsButton';
+import {
+  useSoLineAttachmentLookup,
+  useUploadSoLineAttachments,
+} from '../../../_shared/hooks/useSoLineAttachments';
+import {
+  SPARE_PART_REQUESTS_PATH,
+  canEditSparePartPhotos,
+} from '../../../_shared/lib/sparePartRequest';
+import {
+  useSaveSparePartRequest,
+  useSparePartLocations,
+  useSparePartRequest,
+  useSubmitSparePartRequest,
+} from '../../../_shared/hooks/useSparePartRequest';
+import {
+  SparePartRequestError,
+  type SparePartRequest,
+  type SparePartRequestInput,
+} from '../../../_shared/services/sparePartRequestService';
+
+/** The catalogue by code and name (UAC R2), valued by product id. */
+const searchProducts = (query: string, pageIndex: number) =>
+  searchProductOptions(query, pageIndex, 'id', ' - ');
+
+type SectionKey = 'request' | 'lines';
+
+interface DraftLine {
+  key: string;
+  id?: string;
+  product: SearchableSelectOption | null;
+  /** G1: starts as the picked product's name; the requester may change it. */
+  description: string;
+  stockLocation: string;
+  qty: number | null;
+  unitPrice: number | null;
+}
+
+interface Problems {
+  currency?: string;
+  lines?: string;
+  byLine: Record<string, string>;
+}
+
+let lineSeq = 0;
+const newLine = (): DraftLine => ({
+  key: `new-${(lineSeq += 1)}`,
+  product: null,
+  description: '',
+  stockLocation: '',
+  qty: null,
+  unitPrice: null,
+});
+
+function lineTotal(line: DraftLine): string | null {
+  if (line.qty == null || line.unitPrice == null) return null;
+  if (Number.isNaN(line.qty) || Number.isNaN(line.unitPrice)) return null;
+  return (line.qty * line.unitPrice).toFixed(4);
+}
+
+/** A saved request's line ids onto the form's lines (R2): each line with a product takes the
+ *  first unclaimed saved line of the same product, so the next save updates those rows. */
+function withSavedIds(
+  lines: DraftLine[],
+  saved: SparePartRequest,
+): DraftLine[] {
+  const unclaimed = [...saved.lines];
+  return lines.map((line) => {
+    if (!line.product) return line;
+    const at = unclaimed.findIndex((l) => l.product_id === line.product?.value);
+    if (at < 0) return line;
+    const [match] = unclaimed.splice(at, 1);
+    return { ...line, id: match.id };
+  });
+}
+
+function fromRequest(request: SparePartRequest): DraftLine[] {
+  return request.lines.map((l) => ({
+    key: l.id,
+    id: l.id,
+    product: l.product_id
+      ? {
+          value: l.product_id,
+          label: codeWithName(l.item_code, l.product_name ?? l.description),
+        }
+      : null,
+    description: l.description ?? '',
+    stockLocation: l.stock_location ?? '',
+    qty: l.qty == null ? null : Number(l.qty),
+    unitPrice: l.unit_price == null ? null : Number(l.unit_price),
+  }));
+}
+
+/**
+ * SPARE-PART-ORDER-REQUEST (UAC R1, R2, R5, R6): the New / Edit spare part request form,
+ * laid out like the price tag request form (`PriceTagRequestForm.tsx`): sections that open
+ * in turn (Request, then Products once a currency is chosen), each with a one-line summary
+ * while folded. Lines name a catalogue product (searched by code and name), a location that
+ * starts as the header default, qty and unit price; each line's stock table is a chevron
+ * away and, once saved, its photos are the fulfilment paperclip. Submit is the one main
+ * button; Save as draft keeps it editable.
+ */
+export function SparePartRequestForm({ id }: { id?: string } = {}) {
+  const router = useRouter();
+  const existing = useSparePartRequest(id);
+  // R2: the draft this form has written to. Set by the first save of a New form, so a
+  // refused Submit followed by another Submit or Save updates that draft, never a second one.
+  const [savedId, setSavedId] = useState<string | undefined>(id);
+  const locations = useSparePartLocations();
+  const save = useSaveSparePartRequest();
+  const submit = useSubmitSparePartRequest();
+
+  const [currency, setCurrency] = useState<string>(id ? '' : BASE_CURRENCY);
+  const [neededBy, setNeededBy] = useState<string | null>(null);
+  const [defaultLocation, setDefaultLocation] = useState('');
+  const [reason, setReason] = useState('');
+  const [lines, setLines] = useState<DraftLine[]>(() =>
+    id ? [] : [newLine()],
+  );
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  // The line the row menu was opened on.
+  const [menuLineKey, setMenuLineKey] = useState<string | null>(null);
+  // Capture phase, ahead of the menu's own handler: a right-click on no line stops here, so
+  // the menu stays shut and the browser shows its own.
+  const pickMenuLine = (event: MouseEvent<HTMLDivElement>) => {
+    const row = (event.target as Element).closest('tr[data-line-key]');
+    if (!row) {
+      event.stopPropagation();
+      return;
+    }
+    setMenuLineKey(row.getAttribute('data-line-key'));
+  };
+  const [problems, setProblems] = useState<Problems>({ byLine: {} });
+  // G4: files picked on a line before it exists (keyed by the form's line key), uploaded to
+  // that line right after the save that makes it.
+  const [heldFiles, setHeldFiles] = useState<Record<string, File[]>>({});
+  const uploadPhotos = useUploadSoLineAttachments();
+  const loadedRef = useRef(false);
+
+  useEffect(() => {
+    const request = existing.data;
+    if (!request || loadedRef.current) return;
+    loadedRef.current = true;
+    setCurrency(request.currency ?? '');
+    setNeededBy(request.needed_by ?? null);
+    setDefaultLocation(request.default_location ?? '');
+    setReason(request.reason ?? '');
+    setLines(request.lines.length ? fromRequest(request) : [newLine()]);
+  }, [existing.data]);
+
+  // ---- Sections, as PriceTagRequestForm (openSectionOnce): a rule opens a section once,
+  // and a section folded by hand is never reopened by a rule.
+  const [sectionOpen, setSectionOpen] = useState<Record<SectionKey, boolean>>({
+    request: true,
+    lines: false,
+  });
+  const sectionSettledRef = useRef<Set<SectionKey>>(new Set());
+  const openSectionOnce = useCallback((key: SectionKey) => {
+    if (sectionSettledRef.current.has(key)) return;
+    sectionSettledRef.current.add(key);
+    setSectionOpen((prev) => (prev[key] ? prev : { ...prev, [key]: true }));
+  }, []);
+  const toggleSection = useCallback((key: SectionKey, next: boolean) => {
+    sectionSettledRef.current.add(key);
+    setSectionOpen((prev) => ({ ...prev, [key]: next }));
+  }, []);
+  useEffect(() => {
+    if (currency) openSectionOnce('lines');
+  }, [currency, openSectionOnce]);
+
+  const total = useMemo(
+    () =>
+      lines
+        .reduce((sum, line) => sum + Number(lineTotal(line) ?? 0), 0)
+        .toFixed(4),
+    [lines],
+  );
+  const summaries: Record<SectionKey, string | null> = {
+    request:
+      [
+        currency || null,
+        neededBy ? `needed by ${formatDateInMalaysia(neededBy)}` : null,
+      ]
+        .filter(Boolean)
+        .join(', ') || null,
+    lines: lines.some((l) => l.product)
+      ? `${lines.length} line${lines.length === 1 ? '' : 's'}, ${formatMoneyExact(total, currency)}`
+      : null,
+  };
+
+  const savedRowIds = useMemo(
+    () => lines.map((l) => l.id).filter(Boolean) as string[],
+    [lines],
+  );
+  const photos = useSoLineAttachmentLookup(savedRowIds, 'order_inquiry_row');
+  // A new form's draft is its requester's to edit once its first save has landed. While it
+  // waits for approval the photos are the approver's (G5).
+  const canEditPhotos = existing.data
+    ? canEditSparePartPhotos(existing.data)
+    : !id && Boolean(savedId);
+  // G5: the requester's edit while pending saves straight back into approval.
+  const pending = existing.data?.state === 'pending_approval';
+  // A line not saved yet holds its photos until the save (never while pending: the
+  // upload after it would be refused).
+  const canHoldPhotos = !id || canEditPhotos;
+
+  const updateLine = (key: string, patch: Partial<DraftLine>) =>
+    setLines((prev) =>
+      prev.map((l) => (l.key === key ? { ...l, ...patch } : l)),
+    );
+
+  const body = (): SparePartRequestInput => ({
+    currency: currency || null,
+    needed_by: neededBy,
+    default_location: defaultLocation || null,
+    reason: reason.trim() || null,
+    lines: lines
+      .filter((l) => l.product)
+      .map((l) => ({
+        id: l.id ?? null,
+        product_id: l.product?.value ?? null,
+        description: l.description.trim() || null,
+        stock_location: l.stockLocation || null,
+        qty: l.qty == null || Number.isNaN(l.qty) ? null : String(l.qty),
+        unit_price:
+          l.unitPrice == null || Number.isNaN(l.unitPrice)
+            ? null
+            : String(l.unitPrice),
+      })),
+  });
+
+  /** R5: what Submit needs, said next to the field it is about. */
+  const checkForSubmit = (): Problems => {
+    const found: Problems = { byLine: {} };
+    if (!currency) found.currency = 'Choose the currency.';
+    const chosen = lines.filter((l) => l.product);
+    if (chosen.length === 0) found.lines = 'Add at least one product.';
+    for (const line of lines) {
+      if (!line.product) {
+        if (chosen.length > 0 && (line.qty != null || line.unitPrice != null)) {
+          found.byLine[line.key] = 'Choose a product.';
+        }
+        continue;
+      }
+      if (line.qty == null || Number.isNaN(line.qty) || line.qty <= 0) {
+        found.byLine[line.key] = 'Enter a quantity above 0.';
+      } else if (
+        line.unitPrice != null &&
+        (Number.isNaN(line.unitPrice) || line.unitPrice < 0)
+      ) {
+        found.byLine[line.key] = 'The unit price cannot be negative.';
+      } else if (!line.stockLocation && !defaultLocation) {
+        found.byLine[line.key] = 'Choose a location.';
+      }
+    }
+    return found;
+  };
+
+  /** S1: a line holding photos but no product is never saved (its photos would be lost). */
+  const heldWithoutProduct = (): Problems['byLine'] => {
+    const byLine: Problems['byLine'] = {};
+    for (const line of lines) {
+      if (!line.product && heldFiles[line.key]?.length) {
+        byLine[line.key] = 'Choose a product for this line, or its photos cannot be kept.';
+      }
+    }
+    return byLine;
+  };
+
+  const showServerProblem = (error: unknown) => {
+    const message =
+      error instanceof Error ? error.message : 'Something went wrong.';
+    const field =
+      error instanceof SparePartRequestError ? error.field : undefined;
+    if (field === 'currency') setProblems({ byLine: {}, currency: message });
+    else if (field === 'lines' || field === 'qty' || field === 'unit_price')
+      setProblems({ byLine: {}, lines: message });
+    else toast.error(message);
+  };
+
+  // R7: an Edit form writes nothing until its request has loaded (an empty `lines` would
+  // remove every line and its photos).
+  const notLoaded = Boolean(id) && !existing.data;
+  const busy = save.isPending || submit.isPending || notLoaded;
+
+  const busyAll = busy || uploadPhotos.isPending;
+
+  /** G4: the held files go to the lines the save just made. True when every upload landed;
+   *  a failed one keeps its files on the form (the hook says why), so a second save retries. */
+  const uploadHeld = async (saved: SparePartRequest): Promise<boolean> => {
+    const placed = withSavedIds(lines, saved);
+    let ok = true;
+    for (const line of placed) {
+      const files = heldFiles[line.key];
+      if (!line.id || !files?.length) continue;
+      try {
+        await uploadPhotos.mutateAsync({ lineId: line.id, files, kind: 'order_inquiry_row' });
+        setHeldFiles((prev) => {
+          const next = { ...prev };
+          delete next[line.key];
+          return next;
+        });
+      } catch {
+        ok = false;
+      }
+    }
+    return ok;
+  };
+
+  const persist = async () => {
+    const saved = await save.mutateAsync({ id: savedId, body: body() });
+    setSavedId(saved.id);
+    setLines((prev) => withSavedIds(prev, saved));
+    return saved;
+  };
+
+  /** G2: every save lands on the request's own record page. */
+  const openRecord = (savedRequestId: string) =>
+    router.push(`${SPARE_PART_REQUESTS_PATH}/${savedRequestId}`);
+
+  const onSaveDraft = async () => {
+    if (busyAll) return;
+    const held = heldWithoutProduct();
+    setProblems({ byLine: held });
+    if (Object.keys(held).length) {
+      toggleSection('lines', true);
+      return;
+    }
+    try {
+      const saved = await persist();
+      if (!(await uploadHeld(saved))) return;
+      toast.success('Saved as draft');
+      openRecord(saved.id);
+    } catch (error) {
+      showServerProblem(error);
+    }
+  };
+
+  const onSubmit = async () => {
+    if (busyAll) return;
+    const checked = checkForSubmit();
+    const found = { ...checked, byLine: { ...checked.byLine, ...heldWithoutProduct() } };
+    setProblems(found);
+    if (found.currency || found.lines || Object.keys(found.byLine).length) {
+      if (found.lines || Object.keys(found.byLine).length)
+        toggleSection('lines', true);
+      return;
+    }
+    try {
+      const saved = await persist();
+      if (!(await uploadHeld(saved))) return;
+      if (pending) {
+        // G5: the save itself restarted approval at the first level.
+        toast.success('Submitted again for approval');
+      } else {
+        await submit.mutateAsync(saved.id);
+      }
+      openRecord(saved.id);
+    } catch (error) {
+      showServerProblem(error);
+    }
+  };
+
+  if (id && existing.isError) {
+    return (
+      <div className="space-y-3 rounded-md border border-border p-6 text-center">
+        <p className="text-sm font-semibold">Could not load this request</p>
+        <p className="text-sm text-muted-foreground">
+          {existing.error instanceof Error
+            ? existing.error.message
+            : 'Try again in a moment.'}
+        </p>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => void existing.refetch()}
+        >
+          Try again
+        </Button>
+      </div>
+    );
+  }
+
+  if (notLoaded) {
+    return (
+      <div className="space-y-4" role="status" aria-label="Loading the request">
+        <Skeleton className="h-40 w-full" />
+        <Skeleton className="h-64 w-full" />
+      </div>
+    );
+  }
+
+  if (id && existing.data && !existing.data.can_edit) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        This request can no longer be edited.
+      </p>
+    );
+  }
+
+  const locationOptions = locations.data ?? [];
+  const defaultLabel = defaultLocation
+    ? `Default (${defaultLocation})`
+    : 'Choose a location';
+
+  return (
+    // D4: min-w-0 so the page never grows to the lines table's width at 375 (it scrolls in
+    // its own box instead).
+    <div className="min-w-0 space-y-4">
+      <FormSection
+        title="Request"
+        summary={summaries.request}
+        open={sectionOpen.request}
+        onOpenChange={(next) => toggleSection('request', next)}
+      >
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label htmlFor="spr-currency">Currency *</Label>
+            <SearchableSelect
+              id="spr-currency"
+              value={currency}
+              onChange={(value) => {
+                setCurrency(value);
+                setProblems((p) => ({ ...p, currency: undefined }));
+              }}
+              options={CURRENCY_NAMED_OPTIONS}
+              placeholder="Choose the currency"
+            />
+            {problems.currency ? (
+              <p className="text-xs text-destructive">{problems.currency}</p>
+            ) : null}
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="spr-needed-by">Needed by</Label>
+            <DatePickerField
+              id="spr-needed-by"
+              value={neededBy}
+              onChange={setNeededBy}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="spr-default-location">Default location</Label>
+            <SearchableSelect
+              id="spr-default-location"
+              value={defaultLocation}
+              onChange={setDefaultLocation}
+              options={locationOptions}
+              loadError={locations.error}
+              onRetry={() => void locations.refetch()}
+              placeholder="No default"
+              clearable
+            />
+          </div>
+          <div className="space-y-1.5 sm:col-span-2">
+            <Label htmlFor="spr-reason">Reason</Label>
+            <Textarea
+              id="spr-reason"
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+              rows={3}
+            />
+          </div>
+        </div>
+      </FormSection>
+
+      <FormSection
+        title="Products"
+        summary={summaries.lines}
+        open={sectionOpen.lines}
+        onOpenChange={(next) => toggleSection('lines', next)}
+        bodyClassName="p-0"
+      >
+        {/* relative: the containing block of the table's sr-only labels (absolutely
+            positioned), so none escapes this scroller and widens the page at 375 (a3). */}
+        {/* Owner rule: rows carry no Remove button. A right-click (a long press on touch) on a
+            line opens its menu, the quotation lines grid's pattern (`QuotationLinesGrid.tsx`). */}
+        <ContextMenu modal={false}>
+          <ContextMenuTrigger asChild>
+            <div
+              className="relative overflow-x-auto"
+              onContextMenuCapture={pickMenuLine}
+            >
+              {/* 920px of columns: fits the card at 1280 (935px inside); below that the table
+              scrolls inside its own box, so 375 stays usable. */}
+              <table className="w-full min-w-[920px] table-fixed text-sm">
+                <thead className="border-b border-border bg-muted/40 text-left text-xs text-muted-foreground">
+                  <tr>
+                    <th className="w-12 px-3 py-2 font-medium">No.</th>
+                    <th className="w-44 px-3 py-2 font-medium">Product</th>
+                    <th className="w-44 px-3 py-2 font-medium">Description</th>
+                    <th className="w-32 px-3 py-2 font-medium">Location</th>
+                    <th className="w-24 px-3 py-2 text-right font-medium">
+                      Qty
+                    </th>
+                    <th className="w-28 px-3 py-2 text-right font-medium">
+                      Unit price
+                    </th>
+                    <th className="w-32 px-3 py-2 text-right font-medium">
+                      Total
+                    </th>
+                    <th className="w-[72px] px-3 py-2">
+                      <span className="sr-only">Actions</span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lines.map((line, index) => {
+                    const lineProblem = problems.byLine[line.key];
+                    const lineTotalValue = lineTotal(line);
+                    return [
+                      <tr
+                        key={line.key}
+                        data-line-key={line.key}
+                        className="border-b border-border align-top"
+                      >
+                        <td className="px-3 py-2">
+                          <div className="flex items-center gap-1">
+                            <Button
+                              type="button"
+                              mode="icon"
+                              variant="ghost"
+                              size="sm"
+                              className="size-6"
+                              disabled={!line.product}
+                              aria-label={`${expanded[line.key] ? 'Hide' : 'Show'} stock for line ${index + 1}`}
+                              aria-expanded={Boolean(expanded[line.key])}
+                              onClick={() =>
+                                setExpanded((prev) => ({
+                                  ...prev,
+                                  [line.key]: !prev[line.key],
+                                }))
+                              }
+                            >
+                              {expanded[line.key] ? (
+                                <ChevronDown className="size-3.5" aria-hidden />
+                              ) : (
+                                <ChevronRight
+                                  className="size-3.5"
+                                  aria-hidden
+                                />
+                              )}
+                            </Button>
+                            <span className="tabular-nums">{index + 1}</span>
+                          </div>
+                        </td>
+                        <td className="px-3 py-2">
+                          <SearchableSelect
+                            aria-label={`Product for line ${index + 1}`}
+                            value={line.product?.value ?? ''}
+                            onChange={() => undefined}
+                            onOptionChange={(option) =>
+                              updateLine(line.key, {
+                                product: option,
+                                // G1: a new pick names the line after its product.
+                                ...(option
+                                  ? { description: option.name ?? option.label }
+                                  : {}),
+                              })
+                            }
+                            selectedOption={line.product ?? undefined}
+                            fetchOptions={searchProducts}
+                            paginated
+                            placeholder="Search code or name"
+                            wrapOptions
+                          />
+                          {lineProblem ? (
+                            <p className="mt-1 text-xs text-destructive">
+                              {lineProblem}
+                            </p>
+                          ) : null}
+                        </td>
+                        <td className="px-3 py-2">
+                          <Input
+                            aria-label={`Description for line ${index + 1}`}
+                            value={line.description}
+                            onChange={(event) =>
+                              updateLine(line.key, {
+                                description: event.target.value,
+                              })
+                            }
+                            maxLength={4000}
+                            title={line.description}
+                          />
+                        </td>
+                        <td className="px-3 py-2">
+                          <SearchableSelect
+                            aria-label={`Location for line ${index + 1}`}
+                            value={line.stockLocation}
+                            onChange={(value) =>
+                              updateLine(line.key, { stockLocation: value })
+                            }
+                            options={locationOptions}
+                            placeholder={defaultLabel}
+                            clearable
+                          />
+                        </td>
+                        <td className="px-3 py-2">
+                          <NumberInput
+                            aria-label={`Qty for line ${index + 1}`}
+                            value={line.qty}
+                            onValueChange={(qty) =>
+                              updateLine(line.key, { qty })
+                            }
+                            min={0}
+                            step="any"
+                            className="text-right tabular-nums"
+                          />
+                        </td>
+                        <td className="px-3 py-2">
+                          <NumberInput
+                            aria-label={`Unit price for line ${index + 1}`}
+                            value={line.unitPrice}
+                            onValueChange={(unitPrice) =>
+                              updateLine(line.key, { unitPrice })
+                            }
+                            min={0}
+                            step="any"
+                            className="text-right tabular-nums"
+                          />
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums">
+                          <span
+                            className="block truncate pt-2"
+                            title={
+                              lineTotalValue
+                                ? formatMoneyExact(lineTotalValue, currency)
+                                : ''
+                            }
+                          >
+                            {lineTotalValue
+                              ? formatMoneyExact(lineTotalValue, currency)
+                              : '-'}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2">
+                          <div className="flex items-center justify-end gap-1">
+                            {heldFiles[line.key]?.length ||
+                            (!line.id && canHoldPhotos) ? (
+                              <SoLineAttachmentsButton
+                                lineId={line.key}
+                                label={`Line ${index + 1} ${line.product?.label ?? ''}`.trim()}
+                                attachments={[]}
+                                canEdit
+                                held={{
+                                  files: heldFiles[line.key] ?? [],
+                                  onChange: (files) =>
+                                    setHeldFiles((prev) => ({
+                                      ...prev,
+                                      [line.key]: files,
+                                    })),
+                                }}
+                              />
+                            ) : line.id ? (
+                              <SoLineAttachmentsButton
+                                lineId={line.id}
+                                target={{
+                                  kind: 'order_inquiry_row',
+                                  id: line.id,
+                                }}
+                                label={`Line ${index + 1} ${line.product?.label ?? ''}`.trim()}
+                                attachments={photos.data[line.id] ?? []}
+                                canEdit={canEditPhotos}
+                              />
+                            ) : null}
+                          </div>
+                        </td>
+                      </tr>,
+                      expanded[line.key] && line.product ? (
+                        <tr
+                          key={`${line.key}-stock`}
+                          className="border-b border-border"
+                        >
+                          <td colSpan={8} className="px-3 py-2">
+                            <OrderInquiryStockGrid
+                              productId={line.product.value}
+                              location={
+                                line.stockLocation || defaultLocation || null
+                              }
+                            />
+                          </td>
+                        </tr>
+                      ) : null,
+                    ];
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr>
+                    <td colSpan={6} className="px-3 py-2">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setLines((prev) => [...prev, newLine()])}
+                      >
+                        <Plus className="size-4" aria-hidden />
+                        Add product
+                      </Button>
+                    </td>
+                    <td className="px-3 py-2 text-right font-medium tabular-nums">
+                      {formatMoneyExact(total, currency)}
+                    </td>
+                    <td className="px-3 py-2 text-xs text-muted-foreground">
+                      Total
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </ContextMenuTrigger>
+          <ContextMenuContent className="w-44">
+            <ContextMenuItem
+              disabled={lines.length === 1}
+              onSelect={() =>
+                setLines((prev) => prev.filter((l) => l.key !== menuLineKey))
+              }
+            >
+              Remove line
+            </ContextMenuItem>
+          </ContextMenuContent>
+        </ContextMenu>
+        {problems.lines ? (
+          <p className="px-4 pb-3 text-xs text-destructive">{problems.lines}</p>
+        ) : null}
+      </FormSection>
+
+      <div className="flex flex-wrap justify-end gap-2">
+        {/* G5: a pending request is never saved back to a draft; Submit restarts approval. */}
+        {pending ? null : (
+          <Button
+            type="button"
+            variant="outline"
+            disabled={busyAll}
+            onClick={() => void onSaveDraft()}
+          >
+            Save as draft
+          </Button>
+        )}
+        <Button type="button" disabled={busyAll} onClick={() => void onSubmit()}>
+          Submit
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+export default SparePartRequestForm;

@@ -123,8 +123,16 @@ exports[`MENU_SIDEBAR for staff is unchanged > admin with every permission: filt
             "title": "Series",
           },
           {
+            "path": "/project-sales/import",
+            "title": "Project import",
+          },
+          {
             "path": "/project-sales/price-floors",
             "title": "Price Floors",
+          },
+          {
+            "path": "/project-sales/non-cancellable",
+            "title": "Non-cancellable Items",
           },
           {
             "path": "/project-sales/quotation-templates",
@@ -303,6 +311,10 @@ exports[`MENU_SIDEBAR for staff is unchanged > admin with every permission: filt
           {
             "path": "/project-sales/order-inquiries",
             "title": "Order Inquiries",
+          },
+          {
+            "path": "/procurement-management/spare-part-requests",
+            "title": "Order Requests",
           },
           {
             "path": "/scm/purchase-orders",
@@ -532,6 +544,23 @@ exports[`MENU_SIDEBAR for staff is unchanged > admin with every permission: filt
   {
     "children": [
       {
+        "path": "/after-sales/service-jobs",
+        "title": "Service Jobs",
+      },
+      {
+        "path": "/after-sales/dispatch-board",
+        "title": "Dispatch Board",
+      },
+      {
+        "path": "/after-sales/technicians",
+        "title": "Technicians",
+      },
+    ],
+    "title": "After-Sales Service",
+  },
+  {
+    "children": [
+      {
         "path": "/sla-management/sla-policies",
         "title": "SLA Policies",
       },
@@ -587,6 +616,10 @@ exports[`MENU_SIDEBAR for staff is unchanged > admin with every permission: filt
       {
         "path": "/procurement-management/sponsorship-forms",
         "title": "Sponsorship Forms",
+      },
+      {
+        "path": "/procurement-management/order-change-notices",
+        "title": "Order Change Notices",
       },
       {
         "path": "/procurement-management/sponsorship-forms/report",
@@ -997,6 +1030,18 @@ exports[`MENU_SIDEBAR for staff is unchanged > mixed user (salesperson plus staf
       },
     ],
     "title": "Inventory",
+  },
+  {
+    "heading": "OPERATIONS",
+  },
+  {
+    "children": [
+      {
+        "path": "/procurement-management/order-change-notices",
+        "title": "Order Change Notices",
+      },
+    ],
+    "title": "Project Sales Admin",
   },
 ]
 `;
