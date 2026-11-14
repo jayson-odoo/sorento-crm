@@ -2344,9 +2344,8 @@ export function TagCanvasEditor({
     return layer as TagLayer & { props: Extract<TagLayerProps, { kind: 'image' }> };
   }, [cropEditingLayerId, layers]);
 
-  const cropImageUrl = cropEditingLayer
-    ? layerDisplay(cropEditingLayer, dataOf(cropEditingLayer), assetUrls, library.featureIcons)?.imageUrl
-    : null;
+  // The same URL the layer itself draws (AC-9.3), so the two cannot drift.
+  const cropImageUrl = cropEditingLayer ? displayFor(cropEditingLayer)?.imageUrl : null;
   const cropImage = useHtmlImage(cropImageUrl ?? null);
 
   /**
