@@ -923,6 +923,27 @@ describe('Link PO popup: rows of several products and the Qty / Action columns',
     expect(within(dialog).queryByTestId('po-link-skipped')).toBeNull();
   });
 
+  // Review round (B): the header box must not treat a skipped row as tickable.
+  it('B-5: the header box ticks only the AutoCount rows, never the skipped one', () => {
+    const dialog = renderWithSkipped([newLine('sol-1', 'SO425045')], SKIPPED);
+    const [header, only] = within(dialog).getAllByRole('checkbox');
+    fireEvent.click(only);
+    // The one real row ticked is every tickable row: the header box is fully ticked, not mixed.
+    expect(header).toHaveAttribute('aria-checked', 'true');
+    expect(rowOf(dialog, 'SO900001').querySelector('[role="checkbox"]')).toBeNull();
+  });
+
+  it('B-5: a skipped line with no CRM sales order shows "-" as its sales order and names the item on hover', () => {
+    const dialog = renderWithSkipped([newLine('sol-1', 'SO425045')], [{
+      inquiry_no: 'OI-ZZ-2', item_code: 'ITEM-Y', reason: 'Not in AutoCount yet',
+      so_number: null, line_no: null, location_code: null, delivery_date: null, open_qty: null,
+    }]);
+    const row = within(dialog).getAllByRole('row').slice(1).find((r) => r.textContent?.includes('Not in AutoCount yet')) as HTMLElement;
+    expect(row).toBeTruthy();
+    expect(row).not.toHaveTextContent('OI-ZZ-2');
+    expect(row.querySelector('[title*="ITEM-Y"]')).not.toBeNull();
+  });
+
   // Crew db3 pass on fb7c04172 (14 Nov): at 1280 px the popup's grid area is 974 px wide, the
   // seven columns of a new + linked popup summed 1015 px and the Action picker was cut off. The
   // columns of the fullest popup must fit that area with no sideways scroll.
