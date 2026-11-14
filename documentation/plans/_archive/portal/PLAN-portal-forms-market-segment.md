@@ -1,7 +1,7 @@
 # PLAN - Portal forms: grant by market segment, every kind gated, per-contact override for all five
 
-Status: r4, 16 Sep 2026: PR #963 ready for review (reviewer + security closed, browser pass green), awaiting owner test on :3082 then merge
-UAC: `documentation/plans/portal/portal-forms-market-segment-acceptance-criteria.md`
+Status: merged, PR #963 (cd0520a64), 17 Sep 2026
+UAC: `documentation/plans/_archive/portal/portal-forms-market-segment-acceptance-criteria.md`
 Branch: `feat/portal-forms-market-segment`, worktree `.claude/worktrees/portal-forms-market-segment`
 Lane stack: FE :3080, BE :8080, DB `sorento_pfms` (clone of the dev DB, see Lane setup)
 
