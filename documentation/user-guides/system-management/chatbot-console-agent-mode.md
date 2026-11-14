@@ -13,6 +13,12 @@ Open **System > Messaging > Chatbot Console** (`/system-management/chatbot-conso
 
 The page has two tabs at the top: **Bot** and **Agent**. It opens on **Bot**.
 
+**Prompt version** (next to the contact picker) opens on the version the live bot runs, the one
+marked **production**, so a test turn answers the way WhatsApp would. Pick another version to try
+it for this visit only; reopening the page goes back to the production one. When no version is
+marked production yet, the box is empty and the turn uses the built-in prompt, the same as the
+live bot. The version a turn ran shows next to the message box as **Parser v62** (for example).
+
 ## Before you start: turn Agent mode on for the contact
 
 The agent only works for a contact that is allowed to use it. On the contact's page

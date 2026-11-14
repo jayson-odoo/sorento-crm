@@ -1366,6 +1366,7 @@ def log_respond_send(
     response: Optional[object] = None,
     exc: Optional[BaseException] = None,
     endpoint: Optional[str] = None,
+    http_method: Optional[str] = None,
 ) -> None:
     """Write one Respond.io outbox row for a send that did NOT go through
     ``respond_io_tasks._send_and_log``.
@@ -1421,7 +1422,7 @@ def log_respond_send(
                     endpoint
                     or respond_endpoint(f"/v2/contact/id:{identifier or ''}/message")
                 ),
-                http_method="POST",
+                http_method=http_method or "POST",
                 status="failed" if exc is not None else "success",
                 status_code=status_code,
                 response_payload=response_body,

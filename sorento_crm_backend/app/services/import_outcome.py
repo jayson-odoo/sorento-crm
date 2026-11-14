@@ -440,39 +440,43 @@ class ImportOutcome:
         return envelope
 
 
-def prune_import_job_rows(db, *, retention_days: int, batch_size: int = 5000) -> dict:
+def prune_import_job_rows(
+    db,
+    *,
+    retention_days: int,
+    batch_size: int = 5000,
+    dry_run: bool = False,
+    sleep_ms: int = 0,
+    max_seconds: Optional[float] = None,
+) -> dict:
     """Delete per-row import detail older than the retention window.
 
-    Keyset-batched: a full-history sweep of millions of rows must not be one
-    unbounded DELETE holding a lock for minutes. Counts and the aggregated
-    breakdown live on ``import_jobs.result`` and are untouched.
+    Keyset-batched (``data_retention_service.batched_delete``): a full-history sweep of
+    millions of rows must not be one unbounded DELETE holding a lock for minutes. Counts
+    and the aggregated breakdown live on ``import_jobs.result`` and are untouched.
     """
     from datetime import timedelta
 
     from app.models.job import ImportJobRow
+    from app.services.data_retention_service import batched_delete, rule_result
 
     cutoff = datetime.utcnow() - timedelta(days=int(retention_days))
-    total_deleted = 0
-    while True:
-        ids = [
-            row_id
-            for (row_id,) in db.query(ImportJobRow.id)
-            .filter(ImportJobRow.created_at < cutoff)
-            .limit(batch_size)
-            .all()
-        ]
-        if not ids:
-            break
-        deleted = (
-            db.query(ImportJobRow)
-            .filter(ImportJobRow.id.in_(ids))
-            .delete(synchronize_session=False)
-        )
-        db.commit()
-        total_deleted += deleted
-        if deleted == 0:  # defensive: never spin
-            break
-    return {"rows_deleted": total_deleted, "retention_days": int(retention_days)}
+    deleted, finished = batched_delete(
+        db,
+        ImportJobRow,
+        ImportJobRow.created_at < cutoff,
+        dry_run=dry_run,
+        batch_size=batch_size,
+        sleep_ms=sleep_ms,
+        max_seconds=max_seconds,
+    )
+    return rule_result(
+        "import_job_rows_prune",
+        dry_run=dry_run,
+        finished=finished,
+        rows_deleted=int(deleted),
+        retention_days=int(retention_days),
+    )
 
 
 def _json_safe_identity(identity: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:

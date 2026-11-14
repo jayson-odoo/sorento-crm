@@ -81,6 +81,7 @@ from app.services.chatbot import console_service, crm_sender
 from app.services.chatbot.analytics import topic_audit
 from app.services.chatbot.contracts import TURN_STAGES
 from app.services.chatbot.trace_detail import compose_trace_detail
+from app.services import ai_prompt_registry
 from app.services.error_handler import AppException
 from app.utils.multi_value import multi_values
 from app.services.integration_service import IntegrationLogService
@@ -1114,6 +1115,7 @@ def console_prompt_versions(
     can pin one for the run (the same `prompt_overrides` harness key the Prompts screen's
     "Run a turn" test uses). `label` is whichever `ai_prompt_labels` row (production,
     staging, ...) currently points at that version, or null for one nothing points at.
+    `serving` marks the one production runs; the console defaults to it.
     """
     rows = (
         db.query(AIPromptVersion)
@@ -1132,6 +1134,10 @@ def console_prompt_versions(
         # same row); joined rather than picking one arbitrarily, so the console shows both.
         existing = label_by_version_id.get(str(version_id))
         label_by_version_id[str(version_id)] = f"{existing}, {label}" if existing else label
+    # CONSOLE-DEFAULT-PROMPT: the version the live parser runs, through its own lookup
+    # (`head/parser.py` calls the same `get_prompt`). None = no labelled row, so production
+    # runs the code prompt and nothing here is serving.
+    serving_version = ai_prompt_registry.get_prompt(db, console_service.PARSER_PROMPT_KEY).version
     return [
         ConsolePromptVersion(
             id=str(row.id),
@@ -1139,6 +1145,7 @@ def console_prompt_versions(
             label=label_by_version_id.get(str(row.id)),
             chars=len(row.template or ""),
             base=console_service.prompt_base(row.template),
+            serving=serving_version is not None and int(row.version) == serving_version,
         )
         for row in rows
     ]

@@ -57,7 +57,27 @@ export function SparePartRequestRecord({ id }: { id: string }) {
   const [tab, setTab] = useState('lines');
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [historyLine, setHistoryLine] = useState<OrderInquiryLine | null>(null);
-  const lines = useMemo(() => linesQuery.data ?? NO_ROWS, [linesQuery.data]);
+  const request = requestQuery.data;
+  const revisionState = request?.revision_state ?? null;
+  // U4.6: while a revision is open this page reads its qtys and totals (the request's own
+  // `lines[]`), measured against the APPROVED qty (the row's own `qty`, which the order
+  // inquiry keeps reading): the History icon and the Approve popup's changes compare the
+  // revision with what was approved, not with the first submission.
+  const lines = useMemo(() => {
+    const rows = linesQuery.data ?? NO_ROWS;
+    if (!revisionState || !request) return rows;
+    const revised = new Map(request.lines.map((line) => [line.id, line]));
+    return rows.map((row) => {
+      const line = revised.get(row.id);
+      if (!line) return row;
+      return {
+        ...row,
+        qty: line.qty,
+        submitted_qty: row.qty,
+        line_total: line.total ?? row.line_total,
+      };
+    });
+  }, [linesQuery.data, request, revisionState]);
   // The same key FormSLATrackingTab reads, so the tab and the banner share one request.
   const { data: slaTrackers } = useQuery({
     queryKey: ['form-sla-trackers', 'spare_part_request', id],
@@ -71,8 +91,6 @@ export function SparePartRequestRecord({ id }: { id: string }) {
       editLine.mutate({ rowId: row.id, edit }),
     [editLine],
   );
-
-  const request = requestQuery.data;
 
   if (requestQuery.isLoading) {
     return (
@@ -105,8 +123,13 @@ export function SparePartRequestRecord({ id }: { id: string }) {
       <RecordHeaderCard
         title={request.inquiry_no ?? 'Order request'}
         badges={
-          <Badge variant={sparePartStateVariant(request.state)} appearance="light" size="md">
-            {sparePartRequestStatusLabel(request.state)}
+          // U4.6: an open revision's own state, else the request's.
+          <Badge
+            variant={sparePartStateVariant(revisionState ?? request.state)}
+            appearance="light"
+            size="md"
+          >
+            {sparePartRequestStatusLabel(revisionState ?? request.state)}
           </Badge>
         }
         subtitle={[
@@ -171,7 +194,10 @@ export function SparePartRequestRecord({ id }: { id: string }) {
             onRowSelectionChange={setRowSelection}
             onLineHistoryClick={setHistoryLine}
             sparePart={{
+              view: 'request',
               headerState: request.state,
+              revisionState,
+              canEditRevision: Boolean(request.can_edit),
               canDecide: Boolean(request.can_decide),
               canEditPhotos: canEditSparePartPhotos(request),
               currency: request.currency,

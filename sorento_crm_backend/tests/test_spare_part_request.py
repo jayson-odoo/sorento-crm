@@ -438,35 +438,12 @@ def test_T10_only_the_requester_edits_a_rejected_request(staged):
 
 
 # =============================================================================
-# T11 - revise until purchasing acknowledges (V1, V2)
+# T11 - revise (V1, V2). SPARE-PART-OR-B (owner 14 Nov, U4.2) replaced "back to draft until
+# purchasing acknowledges" with a revision on the same record whatever purchasing did; the
+# two clean-slate tests that pinned the old rule are covered by
+# tests/test_spare_part_or_b_revision.py (test_U4_2_revise_opens_a_revision_and_leaves_the_
+# approved_request_working, test_U4_2_revise_is_allowed_after_purchasing_acknowledged_a_row).
 # =============================================================================
-
-
-def test_T11_revise_after_final_approval_with_nothing_acknowledged_returns_to_draft(staged):
-    inquiry = raised(staged)
-    svc().revise(staged.db, inquiry, staged.requester)
-    staged.db.commit()
-    inquiry = reload(staged.db, inquiry)
-    assert inquiry.state == "draft"
-    assert inquiry.approved_at is None and inquiry.approved_by is None
-    assert all(r.state == "draft" for r in rows_of(staged.db, inquiry))
-    assert not trackers(staged.db, KIND, inquiry.id, open_only=True)
-
-
-def test_T11_revise_after_purchasing_acknowledged_a_row_is_409(staged):
-    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
-
-    inquiry = raised(staged)
-    row = row_for(staged.db, inquiry, staged.product_a)
-    ProjectOrderInquiryService(staged.db).acknowledge_rows([str(row.id)], actor_user_id=staged.buyer)
-    staged.db.commit()
-    assert row_for(staged.db, inquiry, staged.product_a).ack_state == "acknowledged"
-
-    with pytest.raises(AppException) as excinfo:
-        svc().revise(staged.db, reload(staged.db, inquiry), staged.requester)
-    assert excinfo.value.status_code == 409
-    staged.db.rollback()
-    assert reload(staged.db, inquiry).state == "raised"
 
 
 def test_T11_only_the_requester_revises(staged):

@@ -100,6 +100,37 @@ export function multiplyMoney(
   return formatScaled({ units: cents, dp: MONEY_DP });
 }
 
+/** How many decimals a PO intake unit price carries (the server's Numeric(?, 5)). */
+const PRICE_DP = 5;
+
+/**
+ * A PO intake line amount, `qty * unit_price` to the cent, reading the unit price at its full
+ * 5 decimals and rounding HALF-EVEN, the same rule as the server's Decimal quantize
+ * (`project_po_reading.line_amount`), so a live preview and the saved figure always agree:
+ * 100 x 1.25500 is 125.50 and 1 x 1.24500 is 1.24. BigInt arithmetic (via `BigInt()` calls,
+ * not literals) because a 4-dp qty times a 5-dp price can pass 2^53 on a large line.
+ */
+export function lineAmount(
+  qty: string | null | undefined,
+  unitPrice: string | null | undefined,
+): string | null {
+  const quantity = parseScaled(qty, QTY_DP);
+  const price = parseScaled(unitPrice, PRICE_DP);
+  if (!quantity || !price) return null;
+  const product = BigInt(quantity.units) * BigInt(price.units); // scale = QTY_DP + PRICE_DP
+  const negative = product < BigInt(0);
+  const magnitude = negative ? -product : product;
+  const divisor = BigInt(10) ** BigInt(QTY_DP + PRICE_DP - MONEY_DP);
+  let cents = magnitude / divisor;
+  const twice = (magnitude % divisor) * BigInt(2);
+  if (twice > divisor || (twice === divisor && cents % BigInt(2) === BigInt(1))) {
+    cents += BigInt(1);
+  }
+  const units = Number(negative ? -cents : cents);
+  if (!Number.isSafeInteger(units)) return null;
+  return formatScaled({ units, dp: MONEY_DP });
+}
+
 export function isMoneyZero(value: string | null | undefined): boolean {
   const parsed = parseScaled(value, MONEY_DP);
   return parsed ? parsed.units === 0 : false;

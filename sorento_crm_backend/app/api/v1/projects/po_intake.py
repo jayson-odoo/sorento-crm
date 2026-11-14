@@ -290,8 +290,58 @@ def update_purchase_order_version_line(
         service, version = _version_for_edit(db, po_version_id, current_user)
         line = service.get_line(str(version.id), line_id)
         service.update_line(
-            version=version, line=line, payload=payload.model_dump(exclude_unset=True)
+            version=version,
+            line=line,
+            payload=payload.model_dump(exclude_unset=True),
+            actor_user_id=current_user["id"],
         )
+        body = service.serialize_version(version)
+        db.commit()
+        return body
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post(
+    "/purchase-order-versions/{po_version_id}/lines/{line_id}/accept-suggestion",
+    response_model=POVersionDetailResponse,
+)
+def accept_purchase_order_line_suggestion(
+    po_version_id: str,
+    line_id: str,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """AC-A1. Accept the line's suggested product and/or qty; an accepted product is
+    remembered for this customer. Returns the whole version, as a line edit does."""
+    try:
+        validate_uuid_path(line_id, resource="PO line")
+        service, version = _version_for_edit(db, po_version_id, current_user)
+        line = service.get_line(str(version.id), line_id)
+        service.accept_suggestion(version, line, actor_user_id=current_user["id"])
+        body = service.serialize_version(version)
+        db.commit()
+        return body
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post(
+    "/purchase-order-versions/{po_version_id}/accept-suggestions",
+    response_model=POVersionDetailResponse,
+)
+def accept_all_purchase_order_suggestions(
+    po_version_id: str,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """AC-A2. Accept every suggested product and qty on the version, each line through
+    the same accept as AC-A1."""
+    try:
+        service, version = _version_for_edit(db, po_version_id, current_user)
+        service.accept_all_suggestions(version, actor_user_id=current_user["id"])
         body = service.serialize_version(version)
         db.commit()
         return body
@@ -370,6 +420,8 @@ def confirm_purchase_order_version(
             "po_amount": result["po_amount"],
             "model_mismatch_count": result["model_mismatch_count"],
             "price_mismatch_count": result["price_mismatch_count"],
+            "codes_not_remembered": result["codes_not_remembered"],
+            "codes_not_remembered_party": result["codes_not_remembered_party"],
         }
         db.commit()
         # After the response: the alert fans out per recipient and must not hold Confirm.

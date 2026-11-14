@@ -24,6 +24,14 @@ CONTROL_BASE, CONTROL_VARIANT = "TWC7604-SC", "TWCX7604-P"
 NAMES = {BASE: "ZZT seat cover", VARIANT: "ZZT p trap pan", CONTROL_BASE: "ZZT seat cover", CONTROL_VARIANT: "ZZT p trap pan"}
 
 
+def _link_control(db) -> None:
+    """The control variant is linked to its base family by catalogue data (the X insert is gone)."""
+    db.execute(
+        sql_text("UPDATE products SET family_code = :f, family_code_manual = true WHERE product_code = :c"),
+        {"f": "TWC7604", "c": CONTROL_VARIANT},
+    )
+
+
 def _world(session_factory, monkeypatch, stub_access, *, hand_set: bool) -> Console:  # noqa: F811
     codes = [BASE, VARIANT, CONTROL_BASE, CONTROL_VARIANT]
     c = _console(session_factory, monkeypatch, stub_access, codes, **{k.replace("-", "_"): Stock(on_hand=100) for k in codes})
@@ -31,6 +39,7 @@ def _world(session_factory, monkeypatch, stub_access, *, hand_set: bool) -> Cons
     try:
         for code, name in NAMES.items():
             db.execute(sql_text("UPDATE products SET product_name = :n WHERE product_code = :c"), {"n": name, "c": code})
+        _link_control(db)
         if hand_set:
             db.execute(
                 sql_text("UPDATE products SET family_code = 'ABD7604', family_code_manual = true WHERE product_code = :c"),
@@ -126,6 +135,7 @@ def _set_world(session_factory, monkeypatch, stub_access, member_codes: list[str
     try:
         for code, name in {**SET_NAMES, CONTROL_BASE: "ZZT seat cover", CONTROL_VARIANT: "ZZT p trap pan"}.items():
             db.execute(sql_text("UPDATE products SET product_name = :n WHERE product_code = :c"), {"n": name, "c": code})
+        _link_control(db)
         if hide == "other_company":
             from tests.chatbot.test_engine_company_scope import _seed_company
 

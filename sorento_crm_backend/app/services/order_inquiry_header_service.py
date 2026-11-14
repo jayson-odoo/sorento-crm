@@ -470,6 +470,7 @@ class OrderInquiryHeaderService:
             base = base.filter(
                 or_(
                     OrderInquiry.inquiry_no.ilike(like, escape=_LIKE_ESCAPE),
+                    OrderInquiry.oi_no.ilike(like, escape=_LIKE_ESCAPE),
                     OrderInquiry.legacy_inquiry_no.ilike(like, escape=_LIKE_ESCAPE),
                     _SO_NUMBER.ilike(like, escape=_LIKE_ESCAPE),
                     Customer.customer_name.ilike(like, escape=_LIKE_ESCAPE),
@@ -487,6 +488,7 @@ class OrderInquiryHeaderService:
         return OrderInquiryHeaderOut(
             id=inquiry.id,
             inquiry_no=inquiry.inquiry_no,
+            oi_no=inquiry.oi_no,
             inquiry_type=inquiry.inquiry_type,
             state=inquiry.state,
             legacy_inquiry_no=inquiry.legacy_inquiry_no,

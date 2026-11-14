@@ -35,6 +35,7 @@ import {
 import { DEFAULT_HIDDEN_COLUMNS } from '../../components/orderInquiryWorklistColumns';
 import {
   StagedReserveEntry,
+  SPARE_PART_REQUEST_HIDDEN_COLUMNS,
   useOrderInquiryHeaderLinesColumns,
   type SparePartLineEdit,
 } from './orderInquiryHeaderLinesColumns';
@@ -187,9 +188,15 @@ export function OrderInquiryLinesTab({
    * one-OI email link (`?reserve=<id>[,<id>]`) ticks. */
   reserveRequests?: OrderInquiryReserveRequest[];
   /** SPARE-PART-ORDER-REQUEST: a spare part request's own columns (unit price, total, the
-   *  approver's in-place edits, the "was" marks) and its row photos. */
+   *  approver's in-place edits) and its row photos. SPARE-PART-OR-B: `view` says which page
+   *  reads them ('request' = its order request record, else the order inquiry), and on the
+   *  order request page an open revision lets its qtys change (`revisionState`,
+   *  `canEditRevision`). */
   sparePart?: {
+    view?: 'request' | 'inquiry';
     headerState?: string | null;
+    revisionState?: string | null;
+    canEditRevision?: boolean;
     canDecide: boolean;
     canEditPhotos: boolean;
     currency?: string | null;
@@ -305,7 +312,10 @@ export function OrderInquiryLinesTab({
     ...(sparePart
       ? {
           inquiryType: 'spare_part_request' as const,
+          sparePartView: sparePart.view ?? 'inquiry',
           headerState: sparePart.headerState,
+          revisionState: sparePart.revisionState ?? null,
+          canEditRevision: Boolean(sparePart.canEditRevision),
           canDecide: sparePart.canDecide,
           onEditLine: sparePart.onEditLine,
           currency: sparePart.currency,
@@ -374,7 +384,11 @@ export function OrderInquiryLinesTab({
     // still applies afterwards and wins.
     initialState: {
       columnVisibility: Object.fromEntries(
-        DEFAULT_HIDDEN_COLUMNS.map((id) => [id, false]),
+        [
+          ...DEFAULT_HIDDEN_COLUMNS,
+          // SPARE-PART-OR-B U3.3b: PO starts hidden on the order request page.
+          ...(sparePart?.view === 'request' ? SPARE_PART_REQUEST_HIDDEN_COLUMNS : []),
+        ].map((id) => [id, false]),
       ),
     },
     state: { pagination, sorting, rowSelection: lineSelection, globalFilter: search, expanded },

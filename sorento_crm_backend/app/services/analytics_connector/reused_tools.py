@@ -776,9 +776,10 @@ REUSED_TOOLS: tuple[dict, ...] = (
             "'which projects are we chasing', 'my pipeline', 'projects for <developer>', "
             "'projects at sample submission stage', 'critical projects', 'what is <salesperson> "
             "working on'. NOT for delivery orders or purchase orders -- a project is a "
-            'pursuit, not a transaction.\n\nOnly APPROVED projects are listed: a portal '
-            'project registration still waiting for approval (or rejected) is not a project '
-            'yet and is left out, so every row carries a project_code.\n\nEach row returns '
+            'sale we are chasing, not a transaction.\n\nA portal project registration still '
+            'waiting for approval (or rejected) is not a project yet and is left out; that says '
+            "nothing about a listed project's stage or approval, so never call the listed "
+            'projects approved. Every row carries a project_code.\n\nEach row returns '
             'project_code, title, '
             'developer_name, type_name, status_label, outcome (open / won / lost), '
             'owner_name, estimated_sales_value, launch_date, days_since_last_activity, '
