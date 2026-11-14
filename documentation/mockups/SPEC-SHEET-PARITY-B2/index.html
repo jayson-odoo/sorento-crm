@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Spec sheet toolbar and table cells (mock v1)</title>
+<style>
+/* App tokens copied from sorento_crm_frontend/css/config.reui.css (light theme), as in documentation/mockups/SPEC-SHEET-V2-INLINE.
+   Case shape: project PPF2611001 > quotation R2 > spec sheet SS1 (2 pages: cover + one item page). Names, refs and text are fake. */
+:root{--background:#fff;--foreground:#09090b;--muted:#f4f4f5;--muted-fg:#71717a;--border:#ececee;--primary:#3b82f6;--primary-soft:#eff6ff;--new:#b45309;--new-soft:#fffbeb;--bad:#b91c1c;--green:#3f7d3a;--viewer:#e9e9ec;--page:#f7f7f8}
+*{box-sizing:border-box}
+body{margin:0;background:var(--page);color:var(--foreground);font:14px/1.45 Inter,ui-sans-serif,system-ui,sans-serif}
+h1{font-size:22px;margin:0 0 4px}
+.doc{max-width:1360px;margin:0 auto;padding:16px}
+.intro{color:var(--muted-fg);font-size:13px;margin:0 0 12px;max-width:960px}
+.nav{position:sticky;top:0;z-index:20;background:var(--page);padding:8px 0 10px;border-bottom:1px solid var(--border);margin-bottom:16px;display:flex;flex-wrap:wrap;gap:6px}
+.nav a{font-size:12px;text-decoration:none;border:1px solid var(--border);background:#fff;border-radius:999px;padding:3px 10px;color:var(--muted-fg)}
+section{margin:0 0 40px}
+section>h2{font-size:15px;margin:0 0 4px}
+.why{font-size:12.5px;color:var(--muted-fg);margin:0 0 12px;max-width:980px}
+.newtag{display:inline-block;font-size:10px;font-weight:600;letter-spacing:.04em;color:var(--new);background:var(--new-soft);border:1px solid #fcd34d;border-radius:4px;padding:0 5px;margin-left:6px;vertical-align:middle}
+.card{background:#fff;border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);background:#fff;border-radius:8px;padding:6px 12px;font-size:13px;white-space:nowrap}
+.btn.pri{background:var(--foreground);color:#fff;border-color:var(--foreground)}
+.crumb{font-size:12px;color:var(--muted-fg);padding:12px 18px 0}
+.hdr{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:6px 18px 12px;flex-wrap:wrap}
+.hdr h3{margin:0;font-size:20px}
+.hdr .acts{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.pill{font-size:11.5px;border-radius:999px;padding:1px 8px;background:var(--muted);color:var(--muted-fg);margin-left:8px;font-weight:500}
+/* ONE toolbar row */
+.tool{display:flex;align-items:center;gap:2px;padding:6px 10px;border-top:1px solid var(--border);border-bottom:1px solid var(--border);background:#fff;white-space:nowrap;overflow:hidden}
+.tb-btn{display:inline-flex;align-items:center;justify-content:center;min-width:30px;height:30px;border-radius:6px;font-size:13px;color:#27272a;padding:0 6px;border:1px solid transparent}
+.tb-btn:hover{background:var(--muted)}
+.tb-btn.on{background:var(--primary-soft);color:var(--primary);border-color:#bfdbfe}
+.tb-btn.dis{opacity:.35}
+.tb-btn.txt{font-size:12.5px}
+.sep{width:1px;height:20px;background:var(--border);margin:0 6px;flex:none}
+.pn{font-size:12.5px;color:var(--muted-fg);padding:0 4px}
+.pn b{color:var(--foreground);font-weight:500}
+.zoom{font-size:12.5px;min-width:38px;text-align:center;color:#27272a}
+.saved{margin-left:auto;font-size:12px;color:var(--muted-fg);padding-left:8px}
+.ctx{display:inline-flex;align-items:center;gap:2px;background:var(--primary-soft);border-radius:8px;padding:0 4px;height:32px}
+.ctx .lbl{font-size:11px;color:var(--primary);font-weight:600;padding:0 4px;text-transform:uppercase;letter-spacing:.04em}
+.fmt{border:1px solid var(--border);border-radius:6px;padding:2px 8px;font-size:12px;background:#fff;height:26px;display:inline-flex;align-items:center}
+.old{opacity:.55;filter:grayscale(1);position:relative}
+.old:after{content:"today";position:absolute;right:8px;top:4px;font-size:10px;background:#fff;border:1px solid var(--border);border-radius:4px;padding:0 4px;color:var(--bad)}
+.oldbar{display:flex;align-items:center;gap:6px;padding:8px 12px;border-bottom:1px solid var(--border);background:#fff;flex-wrap:wrap;font-size:12.5px}
+.oldbar .b{border:1px solid var(--border);border-radius:6px;padding:3px 8px}
+/* work area */
+.work{display:grid;grid-template-columns:150px minmax(0,1fr) 250px;height:640px}
+.rail{border-right:1px solid var(--border);padding:10px;background:#fafafa;display:flex;flex-direction:column;gap:12px}
+.th{display:flex;gap:6px}.th .n{font-size:11px;color:var(--muted-fg);width:14px;text-align:right}
+.th .mini{flex:1;aspect-ratio:1.414;background:#fff;border-radius:3px;outline:1px solid var(--border)}
+.th.on .mini{outline:2px solid var(--primary)}
+.stack{background:var(--viewer);overflow:hidden;padding:20px;display:flex;justify-content:center;position:relative}
+.pg{width:100%;max-width:760px;aspect-ratio:1.414;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.14);position:relative;overflow:visible;font-family:'Helvetica Neue',Arial,sans-serif;color:#111;container-type:inline-size}
+.abs{position:absolute}
+.ph-img{background:repeating-linear-gradient(45deg,#f4f4f5,#f4f4f5 8px,#ececee 8px,#ececee 16px);display:flex;align-items:center;justify-content:center;color:#71717a;font-size:1.4cqw}
+.txt{font-size:1.5cqw;line-height:1.4}
+/* table on the page */
+table.pt{border-collapse:collapse;width:100%;font-size:1.35cqw;line-height:1.35}
+table.pt td{border:1px solid var(--green);padding:.5cqw .7cqw;vertical-align:top;height:3.4cqw}
+table.pt tr.head td{background:#f1f5ee;font-weight:700}
+table.pt td.cur{outline:2px solid var(--primary);outline-offset:-1px;background:#fff}
+table.pt td.hov{outline:1px dashed #93c5fd;outline-offset:-1px}
+.chip{display:inline-flex;align-items:center;border-radius:4px;background:#e0ecff;color:#1d4ed8;font-size:.92em;padding:0 .35em;margin:0 .1em;font-weight:500;white-space:nowrap}
+.chip.r{background:#dcfce7;color:#166534}
+.caret{display:inline-block;width:1.5px;height:1.1em;background:var(--primary);vertical-align:text-bottom;animation:bl 1s steps(1) infinite}
+@keyframes bl{50%{opacity:0}}
+.colhandle{position:absolute;top:-22px;height:16px;display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--muted-fg);border-radius:4px}
+.addcol{position:absolute;right:-20px;top:0;bottom:0;width:14px;border-radius:4px;background:var(--primary-soft);color:var(--primary);display:flex;align-items:center;justify-content:center;font-size:12px}
+.addrow{position:absolute;left:0;right:0;bottom:-18px;height:14px;border-radius:4px;background:var(--primary-soft);color:var(--primary);display:flex;align-items:center;justify-content:center;font-size:12px}
+/* menus, dialogs */
+.menu{position:absolute;z-index:6;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);padding:4px;width:210px;font-size:12.5px}
+.menu div{padding:5px 8px;border-radius:5px;display:flex;justify-content:space-between}
+.menu div:hover{background:var(--muted)}
+.menu hr{border:0;border-top:1px solid var(--border);margin:4px 0}
+.menu .k{color:var(--muted-fg);font-size:11px}
+.dlg-back{position:absolute;inset:0;background:rgba(9,9,11,.35);display:flex;align-items:center;justify-content:center;z-index:8}
+.dlg{background:#fff;border-radius:12px;width:520px;max-width:92%;box-shadow:0 20px 50px rgba(0,0,0,.25);font-size:13px}
+.dlg header{padding:14px 16px 6px;font-weight:600;font-size:15px}
+.dlg .body{padding:6px 16px 12px}
+.dlg footer{display:flex;justify-content:flex-end;gap:8px;padding:10px 16px;border-top:1px solid var(--border)}
+.ip{border:1px solid var(--border);border-radius:6px;padding:6px 9px;font-size:13px;margin:4px 0 8px;min-height:32px}
+.grp{font-size:11px;color:var(--muted-fg);text-transform:uppercase;letter-spacing:.05em;margin:8px 0 2px}
+.fld{padding:4px 8px;border-radius:5px;display:flex;justify-content:space-between}
+.fld:hover,.fld.on{background:var(--muted)}
+.fld span{color:var(--muted-fg);font-size:12px}
+.prev{font-size:12px;color:var(--muted-fg);border-top:1px solid var(--border);padding-top:8px;margin-top:8px}
+.insp{border-left:1px solid var(--border);padding:12px;font-size:12.5px;background:#fff;overflow:hidden}
+.insp h5{margin:0 0 8px;font-size:11.5px;color:var(--muted-fg);font-weight:500;text-transform:uppercase;letter-spacing:.05em}
+.insp .ip{font-size:12.5px;padding:4px 8px;min-height:28px}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.sides{display:flex;gap:4px;margin:4px 0 8px}
+.sides span{border:1px solid var(--border);border-radius:5px;padding:2px 6px;font-size:11.5px}
+.sides span.on{background:var(--primary-soft);border-color:#bfdbfe;color:var(--primary)}
+.sw{display:inline-block;width:14px;height:14px;border-radius:3px;vertical-align:middle;margin-right:6px;border:1px solid var(--border)}
+code{font-size:11.5px;background:var(--muted);padding:0 4px;border-radius:4px}
+.map{border-collapse:collapse;width:100%}
+.map td,.map th{font-size:12px;vertical-align:top;text-align:left;padding:7px 9px;border-bottom:1px solid var(--border)}
+.map th{background:var(--muted);font-weight:600}
+.tewrap{display:grid;grid-template-columns:200px minmax(0,1fr) 250px;height:560px}
+.layers{border-right:1px solid var(--border);padding:10px;font-size:12.5px;background:#fafafa}
+.layers div{padding:4px 6px;border-radius:5px}
+.layers div.on{background:var(--primary-soft);color:var(--primary)}
+.ruler{height:16px;background:repeating-linear-gradient(90deg,#d4d4d8 0 1px,transparent 1px 20px);border-bottom:1px solid var(--border)}
+/* phone */
+.phone{width:375px;max-width:100%;border:1px solid var(--border);border-radius:24px;overflow:hidden;background:#fff;flex:none}
+.phones{display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start}
+.phone .tool{padding:6px 6px}
+.phone .stack{padding:12px 10px;height:330px}
+.sheet{border-top:1px solid var(--border);padding:12px;font-size:12.5px;border-radius:16px 16px 0 0;box-shadow:0 -6px 18px rgba(0,0,0,.08)}
+.qs{background:#fff;border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin:8px 0;font-size:13px}
+.qs b{display:block;margin-bottom:4px}
+.note{font-size:12px;background:var(--new-soft);border:1px solid #fcd34d;border-radius:8px;padding:8px 10px;margin:8px 0;max-width:980px}
+</style>
+</head>
+<body>
+<div class="doc">
+<h1>Spec sheet: one toolbar row, editable table cells, same table in the template editor <span class="newtag">MOCK v1</span></h1>
+<p class="intro">Lane SPEC-SHEET-PARITY-B2 (PR #2349). Owner 14 Nov: too many bars taking space, table cells hard to fill with values and variables, table not seen in the template editor. Case shape: SS1 of a project quotation, 2 pages (cover + one item page). All names, refs and text are made up.</p>
+<div class="nav"><a href="#a">A. One toolbar row</a><a href="#b">B. Fill a table cell</a><a href="#c">C. Field picker</a><a href="#d">D. Template editor</a><a href="#e">E. Phone 375</a><a href="#f">F. Cover "Fetching image"</a><a href="#map">Component map</a><a href="#q">Questions</a></div>
+
+<!-- ============ A ============ -->
+<section id="a">
+<h2>A. Today: two rows. Proposed: one row</h2>
+<p class="why">Today the page bar (page up/down, 1 of 2, zoom, Fit width, full screen, text format, Saved) sits ABOVE the add-element toolbar. Proposed: both merge into the shared <code>CanvasToolbar</code> (which already has Zoom out / Zoom in / Fit slots). Text format appears in the SAME row only while a text layer is selected; with a table selected the row shows table actions instead. Delete / Duplicate / Group / Ungroup stay on right-click and in a "More" menu.</p>
+<div class="card old" style="margin-bottom:10px">
+  <div class="oldbar"><span class="b">&#8963;</span><span class="b">&#8964;</span><b>1</b> of 2 <span class="b">&minus;</span> 51% <span class="b">+</span><span class="b">Fit width</span><span class="b">&#x26F6;</span> | <span class="b">DM Sans</span><span class="b">12</span><span class="b">B</span><span class="b">I</span><span class="b">Align</span> <span style="margin-left:auto;color:#71717a">Saved</span></div>
+  <div class="oldbar"><span class="b">Text</span><span class="b">Shape</span><span class="b">Image</span><span class="b">Badge</span><span class="b">Table</span><span class="b">Accessories</span><span class="b">Undo</span><span class="b">Redo</span><span class="b">Delete</span><span class="b">Duplicate</span><span class="b">Group</span><span class="b">Ungroup</span></div>
+</div>
+<div class="card">
+  <div class="crumb">Project Sales / Alpha Residence / Quotation PRJQ-2026-0005-R2 / Spec sheet</div>
+  <div class="hdr"><h3>SS1<span class="pill">Draft</span></h3><div class="acts"><span class="btn">Templates</span><span class="btn">&#8249; &#8250;</span><span class="btn pri">Export</span></div></div>
+  <!-- the one row, nothing selected -->
+  <div class="tool">
+    <span class="tb-btn" title="Previous page">&#8963;</span><span class="tb-btn" title="Next page">&#8964;</span><span class="pn"><b>1</b> / 2</span>
+    <span class="sep"></span>
+    <span class="tb-btn txt" title="Add Text">T</span><span class="tb-btn txt" title="Add Shape">&#9634;</span><span class="tb-btn txt" title="Add Image">&#128444;</span><span class="tb-btn txt" title="Add Badge">&#127991;</span><span class="tb-btn txt" title="Add Table">&#8862;</span><span class="tb-btn txt" title="Add Accessories">&#10022;</span>
+    <span class="sep"></span>
+    <span class="tb-btn" title="Undo">&#8630;</span><span class="tb-btn" title="Redo">&#8631;</span><span class="tb-btn" title="More actions">&#8943;</span>
+    <span class="sep"></span>
+    <span class="tb-btn" title="Zoom out">&minus;</span><span class="zoom">51%</span><span class="tb-btn" title="Zoom in">+</span><span class="tb-btn" title="Fit width">&#8596;</span><span class="tb-btn" title="Full screen">&#x26F6;</span>
+    <span class="saved">Saved</span>
+  </div>
+  <div style="padding:8px 14px;font-size:12px;color:var(--muted-fg)">Nothing selected: page nav, add tools, undo/redo, More, zoom. One row, 36 px tall.</div>
+  <!-- text selected -->
+  <div class="tool">
+    <span class="tb-btn">&#8963;</span><span class="tb-btn">&#8964;</span><span class="pn"><b>2</b> / 2</span><span class="sep"></span>
+    <span class="tb-btn txt">T</span><span class="tb-btn txt">&#9634;</span><span class="tb-btn txt">&#128444;</span><span class="tb-btn txt">&#127991;</span><span class="tb-btn txt">&#8862;</span><span class="tb-btn txt">&#10022;</span><span class="sep"></span>
+    <span class="ctx"><span class="lbl">Text</span><span class="fmt">DM Sans</span><span class="fmt">12</span><span class="tb-btn on"><b>B</b></span><span class="tb-btn"><i>I</i></span><span class="tb-btn">&#8801;</span><span class="tb-btn" title="Insert field">{ }</span></span>
+    <span class="sep"></span><span class="tb-btn">&#8630;</span><span class="tb-btn">&#8631;</span><span class="tb-btn">&#8943;</span><span class="sep"></span>
+    <span class="tb-btn">&minus;</span><span class="zoom">51%</span><span class="tb-btn">+</span><span class="tb-btn">&#8596;</span><span class="tb-btn">&#x26F6;</span><span class="saved">Saved</span>
+  </div>
+  <div style="padding:8px 14px;font-size:12px;color:var(--muted-fg)">A text layer selected: its format controls slot in, same row.</div>
+  <!-- table selected -->
+  <div class="tool">
+    <span class="tb-btn">&#8963;</span><span class="tb-btn">&#8964;</span><span class="pn"><b>2</b> / 2</span><span class="sep"></span>
+    <span class="tb-btn txt">T</span><span class="tb-btn txt">&#9634;</span><span class="tb-btn txt">&#128444;</span><span class="tb-btn txt">&#127991;</span><span class="tb-btn txt on">&#8862;</span><span class="tb-btn txt">&#10022;</span><span class="sep"></span>
+    <span class="ctx"><span class="lbl">Table</span><span class="tb-btn txt">+ Row</span><span class="tb-btn txt">+ Column</span><span class="tb-btn txt">Merge</span><span class="tb-btn txt on">Header row</span><span class="tb-btn" title="Insert field">{ }</span></span>
+    <span class="sep"></span><span class="tb-btn">&#8630;</span><span class="tb-btn">&#8631;</span><span class="tb-btn">&#8943;</span><span class="sep"></span>
+    <span class="tb-btn">&minus;</span><span class="zoom">51%</span><span class="tb-btn">+</span><span class="tb-btn">&#8596;</span><span class="tb-btn">&#x26F6;</span><span class="saved">Saved</span>
+  </div>
+  <div style="padding:8px 14px;font-size:12px;color:var(--muted-fg)">A table selected: table actions slot in, same row. Shown in B below.</div>
+</div>
+</section>
+
+<!-- ============ B ============ -->
+<section id="b">
+<h2>B. Fill a table cell: click it and type, fields are chips</h2>
+<p class="why">Today a cell is picked with "Cell row / Cell column" number boxes in the Inspector, and its text is a plain box full of <code>{{doc.ref}}</code> tokens, with Insert field putting the token at the start. Proposed: click a cell to select it, double-click (or start typing) to edit it IN the page with the same in-place editor text layers already use. Fields show as chips (blue = from the product, green = from the quotation). Insert field (the <code>{ }</code> button, or typing <code>{</code>) opens the same field picker and drops the chip at the cursor. Hovering the table edge shows "+" to add a row or column. Right-click keeps today's menu.</p>
+<div class="card">
+  <div class="tool">
+    <span class="tb-btn">&#8963;</span><span class="tb-btn">&#8964;</span><span class="pn"><b>2</b> / 2</span><span class="sep"></span>
+    <span class="tb-btn txt">T</span><span class="tb-btn txt">&#9634;</span><span class="tb-btn txt">&#128444;</span><span class="tb-btn txt">&#127991;</span><span class="tb-btn txt on">&#8862;</span><span class="tb-btn txt">&#10022;</span><span class="sep"></span>
+    <span class="ctx"><span class="lbl">Table</span><span class="tb-btn txt">+ Row</span><span class="tb-btn txt">+ Column</span><span class="tb-btn txt">Merge</span><span class="tb-btn txt on">Header row</span><span class="tb-btn">{ }</span></span>
+    <span class="sep"></span><span class="tb-btn">&#8630;</span><span class="tb-btn">&#8631;</span><span class="tb-btn">&#8943;</span><span class="sep"></span>
+    <span class="tb-btn">&minus;</span><span class="zoom">68%</span><span class="tb-btn">+</span><span class="tb-btn">&#8596;</span><span class="tb-btn">&#x26F6;</span><span class="saved">Saving...</span>
+  </div>
+  <div class="work">
+    <div class="rail"><div class="th"><span class="n">1</span><div class="mini"></div></div><div class="th on"><span class="n">2</span><div class="mini"></div></div></div>
+    <div class="stack">
+      <div class="pg">
+        <div class="abs txt" style="left:5%;top:5%;width:50%"><b>WALL HUNG WATER CLOSET</b></div>
+        <div class="abs ph-img" style="left:5%;top:14%;width:44%;height:52%">Product photo</div>
+        <div class="abs" style="left:54%;top:14%;width:41%">
+                    <table class="pt">
+            <tr class="head"><td style="width:40%">REF</td><td>Value</td></tr>
+            <tr><td>Code</td><td class="hov"><span class="chip">Code</span></td></tr>
+            <tr><td>Brand</td><td><span class="chip">Brand</span></td></tr>
+            <tr><td>Size</td><td><span class="chip">Dimensions</span></td></tr>
+            <tr><td>Project</td><td class="cur"><span class="chip r">Project title</span> / Ref <span class="chip r">Ref</span><span class="caret"></span></td></tr>
+            <tr><td>Description</td><td><span class="chip">Spec sheet description</span></td></tr>
+          </table>
+          <div class="addcol" title="Add column">+</div>
+          <div class="addrow" title="Add row">+</div>
+          <div class="menu" style="left:40%;top:112%">
+            <div>Insert field<span class="k">{</span></div><hr>
+            <div>Insert row above</div><div>Insert row below</div><div>Insert column left</div><div>Insert column right</div><hr>
+            <div>Delete row</div><div>Delete column</div><hr>
+            <div>Merge right</div><div>Merge down</div><div style="color:var(--muted-fg)">Unmerge cells</div><hr>
+            <div>Header row &#10003;</div>
+          </div>
+        </div>
+        <div class="abs" style="left:5%;bottom:5%;font-size:1.1cqw;color:#71717a">Page 2</div>
+      </div>
+    </div>
+    <div class="insp">
+      <h5>Cell</h5>
+      <div style="font-size:12px;color:var(--muted-fg);margin-bottom:6px">Row 5, column 2</div>
+      <label>Border</label>
+      <div class="sides"><span class="on">All</span><span>Top</span><span>Right</span><span>Bottom</span><span>Left</span></div>
+      <div class="row2"><div><label>Colour</label><div class="ip"><span class="sw" style="background:#3f7d3a"></span>#3F7D3A</div></div><div><label>Width</label><div class="ip">0.3 mm</div></div></div>
+      <div class="row2"><div><label>Fill</label><div class="ip"><span class="sw"></span>None</div></div><div><label>Padding</label><div class="ip">1 mm</div></div></div>
+      <label>Text</label>
+      <div class="row2"><div class="ip">DM Sans</div><div class="ip">9</div></div>
+      <h5 style="margin-top:12px">Table</h5>
+      <div class="row2"><div><label>W</label><div class="ip">120 mm</div></div><div><label>Rows x cols</label><div class="ip">6 x 2</div></div></div>
+    </div>
+  </div>
+</div>
+<div class="note">Removed from the Inspector: "Cell row" / "Cell column" number boxes and the plain "Content" box. The cell is picked on the page and its text is typed on the page. Undo / Redo cover each cell edit, as today.</div>
+</section>
+
+<!-- ============ C ============ -->
+<section id="c">
+<h2>C. Insert field: the same picker, chip lands at the cursor</h2>
+<p class="why">Same <code>InsertFieldDialog</code> as text layers (search, groups, preview of the resolved value). For a cell it inserts one field at the cursor and closes, instead of showing its own content box.</p>
+<div class="card" style="position:relative;height:440px;background:var(--viewer)">
+  <div class="dlg-back">
+    <div class="dlg">
+      <header>Insert field</header>
+      <div class="body">
+        <div class="ip">ref</div>
+        <div class="grp">Spec sheet</div>
+        <div class="fld on">Ref (your ref, else quotation no)<span>PRJQ-2026-0005-R2</span></div>
+        <div class="fld">Your ref<span>-</span></div>
+        <div class="fld">Quotation no<span>PRJQ-2026-0005-R2</span></div>
+        <div class="grp">Product</div>
+        <div class="fld">Code<span>SRTWC-0001</span></div>
+        <div class="prev">Cell will read: <b>Alpha Residence / Ref PRJQ-2026-0005-R2</b></div>
+      </div>
+      <footer><span class="btn">Cancel</span><span class="btn pri">Insert</span></footer>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- ============ D ============ -->
+<section id="d">
+<h2>D. Template editor: the same toolbar row and the same table</h2>
+<p class="why">The table IS in the template editor today (Add Table, 3 x 2) but edited the same awkward way. Proposed: one shared table editor, so cell editing, chips, "+" handles, right-click menu and the Cell inspector are identical in both. The template editor keeps its own header (Save, Publish) and rulers; its add-tools row is the same <code>CanvasToolbar</code>.</p>
+<div class="card">
+  <div class="crumb">Dealer Kit / Room Designer / Tag Templates / Spec sheet item page</div>
+  <div class="hdr"><h3>Spec sheet item page<span class="pill">Live v2</span></h3><div class="acts"><span class="btn">Versions</span><span class="btn">Save</span><span class="btn pri">Publish</span></div></div>
+  <div class="tool">
+    <span class="tb-btn txt">T</span><span class="tb-btn txt">&#9634;</span><span class="tb-btn txt">&#128444;</span><span class="tb-btn txt">&#127991;</span><span class="tb-btn txt on">&#8862;</span><span class="tb-btn txt">&#10022;</span><span class="sep"></span>
+    <span class="ctx"><span class="lbl">Table</span><span class="tb-btn txt">+ Row</span><span class="tb-btn txt">+ Column</span><span class="tb-btn txt">Merge</span><span class="tb-btn txt on">Header row</span><span class="tb-btn">{ }</span></span>
+    <span class="sep"></span><span class="tb-btn">&#8630;</span><span class="tb-btn">&#8631;</span><span class="tb-btn">&#8943;</span><span class="sep"></span>
+    <span class="tb-btn">&minus;</span><span class="zoom">74%</span><span class="tb-btn">+</span><span class="tb-btn">&#8596;</span><span class="tb-btn">&#x26F6;</span>
+    <span class="saved">Preview: SRTWC-0001</span>
+  </div>
+  <div class="tewrap">
+    <div class="layers"><div>Title</div><div>Product photo</div><div class="on">Info table</div><div>Footer ref</div></div>
+    <div style="background:var(--viewer);display:flex;flex-direction:column"><div class="ruler"></div>
+      <div style="padding:20px;display:flex;justify-content:center">
+        <div class="pg" style="max-width:620px">
+          <div class="abs txt" style="left:5%;top:5%"><span class="chip">Name</span></div>
+          <div class="abs ph-img" style="left:5%;top:14%;width:44%;height:52%">Product photo</div>
+          <div class="abs" style="left:54%;top:14%;width:41%">
+            <table class="pt">
+              <tr class="head"><td style="width:40%">REF</td><td><span class="chip r">Ref</span></td></tr>
+              <tr><td>Code</td><td class="cur"><span class="chip">Code</span><span class="caret"></span></td></tr>
+              <tr><td>Size</td><td><span class="chip">Dimensions</span></td></tr>
+            </table>
+            <div class="addcol">+</div><div class="addrow">+</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="insp"><h5>Cell</h5><div style="font-size:12px;color:var(--muted-fg)">Row 2, column 2</div><label>Border</label><div class="sides"><span class="on">All</span><span>Top</span><span>Right</span><span>Bottom</span><span>Left</span></div><div class="row2"><div class="ip"><span class="sw" style="background:#3f7d3a"></span>#3F7D3A</div><div class="ip">0.3 mm</div></div></div>
+  </div>
+</div>
+<div class="note">In the template editor a chip shows its field name; the preview product (top-right "Preview: ...") is what the dialog's "Cell will read" line uses. On the spec sheet a chip shows the same name while editing and the real value once you click away.</div>
+</section>
+
+<!-- ============ E ============ -->
+<section id="e">
+<h2>E. Phone (375 px)</h2>
+<p class="why">One row that fits: page nav, Add (one menu holding Text, Shape, Image, Badge, Table, Accessories), Undo, Redo, More, Fit. Zoom by pinch. A selected cell edits in place; its border / fill sit in the Properties sheet from the bottom (today's phone pattern), which is never zero-width.</p>
+<div class="phones">
+  <div class="phone">
+    <div class="tool"><span class="tb-btn">&#8963;</span><span class="tb-btn">&#8964;</span><span class="pn"><b>2</b>/2</span><span class="sep"></span><span class="tb-btn txt">+ Add</span><span class="sep"></span><span class="tb-btn">&#8630;</span><span class="tb-btn">&#8631;</span><span class="tb-btn">&#8943;</span><span class="tb-btn">&#8596;</span><span class="saved">Saved</span></div>
+    <div class="stack"><div class="pg"><div class="abs ph-img" style="left:5%;top:14%;width:44%;height:52%">Photo</div><div class="abs" style="left:54%;top:14%;width:41%"><table class="pt"><tr class="head"><td>REF</td><td>Value</td></tr><tr><td>Code</td><td class="cur"><span class="chip">Code</span><span class="caret"></span></td></tr><tr><td>Size</td><td><span class="chip">Dimensions</span></td></tr></table></div></div></div>
+    <div class="sheet"><b>Cell</b> &middot; Row 2, column 2<div class="sides"><span class="on">All</span><span>Top</span><span>Right</span><span>Bottom</span><span>Left</span></div><div class="row2"><div class="ip"><span class="sw" style="background:#3f7d3a"></span>#3F7D3A</div><div class="ip">0.3 mm</div></div><span class="btn" style="width:100%;justify-content:center">Insert field</span></div>
+  </div>
+  <div class="phone">
+    <div class="tool"><span class="tb-btn">&#8963;</span><span class="tb-btn">&#8964;</span><span class="pn"><b>1</b>/2</span><span class="sep"></span><span class="tb-btn txt on">+ Add</span><span class="sep"></span><span class="tb-btn">&#8630;</span><span class="tb-btn">&#8631;</span><span class="tb-btn">&#8943;</span><span class="tb-btn">&#8596;</span><span class="saved">Saved</span></div>
+    <div class="stack" style="position:relative"><div class="pg"></div>
+      <div class="menu" style="left:70px;top:4px;width:180px"><div>Text</div><div>Shape</div><div>Image</div><div>Badge</div><div>Table</div><div>Accessories</div></div>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- ============ F ============ -->
+<section id="f">
+<h2>F. Cover stuck on "Fetching image"</h2>
+<p class="why">Cause (code read on 0ef9310c): the image draw shows "Fetching image" whenever it has a URL but no loaded picture (<code>KonvaTagLayer.tsx:658-665</code>), and <code>useHtmlImage.ts:48-50</code> treats a FAILED load the same as "not loaded yet" (sets null, no error state). So a picture that cannot be downloaded reads "Fetching image" forever. The URL is a signed thumbnail / medium rendition from storage (<code>project_spec_sheet_service.py:905</code> <code>_asset_urls</code> -> <code>asset_service.py:261</code> <code>screen_urls_for</code>); on the test copy that storage request fails (same cause as the font 502s crew saw). Proposed: a failed load shows "Image not available" (grey box), and a load in progress stays "Fetching image".</p>
+<div class="card" style="padding:16px;display:flex;gap:16px;flex-wrap:wrap">
+  <div style="width:260px"><div class="ph-img" style="height:150px;font-size:12px;background:#f0f0f0;border:1px solid #ccc">Fetching image</div><div style="font-size:12px;color:var(--muted-fg);margin-top:4px">Loading (a moment)</div></div>
+  <div style="width:260px"><div class="ph-img" style="height:150px;font-size:12px;background:#f0f0f0;border:1px solid #ccc">Image not available</div><div style="font-size:12px;color:var(--muted-fg);margin-top:4px">Download failed (new)</div></div>
+</div>
+</section>
+
+<!-- ============ map ============ -->
+<section id="map">
+<h2>Component map (every element reuses existing code)</h2>
+<div class="card"><table class="map">
+<tr><th>Element</th><th>Reuses</th><th>Change</th></tr>
+<tr><td>One toolbar row</td><td><code>dealer-kit/tag-templates/components/CanvasToolbar.tsx</code> (already has Zoom out / Zoom in / Fit slots, lines 419-421, 513-523)</td><td>Add optional page-nav and full-screen slots; spec sheet passes them and drops its own page bar (<code>SpecSheetReader.tsx:955-1038</code>)</td></tr>
+<tr><td>Text format in the row</td><td><code>spec-sheet/.../components/FormatBar.tsx</code></td><td>Rendered inside the toolbar's contextual slot instead of the page bar</td></tr>
+<tr><td>Full screen</td><td><code>dealer-kit/components/FocusMode.tsx</code> <code>FocusToggle</code> (iconOnly)</td><td>none</td></tr>
+<tr><td>More menu (Delete, Duplicate, Group, Ungroup)</td><td><code>CanvasToolbar</code>'s existing "More actions" overflow</td><td>Always folded there on the spec sheet</td></tr>
+<tr><td>Cell editing in place, chips</td><td><code>tag-templates/components/InlineTextEditor.tsx</code> (rich editor, tokens as chips; <code>components/ui/rich-text-editor</code>)</td><td>Positioned over the clicked cell; stores into <code>cells[r][c].text</code></td></tr>
+<tr><td>Field picker</td><td><code>tag-templates/components/InsertFieldDialog.tsx</code></td><td>Insert-one-field mode: returns a token for the cursor</td></tr>
+<tr><td>Right-click menu</td><td>Existing table menu, <code>TagCanvasEditor.tsx:5450-5530</code> (<code>components/ui/context-menu</code>)</td><td>Adds "Insert field", "Insert row above", "Insert column left", "Header row"</td></tr>
+<tr><td>Table maths (merge, borders)</td><td><code>lib/dealer-kit/table-layout.ts</code> (<code>setCellBorder</code> etc.)</td><td>Header row flag</td></tr>
+<tr><td>Cell inspector</td><td><code>InspectorPanel.tsx</code> <code>TableInspector</code> (1285), <code>ColorPicker</code>, <code>NumberInput</code></td><td>Drop "Cell row / Cell column" and the Content box; border side as segmented choice</td></tr>
+<tr><td>Phone Add menu, Properties sheet</td><td><code>CanvasToolbar</code> overflow, the reader's existing phone Properties sheet</td><td>none new</td></tr>
+<tr><td>Image placeholder</td><td><code>KonvaTagLayer.tsx</code> <code>ImageContent</code>, <code>useHtmlImage.ts</code></td><td>Return a failed state; draw "Image not available"</td></tr>
+</table></div>
+</section>
+
+<!-- ============ questions ============ -->
+<section id="q">
+<h2>Questions (with recommendation)</h2>
+<div class="qs"><b>1. Where do Delete / Duplicate / Group / Ungroup go?</b>(a) in the "&#8943; More" menu + right-click <i>(recommended: the owner's minimal rule)</i>; (b) stay as visible icons.</div>
+<div class="qs"><b>2. Header row</b>: (a) a toggle that bolds and shades row 1 and repeats nothing <i>(recommended: simplest)</i>; (b) no header row, style row 1 by hand.</div>
+<div class="qs"><b>3. Chips on the spec sheet after editing</b>: (a) show the real value once you click away, chips only while typing <i>(recommended: the page looks like the print)</i>; (b) always show chips.</div>
+<div class="qs"><b>4. Typing "{" in a cell opens the field picker</b>: (a) yes, plus the { } button <i>(recommended)</i>; (b) button only.</div>
+<div class="qs"><b>5. Scope</b>: (a) ship #2349 as is, this redesign as slice C on a new PR <i>(recommended: #2349 is frozen for the hand test and the owner needs the table in prod)</i>; (b) fold it into #2349 (needs a new hand test).</div>
+</section>
+</div>
+</body>
+</html>
