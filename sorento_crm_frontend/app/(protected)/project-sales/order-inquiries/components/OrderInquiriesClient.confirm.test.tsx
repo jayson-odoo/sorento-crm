@@ -806,7 +806,7 @@ describe('AC-CF-21: the first fetch waits for the memory', () => {
   });
 });
 
-describe('AC-CF-23: Choose document (1) is offered for any ticked row that is not cancelled', () => {
+describe('AC-CF-23: Link PO... (1) is offered for any ticked row that is not cancelled', () => {
   it('a single ticked PLACED row leaves the menu item enabled, not just a raised one', async () => {
     const placedRow = ackRow({
       id: 'row-placed',
@@ -822,7 +822,7 @@ describe('AC-CF-23: Choose document (1) is offered for any ticked row that is no
     fireEvent.click(screen.getByLabelText('Select ZZT-PLACED on SO-PLACED'));
     openActionsMenu();
 
-    const item = screen.getByRole('menuitem', { name: 'Choose document (1)' });
+    const item = screen.getByRole('menuitem', { name: 'Link PO... (1)' });
     expect(item).not.toHaveAttribute('aria-disabled', 'true');
   });
 
@@ -841,7 +841,7 @@ describe('AC-CF-23: Choose document (1) is offered for any ticked row that is no
     fireEvent.click(screen.getByLabelText('Select ZZT-ACTIONED on SO-ACTIONED'));
     openActionsMenu();
 
-    const item = screen.getByRole('menuitem', { name: 'Choose document (1)' });
+    const item = screen.getByRole('menuitem', { name: 'Link PO... (1)' });
     expect(item).not.toHaveAttribute('aria-disabled', 'true');
   });
 });
