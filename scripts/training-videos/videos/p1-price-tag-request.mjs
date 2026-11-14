@@ -18,7 +18,10 @@ export default {
     {
       en: 'Your requests are listed here. Click Create to start a new one.',
       ms: 'Permohonan anda disenaraikan di sini. Klik Create untuk mula yang baharu.',
-      run: async ({ page, click }) => click(page.getByRole('link', { name: 'Create', exact: true }).first()),
+      run: async ({ page, click, point }) => {
+        await point(page.getByRole('main'), 1500);
+        await click(page.getByRole('link', { name: 'Create', exact: true }).first());
+      },
     },
     {
       en: 'Pick the dealer the tags are for. Type a few letters of the name to search.',
@@ -38,9 +41,9 @@ export default {
       run: async ({ page, click }) => click(page.getByRole('button', { name: /Type the items/ }).first()),
     },
     {
-      en: 'Add a line and search the product by name or code.',
-      ms: 'Tambah baris dan cari produk mengikut nama atau kod.',
-      say: 'Add a line, and search the product by name or code.',
+      en: 'Add a line and search for a set or a product by name or code.',
+      ms: 'Tambah baris dan cari set atau produk mengikut nama atau kod.',
+      say: 'Add a line, and search for a set or a product, by name or code.',
       run: async ({ page, click, sleep }) => {
         await click(page.getByRole('button', { name: 'Add line', exact: true }));
         const item = page.getByRole('combobox', { name: 'Item for line 1' });
@@ -48,6 +51,8 @@ export default {
         await page.keyboard.type('Basin', { delay: 110 });
         await sleep(1500);
         await click(page.getByRole('option', { name: 'DM-BS-1001' }).first());
+        await page.keyboard.press('Escape');
+        await sleep(400);
       },
     },
     {
@@ -56,7 +61,7 @@ export default {
       run: async ({ page, click, sleep }) => {
         const qty = page.getByRole('spinbutton', { name: 'Quantity for line 1' });
         await click(qty);
-        await page.keyboard.press('Control+A');
+        await page.keyboard.press('ControlOrMeta+A');
         await page.keyboard.type('4', { delay: 150 });
         await sleep(600);
       },
@@ -71,6 +76,8 @@ export default {
         await page.keyboard.type('WC', { delay: 120 });
         await sleep(1500);
         await click(page.getByRole('option', { name: 'DM-WC-2002' }).first());
+        await page.keyboard.press('Escape');
+        await sleep(400);
       },
     },
     {

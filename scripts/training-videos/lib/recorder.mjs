@@ -156,23 +156,29 @@ const h = {
 };
 
 const timeline = [];
-await page.goto(`${BASE}${spec.start || '/'}`, { waitUntil: 'networkidle' });
+const showTitle = () =>
+  page.evaluate(
+    ([t, sub]) => {
+      if (document.getElementById('tv-title')) return;
+      const d = document.createElement('div');
+      d.id = 'tv-title';
+      d.innerHTML = `<h1></h1><p></p>`;
+      d.querySelector('h1').textContent = t;
+      d.querySelector('p').textContent = sub || '';
+      document.body.appendChild(d);
+    },
+    [spec.title, spec.subtitle],
+  );
+await page.goto(`${BASE}${spec.start || '/'}`, { waitUntil: 'domcontentloaded' });
+// The title card covers the start page while it settles, so the video opens on the title.
+await showTitle();
+await page.waitForLoadState('networkidle');
 await sleep(2500);
 for (let i = 0; i < steps.length; i++) {
   const s = steps[i];
   const at = (Date.now() - t0) / 1000;
   if (s.title) {
-    await page.evaluate(
-      ([t, sub]) => {
-        const d = document.createElement('div');
-        d.id = 'tv-title';
-        d.innerHTML = `<h1></h1><p></p>`;
-        d.querySelector('h1').textContent = t;
-        d.querySelector('p').textContent = sub || '';
-        document.body.appendChild(d);
-      },
-      [spec.title, spec.subtitle],
-    );
+    await showTitle();
   } else {
     await page.evaluate((t) => window.__tvSetCaption(t), s.en);
   }

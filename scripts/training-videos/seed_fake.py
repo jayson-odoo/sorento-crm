@@ -131,6 +131,12 @@ def msisdn(phone: str) -> str:
     return normalize_msisdn(phone)
 
 
+def contact_phone(phone: str) -> str:
+    from app.services.contact_setup_engine import normalise_phone
+
+    return normalise_phone(phone)
+
+
 def hash_pw(plain: str) -> str:
     # The app's own scheme (app/api/v1/auth.py signup + login check).
     return bcrypt.hashpw(plain.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
@@ -175,8 +181,12 @@ def contact(db, phone: str, name: str, ws, *, respond_io_id: str | None = None, 
     from app.models.access import RespondContact
     from app.models.company import RespondContactCompany
 
-    number = msisdn(phone)
-    row = db.query(RespondContact).filter(RespondContact.phone_number == number).first()
+    # Stored the way Dealer access > Add people stores a number (+60...), so the People column
+    # reads one format; rows from an earlier seed without the + are found and rewritten.
+    number = contact_phone(phone)
+    row = db.query(RespondContact).filter(RespondContact.phone_number.in_([number, msisdn(phone)])).first()
+    if row is not None and row.phone_number != number:
+        row.phone_number = number
     if row is None:
         row = RespondContact(phone_number=number, name=name, workspace_id=ws.id, respond_io_id=respond_io_id, **extra)
         db.add(row)
@@ -470,10 +480,20 @@ def reset_video_rows(db):
     from app.models.access import RespondContact, RespondContactCustomer
 
     for phone in VIDEO_PHONES:
-        # The Add people form saves the number with a leading +, the seeder without one.
-        for row in db.query(RespondContact).filter(RespondContact.phone_number.in_([msisdn(phone), "+" + msisdn(phone)])):
+        for row in db.query(RespondContact).filter(RespondContact.phone_number.in_([contact_phone(phone), msisdn(phone)])):
             db.query(RespondContactCustomer).filter_by(contact_id=row.id).delete()
             say(f"unlinked video contact {row.name}")
+    # Complaints and price tag requests the salesperson filed in a video (child rows cascade).
+    from app.models.complaints import Complaint
+    from app.models.price_tag import PriceTagRequest
+
+    sam = db.query(RespondContact).filter(
+        RespondContact.phone_number.in_([contact_phone(SALES["phone"]), msisdn(SALES["phone"])])).first()
+    if sam is not None:
+        for model, what in ((Complaint, "complaints"), (PriceTagRequest, "price tag requests")):
+            n = db.query(model).filter(model.contact_id == sam.id).delete(synchronize_session=False)
+            if n:
+                say(f"removed {n} video {what}")
     db.flush()
 
 
