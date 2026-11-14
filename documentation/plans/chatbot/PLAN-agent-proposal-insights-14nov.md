@@ -1,6 +1,6 @@
 # PLAN: Agent panel proposal comparison with insights + correct Prepared By (AGENT-PROPOSAL-INSIGHTS)
 
-Status: behaviour card filed, waiting on owner answers (size M, LEAD pattern). No product code yet.
+Status: owner answered 14 Nov 11:58 (Q1 a, Q2 none -> a, Q3 a with list data kept, Q4 b, Q5 a); building, red tests first (size M, LEAD pattern). UAC: agent-proposal-insights-acceptance-criteria.md
 
 Base: origin/main ad06893097. Paths under `sorento_crm_backend/app/services/` unless noted.
 
