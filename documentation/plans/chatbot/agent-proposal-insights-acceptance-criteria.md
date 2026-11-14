@@ -97,3 +97,21 @@ Per doc, beside `lines`:
 - H1 "please compare the 3 proposals for the project": findings first, no "% below list", no "<br>", the
   repeated code as separate rows or named as repeated, no charge lines named as such, no invented figures.
 - H2 "who quoted these proposals": each proposal's Prepared By from the document; the different creator named.
+
+## Review round 1 amendments (lead, 14 Nov, reviewer findings 1, 2, 4, 5, 6)
+
+- R1 (C1, C2, C4, C5 amended) The comparison covers only NON-EMPTY docs (B5 `empty: false`). Empty docs are
+  listed in `comparison.empty_documents` (refs, doc order) and have no entry in `totals`; they never make a
+  code or scope "only in some". The comparison block is present when 2 or more non-empty docs are returned;
+  with fewer, it is absent (an empty doc beside one non-empty doc gives no comparison).
+- R2 (C1) On tied totals, `lowest` is the first doc with the lowest total and `highest` the first doc with the
+  highest total, in doc order.
+- R3 (C6, size cap) `_fit` keeps the whole payload under the cap: after every line is cut and it is still over,
+  it trims the comparison lists (largest first, keeping the first entries, raising `<name>_not_shown`)
+  before it drops whole documents; when it drops documents it also drops the comparison block entirely (a
+  comparison never names a document that is not in `documents`). Final JSON length <= cap for any input that
+  the old code kept under the cap.
+- R4 (E1) The prompt's full table rule: a markdown table (the panel renders it), only when total_lines is 30
+  or fewer AND no scope has lines_not_shown; otherwise end with Reply "table" for the full table.
+- R5 (A1, reuse) One creator-name rule: `prepared_by_of` calls `prepared_by_names`; the lines tool reads all
+  creator names in one users query per call.
