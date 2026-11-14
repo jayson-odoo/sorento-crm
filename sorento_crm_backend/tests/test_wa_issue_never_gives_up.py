@@ -179,6 +179,25 @@ def test_R14_the_issue_give_up_copy_exists_and_never_says_idea(language):
     assert CHATBOT_REPLY_COPY[key][1] == text_
 
 
+#: Owner ruling 14 Nov 23:20: in the filing flow the user-facing word is the general one.
+GENERAL_WORD = {"en": "feedback", "ms": "maklum balas", "zh": "反馈"}
+#: Words that name the thing being filed other than the general word (never in an issue give-up).
+OTHER_PRODUCT_WORDS = ("idea", "创意", "cadangan", "suggestion", "建议")
+
+
+@pytest.mark.parametrize("language", LANGUAGES)
+def test_R14_the_issue_give_up_uses_the_general_word_or_no_product_word(language):
+    """Owner ruling 23:20: the issue give-up says "feedback" / "maklum balas" / "反馈", or names no
+    product word at all; never "idea" / "创意"."""
+    text_ = _issue_give_up().get(language, "")
+    assert text_.strip(), f"{language}: no issue give-up text"
+    lowered = text_.lower()
+    # The general word is allowed (GENERAL_WORD[language]); any other product word is not, so the text
+    # either says the general word or names no product word at all.
+    named = [w for w in OTHER_PRODUCT_WORDS if w in lowered]
+    assert named == [], f"{language}: {text_!r} names {named} (use {GENERAL_WORD[language]!r} or none)"
+
+
 @pytest.mark.parametrize("language", LANGUAGES)
 def test_R14_a_give_up_in_an_issue_flow_renders_the_issue_wording(language):
     from app.services.ideation_capture_replies import render_reply
