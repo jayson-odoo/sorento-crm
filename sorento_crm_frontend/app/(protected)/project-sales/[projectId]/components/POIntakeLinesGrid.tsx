@@ -65,7 +65,7 @@ import {
   formatQty,
   isDecimalString,
   isMoneyZero,
-  multiplyMoney,
+  lineAmount,
   subtractMoney,
 } from '../../_shared/lib/money';
 import { NumberInput } from '@/components/ui/number-input';
@@ -148,14 +148,15 @@ function boxFigure(
 
 /**
  * The row's figures as they stand WHILE a person types: the typed qty and unit price, and the
- * amount they give when the paper printed none. A printed amount is never replaced; the Flag
- * checks it against the typed figures instead.
+ * amount they give on a line whose amount the server computes (`amount_computed`: none was
+ * printed). A printed or typed amount is never replaced; the Flag checks it against the typed
+ * figures instead. `lineAmount` is the server's own rule (5-dp price, half-even).
  */
 function liveFigures(line: POVersionLine, draft: RowDraft | undefined) {
   const qty = draft?.qty ?? line.qty;
   const unitPrice = draft?.unit_price ?? line.unit_price;
-  const printed = isDecimalString(line.amount);
-  const expected = multiplyMoney(qty, unitPrice);
+  const printed = isDecimalString(line.amount) && !line.amount_computed;
+  const expected = lineAmount(qty, unitPrice);
   const typedFactor =
     draft?.qty !== undefined || draft?.unit_price !== undefined;
   const amount =
@@ -168,7 +169,7 @@ function liveFigures(line: POVersionLine, draft: RowDraft | undefined) {
 }
 
 /** The Amount box: what was typed into it, else the live qty x unit price on a line whose
- *  paper printed no amount, else the server figure. */
+ *  amount the server computes, else the server figure. */
 function amountBox(line: POVersionLine, draft: RowDraft | undefined): string {
   if (draft?.amount !== undefined) return draft.amount;
   const live = liveFigures(line, draft);
@@ -251,12 +252,10 @@ export function blockingNotes(
 /**
  * The 52 lines, editable in place.
  *
- * Cells are UNCONTROLLED and commit on blur. A controlled input would re-render the whole
- * grid on every keystroke, and a person correcting a misread quantity is typing into a table
- * of fifty-two rows. Escape puts the cell back to what the server holds.
- *
- * Numeric cells are plain text inputs, not native number inputs: money and quantity are strings from
- * the API to the API, and a number input invites the float round trip the contract forbids.
+ * Cells are UNCONTROLLED and commit on blur or Enter; Escape puts the cell back to what the
+ * server holds. Qty, unit price and amount are the shared `NumberInput`; what is typed travels
+ * as the typed STRING to the API (never a re-serialised float), and the grid holds it as a
+ * per-row draft only so the Amount and the Flag can follow it live.
  *
  * The real task on this document is three exceptions out of fifty-two rows, so the flagged
  * lines can be shown on their own. That filter opens ON while the version is unconfirmed
@@ -532,7 +531,24 @@ export const POIntakeLinesGrid = React.forwardRef<
     [],
   );
 
-  /** Blur / Enter on a number box: one save through `commit`, then the box shows the server. */
+  const clearIfUnchanged = React.useCallback(
+    (lineId: string, field: NumericField, sent: string) =>
+      setDrafts((current) => {
+        if (current[lineId]?.[field] !== sent) return current;
+        const row: RowDraft = { ...current[lineId] };
+        delete row[field];
+        const next = { ...current };
+        if (Object.keys(row).length > 0) next[lineId] = row;
+        else delete next[lineId];
+        return next;
+      }),
+    [],
+  );
+
+  /**
+   * Blur / Enter on a number box: one save of the typed figure; the draft gives way to the
+   * server's figure once that save lands.
+   */
   const commitNumber = React.useCallback(
     (line: POVersionLine, field: NumericField, label: string) => {
       const draft = drafts[line.id];
@@ -549,15 +565,15 @@ export const POIntakeLinesGrid = React.forwardRef<
         clear();
         return;
       }
+      // Only the typed figure: the server moves a computed amount itself (`amount_computed`).
       const body: POLineUpdateBody = { [field]: next };
-      const live = liveFigures(line, draft);
-      // The paper printed no amount: qty x unit price IS the amount, saved with it.
-      if (field !== 'amount' && !live.printed && live.expected !== null) {
-        body.amount = live.expected;
-      }
-      void onUpdateLine(line.id, body).finally(clear);
+      void onUpdateLine(line.id, body).finally(() =>
+        // A second edit typed while this save was in flight is kept: the draft is dropped
+        // only if it still holds exactly what was sent.
+        clearIfUnchanged(line.id, field, typed),
+      );
     },
-    [drafts, onUpdateLine, setDraft],
+    [drafts, onUpdateLine, setDraft, clearIfUnchanged],
   );
 
   const liveColumns = React.useMemo<ColumnDef<POVersionLine>[]>(() => {
@@ -1240,18 +1256,22 @@ export const POIntakeLinesGrid = React.forwardRef<
   );
 });
 
-/** What the Suggested pill stands for, in the row's own terms. */
+/** Why the Suggested pill is there, in plain words (crew pass item 4). */
 function suggestionTitle(line: POVersionLine): string {
   const parts: string[] = [];
   if (line.resolution_source === 'suggested') {
     parts.push(
-      `Suggested product ${line.resolved_product_code ?? ''}`.trim() +
-        (line.match_confidence ? `, ${line.match_confidence} confidence` : ''),
+      `The code on the paper did not exactly match one of our codes, so ${
+        line.resolved_product_code ?? 'a product'
+      } is suggested. Accept it or change it.`,
     );
   }
-  if (line.qty_suggested)
-    parts.push(`Suggested quantity ${formatQty(line.qty)}`);
-  return parts.join('. ');
+  if (line.qty_suggested) {
+    parts.push(
+      `The quantity was worked out from the amount divided by the unit price. Accept it or change it.`,
+    );
+  }
+  return parts.join(' ');
 }
 
 /**

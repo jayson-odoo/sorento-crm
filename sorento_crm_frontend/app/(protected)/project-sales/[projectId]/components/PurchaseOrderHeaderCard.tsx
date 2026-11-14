@@ -10,7 +10,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { numberFieldError } from '@/lib/number-field';
-import { useProjectParties, useQuotations, versionsKey } from '../../_shared/hooks/useProjects';
+import { useQuotations, versionsKey } from '../../_shared/hooks/useProjects';
 import { listQuotationVersions } from '../../_shared/services/projectService';
 import { formatMyrExact } from '../../_shared/lib/money';
 import type {
@@ -19,6 +19,7 @@ import type {
   ProjectPurchaseOrderBody,
 } from '../../_shared/types/project.types';
 import { SOURCE_LABELS } from './PurchaseOrdersPanel';
+import { POIssuerSelect } from './POIssuerSelect';
 
 /**
  * What the PO says about itself: the number the contractor refers to it by, when it was
@@ -107,7 +108,6 @@ export function PurchaseOrderHeaderCard({
    */
   onChange?: (patch: Partial<ProjectPurchaseOrderBody>) => void;
 }) {
-  const parties = useProjectParties({ limit: 200 });
   const quotations = useQuotations(projectId);
   const scopes = React.useMemo(() => quotations.data ?? [], [quotations.data]);
   /**
@@ -184,20 +184,10 @@ export function PurchaseOrderHeaderCard({
                 />
               </EditField>
               <EditField id="po-issuer" label="Issued by">
-                <SearchableSelect
+                <POIssuerSelect
                   id="po-issuer"
-                  value={po.issuing_party_id ?? ''}
-                  onChange={(value) => onChange({ issuing_party_id: value || null })}
-                  clearable
-                  loadError={parties.error}
-                  onRetry={() => void parties.refetch()}
-                  options={(parties.data?.data ?? []).map((party) => ({
-                    value: party.id,
-                    label: party.name,
-                    description: party.party_type.replace(/_/g, ' '),
-                  }))}
-                  placeholder="-"
-                  emptyMessage="No parties on file"
+                  value={po.issuing_party_id}
+                  onChange={(partyId) => onChange({ issuing_party_id: partyId })}
                 />
               </EditField>
             </div>

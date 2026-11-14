@@ -88,6 +88,9 @@ export interface POVersionLine {
   match_options?: POLineMatchOption[];
   /** The qty was worked out from amount / unit price and is not yet accepted. */
   qty_suggested?: boolean;
+  /** No amount was printed: the server computes it from qty x unit price and moves it on a
+   *  qty or price edit until an amount is typed. */
+  amount_computed?: boolean;
 }
 
 export type POAnnotationInterpretation =
@@ -122,6 +125,9 @@ export interface POAnnotation {
  */
 export interface POApprovalStamps {
   po_number?: string | null;
+  /** Who issued the PO; the customer accepted codes are remembered for (crew pass item 2). */
+  issuing_party_id?: string | null;
+  issuing_party_name?: string | null;
   status?: string | null;
   approved_by_name?: string | null;
   approved_at?: string | null;
@@ -267,6 +273,8 @@ export interface POIntakeController {
   acceptAnnotation: (annotationId: string, note?: string | null) => Promise<void>;
   editAnnotation: (annotationId: string, body: POAnnotationEditBody) => Promise<void>;
   rejectAnnotation: (annotationId: string, note: string) => Promise<void>;
+  /** Re-read the version (after something outside it changed, e.g. the PO's issuer). */
+  refresh?: () => void;
 }
 
 export const PO_INTERPRETATION_LABELS: Record<POAnnotationInterpretation, string> = {

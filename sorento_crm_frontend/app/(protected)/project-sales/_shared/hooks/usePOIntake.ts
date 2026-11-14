@@ -304,6 +304,9 @@ export function usePOIntakeController(
     },
     qtyOverProducts,
     clearQtyOver: () => setQtyOverProducts(null),
+    refresh: () => {
+      if (versionId) queryClient.invalidateQueries({ queryKey: key });
+    },
     acceptSuggestion,
     acceptAllSuggestions: async () => {
       if (!versionId) return;
