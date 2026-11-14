@@ -582,7 +582,7 @@ def code_candidates_events(
     for match in placed:
         code = str(match["canonical_code"])
         word = words.get(token_key(code))
-        if word is None or code in offered or token_key(code) in seen:
+        if word is None or code in offered_all or token_key(code) in seen:
             continue
         display = match.get("display")
         display = display if isinstance(display, dict) else {}
