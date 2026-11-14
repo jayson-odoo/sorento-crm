@@ -53,6 +53,11 @@ class User(Base):
     avatar = Column(String, nullable=True)
     # Mirrors attachments.storage_provider: 's3' (S3 + CloudFront) or 'r2' (Cloudflare R2 + CDN).
     avatar_storage_provider = Column(String(16), nullable=False, server_default="s3")
+    # UI v2 (phase 0): the stored per-user choice 'v1' | 'v2'. The effective version and
+    # ui_v2_available are computed in app.services.ui_version_service, never read raw.
+    ui_version = Column(String(2), nullable=False, server_default="v1", default="v1")
+    # 'light' | 'dark' | 'system'; read by the v2 theme provider only.
+    theme_mode = Column(String(6), nullable=False, server_default="system", default="system")
     invited_by_user_id = Column(String, nullable=True)
     is_protected = Column(Boolean, default=False, nullable=False)
     # Marks a machine principal that an integration acts as (AC-AC-05b).
@@ -494,6 +499,15 @@ class SystemSetting(Base):
     # Debt drill offers no PO actions and every po-link route answers 403.
     stock_debt_po_link_enabled = Column(
         Boolean, nullable=False, server_default="false", default=False
+    )
+    # UI v2 (phase 0): company kill switch. Off, every user gets v1 whatever they stored.
+    ui_v2_enabled = Column(Boolean, nullable=False, server_default="true", default=True)
+    # UI v2 brand input {preset, custom_hex}; the backend stores it, the FE generates colours.
+    theme = Column(
+        JSONB,
+        nullable=False,
+        server_default=text("""'{"preset": "sorento-blue", "custom_hex": null}'::jsonb"""),
+        default=lambda: {"preset": "sorento-blue", "custom_hex": None},
     )
     # How many days an untouched price tag collection waits before the sweep
     # closes it (r9 D10). 0 turns the sweep off; 7 is the shipped default.

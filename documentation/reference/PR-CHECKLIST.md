@@ -96,3 +96,10 @@ Before merging, verify compliance with [ADR-PRODUCT-STANDARDS.md](./ADR-PRODUCT-
 ## Test cost
 - [ ] New backend tests do not add whole-suite-running slow tests without cause; check the `--durations=30` block in the backend CI logs for the PR ("Backend test suite (Postgres)" and "Backend test suite - SCM (Postgres)") and justify any new entry over ~2s
 - [ ] A test that only asserts against production-copy data goes in `tests/ci_excluded.txt` with a reason, not into the gated set
+
+## UI v2 (`DESIGN-LANGUAGE.md` section 9; any diff under `components/v2/` or `app/**/_v2/`)
+- [ ] **Playbook conformance (R15):** every rule follows the Foundryx playbook; any deviation is a row in `UI-V2-PLAN.md` section 8.1 that names the owner ruling. No unregistered deviation
+- [ ] **Holistic (R16):** no per-page or per-list variant of a shared v2 component, token or pattern; a needed variation is a prop on the shared component
+- [ ] Tokens only: no raw palette class or hex in `components/v2` or `lib/theme` (`css/design-tokens.test.ts`)
+- [ ] The screen meets the X-1..X-15 checks of `UI-V2-PLAN.md` section 7.0 in light AND dark, at 1280 AND 360
+- [ ] v1 is untouched: the same route in v1 captures the same pixels as before the diff

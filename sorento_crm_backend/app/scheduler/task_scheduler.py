@@ -401,6 +401,15 @@ def _handler_api_call_log_prune(db, task):
     except Exception:  # noqa: BLE001
         db.rollback()
         logger.exception("client_error_report prune failed")
+    # UI v2 page views (UI-V2 phase 0, D10): same daily task, fixed 90-day window.
+    from app.services.ui_page_view_service import prune_older_than
+
+    try:
+        result["ui_page_views_deleted"] = int(prune_older_than(db))
+        db.commit()
+    except Exception:  # noqa: BLE001
+        db.rollback()
+        logger.exception("ui_page_views prune failed")
     return result
 
 

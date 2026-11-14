@@ -79,6 +79,10 @@ Every date in the CRM reads day/month/year, for example **05/11/2026** for 5 Nov
 - **A date range** ("from" and "to") is one field. Type `01/11/2026 - 30/11/2026`, or one date for a single day. Type `01/11/2026 -` for "from 1 November onwards" or `- 30/11/2026` for "up to 30 November". Empty the field to clear both ends. The calendar button opens a picker with a **Clear** button.
 - A range on a log or history screen covers whole days: the first day from midnight, the last day until 11:59 pm.
 
+## 6. Trying the new version
+
+If you have been given the **Preview UI v2** permission, your avatar menu (top right) shows **Switch to the new version**; in the new version it reads **Switch to the previous version**. See [Appearance and the new version of the app](../user-management/appearance-and-the-new-version.md).
+
 ## See also
 
 * [Cover a team member on leave](./cover-team-member-on-leave.md)

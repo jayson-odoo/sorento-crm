@@ -110,6 +110,9 @@ def grant_all_permissions_to_admin_roles(db: Session) -> int:
 
     Both bypass `require_permission` at runtime, but explicit grants keep the
     admin UI honest and let permission-driven queries resolve.
+
+    Except `ui.v2.preview`: the v2 interface preview is the owner's alone (UAC journey step 1)
+    and is granted by hand.
     """
     created = 0
     for slug in ("admin", "superadmin"):
@@ -122,7 +125,7 @@ def grant_all_permissions_to_admin_roles(db: Session) -> int:
             text(
                 "INSERT INTO user_role_permissions (id, role_id, permission_id) "
                 "SELECT gen_random_uuid(), :role_id, p.id FROM user_permissions p "
-                "WHERE NOT EXISTS ("
+                "WHERE p.slug <> 'ui.v2.preview' AND NOT EXISTS ("
                 "  SELECT 1 FROM user_role_permissions rp "
                 "  WHERE rp.role_id = :role_id AND rp.permission_id = p.id"
                 ")"

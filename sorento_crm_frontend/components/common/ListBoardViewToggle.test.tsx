@@ -15,8 +15,8 @@ describe('ListBoardViewToggle', () => {
     const board = screen.getByRole('radio', { name: 'Board view' });
     expect(board.getAttribute('data-state')).toBe('on');
     const cls = board.getAttribute('class') ?? '';
-    expect(cls).toContain('data-[state=on]:bg-primary');
-    expect(cls).toContain('data-[state=on]:text-primary-foreground');
+    expect(cls).toContain('data-[state=on]:bg-(--toggle-selected-bg)');
+    expect(cls).toContain('data-[state=on]:text-(--toggle-selected-fg)');
     expect(cls).not.toContain('data-[state=on]:bg-background');
     expect(screen.getByRole('radio', { name: 'List view' }).getAttribute('data-state')).toBe('off');
   });

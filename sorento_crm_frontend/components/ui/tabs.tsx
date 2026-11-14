@@ -103,9 +103,9 @@ const tabsTriggerVariants = cva(
     variants: {
       variant: {
         default:
-          'text-muted-foreground hover:text-foreground data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-xs data-[state=active]:shadow-black/5 [&[data-state=active]_svg]:text-primary-foreground [&[data-state=active]:hover_svg]:text-primary-foreground',
+          'text-muted-foreground hover:text-foreground data-[state=active]:bg-(--toggle-selected-bg) data-[state=active]:text-(--toggle-selected-fg) data-[state=active]:shadow-xs data-[state=active]:shadow-black/5 [&[data-state=active]_svg]:text-(--toggle-selected-fg) [&[data-state=active]:hover_svg]:text-(--toggle-selected-fg)',
         button:
-          'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 rounded-lg text-accent-foreground hover:text-foreground data-[state=active]:bg-primary data-[state=active]:text-primary-foreground [&[data-state=active]_svg]:text-primary-foreground [&[data-state=active]:hover_svg]:text-primary-foreground',
+          'focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 rounded-lg text-accent-foreground hover:text-foreground data-[state=active]:bg-(--toggle-selected-bg) data-[state=active]:text-(--toggle-selected-fg) [&[data-state=active]_svg]:text-(--toggle-selected-fg) [&[data-state=active]:hover_svg]:text-(--toggle-selected-fg)',
         line: 'border-b-2 text-muted-foreground border-transparent data-[state=active]:border-primary hover:text-primary data-[state=active]:text-primary data-[state=active]:border-primary data-[state=active]:text-primary',
       },
       size: {

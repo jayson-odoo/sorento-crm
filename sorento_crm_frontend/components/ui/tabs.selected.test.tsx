@@ -34,9 +34,9 @@ describe('a selected pill tab is the primary colour', () => {
       const active = renderStrip(variant);
       expect(active.getAttribute('data-state')).toBe('active');
       const cls = classOf(active);
-      expect(cls).toContain('data-[state=active]:bg-primary');
-      expect(cls).toContain('data-[state=active]:text-primary-foreground');
-      expect(cls).toContain('[&[data-state=active]_svg]:text-primary-foreground');
+      expect(cls).toContain('data-[state=active]:bg-(--toggle-selected-bg)');
+      expect(cls).toContain('data-[state=active]:text-(--toggle-selected-fg)');
+      expect(cls).toContain('[&[data-state=active]_svg]:text-(--toggle-selected-fg)');
       expect(cls).not.toContain('data-[state=active]:bg-popover');
       expect(cls).not.toContain('data-[state=active]:bg-accent');
     });
@@ -45,6 +45,6 @@ describe('a selected pill tab is the primary colour', () => {
   it('the line strip keeps its underline and no fill', () => {
     const cls = classOf(renderStrip('line'));
     expect(cls).toContain('data-[state=active]:border-primary');
-    expect(cls).not.toContain('data-[state=active]:bg-primary');
+    expect(cls).not.toContain('data-[state=active]:bg-(--toggle-selected-bg)');
   });
 });

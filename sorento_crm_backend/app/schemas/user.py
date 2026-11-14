@@ -387,6 +387,12 @@ class UserResponse(UserBase):
     product_discontinued_scopes: List[ProductDiscontinuedScopeOut] = []
     # PORTAL-P3-ROLE-MENU: set only for a salesperson (see is_salesperson), else null.
     salesperson: Optional[SalespersonMeOut] = None
+    # UI v2 (phase 0): from `ui_version_service.ui_version_fields`, in all three manual
+    # builders in users.py (`response_model` drops an undeclared field silently).
+    ui_version: str = "v1"
+    ui_version_stored: str = "v1"
+    ui_v2_available: bool = False
+    theme_mode: str = "system"
     # The Sign-in section's five fields (S3 1.7). Populated by
     # `app.services.user_contact_link.sign_in_summary` in BOTH manual dict
     # builders (`get_user`, `get_current_user_profile`) - like the scopes above,

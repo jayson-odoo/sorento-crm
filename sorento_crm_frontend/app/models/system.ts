@@ -109,6 +109,11 @@ export interface SystemSetting {
   projectAutocountRegisterEnabled?: boolean;
   stockDebtPoLinkEnabled?: boolean;
 
+  /** UI v2 (phase 0): the company brand input. Missing means Sorento Blue, no custom colour. */
+  theme?: { preset: 'sorento-blue' | 'sorento-red' | 'teal' | 'graphite' | 'indigo'; customHex: string | null };
+  /** UI v2 company kill switch (default on). */
+  uiV2Enabled?: boolean;
+
   /**
    * "Borrow from another order" (PLAN-borrow-location-only-8oct.md D1), off by default.
    * Off borrows a location's stock and orders it back on the borrowing line.

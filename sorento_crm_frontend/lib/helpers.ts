@@ -1,3 +1,9 @@
+import {
+  formatDate as formatDateV2,
+  formatDateRange as formatDateRangeV2,
+  formatDateTime as formatDateTimeV2,
+} from '@/lib/format/date';
+
 export const throttle = (
   func: (...args: unknown[]) => void,
   limit: number,
@@ -277,12 +283,6 @@ export function respondIoTimestampToDate(timestamp: number): Date {
   return new Date(ms);
 }
 
-function toUTCDate(input: Date | string | number): Date {
-  if (input instanceof Date) return input;
-  if (typeof input === 'number') return new Date(input);
-  return parseDateTimeAsUTC(input);
-}
-
 const PROMOTION_CIVIL_YMD = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
@@ -323,14 +323,7 @@ export function formatPromotionBoundaryInMalaysia(input: Date | string | number)
  * Malaysia) or a bare `YYYY-MM-DD` calendar day.
  */
 export function formatDateInMalaysia(input: Date | string | number): string {
-  const date = toUTCDate(input);
-  if (Number.isNaN(date.getTime())) return '';
-  return new Intl.DateTimeFormat('en-GB', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    timeZone: MALAYSIA_TZ,
-  }).format(date);
+  return formatDateV2(input);
 }
 
 /** Time only, Malaysia - for chat bubbles (e.g. 10:22 pm). */
@@ -465,19 +458,8 @@ export function formatDateTimeInMalaysia(
   input: Date | string | number,
   { seconds = false }: { seconds?: boolean } = {},
 ): string {
-  const date = toUTCDate(input);
-  if (Number.isNaN(date.getTime())) return '';
-  return new Intl.DateTimeFormat('en-GB', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-    // STANDARD-HISTORY v2: a history shows seconds only where two entries share a minute.
-    ...(seconds ? { second: '2-digit' as const } : {}),
-    hourCycle: 'h12',
-    timeZone: MALAYSIA_TZ,
-  }).format(date);
+  // STANDARD-HISTORY v2: a history shows seconds only where two entries share a minute.
+  return formatDateTimeV2(input, { seconds });
 }
 
 /**
@@ -490,10 +472,7 @@ export function formatDateRange(
   end: Date | string | number | null | undefined,
   fallback = '',
 ): string {
-  const from = start == null || start === '' ? '' : formatDateInMalaysia(start);
-  const to = end == null || end === '' ? '' : formatDateInMalaysia(end);
-  if (from && to) return `${from} - ${to}`;
-  return from || to || fallback;
+  return formatDateRangeV2(start, end, fallback);
 }
 
 const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;

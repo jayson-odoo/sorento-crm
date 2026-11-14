@@ -15,8 +15,8 @@ import { render, screen } from '@testing-library/react';
 import { Toggle } from './toggle';
 import { ToggleGroup, ToggleGroupItem } from './toggle-group';
 
-const SELECTED_BG = 'data-[state=on]:bg-primary';
-const SELECTED_FG = 'data-[state=on]:text-primary-foreground';
+const SELECTED_BG = 'data-[state=on]:bg-(--toggle-selected-bg)';
+const SELECTED_FG = 'data-[state=on]:text-(--toggle-selected-fg)';
 
 function classOf(el: Element | null) {
   return el?.getAttribute('class') ?? '';
@@ -53,7 +53,7 @@ describe('a selected toggle is the primary colour', () => {
 
   it('the selected item answers hover in its own colour, not the grey of an unselected one', () => {
     render(<Toggle defaultPressed>Bold</Toggle>);
-    expect(classOf(screen.getByRole('button', { name: 'Bold' }))).toContain('data-[state=on]:hover:bg-primary/90');
+    expect(classOf(screen.getByRole('button', { name: 'Bold' }))).toContain('data-[state=on]:hover:bg-(--toggle-selected-bg)/90');
   });
 
   it('a disabled selected item is still dimmed', () => {

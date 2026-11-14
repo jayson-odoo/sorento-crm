@@ -1,0 +1,502 @@
+route,viewport,title,title_px,filled_primary_buttons,filled_labels,breadcrumb,max_tabs,grid_columns,first_row_px,header_px,cell_text_px,non_ddmm_dates,page_sideways_scroll,console_errors
+/,1280,Dashboards,20,1,My Pending,Dashboards,0,0,,,,0,0,0
+/,375,Dashboards,20,2,My Pending; Open AI assistant,Dashboards,0,0,,,,0,0,0
+/auth/account-deactivated,1280,,,0,,,0,0,,,,0,0,0
+/auth/account-deactivated,375,,,1,Open AI assistant,,0,0,,,,0,0,0
+/auth/get-started,1280,,,0,,,0,0,,,,0,0,0
+/auth/get-started,375,,,1,Open AI assistant,,0,0,,,,0,0,0
+/auth/welcome-message,1280,,,0,,,0,0,,,,0,0,0
+/auth/welcome-message,375,,,1,Open AI assistant,,0,0,,,,0,0,0
+/complaint-management/complaint-resolutions,1280,Resolutions,20,1,Add Resolution,Dashboards > Complaints > Resolutions,0,0,,,,0,0,0
+/complaint-management/complaint-resolutions,375,Resolutions,20,2,Add Resolution; Open AI assistant,Dashboards > Complaints > Resolutions,0,0,,,,0,0,0
+/complaint-management/complaint-root-causes,1280,Root Causes,20,1,Add Root Cause,Dashboards > Complaints > Root Causes,0,0,,,,0,0,0
+/complaint-management/complaint-root-causes,375,Root Causes,20,2,Add Root Cause; Open AI assistant,Dashboards > Complaints > Root Causes,0,0,,,,0,0,0
+/complaint-management/complaints,1280,Complaints,20,1,Create,Dashboards > Complaints,0,16,69,40,14,0,0,0
+/complaint-management/complaints,375,Complaints,20,2,Create; Open AI assistant,Dashboards > Complaints,0,16,69,40,14,0,0,0
+/complaint-management/complaints/new,1280,Create Complaint,20,1,Create Complaint,Dashboards > Complaints > Create Complaint,0,5,52,32,14,0,0,0
+/complaint-management/complaints/new,375,Create Complaint,20,2,Create Complaint; Open AI assistant,Dashboards > Complaints > Create Complaint,0,5,52,32,14,0,0,0
+/dealer-kit,1280,Catalogue Pages,20,2,New page; New page,Dashboards > Dealer Kit > Catalogue Pages,0,6,257,40,14,0,0,0
+/dealer-kit,375,Catalogue Pages,20,3,New page; New page; Open AI assistant,Dashboards > Dealer Kit > Catalogue Pages,0,6,257,40,14,0,0,0
+/dealer-kit/accessory-templates,1280,Accessory Templates,20,0,,Dashboards > Dealer Kit > Room Designer > Accessory Templates,0,6,69,40,14,0,0,0
+/dealer-kit/accessory-templates,375,Accessory Templates,20,1,Open AI assistant,Dashboards > Dealer Kit > Room Designer > Accessory Templates,0,6,69,40,14,0,0,0
+/dealer-kit/brochure-images,1280,Brochure Images,20,1,,Dashboards > Dealer Kit > Library > Brochure Images,0,0,,,,0,0,0
+/dealer-kit/brochure-images,375,Brochure Images,20,2,Open AI assistant,Dashboards > Dealer Kit > Library > Brochure Images,0,0,,,,0,0,0
+/dealer-kit/bundles,1280,Bundles,20,2,New bundle; New bundle,Dashboards > Dealer Kit > Library > Bundles,0,0,,,,0,0,0
+/dealer-kit/bundles,375,Bundles,20,3,New bundle; New bundle; Open AI assistant,Dashboards > Dealer Kit > Library > Bundles,0,0,,,,0,0,0
+/dealer-kit/collections,1280,Product Collections,20,1,New collection,Dashboards > Dealer Kit > Library > Product Collections,0,4,213,40,14,0,0,0
+/dealer-kit/collections,375,Product Collections,20,2,New collection; Open AI assistant,Dashboards > Dealer Kit > Library > Product Collections,0,4,213,40,14,0,0,0
+/dealer-kit/design,1280,Room Designer,20,2,Plan; Add product to room,Dashboards > Dealer Kit > Room Designer,2,0,,,,0,0,0
+/dealer-kit/design,375,Room Designer,20,3,Plan; Add product to room; Open AI assistant,Dashboards > Dealer Kit > Room Designer,2,0,,,,0,0,0
+/dealer-kit/design/summary,1280,Design Summary,20,0,,Dashboards > Dealer Kit > Room Designer > Design Summary,0,0,,,,0,0,0
+/dealer-kit/design/summary,375,Design Summary,20,1,Open AI assistant,Dashboards > Dealer Kit > Room Designer > Design Summary,0,0,,,,0,0,0
+/dealer-kit/editions,1280,Editions,20,0,,Dashboards > Dealer Kit > Editions,0,4,157,40,14,0,0,0
+/dealer-kit/editions,375,Editions,20,1,Open AI assistant,Dashboards > Dealer Kit > Editions,0,4,157,40,14,0,0,0
+/dealer-kit/flyer-readings,1280,Flyers,20,2,Read a flyer; Read a flyer,Dashboards > Dealer Kit > Library > Flyers,0,6,297,40,14,0,0,0
+/dealer-kit/flyer-readings,375,Flyers,20,3,Read a flyer; Read a flyer; Open AI assistant,Dashboards > Dealer Kit > Library > Flyers,0,6,297,40,14,0,0,0
+/dealer-kit/price-tag-requests,1280,Price Tag Requests,20,0,,Dashboards > Dealer Kit > Room Designer > Price Tag Requests,0,10,69,40,14,0,0,0
+/dealer-kit/price-tag-requests,375,Price Tag Requests,20,1,Open AI assistant,Dashboards > Dealer Kit > Room Designer > Price Tag Requests,0,10,69,40,14,0,0,0
+/dealer-kit/price-tag-requests/new,1280,New Price Tag Request,20,1,Approve,Dashboards > Dealer Kit > Room Designer > Price Tag Requests > New Price Tag Request,0,0,,,,0,0,3
+/dealer-kit/price-tag-requests/new,375,New Price Tag Request,20,2,Approve; Open AI assistant,Dashboards > Dealer Kit > Room Designer > Price Tag Requests > New Price Tag Request,0,0,,,,0,0,3
+/dealer-kit/tag-sizes,1280,Tag Sizes,20,1,Add size,Dashboards > Dealer Kit > Room Designer > Tag Sizes,0,6,69,40,14,0,0,0
+/dealer-kit/tag-sizes,375,Tag Sizes,20,2,Add size; Open AI assistant,Dashboards > Dealer Kit > Room Designer > Tag Sizes,0,6,69,40,14,0,0,0
+/dealer-kit/tag-templates,1280,Tag Templates,20,1,New Template,Dashboards > Dealer Kit > Room Designer > Tag Templates,0,9,69,40,14,0,0,0
+/dealer-kit/tag-templates,375,Tag Templates,20,2,New Template; Open AI assistant,Dashboards > Dealer Kit > Room Designer > Tag Templates,0,9,69,40,14,0,0,0
+/dealer-kit/tile-designs,1280,Tile Designs,20,2,New design; New design,Dashboards > Dealer Kit > Library > Tile Designs,0,4,257,40,14,0,0,0
+/dealer-kit/tile-designs,375,Tile Designs,20,3,New design; New design; Open AI assistant,Dashboards > Dealer Kit > Library > Tile Designs,0,4,257,40,14,0,0,0
+/finance/billing-documents,1280,Billing Documents,20,0,,Dashboards > Billing Documents,0,9,141,40,14,0,0,0
+/finance/billing-documents,375,Billing Documents,20,1,Open AI assistant,Dashboards > Billing Documents,0,9,141,40,14,0,0,0
+/forms-management/forms,1280,Forms,20,1,Create Form,Dashboards > Forms,0,10,69,40,14,0,0,0
+/forms-management/forms,375,Forms,20,2,Create Form; Open AI assistant,Dashboards > Forms,0,10,69,40,14,0,0,0
+/forms-management/forms/new,1280,Create Form,20,1,Create Form,Dashboards > Forms > Create Form,0,0,,,,0,0,0
+/forms-management/forms/new,375,Create Form,20,2,Create Form; Open AI assistant,Dashboards > Forms > Create Form,0,0,,,,0,0,0
+/ideas,1280,Ideas,20,1,List,Dashboards > Ideas > All ideas,0,0,,,,0,0,1
+/ideas,375,Ideas,20,2,List; Open AI assistant,Dashboards > Ideas > All ideas,0,0,,,,0,0,1
+/ideas/board,1280,Ideas board,20,2,Board; Capture idea,Dashboards > Ideas > All ideas > Ideas board,0,0,,,,0,0,1
+/ideas/board,375,Ideas board,20,3,Board; Capture idea; Open AI assistant,Dashboards > Ideas > All ideas > Ideas board,0,0,,,,0,0,1
+/ideas/portal,1280,Roadmap,20,0,,Dashboards > Ideas > Roadmap,3,0,,,,0,0,1
+/ideas/portal,375,Roadmap,20,1,Open AI assistant,Dashboards > Ideas > Roadmap,3,0,,,,0,0,1
+/integration-management/integration-logs,1280,Integration Logs,20,0,,Dashboards > System > Messaging > Integration Logs,0,9,69,40,14,0,0,0
+/integration-management/integration-logs,375,Integration Logs,20,1,Open AI assistant,Dashboards > System > Messaging > Integration Logs,0,9,69,40,14,0,0,0
+/integration-management/integrations,1280,Integrations,20,1,Connect integration,Dashboards > System > Messaging > Integrations,0,7,69,40,14,0,0,0
+/integration-management/integrations,375,Integrations,20,2,Connect integration; Open AI assistant,Dashboards > System > Messaging > Integrations,0,7,69,40,14,0,0,0
+/integration-management/whatsapp-templates,1280,WhatsApp Templates,20,1,Sync templates,Dashboards > System > Messaging > WhatsApp Templates,0,9,69,40,14,0,0,0
+/integration-management/whatsapp-templates,375,WhatsApp Templates,20,2,Sync templates; Open AI assistant,Dashboards > System > Messaging > WhatsApp Templates,0,9,69,40,14,0,0,0
+/inventory-management/stock,1280,Stock,20,0,,Dashboards > Inventory > Stock,0,11,69,40,14,0,0,2
+/inventory-management/stock,375,Stock,20,1,Open AI assistant,Dashboards > Inventory > Stock,0,11,69,40,14,0,0,2
+/inventory-management/stock-batches,1280,,,0,,,0,9,69,40,14,0,0,0
+/inventory-management/stock-batches,375,,,1,Open AI assistant,,0,9,69,40,14,0,0,0
+/inventory-management/stock-ledger,1280,Stock Ledger,20,0,,Dashboards > Inventory > Stock Ledger,0,9,69,40,14,0,0,0
+/inventory-management/stock-ledger,375,Stock Ledger,20,1,Open AI assistant,Dashboards > Inventory > Stock Ledger,0,9,69,40,14,0,0,0
+/inventory-management/stock-position,1280,Stock position,20,0,,Dashboards > Inventory > Stock position,0,12,137,40,14,0,0,0
+/inventory-management/stock-position,375,Stock position,20,1,Open AI assistant,Dashboards > Inventory > Stock position,0,12,137,40,14,0,0,0
+/inventory-management/stock-status,1280,Stock status,20,0,,Dashboards > Inventory > Stock status,0,0,,,,0,0,0
+/inventory-management/stock-status,375,Stock status,20,1,Open AI assistant,Dashboards > Inventory > Stock status,0,0,,,,0,0,0
+/inventory-management/stock-transfers,1280,Stock transfers,20,0,,Dashboards > Inventory > Stock Transfers,0,12,205,40,14,0,0,0
+/inventory-management/stock-transfers,375,Stock transfers,20,1,Open AI assistant,Dashboards > Inventory > Stock Transfers,0,12,205,40,14,0,0,0
+/inventory-management/storage-zones,1280,,,1,Create Zone,,0,0,,,,0,0,0
+/inventory-management/storage-zones,375,,,2,Create Zone; Open AI assistant,,0,0,,,,0,0,0
+/inventory-management/warehouses,1280,Warehouses,20,1,Create Warehouse,Dashboards > Inventory > Warehouses,0,7,44,40,14,0,0,0
+/inventory-management/warehouses,375,Warehouses,20,2,Create Warehouse; Open AI assistant,Dashboards > Inventory > Warehouses,0,7,44,40,14,0,0,0
+/inventory-management/warehouses/[id],1280,Warehouse,20,1,Edit,Dashboards > Inventory > Warehouses > Warehouse,2,0,,,,0,0,0
+/inventory-management/warehouses/[id],375,Warehouse,20,2,Edit; Open AI assistant,Dashboards > Inventory > Warehouses > Warehouse,2,0,,,,0,0,0
+/inventory-management/warehouses/new,1280,Create Warehouse,20,2,Create Warehouse,Dashboards > Inventory > Warehouses > Create Warehouse,2,0,,,,0,0,0
+/inventory-management/warehouses/new,375,Create Warehouse,20,3,Create Warehouse; Open AI assistant,Dashboards > Inventory > Warehouses > Create Warehouse,2,0,,,,0,0,0
+/marketing-management/campaigns,1280,,,1,Create Campaign,,0,10,69,40,14,0,0,0
+/marketing-management/campaigns,375,,,2,Create Campaign; Open AI assistant,,0,10,69,40,14,0,0,0
+/marketing-management/campaigns/new,1280,Create Campaign,20,1,Create Campaign,Dashboards > Marketing > Campaigns > Create Campaign,0,0,,,,0,0,0
+/marketing-management/campaigns/new,375,Create Campaign,20,2,Create Campaign; Open AI assistant,Dashboards > Marketing > Campaigns > Create Campaign,0,0,,,,0,0,0
+/marketing-management/promotion-attachments,1280,Promotion Attachments,20,0,,Dashboards > Marketing > Promotions > Promotion Attachments,0,6,69,40,14,0,0,0
+/marketing-management/promotion-attachments,375,Promotion Attachments,20,1,Open AI assistant,Dashboards > Marketing > Promotions > Promotion Attachments,0,6,69,40,14,0,0,0
+/marketing-management/promotion-products,1280,Promotion Products,20,0,,Dashboards > Marketing > Promotions > Promotion Products,0,9,69,40,14,0,0,0
+/marketing-management/promotion-products,375,Promotion Products,20,1,Open AI assistant,Dashboards > Marketing > Promotions > Promotion Products,0,9,69,40,14,0,0,0
+/marketing-management/promotion-types,1280,Promotion Types,20,1,Add Promotion Type,Dashboards > Marketing > Promotions > Promotion Types,0,7,69,40,14,0,0,0
+/marketing-management/promotion-types,375,Promotion Types,20,2,Add Promotion Type; Open AI assistant,Dashboards > Marketing > Promotions > Promotion Types,0,7,69,40,14,0,0,0
+/marketing-management/promotions,1280,Promotions,20,1,Create Promotion,Dashboards > Marketing > Promotions > All Promotions,0,11,69,40,14,0,0,0
+/marketing-management/promotions,375,Promotions,20,2,Create Promotion; Open AI assistant,Dashboards > Marketing > Promotions > All Promotions,0,11,69,40,14,0,0,0
+/marketing-management/promotions/new,1280,Create Promotion,20,2,Create Promotion,Dashboards > Marketing > Promotions > All Promotions > Create Promotion,1,0,,,,0,0,0
+/marketing-management/promotions/new,375,Create Promotion,20,3,Create Promotion; Open AI assistant,Dashboards > Marketing > Promotions > All Promotions > Create Promotion,1,0,,,,0,0,0
+/master-data-management/accessories,1280,Accessories,20,1,Add accessory,Dashboards > Products > Specifications > Accessories,0,5,69,40,14,0,0,0
+/master-data-management/accessories,375,Accessories,20,2,Add accessory; Open AI assistant,Dashboards > Products > Specifications > Accessories,0,5,69,40,14,0,0,0
+/master-data-management/brands,375,Brands,20,2,Create Brand; Open AI assistant,Dashboards > Products > Reference Data > Brands,0,10,69,40,14,0,0,0
+/master-data-management/brands/new,1280,Create Brand,20,4,Create Brand,Dashboards > Products > Reference Data > Brands > Create Brand,0,0,,,,0,0,0
+/master-data-management/brands/new,375,Create Brand,20,5,Create Brand; Open AI assistant,Dashboards > Products > Reference Data > Brands > Create Brand,0,0,,,,0,0,0
+/master-data-management/certificates,1280,Certificates,20,1,Add Certificate,Dashboards > Products > Reference Data > Certificates,0,10,69,40,14,0,0,0
+/master-data-management/certificates,375,Certificates,20,2,Add Certificate; Open AI assistant,Dashboards > Products > Reference Data > Certificates,0,10,69,40,14,0,0,0
+/master-data-management/certificates/links,1280,Certificate Links to Check,20,0,,Dashboards > Products > Reference Data > Certificate Links,0,8,141,40,14,0,0,0
+/master-data-management/certificates/links,375,Certificate Links to Check,20,1,Open AI assistant,Dashboards > Products > Reference Data > Certificate Links,0,8,141,40,14,0,0,0
+/master-data-management/countries,1280,Countries,20,1,Add Country,Dashboards > Products > Reference Data > Countries,0,4,69,40,14,0,0,0
+/master-data-management/countries,375,Countries,20,2,Add Country; Open AI assistant,Dashboards > Products > Reference Data > Countries,0,4,69,40,14,0,0,0
+/master-data-management/flyer-spec-proposals,1280,Flyer Spec Proposals,20,0,,Dashboards > Products > Specifications > Flyer Spec Proposals,0,10,193,40,14,0,0,0
+/master-data-management/flyer-spec-proposals,375,Flyer Spec Proposals,20,1,Open AI assistant,Dashboards > Products > Specifications > Flyer Spec Proposals,0,10,193,40,14,0,0,0
+/master-data-management/item-classes,1280,Item Classes,20,1,Add Item Class,Dashboards > Products > Reference Data > Item Classes,0,5,69,40,14,0,0,0
+/master-data-management/item-classes,375,Item Classes,20,2,Add Item Class; Open AI assistant,Dashboards > Products > Reference Data > Item Classes,0,5,69,40,14,0,0,0
+/master-data-management/lookup-sets,1280,Lookup Sets,20,1,Add lookup set,Dashboards > System > Configuration > Lookup Sets,0,7,45,40,14,0,0,0
+/master-data-management/lookup-sets,375,Lookup Sets,20,2,Add lookup set; Open AI assistant,Dashboards > System > Configuration > Lookup Sets,0,7,45,40,14,0,0,0
+/master-data-management/payment-terms,1280,Payment Terms,20,0,,Dashboards > Products > Reference Data > Payment Terms,0,4,69,40,14,0,0,0
+/master-data-management/payment-terms,375,Payment Terms,20,1,Open AI assistant,Dashboards > Products > Reference Data > Payment Terms,0,4,69,40,14,0,0,0
+/master-data-management/product-attachments,1280,Product Attachments,20,0,,Dashboards > Products > Product Attachments,0,5,69,40,14,0,0,0
+/master-data-management/product-attachments,375,Product Attachments,20,1,Open AI assistant,Dashboards > Products > Product Attachments,0,5,69,40,14,0,0,0
+/master-data-management/product-categories,1280,Product Categories,20,1,Create Category,Dashboards > Products > Reference Data > Product Categories,0,7,45,41,14,0,0,0
+/master-data-management/product-categories,375,Product Categories,20,2,Create Category; Open AI assistant,Dashboards > Products > Reference Data > Product Categories,0,7,45,41,14,0,0,0
+/master-data-management/product-sets,1280,Product Sets,20,1,Add set,Dashboards > Products > Product Sets,0,0,,,,0,0,0
+/master-data-management/product-sets,375,Product Sets,20,2,Add set; Open AI assistant,Dashboards > Products > Product Sets,0,0,,,,0,0,0
+/master-data-management/product-sets/proposals,1280,Propose Product Sets,20,1,Propose from catalogue,Dashboards > Products > Product Sets > Propose Product Sets,0,0,,,,0,0,0
+/master-data-management/product-sets/proposals,375,Propose Product Sets,20,2,Propose from catalogue; Open AI assistant,Dashboards > Products > Product Sets > Propose Product Sets,0,0,,,,0,0,0
+/master-data-management/product-specifications,1280,Product Specifications,20,1,Add specification,Dashboards > Products > Specifications > Product Specifications,0,6,69,40,14,0,0,0
+/master-data-management/product-specifications,375,Product Specifications,20,2,Add specification; Open AI assistant,Dashboards > Products > Specifications > Product Specifications,0,6,69,40,14,0,0,0
+/master-data-management/products,1280,Products,20,1,Upload cost price,Dashboards > Products > All Products,0,18,45,40,14,0,0,1
+/master-data-management/products,375,Products,20,2,Upload cost price; Open AI assistant,Dashboards > Products > All Products,0,18,45,40,14,0,0,1
+/master-data-management/products/[id],1280,Product,20,1,Edit,Dashboards > Products > All Products > Product,11,0,,,,0,0,0
+/master-data-management/products/[id],375,Product,20,2,Edit; Open AI assistant,Dashboards > Products > All Products > Product,11,0,,,,0,0,0
+/master-data-management/products/[id]/edit,1280,Edit Product,20,3,Update Product,Dashboards > Products > All Products > Edit Product,6,0,,,,0,0,0
+/master-data-management/products/[id]/edit,375,Edit Product,20,4,Update Product; Open AI assistant,Dashboards > Products > All Products > Edit Product,6,0,,,,0,0,0
+/master-data-management/products/new,1280,Create Product,20,3,Create Product,Dashboards > Products > All Products > Create Product,5,0,,,,0,0,0
+/master-data-management/products/new,375,Create Product,20,4,Create Product; Open AI assistant,Dashboards > Products > All Products > Create Product,5,0,,,,0,0,0
+/master-data-management/sales-agents,1280,Sales Agents,20,0,,Dashboards > Sales > Sales Agents,0,7,44,40,14,0,0,0
+/master-data-management/sales-agents,375,Sales Agents,20,1,Open AI assistant,Dashboards > Sales > Sales Agents,0,7,44,40,14,0,0,0
+/master-data-management/spec-verification,1280,Spec Verification,20,0,,Dashboards > Products > Specifications > Spec Verification,0,8,45,40,14,0,0,0
+/master-data-management/spec-verification,375,Spec Verification,20,1,Open AI assistant,Dashboards > Products > Specifications > Spec Verification,0,8,45,40,14,0,0,0
+/master-data-management/units-of-measure,1280,Units of Measure,20,1,Create UOM,Dashboards > Products > Reference Data > Units of Measure,0,8,45,40,14,0,0,0
+/master-data-management/units-of-measure,375,Units of Measure,20,2,Create UOM; Open AI assistant,Dashboards > Products > Reference Data > Units of Measure,0,8,45,40,14,0,0,0
+/master-data-management/units-of-measure/new,1280,Create Unit of Measure,20,2,Create UOM,Dashboards > Products > Reference Data > Units of Measure > Create Unit of Measure,0,0,,,,0,0,0
+/master-data-management/units-of-measure/new,375,Create Unit of Measure,20,3,Create UOM; Open AI assistant,Dashboards > Products > Reference Data > Units of Measure > Create Unit of Measure,0,0,,,,0,0,0
+/my-requests,1280,,,0,,,0,0,,,,0,0,0
+/my-requests,375,Stock Inquiries,20,2,Create; Open AI assistant,Dashboards > Procurement > Stock Inquiries,0,16,69,40,14,0,0,0
+/my-requests/new_product_application/new,1280,New Product Application,20,1,Submit,Dashboards > Procurement > New Product Applications > New Product Application,0,0,,,,0,0,0
+/my-requests/new_product_application/new,375,New Product Application,20,2,Submit; Open AI assistant,Dashboards > Procurement > New Product Applications > New Product Application,0,0,,,,0,0,0
+/my-requests/price_tag_request,1280,Price Tag Requests,20,0,,Dashboards > Dealer Kit > Room Designer > Price Tag Requests,0,10,69,40,14,0,0,0
+/my-requests/price_tag_request,375,Price Tag Requests,20,1,Open AI assistant,Dashboards > Dealer Kit > Room Designer > Price Tag Requests,0,10,69,40,14,0,0,0
+/my-requests/price_tag_request/new,1280,New Price Tag Request,20,1,Approve,Dashboards > Dealer Kit > Room Designer > Price Tag Requests > New Price Tag Request,0,0,,,,0,0,3
+/my-requests/price_tag_request/new,375,New Price Tag Request,20,2,Approve; Open AI assistant,Dashboards > Dealer Kit > Room Designer > Price Tag Requests > New Price Tag Request,0,0,,,,0,0,3
+/my-requests/sales_opportunity/new,1280,Opportunities,20,2,Create; Create,Dashboards > Sales > Opportunities,0,8,163,40,14,0,0,0
+/my-requests/sales_opportunity/new,375,Opportunities,20,3,Create; Create; Open AI assistant,Dashboards > Sales > Opportunities,0,8,163,40,14,0,0,0
+/my-requests/sample_request/new,1280,New Sample Request,20,2,Submit,Dashboards > Project Sales > Sample Requests > New Sample Request,0,5,37,33,14,0,0,0
+/my-requests/sample_request/new,375,New Sample Request,20,3,Submit; Open AI assistant,Dashboards > Project Sales > Sample Requests > New Sample Request,0,5,37,33,14,0,0,0
+/my-requests/verify,1280,Dashboards,20,1,My Pending,Dashboards,0,0,,,,0,0,0
+/my-requests/verify,375,Dashboards,20,2,My Pending; Open AI assistant,Dashboards,0,0,,,,0,0,0
+/order-management/branches,1280,Customer Branches,20,0,,Dashboards > Delivery Orders > Customer Branches,0,0,,,,0,0,0
+/order-management/branches,375,Customer Branches,20,1,Open AI assistant,Dashboards > Delivery Orders > Customer Branches,0,0,,,,0,0,0
+/order-management/customer-groups,1280,Customer Groups,20,1,Add group,Dashboards > Delivery Orders > Customer Groups,0,5,125,40,14,0,0,0
+/order-management/customer-groups,375,Customer Groups,20,2,Add group; Open AI assistant,Dashboards > Delivery Orders > Customer Groups,0,5,125,40,14,0,0,0
+/order-management/customers,1280,Customers,20,1,Create Customer,Dashboards > Delivery Orders > Customers,0,9,45,40,14,0,0,0
+/order-management/customers,375,Customers,20,2,Create Customer; Open AI assistant,Dashboards > Delivery Orders > Customers,0,9,45,40,14,0,0,0
+/order-management/customers/[id],1280,Customer,20,1,Edit,Dashboards > Delivery Orders > Customers > Customer,4,0,,,,0,0,0
+/order-management/customers/[id],375,Customer,20,2,Edit; Open AI assistant,Dashboards > Delivery Orders > Customers > Customer,4,0,,,,0,0,0
+/order-management/customers/new,1280,Create Customer,20,2,Create Customer,Dashboards > Delivery Orders > Customers > Create Customer,0,0,,,,0,0,0
+/order-management/customers/new,375,Create Customer,20,3,Create Customer; Open AI assistant,Dashboards > Delivery Orders > Customers > Create Customer,0,0,,,,0,0,0
+/order-management/order-statuses,1280,Delivery Order Statuses,20,1,Create Delivery Order Status,Dashboards > Delivery Orders > Delivery Order Status,0,6,44,40,14,0,0,0
+/order-management/order-statuses,375,Delivery Order Statuses,20,2,Create Delivery Order Status; Open AI assistant,Dashboards > Delivery Orders > Delivery Order Status,0,6,44,40,14,0,0,0
+/order-management/order-statuses/new,1280,Create Delivery Order Status,20,1,Create Delivery Order Status,Dashboards > Delivery Orders > Delivery Order Status > Create Delivery Order Status,0,0,,,,0,0,0
+/order-management/order-statuses/new,375,Create Delivery Order Status,20,2,Create Delivery Order Status; Open AI assistant,Dashboards > Delivery Orders > Delivery Order Status > Create Delivery Order Status,0,0,,,,0,0,0
+/order-management/orders,1280,Delivery Orders,20,1,Create Delivery Order,Dashboards > Delivery Orders,0,15,69,40,14,0,0,1
+/order-management/orders,375,Delivery Orders,20,2,Create Delivery Order; Open AI assistant,Dashboards > Delivery Orders,0,15,69,40,14,0,0,1
+/order-management/orders/new,1280,Create Delivery Order,20,1,Create Delivery Order,Dashboards > Delivery Orders > Create Delivery Order,3,0,,,,0,0,0
+/order-management/orders/new,375,Create Delivery Order,20,2,Create Delivery Order; Open AI assistant,Dashboards > Delivery Orders > Create Delivery Order,3,0,,,,0,0,0
+/procurement-management/cost-price-uploads,1280,Cost Price Uploads,20,1,Upload cost list,Dashboards > Procurement > Cost Price Uploads,0,9,69,40,14,0,0,0
+/procurement-management/cost-price-uploads,375,Cost Price Uploads,20,2,Upload cost list; Open AI assistant,Dashboards > Procurement > Cost Price Uploads,0,0,,,,0,0,0
+/procurement-management/grn,1280,Goods Receipt Notes,20,1,Create GRN,Dashboards > Procurement > GRN,0,7,69,40,14,0,0,1
+/procurement-management/grn,375,Goods Receipt Notes,20,2,Create GRN; Open AI assistant,Dashboards > Procurement > GRN,0,7,69,40,14,0,0,1
+/procurement-management/grn/new,1280,Create Goods Receipt Note,20,1,Create,Dashboards > Procurement > GRN > Create Goods Receipt Note,0,0,,,,0,0,0
+/procurement-management/grn/new,375,Create Goods Receipt Note,20,2,Create; Open AI assistant,Dashboards > Procurement > GRN > Create Goods Receipt Note,0,0,,,,0,1,0
+/procurement-management/new-product-applications,1280,New Product Applications,20,1,Create,Dashboards > Procurement > New Product Applications,0,12,69,40,14,0,0,0
+/procurement-management/new-product-applications,375,New Product Applications,20,2,Create; Open AI assistant,Dashboards > Procurement > New Product Applications,0,12,69,40,14,0,0,0
+/procurement-management/new-product-applications/new,1280,New Product Application,20,1,Submit,Dashboards > Procurement > New Product Applications > New Product Application,0,0,,,,0,0,0
+/procurement-management/new-product-applications/new,375,New Product Application,20,2,Submit; Open AI assistant,Dashboards > Procurement > New Product Applications > New Product Application,0,0,,,,0,0,0
+/procurement-management/packing-lists,1280,Packing Lists,20,1,Upload,Dashboards > Procurement > Packing Lists,0,11,69,40,14,0,0,0
+/procurement-management/packing-lists,375,Packing Lists,20,2,Upload; Open AI assistant,Dashboards > Procurement > Packing Lists,0,11,69,40,14,0,0,0
+/procurement-management/packing-lists/new,1280,Create Packing List,20,1,Create,Dashboards > Procurement > Packing Lists > Create Packing List,0,0,,,,0,0,0
+/procurement-management/packing-lists/new,375,Create Packing List,20,2,Create; Open AI assistant,Dashboards > Procurement > Packing Lists > Create Packing List,0,0,,,,0,0,0
+/procurement-management/picking-lines,1280,Picking Lines,20,0,,Dashboards > Procurement > Picking Lines,0,6,69,40,14,0,0,0
+/procurement-management/picking-lines,375,Picking Lines,20,1,Open AI assistant,Dashboards > Procurement > Picking Lines,0,6,69,40,14,0,0,0
+/procurement-management/product-suppliers,1280,Product Suppliers,20,0,,Dashboards > Procurement > Product-Suppliers,0,5,69,40,14,0,0,0
+/procurement-management/product-suppliers,375,Product Suppliers,20,1,Open AI assistant,Dashboards > Procurement > Product-Suppliers,0,5,69,40,14,0,0,0
+/procurement-management/purchase-requests,1280,Purchase Requests,20,1,Create,Dashboards > Project Sales Admin > Purchase Requests,0,14,69,40,14,0,0,0
+/procurement-management/purchase-requests,375,Purchase Requests,20,2,Create; Open AI assistant,Dashboards > Project Sales Admin > Purchase Requests,0,14,69,40,14,0,0,0
+/procurement-management/purchase-requests/new,1280,New Purchase Request,20,1,Create,Dashboards > Project Sales Admin > Purchase Requests > New Purchase Request,0,5,49,40,14,0,0,0
+/procurement-management/purchase-requests/new,375,New Purchase Request,20,2,Create; Open AI assistant,Dashboards > Project Sales Admin > Purchase Requests > New Purchase Request,0,5,49,40,14,0,0,0
+/procurement-management/spo-allocations,1280,SPO Allocations,20,2,Outstanding; Upload SPO,Dashboards > Procurement > SPO Allocations,0,11,69,40,14,0,0,0
+/procurement-management/spo-allocations,375,SPO Allocations,20,3,Outstanding; Upload SPO; Open AI assistant,Dashboards > Procurement > SPO Allocations,0,11,69,40,14,0,0,0
+/procurement-management/spo-allocations/new,1280,Create SPO Allocation,20,1,Create,Dashboards > Procurement > SPO Allocations > Create SPO Allocation,0,0,,,,0,0,0
+/procurement-management/spo-allocations/new,375,Create SPO Allocation,20,2,Create; Open AI assistant,Dashboards > Procurement > SPO Allocations > Create SPO Allocation,0,0,,,,0,0,0
+/procurement-management/sponsorship-forms,1280,Sponsorship Forms,20,1,Create,Dashboards > Project Sales Admin > Sponsorship Forms,0,14,69,40,14,0,0,0
+/procurement-management/sponsorship-forms,375,Sponsorship Forms,20,2,Create; Open AI assistant,Dashboards > Project Sales Admin > Sponsorship Forms,0,14,69,40,14,0,0,0
+/procurement-management/sponsorship-forms/new,1280,New Sponsorship Form,20,1,Create,Dashboards > Project Sales Admin > Sponsorship Forms > New Sponsorship Form,0,7,49,40,14,0,0,0
+/procurement-management/sponsorship-forms/new,375,New Sponsorship Form,20,2,Create; Open AI assistant,Dashboards > Project Sales Admin > Sponsorship Forms > New Sponsorship Form,0,7,49,40,14,0,0,0
+/procurement-management/sponsorship-forms/report,1280,Sponsorship report,20,2,Export to Excel; All,Dashboards > Project Sales Admin > Sponsorship Forms > Report,0,0,,,,0,0,0
+/procurement-management/sponsorship-forms/report,375,Sponsorship report,20,3,Export to Excel; All; Open AI assistant,Dashboards > Project Sales Admin > Sponsorship Forms > Report,0,0,,,,0,0,0
+/procurement-management/stock-inquiries,1280,Stock Inquiries,20,1,Create,Dashboards > Procurement > Stock Inquiries,0,16,69,40,14,0,0,0
+/procurement-management/stock-inquiries,375,Stock Inquiries,20,2,Create; Open AI assistant,Dashboards > Procurement > Stock Inquiries,0,16,69,40,14,0,0,0
+/procurement-management/stock-inquiries/new,1280,Create Stock Inquiry,20,1,Create Stock Inquiry,Dashboards > Procurement > Stock Inquiries > Create Stock Inquiry,0,0,,,,0,0,0
+/procurement-management/stock-inquiries/new,375,Create Stock Inquiry,20,2,Create Stock Inquiry; Open AI assistant,Dashboards > Procurement > Stock Inquiries > Create Stock Inquiry,0,0,,,,0,0,0
+/procurement-management/suppliers,1280,Suppliers,20,1,Create Supplier,Dashboards > Procurement > Suppliers,0,9,45,40,14,0,0,0
+/procurement-management/suppliers,375,Suppliers,20,2,Create Supplier; Open AI assistant,Dashboards > Procurement > Suppliers,0,9,45,40,14,0,0,0
+/procurement-management/suppliers/new,1280,Create Supplier,20,2,Create Supplier,Dashboards > Procurement > Suppliers > Create Supplier,0,0,,,,0,0,0
+/procurement-management/suppliers/new,375,Create Supplier,20,3,Create Supplier; Open AI assistant,Dashboards > Procurement > Suppliers > Create Supplier,0,0,,,,0,0,0
+/project-sales/[id],1280,Project,20,4,Spec In; Save management notes; Activities; Post,Dashboards > Project Sales > Projects > Project,10,0,,,,0,0,2
+/project-sales/[id],375,Project,20,5,Spec In; Save management notes; Activities; Post; Open AI assistant,Dashboards > Project Sales > Projects > Project,10,0,,,,0,0,2
+/project-sales/[id]/order-inquiries,1280,Order Inquiries,20,1,Export Excel,Dashboards > Project Sales > Projects > Project > Order Inquiries,0,14,44,40,14,0,0,0
+/project-sales/[id]/order-inquiries,375,Order Inquiries,20,2,Export Excel; Open AI assistant,Dashboards > Project Sales > Projects > Project > Order Inquiries,0,14,44,40,14,0,0,0
+/project-sales/[id]/quotation-documents/new,1280,New proposal,20,1,Save proposal,Dashboards > Project Sales > Projects > Project > New proposal,3,13,69,32,14,0,0,1
+/project-sales/[id]/quotation-documents/new,375,New proposal,20,2,Save proposal; Open AI assistant,Dashboards > Project Sales > Projects > Project > New proposal,3,13,69,32,14,0,0,1
+/project-sales/[id]/sales-orders/[id],1280,Sales Order,20,1,Compare with AutoCount,Dashboards > Project Sales > Projects > Project > Sales Order,2,0,,,,0,0,0
+/project-sales/[id]/sales-orders/[id],375,Sales Order,20,2,Compare with AutoCount; Open AI assistant,Dashboards > Project Sales > Projects > Project > Sales Order,2,0,,,,0,0,0
+/project-sales/divergences,1280,AutoCount differences,20,0,,Dashboards > Project Sales > AutoCount Differences,0,0,,,,0,0,0
+/project-sales/divergences,375,AutoCount differences,20,1,Open AI assistant,Dashboards > Project Sales > AutoCount Differences,0,0,,,,0,0,0
+/project-sales/fulfilment-planning,1280,Fulfilment planning,20,1,Plan together (0),Dashboards > Supply Chain > Project Demand > Fulfilment Planning,0,15,55,40,14,0,0,0
+/project-sales/fulfilment-planning,375,Fulfilment planning,20,2,Plan together (0); Open AI assistant,Dashboards > Supply Chain > Project Demand > Fulfilment Planning,0,15,55,40,14,0,0,0
+/project-sales/lead-acceptance,1280,Awaiting acceptance,20,0,,Dashboards > Project Sales > Awaiting Acceptance,0,7,193,40,14,0,0,0
+/project-sales/lead-acceptance,375,Awaiting acceptance,20,1,Open AI assistant,Dashboards > Project Sales > Awaiting Acceptance,0,7,193,40,14,0,0,0
+/project-sales/leads,1280,Leads,20,1,Create lead,Dashboards > Project Sales > Leads,0,13,213,40,14,0,0,1
+/project-sales/leads,375,Leads,20,2,Create lead; Open AI assistant,Dashboards > Project Sales > Leads,0,13,213,40,14,0,0,1
+/project-sales/my-tasks,1280,My tasks,20,0,,Dashboards > Project Sales > My Tasks,0,0,,,,0,0,0
+/project-sales/my-tasks,375,My tasks,20,1,Open AI assistant,Dashboards > Project Sales > My Tasks,0,0,,,,0,0,0
+/project-sales/new,1280,Register a project,20,1,Check,Dashboards > Project Sales > Projects > Register a project,0,0,,,,0,0,3
+/project-sales/new,375,Register a project,20,2,Check; Open AI assistant,Dashboards > Project Sales > Projects > Register a project,0,0,,,,0,0,3
+/project-sales/order-inquiries,1280,Order inquiries,20,2,Documents; Outstanding,Dashboards > Procurement > Supply Chain > Order Inquiries,0,12,44,40,14,0,0,0
+/project-sales/order-inquiries,375,Order inquiries,20,3,Documents; Outstanding; Open AI assistant,Dashboards > Procurement > Supply Chain > Order Inquiries,0,12,44,40,14,0,0,0
+/project-sales/order-inquiries/[id],1280,Order Inquiry,20,1,Confirm,Dashboards > Procurement > Supply Chain > Order Inquiries > Order Inquiry,5,19,45,40,14,0,0,0
+/project-sales/order-inquiries/[id],375,Order Inquiry,20,2,Confirm; Open AI assistant,Dashboards > Procurement > Supply Chain > Order Inquiries > Order Inquiry,5,19,45,40,14,0,0,0
+/project-sales/parties,1280,Parties,20,1,Add party,Dashboards > Project Sales > Parties,0,9,193,40,14,0,0,1
+/project-sales/parties,375,Parties,20,2,Add party; Open AI assistant,Dashboards > Project Sales > Parties,0,9,193,40,14,0,0,1
+/project-sales/pipeline,1280,Projects,20,2,Board view; Start,Dashboards > Project Sales > Projects,0,0,,,,0,0,0
+/project-sales/pipeline,375,Projects,20,3,Board view; Start; Open AI assistant,Dashboards > Project Sales > Projects,0,0,,,,0,0,0
+/project-sales/planning-changes,1280,Planning changes,20,1,All,Dashboards > Supply Chain > Project Demand > Planning changes,0,10,225,40,14,0,0,0
+/project-sales/planning-changes,375,Planning changes,20,2,All; Open AI assistant,Dashboards > Supply Chain > Project Demand > Planning changes,0,10,225,40,14,0,0,0
+/project-sales/plans,1280,Plans,20,0,,Dashboards > Supply Chain > Project Demand > Plans,0,0,,,,0,0,0
+/project-sales/plans,375,Plans,20,1,Open AI assistant,Dashboards > Supply Chain > Project Demand > Plans,0,0,,,,0,0,0
+/project-sales/price-floors,1280,Price Floors,20,1,Add floor,Dashboards > Project Sales > Configuration > Price Floors,0,5,69,40,14,0,0,0
+/project-sales/price-floors,375,Price Floors,20,2,Add floor; Open AI assistant,Dashboards > Project Sales > Configuration > Price Floors,0,5,69,40,14,0,0,0
+/project-sales/quotation-templates,1280,Quotation Templates,20,1,Add template,Dashboards > Project Sales > Configuration > Quotation Templates,2,3,89,40,14,0,0,0
+/project-sales/quotation-templates,375,Quotation Templates,20,2,Add template; Open AI assistant,Dashboards > Project Sales > Configuration > Quotation Templates,2,3,89,40,14,0,0,0
+/project-sales/reports,1280,Forecast and reports,20,0,,Dashboards > Supply Chain > Project Demand > Forecast & Reports,0,5,37,29,14,0,0,0
+/project-sales/reports,375,Forecast and reports,20,1,Open AI assistant,Dashboards > Supply Chain > Project Demand > Forecast & Reports,0,5,57,29,14,0,0,0
+/project-sales/sample-requests,1280,Sample Requests,20,1,Create,Dashboards > Project Sales > Sample Requests,0,9,69,40,14,0,0,0
+/project-sales/sample-requests,375,Sample Requests,20,2,Create; Open AI assistant,Dashboards > Project Sales > Sample Requests,0,9,69,40,14,0,0,0
+/project-sales/sample-requests/new,1280,New Sample Request,20,2,Submit,Dashboards > Project Sales > Sample Requests > New Sample Request,0,5,37,33,14,0,0,0
+/project-sales/sample-requests/new,375,New Sample Request,20,3,Submit; Open AI assistant,Dashboards > Project Sales > Sample Requests > New Sample Request,0,5,37,33,14,0,0,0
+/project-sales/series,1280,Series,20,1,Add series,Dashboards > Project Sales > Configuration > Series,0,6,69,40,14,0,0,0
+/project-sales/series,375,Series,20,2,Add series; Open AI assistant,Dashboards > Project Sales > Configuration > Series,0,6,69,40,14,0,0,0
+/project-sales/setup,1280,Project setup,20,2,Add type; Add to-do list template,Dashboards > Project Sales > Configuration > Setup,0,13,53,40,14,0,0,0
+/project-sales/setup,375,Project setup,20,3,Add type; Add to-do list template; Open AI assistant,Dashboards > Project Sales > Configuration > Setup,0,13,53,40,14,0,0,0
+/project-sales/stock-claims,1280,Stock claims,20,0,,Dashboards > Project Sales > Stock Claims,0,0,,,,0,0,0
+/project-sales/stock-claims,375,Stock claims,20,1,Open AI assistant,Dashboards > Project Sales > Stock Claims,0,0,,,,0,0,0
+/project-sales/stock-debt,1280,Stock debt,20,1,Export,Dashboards > Procurement > Supply Chain > Stock Debt,0,8,242,40,14,0,0,0
+/project-sales/stock-debt,375,Stock debt,20,2,Export; Open AI assistant,Dashboards > Procurement > Supply Chain > Stock Debt,0,8,242,40,14,0,0,0
+/project-sales/stock-debt/snapshots,1280,Snapshots,20,0,,Dashboards > Stock Debt > Snapshots,0,7,173,40,14,0,0,0
+/project-sales/stock-debt/snapshots,375,Snapshots,20,1,Open AI assistant,Dashboards > Stock Debt > Snapshots,0,7,173,40,14,0,0,0
+/resource-management/attachment-directories,1280,Files,20,3,All attachments; List view; Upload,Dashboards > Resources > Files,0,9,69,40,14,0,0,0
+/resource-management/attachment-directories,375,Files,20,3,List view; Upload; Open AI assistant,Dashboards > Resources > Files,0,9,69,40,14,0,0,0
+/resource-management/attachment-types,1280,Attachment Types,20,1,Create Attachment Type,Dashboards > Resources > Attachment Types,0,7,69,40,14,0,0,0
+/resource-management/attachment-types,375,Attachment Types,20,2,Create Attachment Type; Open AI assistant,Dashboards > Resources > Attachment Types,0,7,69,40,14,0,0,0
+/resource-management/attachments,1280,Attachments,20,1,Create Attachment,Dashboards > Attachments,0,11,69,40,14,0,0,0
+/resource-management/attachments,375,Attachments,20,2,Create Attachment; Open AI assistant,Dashboards > Attachments,0,11,69,40,14,0,0,0
+/resource-management/document-access,1280,Document Access,20,0,,Dashboards > Resources > Document Access,0,4,89,40,14,0,0,0
+/resource-management/document-access,375,Document Access,20,1,Open AI assistant,Dashboards > Resources > Document Access,0,0,,,,0,0,0
+/resource-management/smart-linkage,1280,Smart Linkage,20,0,,Dashboards > Smart Linkage,0,8,69,40,14,0,0,0
+/resource-management/smart-linkage,375,Smart Linkage,20,1,Open AI assistant,Dashboards > Smart Linkage,0,8,69,40,14,0,0,0
+/resource-management/trash,1280,Trash,20,1,List view,Dashboards > Resources > Trash,0,9,69,40,14,0,0,0
+/resource-management/trash,375,Trash,20,2,List view; Open AI assistant,Dashboards > Resources > Trash,0,9,69,40,14,0,0,0
+/sales/customer-asks,1280,Customer asks,20,0,,Dashboards > Sales > Customer asks,0,0,,,,0,0,0
+/sales/customer-asks,375,Customer asks,20,1,Open AI assistant,Dashboards > Sales > Customer asks,0,0,,,,0,0,0
+/sales/dealer-access,1280,Dealer access,20,1,Add people,Dashboards > Dealer access,0,6,141,40,14,0,0,0
+/sales/dealer-access,375,Dealer access,20,2,Add people; Open AI assistant,Dashboards > Dealer access,0,0,,,,0,0,0
+/sales/leaderboard,1280,Sales leaderboard,20,2,Invoiced; This month,Dashboards > Sales > Leaderboard,6,0,,,,0,0,0
+/sales/leaderboard,375,Sales leaderboard,20,3,Invoiced; This month; Open AI assistant,Dashboards > Sales > Leaderboard,6,0,,,,0,0,0
+/sales/opportunities,1280,Opportunities,20,2,Create; Create,Dashboards > Sales > Opportunities,0,8,163,40,14,0,0,0
+/sales/opportunities,375,Opportunities,20,3,Create; Create; Open AI assistant,Dashboards > Sales > Opportunities,0,8,163,40,14,0,0,0
+/sales/sales-and-outstanding,1280,Sales & outstanding,20,2,Export to Excel; All,Dashboards > Sales > Sales & outstanding,6,0,,,,0,0,0
+/sales/sales-and-outstanding,375,Sales & outstanding,20,3,Export to Excel; All; Open AI assistant,Dashboards > Sales > Sales & outstanding,6,0,,,,0,0,0
+/sales/sales-by-debtor-type,1280,Sales by debtor type,20,1,Export to Excel,Dashboards > Sales > Sales by debtor type,0,0,,,,0,0,0
+/sales/sales-by-debtor-type,375,Sales by debtor type,20,2,Export to Excel; Open AI assistant,Dashboards > Sales > Sales by debtor type,0,0,,,,0,0,0
+/sales/set-apart-customers,1280,Set-apart customers,20,1,Add customer,Dashboards > Sales > Set-apart customers,0,5,141,40,14,0,0,0
+/sales/set-apart-customers,375,Set-apart customers,20,2,Add customer; Open AI assistant,Dashboards > Sales > Set-apart customers,0,5,141,40,14,0,0,0
+/sales/targets,1280,Targets,20,1,Set target,Dashboards > Sales > Targets,3,9,69,40,14,0,0,0
+/sales/targets,375,Targets,20,2,Set target; Open AI assistant,Dashboards > Sales > Targets,3,9,69,40,14,0,0,0
+/sales/targets/new,1280,Target,20,1,Save,Dashboards > Sales > Targets > Target,3,0,,,,0,0,0
+/sales/targets/new,375,Target,20,2,Save; Open AI assistant,Dashboards > Sales > Targets > Target,3,0,,,,0,0,0
+/sales/teams,1280,Sales teams,20,2,Add team; Add team,Dashboards > Sales > Sales Teams,0,5,163,40,14,0,0,0
+/sales/teams,375,Sales teams,20,3,Add team; Add team; Open AI assistant,Dashboards > Sales > Sales Teams,0,5,163,40,14,0,0,0
+/sales/top-selling-items,1280,Top selling items,20,1,Export to Excel,Dashboards > Sales > Top selling items,0,0,,,,0,0,0
+/sales/top-selling-items,375,Top selling items,20,2,Export to Excel; Open AI assistant,Dashboards > Sales > Top selling items,0,0,,,,0,0,0
+/sales/yearly-comparison,1280,Yearly comparison,20,1,Export to Excel,Dashboards > Sales > Yearly comparison,0,0,,,,0,0,0
+/sales/yearly-comparison,375,Yearly comparison,20,2,Export to Excel; Open AI assistant,Dashboards > Sales > Yearly comparison,0,0,,,,0,0,0
+/scm,1280,Supply Chain,20,2,Reorder plan; Warehouse,Dashboards > Supply Chain > Dashboard,0,0,,,,0,0,0
+/scm,375,Supply Chain,20,3,Reorder plan; Warehouse; Open AI assistant,Dashboards > Supply Chain > Dashboard,0,0,,,,0,0,0
+/scm/consignments,1280,Consignment,20,1,Plan selected (0),Dashboards > Project Sales Admin > Consignment,0,10,69,40,14,0,0,0
+/scm/consignments,375,Consignment,20,2,Plan selected (0); Open AI assistant,Dashboards > Project Sales Admin > Consignment,0,10,69,40,14,0,0,0
+/scm/loading-plan,1280,Loading Plan,20,1,Upload,Dashboards > Procurement > Supply Chain > Loading Plan,0,9,69,40,14,0,0,0
+/scm/loading-plan,375,Loading Plan,20,2,Upload; Open AI assistant,Dashboards > Procurement > Supply Chain > Loading Plan,0,9,69,40,14,0,0,0
+/scm/market-signals,1280,Market Signals,20,2,Run research; Add topic,Dashboards > Supply Chain > Planning > Market Signals,0,6,69,40,14,0,0,0
+/scm/market-signals,375,Market Signals,20,3,Run research; Add topic; Open AI assistant,Dashboards > Supply Chain > Planning > Market Signals,0,6,69,40,14,0,0,0
+/scm/policies,1280,Policies,20,1,Auto,Dashboards > Supply Chain > Planning > Policies,8,0,,,,0,0,0
+/scm/policies,375,Policies,20,2,Auto; Open AI assistant,Dashboards > Supply Chain > Planning > Policies,8,0,,,,0,0,0
+/scm/proforma-invoices,1280,Proforma Invoices,20,1,Start,Dashboards > Procurement > Supply Chain > Proforma Invoices,0,13,69,40,14,0,0,0
+/scm/proforma-invoices,375,,,0,,,0,0,,,,0,0,3
+/scm/purchase-orders,1280,Purchase Orders,20,1,Outstanding,Dashboards > Procurement > Supply Chain > Purchase Orders,0,8,69,40,14,0,0,0
+/scm/purchase-orders,375,Purchase Orders,20,2,Outstanding; Open AI assistant,Dashboards > Procurement > Supply Chain > Purchase Orders,0,8,69,40,14,0,0,0
+/scm/sales-orders,1280,Sales Orders,20,1,Plan selected (0),Dashboards > Project Sales Admin > Sales Orders,0,20,45,40,14,0,0,0
+/scm/sales-orders,375,Sales Orders,20,2,Plan selected (0); Open AI assistant,Dashboards > Project Sales Admin > Sales Orders,0,20,45,40,14,0,0,0
+/scm/sales-orders/[id],1280,Sales Order,20,1,Plan,Dashboards > Project Sales Admin > Sales Orders > Sales Order,6,0,,,,0,0,0
+/scm/sales-orders/[id],375,Sales Order,20,2,Plan; Open AI assistant,Dashboards > Project Sales Admin > Sales Orders > Sales Order,6,0,,,,0,0,0
+/scm/simulation,1280,Engine Simulation,20,2,Bless baseline; All statuses,Dashboards > Supply Chain > Planning > Simulation,2,13,44,40,14,0,0,0
+/scm/simulation,375,Engine Simulation,20,3,Bless baseline; All statuses; Open AI assistant,Dashboards > Supply Chain > Planning > Simulation,2,13,44,40,14,0,0,0
+/sla-management/conversation-sla-tracking,1280,Conversation SLA Tracking,20,0,,Dashboards > SLA > Conversation SLA Tracking,0,14,69,40,14,0,0,0
+/sla-management/conversation-sla-tracking,375,Conversation SLA Tracking,20,1,Open AI assistant,Dashboards > SLA > Conversation SLA Tracking,0,14,69,40,14,0,0,0
+/sla-management/conversations,1280,Conversations,20,1,Mine,Dashboards > SLA > Conversations,4,0,,,,0,0,0
+/sla-management/conversations,375,Conversations,20,2,Mine; Open AI assistant,Dashboards > SLA > Conversations,4,0,,,,0,0,0
+/sla-management/escalation-logs,1280,Event Logs,20,0,,Dashboards > SLA > SLA Event Logs,0,9,69,40,14,0,0,0
+/sla-management/escalation-logs,375,Event Logs,20,1,Open AI assistant,Dashboards > SLA > SLA Event Logs,0,9,69,40,14,0,0,0
+/sla-management/form-sla-config,1280,Form SLA Configuration,20,1,Add stage,Dashboards > SLA > Form SLA Configuration,0,0,,,,0,0,0
+/sla-management/form-sla-config,375,Form SLA Configuration,20,2,Add stage; Open AI assistant,Dashboards > SLA > Form SLA Configuration,0,0,,,,0,0,0
+/sla-management/form-sla-tracking,1280,Form SLA Tracking,20,0,,Dashboards > SLA > Form SLA Tracking,0,15,69,40,14,0,0,0
+/sla-management/form-sla-tracking,375,Form SLA Tracking,20,1,Open AI assistant,Dashboards > SLA > Form SLA Tracking,0,15,69,40,14,0,0,0
+/sla-management/kpi-dashboard,1280,,,0,,,0,0,,,,0,0,0
+/sla-management/kpi-dashboard,375,,,1,Open AI assistant,,0,0,,,,0,0,0
+/sla-management/message-snippets,1280,Message Snippets,20,1,Add snippet,Dashboards > SLA > Message Snippets,0,5,69,40,14,0,0,0
+/sla-management/message-snippets,375,Message Snippets,20,2,Add snippet; Open AI assistant,Dashboards > SLA > Message Snippets,0,5,69,40,14,0,0,0
+/sla-management/sla-policies,1280,SLA Policies,20,1,Create SLA Policy,Dashboards > SLA > SLA Policies,0,7,69,40,14,0,0,0
+/sla-management/sla-policies,375,SLA Policies,20,2,Create SLA Policy; Open AI assistant,Dashboards > SLA > SLA Policies,0,7,69,40,14,0,0,0
+/sla-management/sla-policies/new,1280,Create SLA Policy,20,2,Create SLA Policy,Dashboards > SLA > SLA Policies > Create SLA Policy,0,0,,,,0,0,0
+/sla-management/sla-policies/new,375,Create SLA Policy,20,3,Create SLA Policy; Open AI assistant,Dashboards > SLA > SLA Policies > Create SLA Policy,0,0,,,,0,0,0
+/sla-management/team-pending,1280,My Team Tasks,20,0,,Dashboards > SLA > My Team Tasks,0,9,69,40,14,0,0,0
+/sla-management/team-pending,375,My Team Tasks,20,1,Open AI assistant,Dashboards > SLA > My Team Tasks,0,9,69,40,14,0,0,0
+/system-management/activity,1280,Activity Timeline,20,0,,Dashboards > System > Operations > Activity Timeline,0,0,,,,0,0,0
+/system-management/activity,375,Activity Timeline,20,1,Open AI assistant,Dashboards > System > Operations > Activity Timeline,0,0,,,,0,1,0
+/system-management/ai-assistant,1280,AI assistant,20,4,Save settings; Save,Dashboards > System > AI Assistant > Settings,0,0,,,,0,0,2
+/system-management/ai-assistant,375,AI assistant,20,5,Save settings; Save; Open AI assistant,Dashboards > System > AI Assistant > Settings,0,0,,,,0,0,2
+/system-management/ai-assistant/model-prices,1280,Model prices,20,1,Add price,Dashboards > System > AI Assistant > Model prices,0,7,51,40,14,3,0,0
+/system-management/ai-assistant/model-prices,375,Model prices,20,2,Add price; Open AI assistant,Dashboards > System > AI Assistant > Model prices,0,7,51,40,14,3,0,0
+/system-management/ai-assistant/prompts,1280,AI Assistant Prompts,20,0,,Dashboards > System > AI Assistant > Prompts,0,9,44,40,14,0,0,0
+/system-management/ai-assistant/prompts,375,AI Assistant Prompts,20,1,Open AI assistant,Dashboards > System > AI Assistant > Prompts,0,9,44,40,14,0,0,0
+/system-management/ai-assistant/usage,1280,AI Usage,20,0,,Dashboards > System > AI Assistant > Usage,0,0,,,,0,0,0
+/system-management/ai-assistant/usage,375,AI Usage,20,1,Open AI assistant,Dashboards > System > AI Assistant > Usage,0,0,,,,0,0,0
+/system-management/ai-assistant/wishlist,1280,AI Feature Wishlist,20,0,,Dashboards > System > AI Assistant > Wishlist,0,0,,,,0,0,0
+/system-management/ai-assistant/wishlist,375,AI Feature Wishlist,20,1,Open AI assistant,Dashboards > System > AI Assistant > Wishlist,0,0,,,,0,0,0
+/system-management/api-call-logs,1280,API Call Log,20,0,,Dashboards > System > Operations > API Call Log,0,7,105,40,14,0,0,3
+/system-management/api-call-logs,375,API Call Log,20,1,Open AI assistant,Dashboards > System > Operations > API Call Log,0,7,125,40,14,0,0,3
+/system-management/app-store,1280,App Store,20,1,Install bundle,Dashboards > System > Platform > App Store,0,5,44,40,14,0,0,0
+/system-management/app-store,375,App Store,20,2,Install bundle; Open AI assistant,Dashboards > System > Platform > App Store,0,5,44,40,14,0,0,0
+/system-management/app-store/bundles,1280,Module bundles,20,1,New bundle,Dashboards > System > Platform > Module bundles,0,5,51,40,14,0,0,0
+/system-management/app-store/bundles,375,Module bundles,20,2,New bundle; Open AI assistant,Dashboards > System > Platform > Module bundles,0,5,51,40,14,0,0,0
+/system-management/audit-logs,1280,Audit Logs,20,0,,Dashboards > System > Operations > Audit Logs,0,8,45,40,14,0,0,0
+/system-management/audit-logs,375,Audit Logs,20,1,Open AI assistant,Dashboards > System > Operations > Audit Logs,0,8,45,40,14,0,0,0
+/system-management/automation,1280,Automation,20,1,Add automation,Dashboards > System > Configuration > Automation,0,9,69,40,14,0,0,0
+/system-management/automation,375,Automation,20,2,Add automation; Open AI assistant,Dashboards > System > Configuration > Automation,0,9,69,40,14,0,0,0
+/system-management/bot-failures,1280,Bot failures,20,1,Export to Excel,Dashboards > System Management > Bot Failures,0,0,,,,0,0,0
+/system-management/bot-failures,375,Bot failures,20,2,Export to Excel; Open AI assistant,Dashboards > System Management > Bot Failures,0,0,,,,0,0,0
+/system-management/chat-history,1280,Chat History,20,0,,Dashboards > System > Messaging > Chat History,0,7,69,40,14,0,0,0
+/system-management/chat-history,375,Chat History,20,1,Open AI assistant,Dashboards > System > Messaging > Chat History,0,7,69,40,14,0,0,0
+/system-management/chat-overview,1280,Chat overview,20,1,Export to Excel,Dashboards > System Management > Chat Overview,0,0,,,,0,0,0
+/system-management/chat-overview,375,Chat overview,20,2,Export to Excel; Open AI assistant,Dashboards > System Management > Chat Overview,0,0,,,,0,0,0
+/system-management/chatbot-console,1280,Chatbot Console,20,1,Send message,Dashboards > System > Messaging > Chatbot Console,0,0,,,,0,0,0
+/system-management/chatbot-console,375,Chatbot Console,20,2,Send message; Open AI assistant,Dashboards > System > Messaging > Chatbot Console,0,0,,,,0,0,0
+/system-management/chatbot-domains,1280,Chatbot Domains,20,1,Add domain,Dashboards > System > Messaging > Chatbot Domains,0,9,44,40,14,0,0,0
+/system-management/chatbot-domains,375,Chatbot Domains,20,2,Add domain; Open AI assistant,Dashboards > System > Messaging > Chatbot Domains,0,9,44,40,14,0,0,0
+/system-management/chatbot-entity-kinds,1280,Entity kinds,20,1,Add kind,Dashboards > System > Messaging > Entity Kinds,0,6,44,40,14,0,0,0
+/system-management/chatbot-entity-kinds,375,Entity kinds,20,2,Add kind; Open AI assistant,Dashboards > System > Messaging > Entity Kinds,0,6,44,40,14,0,0,0
+/system-management/chatbot-status-words,1280,Chatbot Status Words,20,1,Add status word,Dashboards > System > Messaging > Status Words,0,5,44,40,14,0,0,0
+/system-management/chatbot-status-words,375,Chatbot Status Words,20,2,Add status word; Open AI assistant,Dashboards > System > Messaging > Status Words,0,5,44,40,14,0,0,0
+/system-management/client-errors,1280,Client Errors,20,0,,Dashboards > System > Operations > Client Errors,0,7,69,40,14,0,0,0
+/system-management/client-errors,375,Client Errors,20,1,Open AI assistant,Dashboards > System > Operations > Client Errors,0,7,69,40,14,0,0,0
+/system-management/companies,1280,Companies,20,1,Create Company,Dashboards > System > Platform > Companies,0,10,45,40,14,0,0,0
+/system-management/companies,375,Companies,20,2,Create Company; Open AI assistant,Dashboards > System > Platform > Companies,0,10,45,40,14,0,0,0
+/system-management/email-event-configs,1280,Email Event Configs,20,35,,Dashboards > System > Messaging > Email Event Configs,0,6,73,40,14,0,0,0
+/system-management/email-event-configs,375,Email Event Configs,20,36,Open AI assistant,Dashboards > System > Messaging > Email Event Configs,0,6,73,40,14,0,0,0
+/system-management/email-outbox,1280,Email Outbox,20,0,,Dashboards > System > Messaging > Outgoing Mails > Email Outbox,0,12,69,40,14,0,0,0
+/system-management/email-outbox,375,Email Outbox,20,1,Open AI assistant,Dashboards > System > Messaging > Outgoing Mails > Email Outbox,0,12,69,40,14,0,0,0
+/system-management/email-templates,1280,Email Templates,20,1,Add template,Dashboards > System > Messaging > Email Templates,0,7,69,40,14,0,0,0
+/system-management/email-templates,375,Email Templates,20,2,Add template; Open AI assistant,Dashboards > System > Messaging > Email Templates,0,7,69,40,14,0,0,0
+/system-management/email-theme,1280,Email Theme,20,2,Save; Desktop,Dashboards > System > Messaging > Email Theme,2,0,,,,0,0,0
+/system-management/email-theme,375,Email Theme,20,3,Save; Desktop; Open AI assistant,Dashboards > System > Messaging > Email Theme,2,0,,,,0,0,0
+/system-management/embeddings,1280,Embeddings,20,1,Embed missing,Dashboards > System > Configuration > Embeddings,9,4,73,40,14,0,0,0
+/system-management/embeddings,375,Embeddings,20,2,Embed missing; Open AI assistant,Dashboards > System > Configuration > Embeddings,9,4,73,40,14,0,0,0
+/system-management/health,1280,System Health,20,0,,Dashboards > System > Operations > System Health,0,0,,,,0,0,0
+/system-management/health,375,System Health,20,1,Open AI assistant,Dashboards > System > Operations > System Health,0,0,,,,0,0,0
+/system-management/import-field-aliases,1280,Import Column Mappings,20,1,Add mapping,Dashboards > System > Configuration > Import Column Mappings,0,2,71,40,14,0,0,0
+/system-management/import-field-aliases,375,Import Column Mappings,20,2,Add mapping; Open AI assistant,Dashboards > System > Configuration > Import Column Mappings,0,2,71,40,14,0,0,0
+/system-management/import-jobs,1280,Import Jobs,20,0,,Dashboards > System > Operations > Import Jobs,0,14,69,40,14,0,0,0
+/system-management/import-jobs,375,Import Jobs,20,1,Open AI assistant,Dashboards > System > Operations > Import Jobs,0,14,69,40,14,0,0,0
+/system-management/import-logs,1280,Import Logs,20,0,,Dashboards > System > Operations > Import Logs,0,11,69,40,14,0,0,0
+/system-management/import-logs,375,Import Logs,20,1,Open AI assistant,Dashboards > System > Operations > Import Logs,0,11,69,40,14,0,0,0
+/system-management/mcp-tools,1280,,,0,,,0,3,44,40,14,1,0,0
+/system-management/mcp-tools,375,,,1,Open AI assistant,,0,3,44,40,14,1,0,0
+/system-management/numbering-rules,1280,Running Numbers,20,0,,Dashboards > System > Configuration > Running Numbers,0,8,45,40,14,0,0,0
+/system-management/numbering-rules,375,Running Numbers,20,1,Open AI assistant,Dashboards > System > Configuration > Running Numbers,0,8,45,40,14,0,0,0
+/system-management/outgoing-mails,1280,Outgoing Mails,20,0,,Dashboards > System > Messaging > Outgoing Mails,0,8,69,40,14,0,0,0
+/system-management/outgoing-mails,375,Outgoing Mails,20,1,Open AI assistant,Dashboards > System > Messaging > Outgoing Mails,0,8,69,40,14,0,0,0
+/system-management/respond-contacts,1280,Respond Contacts,20,0,,Dashboards > System > Messaging > Respond.io Contacts,0,6,69,40,14,0,0,0
+/system-management/respond-contacts,375,Respond Contacts,20,1,Open AI assistant,Dashboards > System > Messaging > Respond.io Contacts,0,6,69,40,14,0,0,0
+/system-management/respond-outbox,1280,Respond Outbox,20,0,,Dashboards > System > Messaging > Outgoing Mails > Respond Outbox,0,8,69,40,14,0,0,0
+/system-management/respond-outbox,375,Respond Outbox,20,1,Open AI assistant,Dashboards > System > Messaging > Outgoing Mails > Respond Outbox,0,8,69,40,14,0,0,0
+/system-management/respond-workspaces,1280,Respond.io Workspaces,20,1,Add workspace,Dashboards > System > Messaging > Respond.io Workspaces,0,9,69,40,14,0,0,0
+/system-management/respond-workspaces,375,Respond.io Workspaces,20,2,Add workspace; Open AI assistant,Dashboards > System > Messaging > Respond.io Workspaces,0,9,69,40,14,0,0,0
+/system-management/scheduled-tasks,1280,Scheduled Tasks,20,0,,Dashboards > System > Operations > Scheduled Tasks,0,8,69,40,14,0,0,0
+/system-management/scheduled-tasks,375,Scheduled Tasks,20,1,Open AI assistant,Dashboards > System > Operations > Scheduled Tasks,0,8,69,40,14,0,0,0
+/system-management/status-graphs,1280,Status Graphs,20,2,Add status; Add transition,Dashboards > System > Configuration > Status Graphs,0,0,,,,0,0,0
+/system-management/status-graphs,375,Status Graphs,20,3,Add status; Add transition; Open AI assistant,Dashboards > System > Configuration > Status Graphs,0,0,,,,0,0,0
+/system-management/top-asks,1280,Top asks,20,1,Export to Excel,Dashboards > System Management > Top Asks,0,0,,,,0,0,0
+/system-management/top-asks,375,Top asks,20,2,Export to Excel; Open AI assistant,Dashboards > System Management > Top Asks,0,0,,,,0,0,0
+/system-management/topic-audit,1280,Topic audit,20,2,Draw sample; To review,Dashboards > System > Messaging > Topic Audit,0,0,,,,0,0,0
+/system-management/topic-audit,375,Topic audit,20,3,Draw sample; To review; Open AI assistant,Dashboards > System > Messaging > Topic Audit,0,0,,,,0,0,0
+/system-management/tracking-validation,1280,Tracking Validation,20,0,,Dashboards > System > Operations > Tracking Validation,0,8,44,40,14,0,0,0
+/system-management/tracking-validation,375,Tracking Validation,20,1,Open AI assistant,Dashboards > System > Operations > Tracking Validation,0,8,44,40,14,0,0,0
+/system-management/translations,1280,Translations,20,0,,Dashboards > System > Configuration > Translations,0,8,69,40,14,0,0,0
+/system-management/translations,375,Translations,20,1,Open AI assistant,Dashboards > System > Configuration > Translations,0,8,69,40,14,0,0,0
+/system-management/work-calendar,1280,Work Calendar,20,7,Save work calendar; Add Holiday,Dashboards > System > Configuration > Work Calendar,0,5,69,40,14,0,0,0
+/system-management/work-calendar,375,Work Calendar,20,8,Save work calendar; Add Holiday; Open AI assistant,Dashboards > System > Configuration > Work Calendar,0,5,69,40,14,0,0,0
+/ticket-management/tickets,1280,Tickets,20,2,List view; Create Ticket,Dashboards > Tickets,0,10,69,40,14,0,0,0
+/ticket-management/tickets,375,Tickets,20,3,List view; Create Ticket; Open AI assistant,Dashboards > Tickets,0,10,69,40,14,0,0,0
+/ticket-management/tickets/new,1280,Create ticket,20,1,Submit ticket,Dashboards > Tickets > Create ticket,0,0,,,,0,0,0
+/ticket-management/tickets/new,375,Create ticket,20,2,Submit ticket; Open AI assistant,Dashboards > Tickets > Create ticket,0,0,,,,0,0,0
+/town,1280,Town,20,1,Wallboard,Dashboards > Town,0,0,,,,0,0,0
+/town,375,Town,20,2,Wallboard; Open AI assistant,Dashboards > Town,0,0,,,,0,0,0
+/user-management/access-agents,1280,AI Agents,20,1,Create Access Agent,Dashboards > Users & Access > Access > AI Agents,0,6,69,40,14,0,0,0
+/user-management/access-agents,375,AI Agents,20,2,Create Access Agent; Open AI assistant,Dashboards > Users & Access > Access > AI Agents,0,6,69,40,14,0,0,0
+/user-management/access-agents/new,1280,AI Agents,20,1,Create Access Agent,Dashboards > Users & Access > Access > AI Agents,0,6,69,40,14,0,0,0
+/user-management/access-agents/new,375,AI Agents,20,2,Create Access Agent; Open AI assistant,Dashboards > Users & Access > Access > AI Agents,0,6,69,40,14,0,0,0
+/user-management/account,1280,Never Stuck Admin,20,10,Save Profile; Add; Enable notifications,Dashboards > Users & Access > Account,3,0,,,,0,0,0
+/user-management/account,375,Never Stuck Admin,20,11,Save Profile; Add; Enable notifications; Open AI assistant,Dashboards > Users & Access > Account,3,0,,,,0,0,0
+/user-management/account/logs,1280,Never Stuck Admin,20,0,,Dashboards > Users & Access > Account > Never Stuck Admin,3,6,69,40,14,0,0,0
+/user-management/account/logs,375,Never Stuck Admin,20,1,Open AI assistant,Dashboards > Users & Access > Account > Never Stuck Admin,3,6,69,40,14,0,0,0
+/user-management/account/security,1280,Never Stuck Admin,20,0,,Dashboards > Users & Access > Account > Never Stuck Admin,3,0,,,,0,0,0
+/user-management/account/security,375,Never Stuck Admin,20,1,Open AI assistant,Dashboards > Users & Access > Account > Never Stuck Admin,3,0,,,,0,0,0
+/user-management/contact-access-agents,1280,Internal Users,20,1,Create Contact,Dashboards > Users & Access > People > Internal Users,0,22,69,40,14,0,0,0
+/user-management/contact-access-agents,375,Internal Users,20,2,Create Contact; Open AI assistant,Dashboards > Users & Access > People > Internal Users,0,22,69,40,14,0,0,0
+/user-management/contact-access-types,1280,Contact Access Types,20,1,Add type,Dashboards > Users & Access > Access > Contact Access Types,0,8,69,40,14,0,0,0
+/user-management/contact-access-types,375,Contact Access Types,20,2,Add type; Open AI assistant,Dashboards > Users & Access > Access > Contact Access Types,0,8,69,40,14,0,0,0
+/user-management/contact-tags,1280,Contact Tags,20,1,Add tag,Dashboards > Users & Access > Access > Contact Tags,0,8,97,40,14,0,0,0
+/user-management/contact-tags,375,Contact Tags,20,2,Add tag; Open AI assistant,Dashboards > Users & Access > Access > Contact Tags,0,8,97,40,14,0,0,0
+/user-management/contacts,1280,Internal Users,20,1,Create Contact,Dashboards > Internal Users,0,22,69,40,14,0,0,0
+/user-management/contacts,375,Internal Users,20,2,Create Contact; Open AI assistant,Dashboards > Internal Users,0,22,69,40,14,0,0,0
+/user-management/contacts/access-sheet,1280,Import access sheet,20,1,Preview,Dashboards > Users & Access > People > Internal Users > Import access sheet,0,0,,,,0,0,0
+/user-management/contacts/access-sheet,375,Import access sheet,20,2,Preview; Open AI assistant,Dashboards > Users & Access > People > Internal Users > Import access sheet,0,0,,,,0,0,0
+/user-management/logs,1280,Logs,20,0,,Dashboards > Users & Access > Logs,0,7,69,40,14,0,0,0
+/user-management/logs,375,Logs,20,1,Open AI assistant,Dashboards > Users & Access > Logs,0,7,69,40,14,0,0,0
+/user-management/market-segments,1280,Market Segments,20,1,Add segment,Dashboards > Users & Access > Market Segments,0,9,69,40,14,0,0,0
+/user-management/market-segments,375,Market Segments,20,2,Add segment; Open AI assistant,Dashboards > Users & Access > Market Segments,0,9,69,40,14,0,0,0
+/user-management/onboarding-requests,1280,Onboarding Requests,20,1,New request,Dashboards > Users & Access > People > Onboarding Requests,0,10,69,40,14,0,0,0
+/user-management/onboarding-requests,375,Onboarding Requests,20,2,New request; Open AI assistant,Dashboards > Users & Access > People > Onboarding Requests,0,10,69,40,14,0,0,0
+/user-management/permissions,1280,Permissions,20,1,Add Permission,Dashboards > Users & Access > Access > Permissions,0,6,51,40,14,0,0,0
+/user-management/permissions,375,Permissions,20,2,Add Permission; Open AI assistant,Dashboards > Users & Access > Access > Permissions,0,6,51,40,14,0,0,0
+/user-management/roles,1280,Roles,20,1,Add Role,Dashboards > Users & Access > Access > Roles,0,5,45,40,14,0,0,0
+/user-management/roles,375,Roles,20,2,Add Role; Open AI assistant,Dashboards > Users & Access > Access > Roles,0,5,45,40,14,0,0,0
+/user-management/settings,1280,Settings,20,2,Save Settings,Dashboards > Users & Access > Settings,14,0,,,,0,0,0
+/user-management/settings,375,Settings,20,3,Save Settings; Open AI assistant,Dashboards > Users & Access > Settings,14,0,,,,0,0,0
+/user-management/settings/chatbot,1280,Settings,20,1,Save,Dashboards > Users & Access > Settings,14,0,,,,0,0,0
+/user-management/settings/chatbot,375,Settings,20,2,Save; Open AI assistant,Dashboards > Users & Access > Settings,14,0,,,,0,0,0
+/user-management/settings/chatbot-media,1280,Settings,20,1,Save Settings,Dashboards > Users & Access > Settings,14,0,,,,0,0,0
+/user-management/settings/chatbot-media,375,Settings,20,2,Save Settings; Open AI assistant,Dashboards > Users & Access > Settings,14,0,,,,0,0,0
+/user-management/settings/complaints,1280,Settings,20,4,Save Settings; Save handling lock,Dashboards > Users & Access > Settings,14,0,,,,0,0,0
+/user-management/settings/complaints,375,Settings,20,5,Save Settings; Save handling lock; Open AI assistant,Dashboards > Users & Access > Settings,14,0,,,,0,0,0
+/user-management/settings/embeddings,1280,Settings,20,1,Save,Dashboards > Users & Access > Settings,14,0,,,,0,0,0
+/user-management/settings/embeddings,375,Settings,20,2,Save; Open AI assistant,Dashboards > Users & Access > Settings,14,0,,,,0,0,0
+/user-management/settings/integrations,1280,Settings,20,6,Save; Generate token; Save; Save; Save; Save,Dashboards > Users & Access > Settings,14,0,,,,0,0,0
+/user-management/settings/integrations,375,Settings,20,7,Save; Generate token; Save; Save; Save; Save; Open AI assistant,Dashboards > Users & Access > Settings,14,0,,,,0,0,0
+/user-management/settings/notifications,1280,Settings,20,1,Save Settings,Dashboards > Users & Access > Settings,14,4,61,40,14,0,0,0
+/user-management/settings/notifications,375,Settings,20,2,Save Settings; Open AI assistant,Dashboards > Users & Access > Settings,14,4,61,40,14,0,0,0
+/user-management/settings/portal-revisions,1280,Settings,20,2,Save Settings,Dashboards > Users & Access > Settings,14,6,45,40,14,0,0,0
+/user-management/settings/portal-revisions,375,Settings,20,3,Save Settings; Open AI assistant,Dashboards > Users & Access > Settings,14,6,45,40,14,0,0,0
+/user-management/settings/search-ranking,1280,Settings,20,0,,Dashboards > Users & Access > Settings,14,0,,,,0,0,0
+/user-management/settings/search-ranking,375,Settings,20,1,Open AI assistant,Dashboards > Users & Access > Settings,14,0,,,,0,0,0
+/user-management/settings/smtp,1280,Settings,20,2,Save SMTP settings,Dashboards > Users & Access > Settings,14,0,,,,0,0,0
+/user-management/settings/smtp,375,Settings,20,3,Save SMTP settings; Open AI assistant,Dashboards > Users & Access > Settings,14,0,,,,0,0,0
+/user-management/settings/social,1280,Settings,20,1,Save Settings,Dashboards > Users & Access > Settings,14,0,,,,0,0,0
+/user-management/settings/social,375,Settings,20,2,Save Settings; Open AI assistant,Dashboards > Users & Access > Settings,14,0,,,,0,0,0
+/user-management/settings/spec-visibility,1280,Settings,20,2,Hide these; Save spec visibility,Dashboards > Users & Access > Settings,14,0,,,,0,0,0
+/user-management/settings/spec-visibility,375,Settings,20,3,Hide these; Save spec visibility; Open AI assistant,Dashboards > Users & Access > Settings,14,0,,,,0,0,0
+/user-management/settings/stock-visibility,1280,Settings,20,2,Include; Save stock visibility,Dashboards > Users & Access > Settings,14,0,,,,0,0,0
+/user-management/settings/stock-visibility,375,Settings,20,3,Include; Save stock visibility; Open AI assistant,Dashboards > Users & Access > Settings,14,0,,,,0,0,0
+/user-management/settings/system-health,1280,Settings,20,1,Save Settings,Dashboards > Users & Access > Settings,14,0,,,,0,0,0
+/user-management/settings/system-health,375,Settings,20,2,Save Settings; Open AI assistant,Dashboards > Users & Access > Settings,14,0,,,,0,0,0
+/user-management/teams,1280,Teams,20,1,Create team,Dashboards > Users & Access > People > Teams,0,0,,,,0,0,0
+/user-management/teams,375,Teams,20,2,Create team; Open AI assistant,Dashboards > Users & Access > People > Teams,0,0,,,,0,0,0
+/user-management/users,1280,Administrative Users,20,11,Add user; Daily conversation summary; Daily conversation summary; Daily conversa,Dashboards > Users & Access > People > Administrative Users,0,9,49,40,14,0,0,0
+/user-management/users,375,Administrative Users,20,12,Add user; Daily conversation summary; Daily conversation summary; Daily conversa,Dashboards > Users & Access > People > Administrative Users,0,9,49,40,14,0,0,0
+/user-management/users/[id],1280,User,20,2,Edit user; Send invitation email,Dashboards > Users & Access > People > Administrative Users > User,2,0,,,,0,0,0
+/user-management/users/[id],375,User,20,3,Edit user; Send invitation email; Open AI assistant,Dashboards > Users & Access > People > Administrative Users > User,2,0,,,,0,0,0
+/workflow-forms-management/definitions,1280,Workflow form definitions,20,1,New workflow form,Dashboards > Workflow Forms > Definitions,0,5,69,40,14,0,0,2
+/workflow-forms-management/definitions,375,Workflow form definitions,20,2,New workflow form; Open AI assistant,Dashboards > Workflow Forms > Definitions,0,5,69,40,14,0,0,2
+/workflow-forms-management/submissions,1280,Workflow submissions,20,1,New submission,Dashboards > Workflow submissions,0,4,69,40,14,0,0,2
+/workflow-forms-management/submissions,375,Workflow submissions,20,2,New submission; Open AI assistant,Dashboards > Workflow submissions,0,4,69,40,14,0,0,2
+/workflow-forms-management/submissions/new,1280,New submission,20,0,,Dashboards > Workflow submissions > New submission,0,0,,,,0,0,0
+/workflow-forms-management/submissions/new,375,New submission,20,1,Open AI assistant,Dashboards > Workflow submissions > New submission,0,0,,,,0,0,0
