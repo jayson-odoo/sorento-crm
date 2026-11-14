@@ -86,6 +86,7 @@ import { SalesOrdersPanel } from './SalesOrdersPanel';
 import { QuotationsPanel } from './QuotationsPanel';
 import { SampleRequestsPanel } from './SampleRequestsPanel';
 import { RelatedRecordsPanel, RelatedTabCount } from './RelatedRecordsPanel';
+import { LEGACY_SPONSORSHIP_TAB } from './relatedRecordTypes';
 import { StakeholdersPanel } from './StakeholdersPanel';
 import { TasksPanel } from './TasksPanel';
 
@@ -124,10 +125,9 @@ const STAGE_FORM_ROUTE: Record<string, (projectId: string) => string> = {
   specified: (id) => `/project-sales/${id}/quotation-documents/new`,
   sample_submission: (id) => `/project-sales/sample-requests/new?project_id=${id}`,
   sponsorship_form: (id) => `/procurement-management/sponsorship-forms/new?project_id=${id}`,
+  // The PO tab with its existing "Upload a customer PO" dialog already open.
+  po_received: (id) => `/project-sales/${id}?tab=orders&upload=po`,
 };
-
-/** The retired Sponsorship Form tab; its old links open Related, filtered to sponsorship forms. */
-const LEGACY_SPONSORSHIP_TAB = 'sponsorships';
 
 export function resolveProjectTab(requested: string | null): TabId {
   if (requested === 'samples') return 'sample-requests';

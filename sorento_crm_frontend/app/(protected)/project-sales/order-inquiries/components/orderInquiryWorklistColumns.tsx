@@ -21,6 +21,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { ConsignmentBadge } from '@/app/(protected)/scm/lib/docType';
+import { RowStatusCell, rowStatusPill } from '../../_shared/components/OrderInquiryLineStatusPill';
 import {
   ackStateOf,
   bundledHostChangeLines,
@@ -34,6 +35,7 @@ import { OrderInquiryVerbPill, ReservePill } from '../../_shared/components/Orde
 import {
   bundledHeadline,
   formatInquiryQty,
+  wasQtyOf,
   inquiryFooterTotals,
   inquiryRowRemaining,
   inquiryRowTaken,
@@ -778,6 +780,8 @@ export function ItemCodeCell({
    */
   codeOnly?: boolean;
 }) {
+  // UAC G1: a spare part line's own description stands in for the product name.
+  const name = row.line_description || row.product_name;
   return (
     <div className="min-w-0">
       <span className="block truncate font-medium" title={row.item_code ?? ''}>
@@ -793,9 +797,9 @@ export function ItemCodeCell({
           was {row.previous_item_code}
         </span>
       )}
-      {!codeOnly && row.product_name && !sameDisplayText(row.product_name, row.item_code) && (
-        <span className="block truncate text-xs text-muted-foreground" title={row.product_name}>
-          {row.product_name}
+      {!codeOnly && name && !sameDisplayText(name, row.item_code) && (
+        <span className="block truncate text-xs text-muted-foreground" title={name}>
+          {name}
         </span>
       )}
     </div>
@@ -806,6 +810,12 @@ export function QtyCell({ row }: { row: OrderInquiryWorklistRow }) {
   return (
     <span className="flex min-w-0 items-center gap-1 tabular-nums">
       {formatInquiryQty(row.qty)}
+      {/* AC-V2-4: only while the change waits for CS; a settled row keeps its icon alone. */}
+      {row.waiting_for_cs && wasQtyOf(row.qty, row.previous_qty) ? (
+        <span className="shrink-0 text-xs text-muted-foreground">
+          {`Was ${wasQtyOf(row.qty, row.previous_qty)}`}
+        </span>
+      ) : null}
       <QtyAnnotationButton row={row} />
       {row.line_cancelled ? (
         <WorklistPill testId={`qty-line-cancelled-${row.id}`}>cancelled</WorklistPill>
@@ -1444,6 +1454,16 @@ export function useOrderInquiryWorklistColumns({
             />
           </div>
         ),
+      },
+      {
+        // OI-WHOLE-SO-CANCEL v2 (H2): the row's status in the words the OI screens share
+        // (`ackStatusText`): Waiting for CS, SO cancelled, To order, Done, Rejected.
+        id: 'status',
+        accessorFn: (row) => rowStatusPill(row).text,
+        header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
+        size: 160,
+        meta: { headerTitle: 'Status', skeleton: <Skeleton className="h-4 w-20" /> },
+        cell: ({ row }) => <RowStatusCell row={row.original} />,
       },
       {
         // AC-DT-6 (`PLAN-oi-decision-trail-ui.md`): the trail behind the instruction -

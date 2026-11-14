@@ -1108,6 +1108,7 @@ class StockInquiry(Base):
     revision_no = Column(Integer, nullable=False, server_default="0", default=0)
     last_revised_at = Column(DateTime(timezone=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=True)
+    last_activity_at = Column(DateTime(timezone=False), nullable=True, index=True)  # newest person activity (FORMS-LAST-ACTIVITY)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=True)
 
     @property
@@ -1223,6 +1224,7 @@ class PurchaseRequestHeader(Base):
     revision_no = Column(Integer, nullable=False, server_default="0", default=0)
     last_revised_at = Column(DateTime(timezone=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    last_activity_at = Column(DateTime(timezone=False), nullable=True, index=True)  # newest person activity (FORMS-LAST-ACTIVITY)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     lines = relationship(

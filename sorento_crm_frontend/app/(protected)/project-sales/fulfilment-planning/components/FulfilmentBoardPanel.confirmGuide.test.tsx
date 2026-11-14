@@ -573,23 +573,22 @@ describe('T-FE2 (F2 F3 F4): a page for every order, listing every covered line a
     expect(getLineSplits).not.toHaveBeenCalled();
   });
 
-  // PLAN-BATCH-COUNT-DISPLAY (owner ruling 21 Oct 2026 ~16:15): a line the book cancelled is not a
-  // decision, so the guide's pages (the lines Confirm (N) counts) leave it out; the board's
-  // AutoCount change note names it instead.
-  it('B2: a covered book-cancelled line with no draft is not a guide row; it is the AutoCount note', async () => {
+  // F2 12/13 Nov (owner: follow the path of Decide Confirm): a line the book cancelled is not a
+  // decision until it is saved, so nothing counts it and there is no AutoCount note any more.
+  it('B2: a covered book-cancelled line with no draft is not counted and raises no note', async () => {
     const board = mapContributions(boardOf([SO1_L1, SO1_L2]), (entry) =>
       entry.project_line_id === 'pl-1-2'
-        ? { ...entry, cancelled: true, cancelled_at: null, saved_remark: 'CANCEL ALL' }
+        ? { ...entry, cancelled: true, cancelled_at: null, saved_remark: 'CANCEL ALL', pending_change_batch_id: 'b-1' }
         : entry,
     );
-    await mountWith(board, ['SO000001']);
-    expect(await screen.findByTestId('board-autocount-change-note')).toHaveTextContent(
-      '1 old line',
-    );
-    // Nothing else is decided, so the button applies the change and the guide has no line page.
-    expect(screen.getByTestId('board-confirm')).toHaveTextContent('Apply AutoCount change');
-    await openConfirmGuide();
-    expect(screen.queryByTestId('split-line-2')).toBeNull();
+    // Confirm (0) is disabled, so `mountWith` (which waits for it to enable) does not apply.
+    getPlanningBoard.mockResolvedValue(board);
+    renderPanel(['SO000001']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    expect(screen.queryByTestId('board-autocount-change-note')).toBeNull();
+    // Nothing else is decided, so the button reads Confirm (0), never Apply AutoCount change.
+    expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (0)');
+    expect(screen.getByTestId('board-confirm')).not.toHaveTextContent('Apply AutoCount change');
   });
 
   it('B2: the header count equals the rows shown', async () => {

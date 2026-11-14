@@ -1161,6 +1161,12 @@ def _delete_message_snippet(db: Session, payload: dict):
     return MessageSnippetService(db).delete_snippet(_entity_id(payload))
 
 
+def _delete_technician(db: Session, payload: dict):
+    from app.services import technician_service
+
+    return technician_service.delete(db, _entity_id(payload))
+
+
 def _delete_automation(db: Session, payload: dict):
     from app.services.automation_service import AutomationService
 
@@ -1355,6 +1361,17 @@ register(
         window=WINDOW_DESTRUCTIVE,
         permission="sla_management.message_snippets.delete",
         label="Delete snippet",
+    )
+)
+
+register(
+    FormAction(
+        key="technician.delete",
+        entity_types=("technician",),
+        execute=_delete_technician,
+        window=WINDOW_DESTRUCTIVE,
+        permission="after_sales.technicians.manage",
+        label="Delete technician",
     )
 )
 
@@ -2374,6 +2391,59 @@ register(
 )
 
 
+def _delete_spare_part_request(db: Session, payload: dict):
+    from app.services import spare_part_request_service
+
+    # The requester's own Draft / Rejected request; re-checked here because the state can
+    # change inside the window (a submit during the countdown keeps the request).
+    spare_part_request_service.delete_draft(
+        db, _entity_id(payload), str(payload.get("requested_by_id") or "")
+    )
+    return {"message": "Deleted"}
+
+
+register(
+    FormAction(
+        key="spare_part_request.delete",
+        entity_types=("spare_part_request",),
+        execute=_delete_spare_part_request,
+        # Destructive: a hard delete of the requester's request, its lines and their photos.
+        window=WINDOW_DESTRUCTIVE,
+        permission=OWN_RECORD,
+        label="Delete draft",
+    )
+)
+
+
+def _delete_order_inquiry_row_attachment(db: Session, payload: dict):
+    from app.services import so_line_attachments, spare_part_request_service
+
+    # SPARE-PART-ORDER-REQUEST: a spare part request line's photo. Authorised by the
+    # request's own rule (requester while draft / rejected, approver while pending),
+    # checked again here at commit, where the row's state is final.
+    row_id = str(payload.get("line_id") or "")
+    actor = payload.get("requested_by_id")
+    spare_part_request_service.assert_can_write_row_photos(db, row_id, actor)
+    return so_line_attachments.delete(
+        db, row_id, _entity_id(payload), actor, so_line_attachments.OI_ROW
+    )
+
+
+register(
+    FormAction(
+        key="order_inquiry_row_attachment.delete",
+        entity_types=("order_inquiry_row_attachment",),
+        execute=_delete_order_inquiry_row_attachment,
+        # Destructive, as the SO line attachment delete above. The grant is the request's
+        # own write rule (`spare_part_request_service.assert_can_write_row_photos`), not
+        # a role slug, so it is checked in the handler.
+        window=WINDOW_DESTRUCTIVE,
+        permission=OWN_RECORD,
+        label="Delete attachment",
+    )
+)
+
+
 def _delete_notification(db: Session, payload: dict):
     from app.services.error_handler import handle_not_found
     from app.services.notification_service import NotificationService
@@ -2516,6 +2586,28 @@ register(
         key="new_product_application_attachment.unlink",
         entity_types=("new_product_application_attachment",),
         execute=_unlink_new_product_application_attachment,
+        window=WINDOW_REVERSIBLE,
+        permission=OWN_RECORD,
+        label="Unlink attachment",
+    )
+)
+
+
+def _unlink_order_change_notice_attachment(db: Session, payload: dict):
+    from app.services import order_change_notice_service
+
+    # Re-checked here: the notice can leave draft inside the window. Only the link goes.
+    order_change_notice_service.unlink_attachment(
+        db, _entity_id(payload), str(payload.get("requested_by_id") or "")
+    )
+    return {"message": "Unlinked"}
+
+
+register(
+    FormAction(
+        key="order_change_notice_attachment.unlink",
+        entity_types=("order_change_notice_attachment",),
+        execute=_unlink_order_change_notice_attachment,
         window=WINDOW_REVERSIBLE,
         permission=OWN_RECORD,
         label="Unlink attachment",
@@ -3155,6 +3247,32 @@ register(
 )
 
 
+def _delete_non_cancellable_rule(db: Session, payload: dict):
+    """NON-CANCELLABLE-ITEMS: the hard delete `DELETE /config/non-cancellable-rules/{id}` runs,
+    behind the countdown (D7). Lines already priced keep their stored flag."""
+    from app.models.projects import NonCancellableRule
+    from app.services.error_handler import handle_not_found
+
+    row = db.query(NonCancellableRule).filter(NonCancellableRule.id == _entity_id(payload)).first()
+    if row is None:
+        raise handle_not_found("Non-cancellable rule", _entity_id(payload))
+    db.delete(row)
+    db.flush()
+    return {"deleted": True}
+
+
+register(
+    FormAction(
+        key="non_cancellable_rule.delete",
+        entity_types=("non_cancellable_rule",),
+        execute=_delete_non_cancellable_rule,
+        window=WINDOW_DESTRUCTIVE,
+        permission="projects.types.edit",
+        label="Delete non-cancellable rule",
+    )
+)
+
+
 def _delete_exchange_rate(db: Session, payload: dict):
     from app.services.costing import rates
 
@@ -3190,5 +3308,47 @@ register(
         window=WINDOW_REVERSIBLE,
         permission="products.party_costing.manage",
         label="Remove from party",
+    )
+)
+
+
+# ----- Project import (PLAN-project-import-12nov.md, AC-PI-37/38) ------------------------
+#
+# Revert a run: it removes what the run created and keeps anything changed since. Destructive
+# (records are removed), so it takes the long window. Parked from the run page's gear menu.
+
+
+def _revert_project_import_run(db: Session, payload: dict):
+    from app.services.project_import import service as project_import
+
+    return project_import.revert_by_id(db, _entity_id(payload), user_id=payload.get("requested_by_id"))
+
+
+def _delete_project_import_run(db: Session, payload: dict):
+    from app.services.project_import import service as project_import
+
+    return project_import.delete_by_id(db, _entity_id(payload), user_id=payload.get("requested_by_id"))
+
+
+register(
+    FormAction(
+        key="project_import_run.delete",
+        entity_types=("project_import_run",),
+        execute=_delete_project_import_run,
+        window=WINDOW_DESTRUCTIVE,
+        permission="projects.import.run",
+        label="Delete import",
+    )
+)
+
+
+register(
+    FormAction(
+        key="project_import_run.revert",
+        entity_types=("project_import_run",),
+        execute=_revert_project_import_run,
+        window=WINDOW_DESTRUCTIVE,
+        permission="projects.import.run",
+        label="Revert import",
     )
 )

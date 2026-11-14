@@ -121,7 +121,11 @@ def referred_entries(
     payload = getattr(pending_before, "payload", None) if pending_before is not None else None
     declined = "stock_pick_declined" in (getattr(getattr(plan, "trace", None), "rules_fired", None) or [])
     if declined and isinstance(payload, dict) and payload.get("did_you_mean") is True and payload.get("typed"):
-        add(str(payload["typed"]), branch=BRANCH_REFERRED, answer=text, qty=_quantity(payload.get("stock_qty")))
+        # CHATBOT-CODE-MATCH R7: a pick over several missed codes keeps each code's own
+        # typed word and quantity in its `groups` (`dealer_stock.did_you_mean_each`).
+        groups = [g for g in payload.get("groups") or [] if isinstance(g, dict) and g.get("typed")]
+        for typed, qty in [(g["typed"], g.get("qty")) for g in groups] or [(payload["typed"], payload.get("stock_qty"))]:
+            add(str(typed), branch=BRANCH_REFERRED, answer=text, qty=_quantity(qty))
     if out:
         return out
 

@@ -146,6 +146,11 @@ def _planning_change(api):
     fixture = _form_three(api)
     _another_orders_raised_row(fixture)
     _open_pool_po_line(fixture["world"], qty=500)
+    # F2 12/13 Nov: a cancel is saved like any change before Confirm (an unsaved one stays pending)
+    from ._cancel_decide import decide_cancelled_rows
+
+    decide_cancelled_rows(fixture["world"].db, fixture["batch"].id)
+    fixture["world"].db.commit()
     orders = [
         {
             "pso_id": str(fixture["order"].id),

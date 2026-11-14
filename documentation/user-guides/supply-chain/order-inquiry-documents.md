@@ -24,7 +24,7 @@ by default. **Completed** means every line of that order inquiry has been confir
 line does not count against it); when CS changes or adds a line later, the order inquiry returns
 to **Outstanding**.
 
-Columns, in order: **Raised at**, **OI no**, **S/O no**, **Raised by**, **Lines**, **Qty**,
+Columns, in order: **Raised at**, **Doc no**, **S/O no**, **Raised by**, **Lines**, **Qty**,
 **Customer**, **Project**, **Agent**, **SO date**, **Status**.
 
 * **Status** shows as a badge, **Outstanding** or **Completed**.
@@ -99,7 +99,10 @@ rows were all cancelled is not shown at all.
 Each row also carries a small chevron beside its checkbox: click it to expand a stock breakdown
 for that product without leaving the page. The breakdown stays inside the grid's own width, and
 its **Location** column can be dragged wider or narrower - the width you set is remembered on
-this browser.
+this browser. A line whose **Location** belongs to an ownership group (such as `BRW-BB`) shows
+every location of that group with the group's subtotal; a line at any other location (a site
+pool such as `BRW`, or a location outside every ownership group) shows that location's own
+stock.
 
 **Requested** is what the line's live buy instructions ask for, added up. **Taken** is how much
 of that is already on a PO or SPO link or reserved by CS. **Remaining** is Requested minus Taken,
@@ -143,6 +146,13 @@ Three more words belong to this tab alone:
 
 * **To order** - CS changed a line after it was taken on, or a used row is waiting; it turns
   Done on its own once its live links cover it, or when you **Confirm** it by hand.
+* **Waiting for CS** - the sales order changed in AutoCount since CS last confirmed it (new date,
+  new quantity, a line removed, or the whole order cancelled or deleted). The line already shows
+  the sales order's new values, with the old one as **Was**, but you can't confirm it yet: CS
+  decides the change on Fulfilment Planning first, and their **Confirm** sends you the usual
+  email. It isn't counted under **To confirm** until then.
+* **SO cancelled** - the whole sales order was cancelled or deleted in AutoCount, and CS has
+  already decided it.
 * **Line cancelled** - the sales order line itself was cancelled (greyed).
 * **Nothing to buy** - every instruction on the line has been used up or cancelled (greyed).
 
@@ -244,9 +254,9 @@ History dialog; on a line that has been reserved against, its **Reserve** tab li
 request, reserve, unreserve and cancelled request on that line, newest first, each with the
 quantity, the location, who did it, when, and the reason if one was given.
 
-The **State** filter beside the search box on the **Lines** tab includes **Request to
-reserve**, **Reserved** and **Not reserved** alongside the usual states, so you can narrow to
-only what needs you.
+The **State** filter beside the search box on the **Lines** tab offers exactly the words the
+**State** column shows (for example **To order**, **Waiting for CS**, **Done**), including **Request
+to reserve**, **Reserved** and **Not reserved**, so you can narrow to only what needs you.
 
 Without the **Reserve Stock for Order Inquiries** permission, none of this shows - lines display
 their plain state pill, the **History** icon and the paperclip only, and no **Reserve** button

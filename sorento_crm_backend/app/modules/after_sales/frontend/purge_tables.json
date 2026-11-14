@@ -1,0 +1,5 @@
+{
+  "moduleKey": "after_sales",
+  "tables": ["service_jobs", "technicians"],
+  "description": "Service jobs and the technician roster."
+}

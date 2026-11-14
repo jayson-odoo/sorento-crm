@@ -10,7 +10,7 @@ Use this to switch customer portal forms on or off for every contact carrying a 
 3. Each form has its own row with **Not set**, **On** and **Off**:
    Complaint, Stock Inquiry, Purchase Request, Sponsorship Form, Project Registration,
    Price Tag Request, Sales Opportunities, Sample Request, New Product Application,
-   Customer asks and Conversation.
+   Order Change Notice, Customer asks and Conversation.
 4. **Not set** leaves that form alone on the tag's contacts. **On** shows it to them, **Off**
    hides it.
 5. Click **Save**: *Tag settings saved*.
@@ -25,6 +25,8 @@ When viewing (not editing), the group lists only the forms set to On or Off.
   every contact with the tag.
 * Customer asks and Conversation only ever show to a contact linked to a sales agent, whatever the
   tag says.
+* **Order Change Notice** is a salesperson's form: switching it **On** shows it under **My requests**
+  for the salesperson whose user is linked to the contact. The WhatsApp portal does not list it yet.
 * Applying writes the tag's choice into each contact's own **Portal forms** setting on the
   contact record, so it replaces what was set there for those forms.
 

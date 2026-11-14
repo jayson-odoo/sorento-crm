@@ -144,6 +144,7 @@ const OLD_PATHS: string[] = [
   '/project-sales/setup',
   '/project-sales/series',
   '/project-sales/price-floors',
+  '/project-sales/non-cancellable',
   '/project-sales/quotation-templates',
   '/marketing-management/promotions',
   '/marketing-management/promotion-attachments',
@@ -448,7 +449,7 @@ describe('menu.config - Procurement > Supply Chain sub-group (AC-A1)', () => {
     ]);
   });
 
-  it('Supply Chain sub-group holds Reorder Planning, Stock Debt, Loading Plan, Order Inquiries, Purchase Orders, Proforma Invoices in order, each gated correctly', () => {
+  it('Supply Chain sub-group holds Reorder Planning, Stock Debt, Loading Plan, Order Inquiries, Order Requests, Purchase Orders, Proforma Invoices in order, each gated correctly', () => {
     const procurement = findGroup(MENU_SIDEBAR, 'Procurement');
     const supplyChain = findSubGroup(procurement!, 'Supply Chain');
     expect(supplyChain).toBeDefined();
@@ -462,9 +463,16 @@ describe('menu.config - Procurement > Supply Chain sub-group (AC-A1)', () => {
       'Stock Debt',
       'Loading Plan',
       'Order Inquiries',
+      // SPARE-PART-ORDER-REQUEST: a spare part request IS an order inquiry; beside it.
+      'Order Requests',
       'Purchase Orders',
       'Proforma Invoices',
     ]);
+    expect(findLeaf(supplyChain!.children!, 'Order Requests')).toMatchObject({
+      path: '/procurement-management/spare-part-requests',
+      // Crew ruling (mirrors Purchase Requests): the approver / purchasing read gates it.
+      permission: 'procurement.spare_part_requests.view',
+    });
     expect(findLeaf(supplyChain!.children!, 'Reorder Planning')).toMatchObject({
       path: '/scm/reorder',
       permission: 'scm.reorder.run',

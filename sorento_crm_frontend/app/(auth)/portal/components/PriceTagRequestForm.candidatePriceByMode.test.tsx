@@ -175,6 +175,8 @@ async function startWithTheHost() {
   chooseTypedItems();
   fireEvent.click(screen.getByRole('button', { name: /Add line/ }));
   await selectOption('Search a set or product...', `${HOST.kind}:${HOST.id}`);
+  // PRICETAG-ALA-CARTE AC-3: a new line starts ala carte, so the one package is chosen.
+  await selectOption('Ala carte', COMBO_TAP_GROUP.combo_id);
 }
 
 function openPriceSection() {
