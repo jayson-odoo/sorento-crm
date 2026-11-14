@@ -1,7 +1,7 @@
 """Register a CRM project in AutoCount (AC-PROJECT-REGISTER).
 
-    GET  /project-sales/{project_id}/autocount-register   (status)
-    POST /project-sales/{project_id}/autocount-register   (register, no body)
+    GET  /project-sales/projects/{project_id}/autocount-register   (status)
+    POST /project-sales/projects/{project_id}/autocount-register   (register, no body)
 
 Check order: permission (`projects.autocount.write`) -> the admin switch "AutoCount project
 registration" (403, and the Shared Service is never touched) -> the project, found in the
@@ -54,7 +54,7 @@ def _require_switch(db: Session) -> None:
         raise AppException(status_code=403, message=SWITCHED_OFF, code="ac_register_switched_off")
 
 
-@router.get("/{project_id}/autocount-register", response_model=RegisterStatus)
+@router.get("/projects/{project_id}/autocount-register", response_model=RegisterStatus)
 def register_status(
     project_id: str,
     current_user: dict = Depends(require_permission(WRITE)),
@@ -69,7 +69,7 @@ def register_status(
         _guard(exc)
 
 
-@router.post("/{project_id}/autocount-register", response_model=WriteResult)
+@router.post("/projects/{project_id}/autocount-register", response_model=WriteResult)
 def register_project(
     project_id: str,
     current_user: dict = Depends(require_permission(WRITE)),

@@ -93,7 +93,7 @@ router.include_router(line_splits.router, tags=["project-fulfilment-planning"])
 # AutoCount write-back (AC-QTSO-CRM): `/sales-orders/amendments/{id}/autocount` is a longer path
 # than `/sales-orders/{pso_id}`, but declared ahead of the plain router like its neighbours.
 router.include_router(project_autocount_write.router, tags=["project-autocount-write"])
-# AC-PROJECT-REGISTER: `/{project_id}/autocount-register`, beside the other AutoCount writes.
+# AC-PROJECT-REGISTER: `/projects/{project_id}/autocount-register`, beside the other AutoCount writes.
 router.include_router(project_autocount_register.router, tags=["project-autocount-write"])
 router.include_router(sales_orders.router, tags=["project-sales-orders"])
 # Allocation (P9) hangs off sales order LINES and off claims between projects, so it is

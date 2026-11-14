@@ -70,10 +70,10 @@ export const cancelQuotationInAutocount = (documentId: string) =>
 export async function getProjectAutocountRegister(
   projectId: string,
 ): Promise<ProjectAutocountRegisterStatus> {
-  const response = await apiFetch(`${BASE}/${projectId}/autocount-register`);
+  const response = await apiFetch(`${BASE}/projects/${projectId}/autocount-register`);
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to check AutoCount'));
   return response.json();
 }
 
 export const registerProjectInAutocount = (projectId: string) =>
-  post(`/${projectId}/autocount-register`, 'Could not register the project in AutoCount');
+  post(`/projects/${projectId}/autocount-register`, 'Could not register the project in AutoCount');
