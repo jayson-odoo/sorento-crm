@@ -64,7 +64,7 @@ MAX_TARGETS = 500
 
 TIER_LABELS = {"dealer": "Dealer", "office": "Office", "end_user": "End user"}
 
-#: The per-contact switches (eight chatbot ones plus the registered project rule), column -> label (the Chatbot card shows AI replies first; this order is the copy dialog's).
+#: The per-contact switches (nine chatbot ones plus the registered project rule), column -> label (the Chatbot card shows AI replies first; this order is the copy dialog's).
 SWITCHES: tuple[tuple[str, str], ...] = (
     ("chatbot_stock_allowed", "Stock checks"),
     ("notify_salesman", "Notify salesman"),
@@ -74,6 +74,7 @@ SWITCHES: tuple[tuple[str, str], ...] = (
     ("chatbot_allowed", "AI replies"),
     ("chatbot_skip_period_questions", "Skip date-range questions"),
     ("chatbot_files_as_links", "Send files as links"),
+    ("chatbot_agent_enabled", "Agent mode"),
     # Not a chatbot switch, but a per-contact rule edited under the same permission (portal project picker).
     ("requires_registered_project", "Requires registered project"),
 )

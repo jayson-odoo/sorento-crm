@@ -441,11 +441,69 @@ class TestConsolePromptVersions:
         assert by_version[2]["chars"] == 25
 
 
+class TestConsolePromptVersionServing:
+    """CONSOLE-DEFAULT-PROMPT (owner, 14 Nov): the console defaults to the version production
+    actually serves, read through the live pipeline's own lookup (`ai_prompt_registry.get_prompt`,
+    the call `head/parser.py` makes), not to the newest "full"-lineage body. Every version from
+    v62 on differs from the code prompt's opening, so the old default pinned a weeks-old one."""
+
+    @pytest.fixture(autouse=True)
+    def _fresh_prompt_cache(self):
+        # `get_prompt` caches the resolved label for 60s; never leave this test's rows in it.
+        from app.services import ai_prompt_registry
+
+        ai_prompt_registry.bust_cache(console_service.PARSER_PROMPT_KEY)
+        yield
+        ai_prompt_registry.bust_cache(console_service.PARSER_PROMPT_KEY)
+
+    def test_the_labelled_version_is_serving_even_when_an_older_one_is_full_lineage(
+        self, client, session_factory
+    ):
+        from app.services.chatbot_parser_prompt import SEMANTIC_PARSER_PROMPT
+
+        db = session_factory()
+        full = AIPromptVersion(
+            name=console_service.PARSER_PROMPT_KEY, version=61, template=SEMANTIC_PARSER_PROMPT, variables=[],
+        )
+        live = AIPromptVersion(
+            name=console_service.PARSER_PROMPT_KEY, version=62, template="z" * 300, variables=[],
+        )
+        db.add_all([full, live])
+        db.flush()
+        db.add(AIPromptLabel(name=console_service.PARSER_PROMPT_KEY, label="production", version_id=live.id))
+        db.commit()
+
+        resp = client.get(PROMPT_VERSIONS_URL)
+        assert resp.status_code == 200, resp.text
+        by_version = {row["version"]: row for row in resp.json()}
+        assert by_version[61]["base"] == "full"
+        assert by_version[62]["base"] == "other"
+        assert by_version[62]["serving"] is True
+        assert by_version[61]["serving"] is False
+
+    def test_with_no_label_nothing_is_serving_so_the_console_runs_the_code_prompt(
+        self, client, session_factory
+    ):
+        from app.services.chatbot_parser_prompt import SEMANTIC_PARSER_PROMPT
+
+        db = session_factory()
+        db.add(
+            AIPromptVersion(
+                name=console_service.PARSER_PROMPT_KEY, version=61, template=SEMANTIC_PARSER_PROMPT, variables=[],
+            )
+        )
+        db.commit()
+
+        resp = client.get(PROMPT_VERSIONS_URL)
+        assert resp.status_code == 200, resp.text
+        assert [row["serving"] for row in resp.json()] == [False]
+
+
 class TestConsolePromptVersionBase:
     """Item 6 (8 Sep 2026): the owner's turns silently ran the compact base twice because
     the console's null choice meant "the production label", which locally sits on the
-    compact lineage. Every version now says which base it is, so the FE can default to
-    the newest FULL one.
+    compact lineage. Every version now says which base it is (shown in the picker; since
+    CONSOLE-DEFAULT-PROMPT the default is the serving version, see the class above).
 
     Retired 16 Sep 2026 (AC-1592, coordinator ruling, "SLIM"): both tests here import
     `chatbot_parser_prompt.SEMANTIC_PARSER_PROMPT_SLIM`, retired outright (D8, "one

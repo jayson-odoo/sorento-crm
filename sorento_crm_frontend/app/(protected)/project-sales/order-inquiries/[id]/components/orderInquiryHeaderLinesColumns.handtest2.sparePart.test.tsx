@@ -23,7 +23,10 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
 }));
 
-import { useOrderInquiryHeaderLinesColumns } from './orderInquiryHeaderLinesColumns';
+import {
+  SPARE_PART_REQUEST_HIDDEN_COLUMNS,
+  useOrderInquiryHeaderLinesColumns,
+} from './orderInquiryHeaderLinesColumns';
 import { DEFAULT_HIDDEN_COLUMNS } from '../../components/orderInquiryWorklistColumns';
 import { foldInquiryLines, toLineRows } from '../../../_shared/lib/orderInquiryLineFold';
 import type { OrderInquiryWorklistRow } from '../../../_shared/types/orderInquiry.types';
@@ -174,8 +177,14 @@ describe('F3: R11 and R13 still hold with the extra column', () => {
         data: [],
         columns,
         getCoreRowModel: getCoreRowModel(),
+        // SPARE-PART-OR-B U3.3b: the view's default visibility (PO hidden on the request view).
         initialState: {
-          columnVisibility: Object.fromEntries(DEFAULT_HIDDEN_COLUMNS.map((id) => [id, false])),
+          columnVisibility: Object.fromEntries(
+            [
+              ...DEFAULT_HIDDEN_COLUMNS,
+              ...(options.sparePartView === 'request' ? SPARE_PART_REQUEST_HIDDEN_COLUMNS : []),
+            ].map((id) => [id, false]),
+          ),
         },
       });
       return {
@@ -187,10 +196,13 @@ describe('F3: R11 and R13 still hold with the extra column', () => {
     return result.current;
   }
 
-  it.each([
-    ['a reader', READER],
-    ['the approver', PENDING_DECIDER],
-  ])('%s: both columns are visible by default and the sizes fit the 950 card', (_who, options) => {
+  // SPARE-PART-OR-B (lead ruling 14 Nov): on both views, the order request page and the OI.
+  it.each(
+    (['request', 'inquiry'] as const).flatMap((view): Array<[string, Options]> => [
+      [`${view} view, a reader`, { ...READER, sparePartView: view }],
+      [`${view} view, the approver`, { ...PENDING_DECIDER, sparePartView: view }],
+    ]),
+  )('%s: both columns are visible by default and the sizes fit the 950 card', (_who, options) => {
     const { total, sizes, titles } = sizesOf(options);
     expect(titles, `visible: ${sizes.join(', ')}`).toEqual(
       expect.arrayContaining(['Product code', 'Description']),

@@ -339,9 +339,9 @@ export default function ChatbotConsole() {
   );
 
   // The version actually in effect, spelled out next to the composer - "Parser v38", never
-  // the raw id. `promptVersionId === null` after the versions have loaded is an explicit
-  // in-session pick of the live production label (the select's "clear" option), not a
-  // loading state.
+  // the raw id. `promptVersionId === null` after the versions have loaded is the live
+  // production label: the select's "clear" option, or the default when no version is
+  // labelled (the turn then runs the code prompt). Not a loading state.
   const activePromptVersion = promptVersions.find((v) => v.id === promptVersionId);
   const activePromptLabel = promptVersionsLoading
     ? null
