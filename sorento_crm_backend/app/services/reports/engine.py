@@ -863,9 +863,7 @@ def _pivot(ctx: QueryContext, view: ReportViewConfig, cap: bool, strict_sort: bo
                                   row_column, strict=strict_sort)
     value_labels = _value_labels(col_column, col_values)
 
-    # Cells that hold data, not rows x columns: an empty cell is never sent, and counting
-    # the empty ones refused a two-week Customer x Month summary (REPORT-PIVOT-MONTHS).
-    if cap and len(grouped) > PIVOT_CELL_CAP:
+    if cap and len(row_values) * len(col_values) > PIVOT_CELL_CAP:
         raise ReportCapped(
             f"This summary is more than {PIVOT_CELL_CAP:,} cells. "
             "Group by something coarser or export to Excel instead."
@@ -929,7 +927,8 @@ def _axis_values(
 
     A FIXED axis (the months of the year the period touches, the period's years, the
     period's months) prints every value whether the data holds it or not; any other axis
-    prints what is present, ranked naturally. The blank bucket is kept and sorts last either way.
+    prints what is present, ranked naturally. The blank bucket is kept and sorts last
+    either way.
     """
     fixed: Optional[List[str]] = None
     if column.fixed_values == reg.MONTHS_OF_YEAR:

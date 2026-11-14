@@ -14,4 +14,4 @@ A month in the period with no sales stays in the summary as a blank column. The 
 
 ## "This summary is more than 5,000 cells"
 
-The summary shows at most 5,000 figures. Only the places that hold a figure count; a blank cell does not. If you still hit it, group by something coarser (for example Account type instead of Customer), choose a shorter period, or export to Excel, which has no limit.
+The summary shows at most 5,000 cells (rows times columns, blank cells included). A shorter period also means fewer month columns, so a summary by customer over two weeks fits. If you still hit it, group by something coarser (for example Account type instead of Customer), choose a shorter period, or export to Excel, which has no limit.

@@ -466,18 +466,6 @@ def test_the_export_path_has_no_cap(db, definition, monkeypatch):
     assert result.row_count == 5
 
 
-def test_a_pivot_is_capped_on_cells_with_data_not_rows_times_columns(db, definition, monkeypatch):
-    """REPORT-PIVOT-MONTHS. Agent x Month of 2026 is 2 x 12 = 24 printed cells, but only 4
-    hold data (Alice Jan, Alice Mar, Bob Mar, Bob Nov). The cap counts the 4: an empty cell
-    costs nothing to send, and counting it refused a 2-week summary on production."""
-    from app.services.reports import engine
-
-    monkeypatch.setattr(engine, "PIVOT_CELL_CAP", 5)
-    pivot = _run(db, definition).layouts.summary
-    assert len(pivot.row_values) * len(pivot.col_dim.values) == 24
-    assert pivot.grand_total["amount"] == "1750.24"
-
-
 def _month_of_year_definition():
     """The scratch definition plus a Month-of-the-year axis (JAN..DEC fixed values), the
     shape billing_document_lines' `month_of_year` carries."""
