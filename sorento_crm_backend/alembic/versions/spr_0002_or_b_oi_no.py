@@ -14,7 +14,7 @@ part request without an oi_no takes one in raised_at order; a legacy request alr
 in the OI- series keeps its own number. Idempotent.
 
 Revision ID: spr_0002_or_b_oi_no
-Revises: plr_0001_primary_owner
+Revises: dbr_0001_retention_settings
 """
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "spr_0002_or_b_oi_no"
-down_revision = "plr_0001_primary_owner"
+down_revision = "dbr_0001_retention_settings"
 branch_labels = None
 depends_on = None
 
