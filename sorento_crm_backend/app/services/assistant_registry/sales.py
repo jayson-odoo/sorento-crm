@@ -16,8 +16,92 @@ from app.models.sales import SalesTarget
 from app.models.sales_agent import SalesAgent
 from app.services.assistant_registry import register
 from app.services.assistant_registry.types import EntityDef, FieldDef
+from app.utils.date_format import fmt_date_range
 
 TARGETS_VIEW = "sales.targets.view"
+
+
+#: W-A (AGENT-COMMISSION-WA): the next rung of the target page's own tier ladder, on a summary row whose subject has
+#: one commission target in the window (the note answers target by target, with the assumptions it makes).
+NEXT_TIER_FIELDS = {
+    "next_tier": FieldDef(
+        "Next tier", kind="number",
+        note="The next tier's number on the target's ladder; empty at the top tier, without commission, or when the "
+             "subject has several targets (then the note answers target by target).",
+    ),
+    "next_tier_at": FieldDef(
+        "Next tier from", kind="number", note="Where the next tier starts: RM, or units on a quantity target.",
+    ),
+    "to_next_tier": FieldDef(
+        "To the next tier", kind="number",
+        note="Still to sell to reach the next tier: RM, or units on a quantity target.",
+    ),
+    "next_tier_payout": FieldDef(
+        "Payout at the next tier (RM)", kind="number",
+        note="Commission plus bonus the period would pay on reaching the next tier (the same engine as the page).",
+    ),
+    "next_tier_gain": FieldDef(
+        "More at the next tier (RM)", kind="number", note="Payout at the next tier minus the payout now.",
+    ),
+    "next_tier_lines": FieldDef(
+        "Next tier, target by target", kind="text",
+        note="One sentence per commission target live today: its period, the next tier and where it starts, what is "
+             "still to sell, what it would pay there and how much more than now (with the account mix and rates it "
+             "assumes), or that it is at its top tier or has no ladder.",
+    ),
+}
+
+
+#: `next_tier` (crm_query): what a next-tier question asks, said by the model from the user's meaning in any language.
+NEXT_TIER_KINDS = ("distance", "closest", "furthest")
+#: `subjects`: whose ranking a closest / furthest question asks for.
+NEXT_TIER_SUBJECTS = ("agent", "dealer", "team", "all")
+#: The columns of every next-tier answer, whatever else the call listed (crew live x3 on 0c5c7b78: X2 run 3 and W4
+#: run 2 dropped them). TGT and payout account come with them (`always_fields`).
+NEXT_TIER_COLUMNS = (
+    "owner_kind", "to_next_tier", "next_tier", "next_tier_at", "next_tier_payout", "next_tier_gain", "payout",
+    "next_tier_lines",
+)
+
+
+def _next_tier_spec(spec: dict) -> dict:
+    """`agent_target_summary`'s `next_tier` / `subjects` arguments as the spec it runs (crew live x3, owner rule:
+    the model states the question kind as an argument, code never reads the message): one row per subject (no
+    regroup), the next-tier columns, ranked by what is still to sell (furthest first for `furthest`), only the asked
+    subjects. closest / furthest without `subjects` is refused so the model asks the user, never guesses."""
+    from app.services.assistant_registry.query import QueryRefused
+
+    kind, subjects = spec.get("next_tier"), spec.get("subjects")
+    if kind is None:
+        if subjects is not None:
+            raise QueryRefused("invalid", "`subjects` goes with `next_tier` closest or furthest.")
+        return spec
+    if kind not in NEXT_TIER_KINDS:
+        raise QueryRefused("invalid", "`next_tier` is one of distance, closest, furthest.")
+    if subjects is not None and subjects not in NEXT_TIER_SUBJECTS:
+        raise QueryRefused("invalid", "`subjects` is one of agent, dealer, team, all.")
+    if kind == "distance" and subjects is not None:
+        # A distance question names its subject (agent=...); a kind beside it could only contradict it.
+        raise QueryRefused("invalid", "`subjects` goes with next_tier closest or furthest, not distance.")
+    if kind != "distance" and subjects is None:
+        raise QueryRefused(
+            "invalid",
+            f"`next_tier` {kind} needs `subjects`: agent, dealer, team or all. If the user did not say whose "
+            "ranking they want, ask them one short question (agents, dealers or teams?) instead of querying.",
+        )
+    out = {k: v for k, v in spec.items() if k not in ("group_by", "aggregates", "fields", "sort")}
+    out["fields"] = list(NEXT_TIER_COLUMNS)
+    # One page is NEXT_LINES rows, each with its own next-tier sentence; "more" pages on (`offset`, owner L85).
+    raw = spec.get("limit")
+    if raw is None or (isinstance(raw, int) and not isinstance(raw, bool) and raw >= 1):
+        out["limit"] = min(raw or NEXT_LINES, NEXT_LINES)
+    out["sort"] = [{"field": "to_next_tier", "dir": "desc" if kind == "furthest" else "asc"}]
+    if subjects in ("agent", "dealer", "team"):
+        filters = [
+            f for f in out.get("filters") or [] if not (isinstance(f, dict) and f.get("field") == "owner_kind")
+        ]
+        out["filters"] = [*filters, {"field": "owner_kind", "op": "eq", "value": subjects}]
+    return out
 
 
 def _narrowing(db, base, agent_ids=None, kinds=None, names=None) -> list:
@@ -212,9 +296,23 @@ def _target_rows(
                 "commission": commission if has_commission else None,
                 "bonus": bonus if has_commission else None,
                 "payout": round((commission or 0) + (bonus or 0), 2) if has_commission else None,
+                "_next": fig["next_tier"],
+                "_has_tiers": has_commission,
             }
         )
     return rows
+
+
+def _next_fields(nxt: dict | None) -> dict:
+    """The next rung of one period (`target_service._next_tier`, the page's own ladder and engine) as fields."""
+    nxt = nxt if nxt and nxt.get("state") == "next" else {}
+    return {
+        "next_tier": nxt.get("tier"),
+        "next_tier_at": nxt.get("threshold"),
+        "to_next_tier": nxt.get("gap"),
+        "next_tier_payout": nxt.get("payout"),
+        "next_tier_gain": nxt.get("gain"),
+    }
 
 
 def _share_label(customer, accounts) -> str:
@@ -325,10 +423,21 @@ def _summary_rows(
         for k in ("commission", "bonus", "payout"):
             if row[k] is not None:
                 out[k] = round((out[k] or 0.0) + row[k], 2)
+        if row["_has_tiers"]:
+            out.setdefault("_periods", {}).setdefault(row["target_no"], []).append(row)
         for label, share in row.get("_account_shares") or []:
             out["_shares"][label] = round(out["_shares"].get(label, 0.0) + share, 2)
     rows = []
     for out in per.values():
+        # W-A: each commission target's live period, the row's numbers only when there is one (owner card Q2 a).
+        live = [_live(p) for _no, p in sorted(out.pop("_periods", {}).items())]
+        out["_live"] = [
+            {"target_no": p["target_no"], "start": p["period_start"], "end": p["period_end"], "next": p["_next"]}
+            for p in live
+        ]
+        out.update(_next_fields(live[0]["_next"] if len(live) == 1 else None))
+        # Target by target, for the model to write from (owner 14 Nov: the reply is the model's).
+        out["next_tier_lines"] = " ".join(_next_line(out["owner"], p) for p in out["_live"]) or None
         for target_no, (goal, achieved) in out.pop("_per_target").items():
             if goal <= 0:
                 # A target of 0 over the window has no % on the screen; its sales would swamp the row's % (owner
@@ -384,7 +493,57 @@ def _some(names: list[str], most: int = 5) -> str:
     return f"{shown} and {len(names) - most} more" if len(names) > most else shown
 
 
-def _summary_note(rows: list[dict]) -> str | None:
+def _live(periods: list[dict]) -> dict:
+    """The one period of a target the next-tier answer reads: today's, else the last one started by today, else the
+    window's first (a window wholly in the future)."""
+    from app.services.sales.team_service import _today
+
+    current = [p for p in periods if p["is_current"]]
+    if current:
+        return current[0]
+    started = [p for p in periods if p["period_start"] <= _today()]
+    return started[-1] if started else periods[0]
+
+
+#: The rows of one next-tier page, each with its next-tier lines ("more" pages on).
+NEXT_LINES = 10
+
+
+def _rm(value, unit: str = "RM") -> str:
+    return f"RM {value:,.2f}" if unit == "RM" else f"{value:,.2f} units"
+
+
+#: What the line says when there is no next tier to reach (`target_service._next_tier` `state`).
+NO_NEXT = {
+    "top": "has reached its top tier: no next tier.",
+    "no_ratio": "has no RM per point on file for the period, so its tiers cannot be placed: no next tier known.",
+    "no_tiers": "has no tiers in this period: no next tier.",
+}
+
+
+def _next_line(owner: str, live: dict) -> str:
+    from app.services.sales.team_service import _today
+
+    nxt, no = live["next"], live["target_no"]
+    when = fmt_date_range(live["start"], live["end"]) + (" (closed)" if live["end"] < _today() else "")
+    if nxt is None or nxt["state"] != "next":
+        return f"{no} ({owner}, {when}) " + NO_NEXT[nxt["state"] if nxt else "no_tiers"]
+    unit = nxt["unit"]
+    line = (
+        f"{no} ({owner}, {when}): tier {nxt['tier']} at {_rm(nxt['threshold'], unit)}, {_rm(nxt['gap'], unit)} to "
+        f"go, would pay {_rm(nxt['payout'])} ({_rm(nxt['gain'])} more than now)"
+    )
+    if nxt.get("mix") == "so_far":
+        line += ", if the rest comes in the same account mix as sold so far"
+    elif nxt.get("mix") == "even":
+        line += ", with nothing sold yet: if the rest is split evenly across the accounts"
+    if nxt.get("rates"):
+        rate = (lambda v: f"RM {v:g} per unit") if unit == "units" else (lambda v: f"{v:g}%")
+        line += " (rates on that tier: " + ", ".join(f"{r['label']} {rate(r['rate'])}" for r in nxt["rates"]) + ")"
+    return line + "."
+
+
+def _summary_note(rows: list[dict], used: set[str] = frozenset()) -> str | None:
     """What the answer must say about the rows it shows (owner C3, Q5): which targets of 0 were left out of target
     and achieved, and whose payout is empty because no commission is set (never "RM 0")."""
     parts = []
@@ -394,6 +553,13 @@ def _summary_note(rows: list[dict]) -> str | None:
     unset = [r["owner"] for r in rows if not r["_has_commission"]]
     if unset:
         parts.append(f"No commission is set on the targets of {_some(unset)}.")
+    # Next tier (W-A): each row's own `next_tier_lines` say it target by target (owner card Q2 a: a sum of two
+    # distances is not a distance). Rows, none with a commission target: one note says so (crew live x3 W6), never a
+    # ranking of something else. No rows: the other notes speak (review B1).
+    asked = used & NEXT_TIER_FIELDS.keys()
+    if asked and rows and not any(r.get("_live") for r in rows):
+        who = "agent target" if all(r["owner_kind"] == "agent" for r in rows) else "target"
+        parts.insert(0, f"No {who} has a commission ladder this period.")
     return " ".join(parts) or None
 
 
@@ -432,13 +598,19 @@ def _target_list_rows(
                 continue
             if r["start_date"] > date_to or r["end_date"] < date_from:
                 continue
+            # A target of 0 has no target, achieved or % to show, said in words as on the payout summary (crew
+            # live x3 on 0c5c7b78, X3: "achieved 9.92M" printed for a target of 0).
+            zero = r["target_value"] is not None and r["target_value"] <= 0
             rows.append({
                 "id": r["target_id"], "target_id": r["target_id"], "target_no": r["target_no"],
                 "subject": r["subject_label"], "subject_kind": subject, "period": r["start_date"],
-                "start_date": r["start_date"], "end_date": r["end_date"], "target_value": r["target_value"],
-                "achieved_value": r["achieved_value"], "achieved_pct": r["achieved_pct"],
-                "remaining_value": _remaining(r["target_value"], r["achieved_value"]),
+                "start_date": r["start_date"], "end_date": r["end_date"],
+                "target_value": None if zero else r["target_value"],
+                "achieved_value": None if zero else r["achieved_value"],
+                "achieved_pct": None if zero else r["achieved_pct"],
+                "remaining_value": None if zero else _remaining(r["target_value"], r["achieved_value"]),
                 "reached": not _below(r["achieved_pct"]),
+                "_empty": dict.fromkeys(("target_value", "achieved_value", "achieved_pct", "remaining_value"), ZERO_TARGET) if zero else {},
             })
             if len(rows) > limit:
                 from app.services.assistant_registry.query import QueryRefused
@@ -595,11 +767,14 @@ register(
                 "Commission payout", kind="number",
                 note="Commission plus bonus over the window; empty (not 0) when no commission is set.",
             ),
+            **NEXT_TIER_FIELDS,
         },
         name_by=("owner",),
-        hint="COMMISSION PAYOUT / TARGET vs ACHIEVED for an agent, a team or a dealer, or per agent / team / dealer: "
-             "one row per agent, team and dealer, highest payout first, totals row; no period = this year. One of them: agent=<code or name as said> "
-             "(an agent, team or dealer); only dealers or teams: owner_kind eq dealer|team",
+        hint="COMMISSION PAYOUT / TARGET vs ACHIEVED / NEXT TIER (how far to it, what it would pay) for an agent, a "
+             "team or a dealer, or per agent / team / dealer: one row per agent, team and dealer, highest payout "
+             "first, totals row; no period = this year. One of them: agent=<code or name as said> (an agent, team or "
+             "dealer); only dealers or teams: owner_kind eq dealer|team. Next tier (how far, closest, what it would "
+             "pay or earn there): set next_tier, and subjects for closest / furthest",
         list_fields=("owner_kind", "target_value", "achieved_value", "achieved_pct", "remaining_value", "payout"),
         # Sales vs target in one query (UAC 11): RM figures of the amount rows only, a units row has none.
         row_totals=("targets", "target_value", "achieved_value", "remaining_value", "commission", "bonus", "payout"),
@@ -608,6 +783,7 @@ register(
         window_field="period",
         brand_blind=True,
         own_note="You see only your own agents' targets: team and dealer payouts are not visible to you.",
+        spec_hook=_next_tier_spec,
         row_note=_summary_note,
         rank_by="payout",
         default_window="this_year",

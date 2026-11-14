@@ -28,6 +28,7 @@ from app.services.assistant_registry.query import (
     _display_date,
     _limit,
     _list,
+    _offset,
     _plain,
     _scalar,
     _sort_dir,
@@ -303,6 +304,8 @@ def _sorted(items: list[dict], order: list[tuple[str, str]]) -> list[dict]:
 
 
 def run_computed(db, user_id: str, entity: EntityDef, own_only: bool, slugs: set[str], spec: dict) -> dict:
+    if entity.spec_hook is not None:
+        spec = entity.spec_hook(spec)
     asked = _list(spec, "filters", MAX_FILTERS)
     date_from, date_to, rest, period = _window(entity, asked)
     notes = []
@@ -313,6 +316,12 @@ def run_computed(db, user_id: str, entity: EntityDef, own_only: bool, slugs: set
         date_from, date_to, rest, period = _window(entity, [*asked, default])
         shown = _display_date(date_from.isoformat(), "date"), _display_date(date_to.isoformat(), "date")
         notes.append(f"No period named: {entity.default_window.replace('_', ' ')}, {shown[0]} to {shown[1]}.")
+    if spec.get("next_tier") and date_from <= _today() <= date_to:
+        # How far from the next tier is a question about today's periods: one period basis for every figure of
+        # the answer, never a year's sums beside the current quarter's next tier (crew live x3 on bb85f8b5, X1/W9).
+        date_from = date_to = _today()
+        period, defaulted = None, False
+        notes = [n for n in notes if not n.startswith("No period named")]
     named = {f.get("field") for f in rest}
     for field, op, value, note in entity.default_filters:
         if field not in named:
@@ -325,6 +334,15 @@ def run_computed(db, user_id: str, entity: EntityDef, own_only: bool, slugs: set
     tests = [_predicate(entity, slugs, item) for item in rest]
     group_by = _list(spec, "group_by", MAX_GROUP_FIELDS)
     aggregates = _list(spec, "aggregates", MAX_AGGREGATES)
+    # The names the question used, read before any rewrite below, so a note answers only what was asked (W-A:
+    # next-tier lines; an aggregate on a next-tier field still counts once the query is turned back into rows).
+    used = {
+        *named,
+        *(f for f in _list(spec, "fields") if isinstance(f, str)),
+        *(i.get("field") for i in _list(spec, "sort", 4) if isinstance(i, dict)),
+        *((g.get("field") if isinstance(g, dict) else g) for g in group_by),
+        *(a.get("field") for a in aggregates if isinstance(a, dict)),
+    }
     if entity.row_identity and (group_by or aggregates) and (
         not group_by or any((g.get("field") if isinstance(g, dict) else g) in entity.row_identity for g in group_by)
     ):
@@ -375,15 +393,19 @@ def run_computed(db, user_id: str, entity: EntityDef, own_only: bool, slugs: set
     rows = [r for r in computed if all(t(r) for t in tests)]
     if own_only and entity.own_note:
         notes.append(entity.own_note)
-    if entity.row_note:
-        said = entity.row_note(rows)
-        if said:
-            notes.append(said)
-
     if key_rows or agg_rows:
         out = _groups(entity, rows, key_rows, agg_rows, sort, spec)
     else:
         out = _rows(entity, slugs, rows, sort, spec)
+    if entity.row_note:
+        # About the rows the result shows (a limit or a cut leaves the others unsaid), in their order.
+        listed = {str(r.get("id")): i for i, r in enumerate(out.get("rows") or [])} if "rows" in out else None
+        about = rows if listed is None else sorted(
+            (r for r in rows if str(r.get("id")) in listed), key=lambda r: listed[str(r.get("id"))]
+        )
+        said = entity.row_note(about, used)
+        if said:
+            notes.append(said)
     out["period_display"] = period
     out["scope_note"] = " ".join(notes) or None
     if not rows and narrow:
@@ -547,9 +569,9 @@ def _rows(entity: EntityDef, slugs: set[str], rows: list[dict], sort: list[dict]
     if ranked:
         order = [(entity.rank_by, "desc")]
     rows = _sorted(list(rows), order) if order else rows
-    limit = _limit(spec, MAX_ROWS, entity.default_limit or DEFAULT_ROWS)
+    limit, skip = _limit(spec, MAX_ROWS, entity.default_limit or DEFAULT_ROWS), _offset(spec)
     out_rows = []
-    for row in rows[:limit]:
+    for row in rows[skip:skip + limit]:
         item = {"id": str(row.get("id"))}
         if entity.screen_path:
             item["link"] = entity.screen_path.format(**row)
@@ -567,12 +589,12 @@ def _rows(entity: EntityDef, slugs: set[str], rows: list[dict], sort: list[dict]
         {"key": f, "label": entity.fields[f].label} for f in shown if f not in entity.name_by
     ]
     out = {
-        "entity": entity.key, "rows": out_rows, "total": len(rows), "truncated": len(rows) > len(out_rows),
-        "restricted": restricted, "columns": columns,
+        "entity": entity.key, "rows": out_rows, "total": len(rows), "truncated": len(rows) > skip + len(out_rows),
+        "restricted": restricted, "columns": columns, "offset": skip,
     }
     if dropped:
         out["columns_dropped"] = dropped
-    if ranked and out["truncated"]:
+    if ranked and (out["truncated"] or skip):
         out["ranked_by"] = entity.fields[entity.rank_by].label
     shown_keys = {c["key"] for c in columns}
     totals = {}
@@ -616,8 +638,9 @@ def _groups(entity: EntityDef, rows: list[dict], key_rows, agg_rows, sort: list[
     groups = _sorted(groups, order)
     total_groups = len(groups)
     every = groups
-    groups = groups[: _limit(spec, MAX_GROUPS, MAX_GROUPS)]
-    truncated = total_groups > len(groups)
+    skip = _offset(spec)
+    groups = groups[skip:skip + _limit(spec, MAX_GROUPS, MAX_GROUPS)]
+    truncated = total_groups > skip + len(groups)
     totals = {}
     # Over every group, shown or not (crew live x3: a cut list had no totals row at all).
     if key_rows:
@@ -634,10 +657,11 @@ def _groups(entity: EntityDef, rows: list[dict], key_rows, agg_rows, sort: list[
         "groups": [{k: _plain(v) for k, v in g.items()} for g in groups],
         "total_groups": total_groups,
         "truncated": truncated,
+        "offset": skip,
         "columns": [{"key": name, "label": label, "group": True} for name, _fn, label in key_rows]
         + [{"key": alias, "label": label} for alias, _fn, label in agg_rows],
         "totals": totals,
     }
-    if ranked and truncated:
+    if ranked and (truncated or skip):
         out["ranked_by"] = next(label for alias, _fn, label in agg_rows if alias == rank)
     return out

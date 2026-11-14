@@ -41,7 +41,10 @@ OPS = (
 )
 BUCKETS = ("day", "week", "month", "quarter", "year")
 FNS = ("count", "count_distinct", "sum", "avg", "min", "max")
-SPEC_KEYS = ("entity", "agent", "period", "fields", "filters", "group_by", "aggregates", "sort", "limit")
+SPEC_KEYS = (
+    "entity", "agent", "period", "fields", "filters", "group_by", "aggregates", "sort", "limit", "offset", "next_tier",
+    "subjects", "about_self",
+)
 _DATE_ONLY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 #: A date as the answers write it (dd/mm/yyyy), accepted in a filter too.
 _DMY = re.compile(r"^(\d{1,2})/(\d{1,2})/(\d{4})$")
@@ -530,6 +533,25 @@ def _limit(spec: dict, cap: int, default: int) -> int:
     return min(raw, cap)
 
 
+def _offset(spec: dict) -> int:
+    """The rows (or groups) already shown, skipped: "more" pages on a cut list (AGENT-COMMISSION-WA, owner L85)."""
+    raw = spec.get("offset")
+    if raw is None:
+        return 0
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < 0:
+        raise QueryRefused("invalid", "`offset` must be a whole number from 0.")
+    return raw
+
+
+def _past_end(db, stmt, skip: int) -> int:
+    """The whole count of a page that found nothing: 0 on the first page; past the end of a list ("more" once too
+    often), the list's own count, never 0, which every caller reads as "nothing found" (review on 5f651cfb)."""
+    if not skip:
+        return 0
+    counted = _run(db, select(func.count()).select_from(stmt.subquery()))
+    return int(counted[0][0] or 0) if counted else 0
+
+
 def _plain(value: Any) -> Any:
     """A value as the answer shows it: a date as dd/mm/yyyy, a stored (naive UTC) timestamp as Malaysian
     dd/mm/yyyy hh:mm (owner ruling, 5 Nov)."""
@@ -642,6 +664,11 @@ def run_query(db, user_id: str, spec: Any) -> dict:
         raise QueryRefused("invalid", f"Unknown key(s): {', '.join(unknown)}. Keys: {', '.join(SPEC_KEYS)}.")
     slugs = _slugs(db, user_id)
     entity, own_only = _entity_for(db, user_id, spec.get("entity"), slugs)
+    if spec.get("about_self") is not None and not isinstance(spec.get("about_self"), bool):
+        raise QueryRefused("invalid", "`about_self` is true or false.")
+    # `about_self` is read before the query runs (`query_tools.strip_self_agent`); nothing below reads it.
+    if entity.spec_hook is None and (spec.get("next_tier") is not None or spec.get("subjects") is not None):
+        raise QueryRefused("invalid", "`next_tier` and `subjects` are for agent_target_summary only.")
     spec = shorthands(entity, spec)
     if entity.compute is not None:
         from app.services.assistant_registry.computed import run_computed
@@ -793,9 +820,9 @@ def _rows(db, user_id, entity, own_only, paths, filters, spec) -> dict:
     stmt = _base(db, user_id, entity, own_only, stmt, paths)
     for clause in filters:
         stmt = stmt.where(clause)
-    limit = _limit(spec, MAX_ROWS, DEFAULT_ROWS)
-    rows = _run(db, stmt.order_by(*order).limit(limit))
-    total_rows = int(rows[0]._mapping["__total"]) if rows else 0
+    limit, skip = _limit(spec, MAX_ROWS, DEFAULT_ROWS), _offset(spec)
+    rows = _run(db, stmt.order_by(*order).limit(limit).offset(skip))
+    total_rows = int(rows[0]._mapping["__total"]) if rows else _past_end(db, stmt, skip)
     out_rows = []
     for row in rows:
         data = row._mapping
@@ -813,8 +840,8 @@ def _rows(db, user_id, entity, own_only, paths, filters, spec) -> dict:
         {"key": f, "label": paths.resolve(f)[1].label} for f in shown if f not in entity.name_by
     ]
     out = {
-        "entity": entity.key, "rows": out_rows, "total": total_rows, "truncated": total_rows > len(out_rows),
-        "restricted": restricted, "columns": columns,
+        "entity": entity.key, "rows": out_rows, "total": total_rows, "truncated": total_rows > skip + len(out_rows),
+        "restricted": restricted, "columns": columns, "offset": skip,
     }
     if dropped:
         out["columns_dropped"] = dropped
@@ -891,21 +918,21 @@ def _groups(db, user_id, entity, own_only, paths, filters, group_by, aggregates,
     order += [expr.asc().nulls_last() for _, expr in keys]
     if order:
         stmt = stmt.order_by(*order)
-    limit = _limit(spec, MAX_GROUPS, MAX_GROUPS)
-    rows = _run(db, stmt.limit(limit))
-    total_groups = int(rows[0]._mapping["__total"]) if rows and keys else len(rows)
+    limit, skip = _limit(spec, MAX_GROUPS, MAX_GROUPS), _offset(spec)
+    rows = _run(db, stmt.limit(limit).offset(skip))
+    total_groups = int(rows[0]._mapping["__total"]) if rows and keys else (_past_end(db, stmt, skip) if keys else len(rows))
     groups = [{name: _plain(row._mapping[name]) for name in labelled} for row in rows]
-    truncated = total_groups > len(groups)
-    # Column totals of the counts and sums, over every group (only when none was cut off).
+    truncated = total_groups > skip + len(groups)
+    # Column totals of the counts and sums, over every group (only when the page holds every group).
     totals = {}
-    if keys and not truncated:
+    if keys and not truncated and not skip:
         for alias, _expr, _label in agg_rows:
             if alias == "count" or alias.startswith(("count_", "sum_")):
                 totals[alias] = round(sum(float(g[alias] or 0) for g in groups), 2)
                 if alias == "count" or alias.startswith("count_"):
                     totals[alias] = int(totals[alias])
     return {
-        "entity": entity.key, "groups": groups, "total_groups": total_groups, "truncated": truncated,
+        "entity": entity.key, "groups": groups, "total_groups": total_groups, "truncated": truncated, "offset": skip,
         "columns": [{"key": name, "label": label, "group": True} for name, _expr, label in key_rows]
         + [{"key": alias, "label": label} for alias, _expr, label in agg_rows],
         "totals": totals,

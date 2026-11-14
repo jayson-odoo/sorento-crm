@@ -2421,16 +2421,20 @@ def period_figures(
     bonuses = _tier_bonuses(db, rates)
     ratios = point_ratios(db) if any(t.threshold_unit == "points" for t, _ in pairs) else []
 
+    accounts = _accounts_by_target(db, [t.id for t, _ in pairs if t.subject_kind == "dealer"])
+
     out: List[Tuple[SalesTarget, SalesTargetPeriod, dict]] = []
     for target, p in pairs:
         tiers = tiers_by.get(target.id, [])
         mine = [r for r in ratios if r.company_id == target.company_id]
-        payout = period_payout(
-            target, p, _engine_tiers(tiers, rates, bonuses), [t.period_start for t in tiers],
-            by_account.get(p.id, {}), mine,
-        )
+        engine, starts = _engine_tiers(tiers, rates, bonuses), [t.period_start for t in tiers]
+        payout = period_payout(target, p, engine, starts, by_account.get(p.id, {}), mine)
         ratio = ratio_on(mine, p.period_end) if target.threshold_unit == "points" else None
         value = sum(by_account.get(p.id, {}).values(), Decimal("0"))
+        nxt = _next_tier(
+            target, p, engine, starts, by_account.get(p.id, {}), mine,
+            [(c.id, account_label(c)) for c in accounts.get(target.id, [])], payout,
+        )
         figure = p.target_value * ratio if ratio is not None else p.target_value
         out.append(
             (
@@ -2448,10 +2452,82 @@ def period_figures(
                         key: float(value) for key, value in (payout.by_account or {}).items()
                     } if payout.commission is not None else {},
                     "ratio_missing": payout.ratio_missing,
+                    "next_tier": nxt,
                 },
             )
         )
     return out
+
+
+def _next_tier(
+    target: SalesTarget,
+    period: SalesTargetPeriod,
+    engine: List[commission_service.Tier],
+    starts: List[Optional[date]],
+    by_account: Dict[Optional[str], Decimal],
+    ratios: List[SalesPointRatio],
+    labels: List[Tuple[str, str]],
+    payout: commission_service.Payout,
+) -> Optional[dict]:
+    """The period's next rung on the target page's own ladder (`tier_ladder`, `_reached`, as `period_progress`
+    reads it) and what the period would pay on reaching it: the one engine (`period_payout`) on the achievement
+    raised to the rung's threshold (AGENT-COMMISSION-WA). `state`: `next`, `top` (every rung reached),
+    `no_ratio` (a points target with no RM per point on file) or `no_tiers` (no rung with a threshold in the
+    period); None without commission. `unit`: RM, or units on a quantity target (threshold and gap; the payout is
+    RM). Per-account rates (a dealer): the rest is bought in the mix sold so far, split evenly across the counted
+    accounts when nothing is sold yet (owner card Q1 a); `mix` says which and `rates` names each account's rate on
+    the rung when they differ."""
+    if (target.commission_method or "none") == "none":
+        return None
+    unit = "units" if target.metric == "quantity" else "RM"
+    if (target.threshold_unit or "pct") == "points" and ratio_on(ratios, period.period_end) is None:
+        return {"state": "no_ratio", "unit": unit}
+    # What the engine counts: an account netting negative (returns) counts as 0 (`payout_for`); agent and team
+    # targets are one bucket (`period_payout`).
+    if target.subject_kind == "dealer":
+        counted = {k: max(v, Decimal("0")) for k, v in by_account.items()}
+    else:
+        counted = {None: max(sum(by_account.values(), Decimal("0")), Decimal("0"))}
+    total = sum(counted.values(), Decimal("0"))
+    account_ids = [cid for cid, _label in labels]
+    ladder = tier_ladder(engine, starts, period, target, ratios, labels)
+    if not ladder:
+        return {"state": "no_tiers", "unit": unit}
+    upcoming = [r for r in ladder if not _reached(r, total, target, period)]
+    if not upcoming or ((target.threshold_unit or "pct") == "pct" and Decimal(period.target_value) <= 0):
+        # On a pct target of 0 every reachable rung is already reached (the engine's rule).
+        return {"state": "top", "unit": unit}
+    rung = upcoming[0]
+    threshold = Decimal(rung["threshold_rm"])
+    if target.subject_kind != "dealer":
+        raised: Dict[Optional[str], Decimal] = {None: threshold}
+    else:
+        keys = [k for k, v in counted.items() if v > 0] if total > 0 else (account_ids or [None])
+        raised = {
+            k: (counted[k] * threshold / total if total > 0 else threshold / len(keys)) for k in keys[:-1]
+        }
+        # The last account takes the remainder, so the parts add up to the threshold exactly (a 1:2 or three-way
+        # split at Decimal precision falls a hair short and the engine would not reach the rung, review B1).
+        raised[keys[-1]] = threshold - sum(raised.values(), Decimal("0"))
+    # The assumption only matters when the rung pays different rates per account.
+    per_account = target.subject_kind == "dealer" and len(account_ids) > 1 and any(
+        t.account_rates is not None for t in engine
+    )
+    rates = [r for r in rung["rates"] if r["label"] is not None]
+    would = period_payout(target, period, engine, starts, raised, ratios)
+    now = (payout.commission or Decimal("0")) + (payout.bonus or Decimal("0"))
+    pay = (would.commission or Decimal("0")) + (would.bonus or Decimal("0"))
+    return {
+        "state": "next",
+        "unit": unit,
+        "tier": rung["tier"],
+        "threshold": _r2(threshold),
+        "gap": _r2(threshold - total),
+        "payout": _r2(pay),
+        "gain": _r2(pay - now),
+        "mix": ("so_far" if total > 0 else "even") if per_account else None,
+        "rates": rates if per_account and len({r["rate"] for r in rates}) > 1 else [],
+    }
 
 
 def period_progress(

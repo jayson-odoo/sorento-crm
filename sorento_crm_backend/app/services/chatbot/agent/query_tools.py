@@ -17,6 +17,7 @@ from app.services.assistant_registry.query import MAX_GROUPS, MAX_ROWS, QueryRef
 from app.services.chatbot import principal as staff_principal
 from app.services.chatbot.agent import writes
 from app.services.chatbot.agent.tools import TOOL_LABELS, ToolResult, cap_result
+from app.services.chatbot.composers.sets import more_line, next_count
 
 QUERY = "crm_query"
 DESCRIBE = "crm_describe"
@@ -77,8 +78,22 @@ def query_result(data: Any, *, panel: bool) -> ToolResult:
         card = as_card(data, panel=panel)
         if card is not None:
             return card
+        if _is_distance(data):
+            # The model writes the next-tier reply from the rows (owner 14 Nov): what to write comes with them.
+            data = {**data, "instruction": DISTANCE_INSTRUCTION}
     shaped, more = cap_result(data)
+    if isinstance(shaped, dict):
+        _paging(shaped)
     return ToolResult("ok", data=shaped, more=more)
+
+
+def _paging(data: dict) -> None:
+    """A cut result says how many rows the next page shows and the offset that asks for it ("more", owner L85),
+    counted on the rows the model was given."""
+    data["more"] = _left(data)
+    if data["more"]:
+        items = data.get("groups") if "groups" in data else data.get("rows")
+        data["next_offset"] = int(data.get("offset") or 0) + len(items or [])
 
 
 def _query(db, ctx, args: dict) -> ToolResult:
@@ -99,6 +114,16 @@ SAMPLE_ROWS = 3
 CARD_INSTRUCTION = (
     "The full table is shown to the user under your reply by the system. Write ONE short line (the headline "
     "figure from totals), do not list or repeat the rows, and do not repeat the period or note."
+)
+#: What the model writes from a next-tier result (crew pass 6882082161, L51 / L82; owner 14 Nov: the agent's reply is
+#: the model's only, so the tool says what to write and code adds nothing to it).
+DISTANCE_INSTRUCTION = (
+    "Write the reply yourself, in the user's language, from these rows. For each row, say its next_tier_lines, one "
+    "target per line, with every figure and period as given (a period reads dd/mm/yyyy - dd/mm/yyyy). Say each "
+    "scope_note sentence too. Do not add totals, payouts or rows the user did not ask for, and do not repeat a figure. "
+    "Plain text, no markdown (no *, no #, no bullets). When `more` is above 0, end with the line: "
+    'Reply "more" to see the next N. (N = more); if the user then asks for more, make the same crm_query call with '
+    "offset = next_offset."
 )
 
 
@@ -145,15 +170,31 @@ def render_card(data: dict, *, title: str, panel: bool) -> str:
             lines.append(f"- {_cell(item.get(first['key']))}: {values}" if values else f"- {_cell(item.get(first['key']))}")
         if totals:
             lines.append("Total: " + ", ".join(f"{c['label']} {_cell(totals[c['key']])}" for c in columns if c["key"] in totals))
-    shown, whole = len(items), data.get("total_groups", data.get("total"))
-    if data.get("truncated") and whole:
+    shown, whole, skip = len(items), data.get("total_groups", data.get("total")), int(data.get("offset") or 0)
+    if skip and shown and whole:
+        # A later page ("more"): which rows it shows.
+        lines.append(f"Showing {skip + 1:,} to {skip + shown:,} of {int(whole):,}.")
+    elif data.get("truncated") and whole:
         if data.get("ranked_by"):
             lines.append(f"Top {shown:,} of {int(whole):,} by {str(data['ranked_by']).lower()}.")
         else:
             lines.append(f"Showing {shown:,} of {int(whole):,}.")
     if data.get("scope_note"):
         lines.append(data["scope_note"])
+    left = _left(data)
+    if left:
+        # The standard last line of a cut list (owner L85); "more" pages on (`offset`).
+        lines.append(more_line(left))
     return "\n".join(lines)
+
+
+def _left(data: dict) -> int:
+    """How many rows (or groups) the next page shows: what is left after this page, never past this page's size."""
+    items = data.get("groups") if "groups" in data else data.get("rows")
+    shown, whole = len(items or []), data.get("total_groups", data.get("total"))
+    if not data.get("truncated") or not whole or not shown:
+        return 0
+    return next_count(int(whole), int(data.get("offset") or 0), shown, shown)
 
 
 def as_card(data: dict, *, panel: bool) -> ToolResult | None:
@@ -162,7 +203,8 @@ def as_card(data: dict, *, panel: bool) -> ToolResult | None:
     items = data.get("groups") if "groups" in data else data.get("rows")
     entity = ENTITIES.get(str(data.get("entity")))
     least = entity.card_min_rows if entity is not None and entity.card_min_rows else CARD_MIN_ROWS + 1
-    if not isinstance(items, list) or len(items) < least:
+    if _is_distance(data) or not isinstance(items, list) or len(items) < least:
+        # A next-tier page (at most NEXT_LINES rows) goes to the model whole: it writes the reply (owner 14 Nov).
         return None
     title = entity.label if entity is not None else "Results"
     if "groups" in data:
@@ -177,9 +219,13 @@ def as_card(data: dict, *, panel: bool) -> ToolResult | None:
         "truncated": data.get("truncated"),
         "sample": items[:SAMPLE_ROWS],
     }
-    for key in ("total", "total_groups", "totals", "restricted", "ranked_by"):
+    for key in ("total", "total_groups", "totals", "restricted", "ranked_by", "offset"):
         if key in data:
             summary[key] = data[key]
+    # Paging for "more" (`offset`): what the next page would show, and the offset that asks for it.
+    summary["more"] = _left(data)
+    if summary["more"]:
+        summary["next_offset"] = int(data.get("offset") or 0) + len(items)
     return ToolResult("ok", data=summary, display=render_card(data, title=title, panel=panel))
 
 
@@ -306,6 +352,32 @@ QUERY_SCHEMA = {
                     "type": "object", "properties": {"field": _TEXT, "dir": _TEXT}, "required": ["field"],
                 }},
                 "limit": {"type": "integer"},
+                "offset": {
+                    "type": "integer",
+                    "description": "The next page of a cut list. When the user asks for more of the list you last "
+                    "showed (more, next, the rest, in any language), make the same crm_query call again with "
+                    "offset = the rows already shown (the earlier offset plus its rows; a cut result gives it as "
+                    "`next_offset`). Leave it out otherwise.",
+                },
+                "about_self": {
+                    "type": "boolean",
+                    "description": "true when the user asks about their own figures: they say my / mine / me, "
+                    "or the same in any language (saya), or the user names themselves. Then their own name may be "
+                    "the `agent`. Leave it out otherwise: the asker's own name is not used as an agent filter.",
+                },
+                "next_tier": {
+                    "type": "string", "enum": ["distance", "closest", "furthest"],
+                    "description": "agent_target_summary only. Set it when the user asks about the NEXT commission "
+                    "tier, in any language: how far someone is from it, how much more they must sell, or what they "
+                    "would pay or earn there (distance); who is closest to it (closest) or furthest from it "
+                    "(furthest). The answer's columns, ranking and period are then decided by the tool. Leave it "
+                    "out for any other question.",
+                },
+                "subjects": {
+                    "type": "string", "enum": ["agent", "dealer", "team", "all"],
+                    "description": "With next_tier closest or furthest: whose ranking the user asked for (all = "
+                    "everyone). If the user did not say, ask them one short question instead of guessing.",
+                },
             },
             "required": ["entity"],
         },
@@ -369,25 +441,18 @@ def _year_as_range(text: str, entries: list[dict]) -> str:
     return text
 
 
-def _user_named(args: dict, user_text: str | None) -> bool:
-    said = " ".join(str(user_text or "").split()).lower()
-    if not said:
-        return False
-    values = [args.get("agent")] + [f.get("value") for f in args.get("filters") or [] if isinstance(f, dict)]
-    return any(isinstance(v, str) and v.strip() and " ".join(v.split()).lower() in said for v in values)
-
-
 def strip_self_agent(
-    args: dict, user_name: str | None, user_text: str, *, has_own_agent: bool = True,
+    args: dict, user_name: str | None, *, has_own_agent: bool = True,
 ) -> tuple[dict, str | None]:
-    """The asking user's own name is not an agent filter unless they said "my" (or named themselves): crew live
-    round 4, "payout per dealer" was first filtered by the asker's own name and found nothing. An asker with no
-    sales agent of their own (`has_own_agent` False): "my" cannot mean an agent, so their name is left out then too
-    (TARGET-ACHIEVED-PERF UAC 14, crew trace f0c0f4c8: "my dealers" filtered by the asker's name found nothing)."""
+    """The asking user's own name is not an agent filter unless the question is about them: crew live round 4,
+    "payout per dealer" was first filtered by the asker's own name and found nothing. Whether the user means
+    themselves ("my", "saya", their own name, in any language) is the model's `about_self` argument; code only
+    compares the call's agent with the asker's stored name and never reads the message (owner rule 4 Oct, 28 Oct).
+    An asker with no sales agent of their own (`has_own_agent` False): a question about themselves cannot mean an
+    agent, so their name is left out even then (TARGET-ACHIEVED-PERF UAC 14, crew trace f0c0f4c8: "my dealers"
+    filtered by the asker's name found nothing)."""
     own = " ".join(str(user_name or "").split()).lower()
-    said = " ".join(str(user_text or "").split()).lower()
-    said_my = bool(re.search(r"\b(my|me|mine|myself|saya)\b", said))
-    if not own or (said_my and has_own_agent):
+    if not own or (args.get("about_self") is True and has_own_agent):
         return args, None
 
     words = set(own.split())
@@ -395,7 +460,7 @@ def strip_self_agent(
     def is_self(value: Any) -> bool:
         # The asker's name, or part of it, in any order ("Teh", "teh jayson"); never one naming someone else too.
         v = " ".join(str(value or "").split()).lower()
-        return bool(v) and set(v.split()) <= words and v not in said
+        return bool(v) and set(v.split()) <= words
 
     out, dropped = dict(args), []
     if is_self(out.get("agent")):
@@ -412,12 +477,41 @@ def strip_self_agent(
         out["filters"] = keep
     if not dropped:
         return args, None
-    if said_my:
+    if not has_own_agent:
         return out, (
             f"Left out {', '.join(dropped)}: that is your own name and you have no sales agent of your own, so the "
             "question covers everyone you can see."
         )
-    return out, f"Left out {', '.join(dropped)}: that is your own name and the question did not name it or say 'my'."
+    return out, f"Left out {', '.join(dropped)}: that is your own name, nothing matched it and the question was not about you."
+
+
+def _found_something(out: Any) -> bool:
+    """A call that ran found at least one row or group, read from any shape it returns: rows, groups, or a card's
+    summary (`as_card`: `sample`, `total` / `total_groups`, review on 740b01ce)."""
+    data = getattr(out, "data", None)
+    return getattr(out, "status", None) == "ok" and isinstance(data, dict) and bool(
+        data.get("rows") or data.get("groups") or data.get("sample") or data.get("total") or data.get("total_groups")
+    )
+
+
+#: The statuses of a call that ran; anything else (a refusal, a timeout) is never re-run without the name.
+_RAN = ("ok", "empty")
+
+
+def query_as_asker(
+    args: dict, user_name: str | None, run, *, has_own_agent: bool = True,
+) -> tuple[dict, Any, str | None]:
+    """Run a crm_query for the asking user: (the args that ran, the result, a note or None). A call that names the
+    asker's own name (`strip_self_agent`) runs as it is first; only when it finds nothing is the name dropped and the
+    call run again (crew live round 4: "payout per dealer" was filtered by the asker's own name). So a colleague who
+    shares a word of the asker's name ("payout for Tan" asked by Tan Wei Ming) is answered, the data decides, and
+    the message is never read (review on 8202e048). An asker with no sales agent of their own (TARGET-ACHIEVED-PERF
+    UAC 14): the same, and `about_self` does not keep the name then ("my dealers" cannot mean an agent of theirs)."""
+    stripped, note = strip_self_agent(args, user_name, has_own_agent=has_own_agent)
+    first = run(args)
+    if note is None or getattr(first, "status", None) not in _RAN or _found_something(first):
+        return args, first, None
+    return stripped, run(stripped), note
 
 
 def _names_a_subject(entity_key: str, args: dict) -> bool:
@@ -436,6 +530,25 @@ def _names_a_subject(entity_key: str, args: dict) -> bool:
     return False
 
 
+# ------------------------------------------------------------------ distance to the next tier (AGENT-COMMISSION-WA)
+
+#: The entity that answers "how far from the next tier" (`assistant_registry.sales`, `next_tier`).
+NEXT_TIER_ENTITY = "agent_target_summary"
+
+
+def _is_distance(data: dict) -> bool:
+    return data.get("entity") == NEXT_TIER_ENTITY and any(
+        c.get("key") == "to_next_tier" for c in data.get("columns") or []
+    )
+
+
+def _next_tier_call(entry: dict) -> bool:
+    """A call the model made with `next_tier` set: what the answer is about, stated by the model as an argument
+    (owner rule: never read from the message text)."""
+    args = entry.get("args") or {}
+    return args.get("entity") == NEXT_TIER_ENTITY and bool(args.get("next_tier"))
+
+
 def shape_reply(text: str, ledger: dict | None, user_text: str | None = None) -> str:
     """The reply as the owner's rules want it, decided in code whatever the model wrote (crew pass, 5 Nov):
     a `crm_query` row shown by its code (alone, or as "CODE (Name)") is shown by its label "CODE: Name"; the
@@ -449,20 +562,22 @@ def shape_reply(text: str, ledger: dict | None, user_text: str | None = None) ->
     missed: set[str] = set()
     kept: list[dict] = []
     for e in (ledger or {}).values():
-        if e.get("name") != QUERY or e.get("status") != "ok":
+        if e.get("name") != QUERY or e.get("status") != "ok" or _next_tier_call(e):
+            # A next-tier answer is the model's own text (owner 14 Nov): nothing is built, rewritten or appended
+            # for it; the tool told the model what to write (`DISTANCE_INSTRUCTION`).
             continue
         args = e.get("args") or {}
         entity = str((e.get("data") or {}).get("entity") or args.get("entity") or "")
         named = _names_a_subject(entity, args)
-        if named and (e.get("data") or {}).get("rows") == [] and not (e.get("data") or {}).get("total") and (
-            _user_named(args, user_text)
-        ):
-            # Only a name the USER asked about: an empty call on a name the model made up (the asker's own, crew
-            # live round 6) never hides the table a later call returned.
+        if named and (e.get("data") or {}).get("rows") == [] and not (e.get("data") or {}).get("total"):
+            # A named call is the user's name (`agent` as the user said it); the asker's own name the model made up
+            # that found nothing is dropped and the call run again (`query_as_asker`), so it never hides a later
+            # table (crew live round 6). Nothing here reads the message (owner rule).
             missed.add(entity)
-        if entity in missed and not named:
+        if entity in missed and not named and not args.get("subjects"):
             # A whole table nobody asked for, after the named record was not found, is not shown, nor its notes
-            # (owner 8 Nov: "payout to fullshun" appended every payout and notes on other agents).
+            # (owner 8 Nov: "payout to fullshun" appended every payout and notes on other agents). A next-tier
+            # ranking with `subjects` was asked for, by the model's own argument.
             continue
         kept.append(e)
         if e.get("display"):
