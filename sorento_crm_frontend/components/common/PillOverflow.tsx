@@ -22,6 +22,8 @@ export interface PillItem {
   key: string;
   label: string;
   tone?: PillTone;
+  /** Hover text of the visible pill (e.g. a customer's code under its name). */
+  title?: string;
 }
 
 const TONE_CLASS: Record<PillTone, string> = {
@@ -223,6 +225,7 @@ export function PillOverflow({
                 key={item.key}
                 label={item.label}
                 tone={item.tone}
+                title={item.title}
                 interactive
               />
             ))}
@@ -286,17 +289,20 @@ export function PillOverflowList({ items }: { items: PillItem[] }) {
 function Pill({
   label,
   tone = 'neutral',
+  title,
   interactive = false,
   measureRef,
 }: {
   label: string;
   tone?: PillTone;
+  title?: string;
   interactive?: boolean;
   measureRef?: React.Ref<HTMLSpanElement>;
 }) {
   return (
     <span
       ref={measureRef}
+      title={title}
       role={interactive ? 'button' : undefined}
       tabIndex={interactive ? 0 : undefined}
       onKeyDown={

@@ -156,6 +156,12 @@ def edit_spare_part_request_line(
 ):
     inquiry = _to_decide(inquiry_id, db)
     row_id = validate_uuid_path(row_id, resource="Line")
+    uid = str(current_user["id"])
+    # SPARE-PART-OR-B (U4.3): the requester's own qty change on a revision is a requester's
+    # write, so it needs the create grant like every other one (edit, submit, revise).
+    if spr.in_revision(inquiry) and spr.is_requester(inquiry, uid):
+        if not UserPermissionService(db).check_user_has_permission(uid, CREATE):
+            raise AppException(403, "You cannot change this request.", code="FORBIDDEN")
     body = payload.model_dump(mode="json")
     spr.edit_line(
         db, inquiry, row_id, str(current_user["id"]), qty=body.get("qty"),
