@@ -27,11 +27,17 @@ B1. Usage, from the repo root: `scripts/pr-gate.sh [--plan] [--base <ref>]`. Def
     `scripts/crew-tests.sh`.
 B2. Main must already be merged: when `<base>` is not an ancestor of HEAD, the script runs no check and its last line
     is `pr-gate: <head sha> FAIL main=<base sha> reason=main-not-merged`, exit 1. This holds with `--plan` too.
+B2a. A run (not `--plan`) refuses a tree with uncommitted changes to tracked files, since its result would not
+    describe the head sha: last line `pr-gate: <head sha> FAIL main=<base sha> reason=dirty-tree`, exit 1, no
+    check run. Untracked files (venv, env files) are allowed. (Security review, 14 Nov.)
 B3. Changed files = `git diff --name-only --no-renames <base> HEAD` (or `CREW_CHANGED_FILES`). Areas, the same
     regexes as deploy.yml `changes`:
     backend `^(sorento_crm_backend/|\.github/workflows/deploy\.yml$)`,
     frontend `^(sorento_crm_frontend/|\.github/workflows/deploy\.yml$)`,
     mcp `^(sorento_crm_mcp/|\.github/workflows/deploy\.yml$)`.
+B3a. A path git prints quoted (a control character such as a tab in the name) cannot be matched to an area, so
+    it selects every area (fails closed). Non-ASCII names are read unquoted (`core.quotePath=false`) and match
+    their area normally. (Security review, 14 Nov: the hosted gate read the API's unquoted file list.)
 B4. Check ids, in this order. Always: `alembic-heads` (`python3 scripts/ci_alembic_heads.py`), `pii`
     (`python3 scripts/pii_guard.py`), `ai-coverage` (`python3 scripts/ci_ai_coverage.py --base <base sha>`),
     `outline-guides` (`python3 scripts/sync_user_guides_outline.py check`), `gitleaks`

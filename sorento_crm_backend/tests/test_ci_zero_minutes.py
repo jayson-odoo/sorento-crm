@@ -279,3 +279,34 @@ def test_b6_a_failing_check_does_not_stop_the_rest(tmp_path):
     assert _last_line(result) == (
         f"pr-gate: {ctx['head']} FAIL main={ctx['main']} checks={','.join(ALWAYS)} failed=pii,gitleaks"
     )
+
+
+def test_b2a_a_dirty_tracked_tree_fails_and_runs_nothing(tmp_path):
+    ctx = _repo(tmp_path)
+    (ctx["repo"] / "README.md").write_text("edited, not committed\n")
+    (ctx["repo"] / "untracked.txt").write_text("fine\n")
+    result = _run(ctx)
+    assert result.returncode == 1, (result.stdout, result.stderr)
+    assert _last_line(result) == f"pr-gate: {ctx['head']} FAIL main={ctx['main']} reason=dirty-tree"
+    assert _ran(ctx) == [], "no check may run on a dirty tree"
+
+
+def test_b2a_untracked_files_alone_do_not_block(tmp_path):
+    ctx = _repo(tmp_path)
+    (ctx["repo"] / "untracked.txt").write_text("fine\n")
+    result = _run(ctx)
+    assert result.returncode == 0, (result.stdout, result.stderr)
+
+
+def test_b3a_a_non_ascii_path_matches_its_area(tmp_path):
+    ctx = _repo(tmp_path, head_files={"sorento_crm_backend/app/caf\u00e9.py": "x = 1\n"})
+    result = _run(ctx, "--plan")
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert _plan(result).get("checks") == " ".join(ALWAYS + BACKEND), result.stdout
+
+
+def test_b3a_a_quoted_path_selects_every_area(tmp_path):
+    ctx = _repo(tmp_path, head_files={"sorento_crm_frontend/a\tb.ts": "x\n"})
+    result = _run(ctx, "--plan")
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert _plan(result).get("checks") == " ".join(EVERY), result.stdout
