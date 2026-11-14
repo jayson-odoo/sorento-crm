@@ -41,7 +41,7 @@ CANDIDATE_PATH = _PLANS / "prompt-wa-issue-ideate.txt"
 BASE_MD5 = "d29c19830b22aa47403a88ddcb8e817d"  # production v72 (crew, 5 Nov)
 # The lead fills this in once the coder has committed prompt-wa-issue-ideate.txt (md5 of that exact file).
 # Until then this test is red on purpose.
-CANDIDATE_MD5 = "edfb489f352ac552d82266b1bd362095"
+CANDIDATE_MD5 = "TBD"
 
 PROMPT_NAME = "chatbot_semantic_parser"
 MIGRATION_FILE = "wa_0002_parser_issue_ideate.py"
@@ -53,12 +53,14 @@ EDIT1_OLD = "a complaint about existing behaviour (stays portal_link/complaint);
 EDIT1_NEW = "a complaint about a product or an order (stays portal_link/complaint);"
 INSERTED_LINE = (
     "    → ALSO ideate: the user REPORTS a problem with the CRM system or the assistant itself (an error, a "
-    "screen or page that does not load, does not work or shows wrong data, an answer from the assistant that "
-    "is wrong). That is an issue to log: domain_hint \"ideate\", intent_hint \"submit_idea\", message_type "
-    "\"business_query\", no routing (null / null). It is never request_for_help, never an IT or support team, "
-    "and never the domain of the screen or data it is about; only an explicit ask for a person to take it "
-    "over is request_for_help."
+    "screen or page that does not load or does not work, an answer from the assistant that is wrong). That is "
+    "an issue to log: domain_hint \"ideate\", intent_hint \"submit_idea\", message_type \"business_query\", no "
+    "routing (null / null). It is never request_for_help, never an IT or support team, and never the domain of "
+    "the screen it is about; only an explicit ask for a person to take it over is request_for_help. Asking "
+    "about or disputing a record's own data (an order's status, a stock figure, a price) is not a problem with "
+    "the system: it stays in its own domain."
 )
+RECORD_DATA_PHRASE = "Asking about or disputing a record's own data"
 EDIT2_OLD = "  - ideate (an idea is never escalated), or none of these this turn -> NO routing: null / null"
 EDIT2_NEW = (
     "  - ideate (an idea or an issue report is never escalated), or none of these this turn -> NO routing: "
@@ -98,8 +100,8 @@ def _apply():
 def test_R9_the_candidate_is_pinned_and_is_v72_plus_the_two_edits():
     v72 = _v72()
     assert CANDIDATE_PATH.is_file(), f"missing committed candidate {CANDIDATE_PATH.name}"
-    assert _md5(CANDIDATE_PATH) == CANDIDATE_MD5, "pin the candidate's md5 (CANDIDATE_MD5)"
     candidate = CANDIDATE_PATH.read_text(encoding="utf-8")
+    assert RECORD_DATA_PHRASE in candidate, "record-data disputes stay in their own domain (review N5)"
     assert candidate == _expected_from_doc(v72)
 
     removed, added = [], []
@@ -110,6 +112,7 @@ def test_R9_the_candidate_is_pinned_and_is_v72_plus_the_two_edits():
     old_bullet = next(line for line in v72.split("\n") if EDIT1_OLD in line)
     assert sorted(removed) == sorted([old_bullet, EDIT2_OLD])
     assert sorted(added) == sorted([old_bullet.replace(EDIT1_OLD, EDIT1_NEW), INSERTED_LINE, EDIT2_NEW])
+    assert _md5(CANDIDATE_PATH) == CANDIDATE_MD5, "pin the candidate's md5 (CANDIDATE_MD5)"
 
 
 def test_R9_apply_issue_rule_on_v72_returns_the_committed_candidate():
@@ -278,4 +281,40 @@ def test_R9_the_active_prompt_carries_the_rule_after_promotion():
         )
         label.version_id = new.id
         db.flush()
+        assert SHARED_PHRASE in _live_text(db)
+
+
+def test_R10_B2_downgrade_keeps_a_promoted_row_and_its_production_label():
+    """Review B2: once the owner has moved the production label onto the published row, a downgrade must not
+    delete that row (the label row would cascade with it and production would point at nothing)."""
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+
+    mig = _migration()
+    with blank_session() as db:
+        old = _production_on(db, _v72())
+        mig.publish(db)
+        (new,) = [r for r in _parser_rows(db).values() if (r.config_json or {}).get(MARKER_KEY)]
+        label = (
+            db.query(AIPromptLabel)
+            .filter(AIPromptLabel.name == PROMPT_NAME, AIPromptLabel.label == "production")
+            .one()
+        )
+        label.version_id = new.id
+        db.flush()
+        new_id, label_id, old_id = new.id, label.id, old.id
+
+        with Operations.context(MigrationContext.configure(db.connection())):
+            mig.downgrade()
+
+        left = _parser_rows(db)
+        assert new_id in left, "the downgrade deleted the promoted row"
+        assert old_id in left
+        prod = (
+            db.query(AIPromptLabel)
+            .filter(AIPromptLabel.name == PROMPT_NAME, AIPromptLabel.label == "production")
+            .one_or_none()
+        )
+        assert prod is not None and prod.id == label_id, "the production label is gone"
+        assert prod.version_id == new_id
         assert SHARED_PHRASE in _live_text(db)
