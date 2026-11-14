@@ -52,3 +52,16 @@ Plan: `PLAN-target-achieved-perf-14nov.md`.
     sums over all matching rows next to the payout (never summed across amount and quantity), so
     one query answers "sales vs target" (live diagnostic: with payout-only totals the model ran
     crm_query 5 times in one turn).
+
+## Fix round (crew-pass on cca604f9 NOT READY, 14 Nov; owner D4: no answer ends in a timeout or "limit" message)
+
+12. Crew pass, typo question: 6 rounds, 8 tool calls all ok, then the next round's model call started with
+    almost no turn time left (`chatbot_agent_max_seconds` 45; a round gets min(60 s, time left), loop.py
+    ~1958) and timed out; the turn ended `limited` / `error` with "Stopped: an error" after 55 s.
+    (a) A tool round is not started when the turn has less time left than a round needs; with tool results
+        in hand the turn goes straight to its final answer from those results: status answered, no
+        limit_hit, no "stopped because of an error" sentence, no footer.
+    (b) If a round's model call times out anyway while tool results are in hand, the turn still answers
+        from those results the same way (no error footer or sentence). With NO tool result yet, today's
+        behaviour stays (nothing to answer from).
+    (c) Only when the final answer itself fails does the turn end in an error.
