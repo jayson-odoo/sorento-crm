@@ -18,6 +18,8 @@ from app.services.chatbot.agent.tools import ToolResult
 
 BATCH = "crm_batch_propose"
 MAX_ROWS = 50
+#: The user's line for a table over MAX_ROWS (the tool's message is guidance for the model).
+TOO_MANY_SAY = f"I can take at most {MAX_ROWS} rows at a time; send the table in parts."
 PREVIEW_HEAD = "I will make these changes when you confirm:"
 SKIPPED_HEAD = "Not changed:"
 NEEDS_HEAD = "Needs your choice:"
@@ -154,6 +156,26 @@ _PHONE_RUN = re.compile(r"\+?\d[\d\s().-]{5,}\d")
 _MATCH_DIGITS = 9
 
 
+def role_in_users_words(args: dict, user_text: str | None, stated: str | None = None) -> dict:
+    """On the answer to a company or role question, a row the question asked about takes a role only when the user's
+    own words give it: the model's copy of the access word (`access_as_written`) must be in this message, as the
+    dealer name and the company must (A17, A18). A copy check, never a word list. Otherwise the role is unsaid again:
+    the record decides, or the role is asked (crew re-pass b549042d: 'Mocha' made everyone Employee)."""
+    if args.get("role") not in ("owner", "employee"):
+        # The answer turn's row lost the role the request gave: it comes back (review nit).
+        return {**args, "role": stated, "access_as_written": stated} if stated else args
+    if stated and args["role"] == stated:
+        return args  # the role the user gave in the request the question came from (review blocker 1)
+    said = " ".join(str(args.get("access_as_written") or "").split()).lower()
+    text = " ".join(str(user_text or "").split()).lower()
+    # The start of a word in the message ("owners" holds "owner"); a copy under 3 characters must be a whole word, so
+    # "e" never matches "everyone" (review should-fixes).
+    tail = "" if len(said) >= 3 else "(?![0-9a-z])"
+    if said and re.search(rf"(?<![0-9a-z]){re.escape(said)}{tail}", text):
+        return args
+    return {**args, "role": "unknown", "access_as_written": ""}
+
+
 def _asked_again(args: dict, key: Any, user_text: str) -> bool:
     """Does the user's latest message name this row: its phone (the last 9 digits, any formatting, also inside a
     pasted list of numbers) or its name (whole words, any case)? Plain text, never the model's say-so."""
@@ -262,7 +284,9 @@ def propose_rows(
     previous_waiting: list[dict] | None = None, closed: dict | None = None,
     previous_typed: list[dict] | None = None, expired_waiting: list[dict] | None = None,
     previous_skipped: list[dict] | None = None, left_out: list[dict] | None = None,
-    previous_card: list[str] | None = None, previous_ready: list[str] | None = None,
+    previous_card: list[str] | None = None, previous_ready: list[str] | None = None, attached: bool = False,
+    earlier_keys: set | None = None, asked: list[dict] | None = None, held: dict | None = None,
+    picture_keys: list | None = None, asked_keys: dict | None = None,
 ) -> tuple[list[dict], list[dict], list[dict]]:
     """(steps, skipped, waiting) for the rows, in input order. A skipped row: {"row", "reason", "cells"}. A waiting
     item (a row whose only problem is a customer name that fits several accounts; one per such name):
@@ -274,7 +298,10 @@ def propose_rows(
     only the rows it names, plus every row of the last table when this call answers its pick; a message naming nobody
     is a follow-up about the immediately preceding card (`previous_card`), whose rows may come back. The ready rows of
     that card while it is undecided (`previous_ready`) may always come back: the user is extending it. Any other row
-    is left out (`left_out`, never shown)."""
+    is left out (`left_out`). `attached`: the message carries a picture or file; the rows the model read from it are
+    the people this message names (owner hand test 14 Nov: a screenshot of the Contacts list), so a row is left out
+    only when its phone was on an earlier table of this conversation (`earlier_keys`) and the typed text does not name
+    it: a picture never brings back a person of an older request (security review)."""
     definition = writes.WRITES[write]
     steps: list[dict] = []
     skipped: list[dict] = []
@@ -320,8 +347,22 @@ def propose_rows(
             if use_given and valid(given):
                 n = given
         key = definition.batch_key(args) if definition.batch_key is not None and isinstance(args, dict) else None
+        if this_message and key is not None and key in (asked_keys or {}) and isinstance(args, dict):
+            args = role_in_users_words(args, user_text, (asked_keys or {}).get(key))
+        if (
+            this_message and key is not None and key in (held or {}) and isinstance(args, dict)
+            and not (_said(key, user_text) or _asked_again(args, key, user_text))
+        ):
+            # A row the last question held and this answer does not name: the answer is not its role (crew pass 4
+            # addendum: 'employee' made a Business owner an Employee). It keeps the role it had then: the one the user
+            # stated, else the record's, read again (review B1).
+            stated = held[key]
+            args = {**args, "role": stated, "access_as_written": args.get("access_as_written") or stated} if stated else {
+                **args, "role": "unknown", "access_as_written": "",
+            }
         if (
             this_message and key is not None and key not in table_keys
+            and (not attached or key in (earlier_keys or set()))
             and not (_said(key, user_text) or _asked_again(args, key, user_text))
             # A row of the last pick re-sent with codes answers that pick; `_not_listed` judges its codes. Codes of an
             # expired pick get their own refusal below, so the user is told why (review round B1).
@@ -362,8 +403,23 @@ def propose_rows(
                 skipped.append({"row": n, "key": key, "reason": unlisted, "cells": _cells(definition, args, None)})
                 continue
         mark = {"typed": typed} if typed is not None else {}
-        out, step = writes.propose_step(db, ctx, write, args, seen_ids=seen_ids)
+        # A row read from a picture, on its own turn or on the answer to that turn's question (review B2).
+        pictured = attached or (key is not None and key in (picture_keys or ()))
+        from_picture = {"_from_attachment": True} if pictured and write == contact_grant.GRANT else None
+        out, step = writes.propose_step(db, ctx, write, args, seen_ids=seen_ids, loop_args=from_picture)
         if step is None:
+            needs = (out.data or {}).get("needs") if isinstance(out.data, dict) else None
+            if needs and asked is not None:
+                # Only the company and/or role are missing: asked in one question (`question_reply`), never listed
+                # as not changed (crew decision 14 Nov).
+                # The role the user gave for it, if any, so the answer that adds the company keeps it (review 1).
+                said_role = args.get("role") if args.get("role") in ("owner", "employee") and args.get(
+                    "access_as_written") else None
+                asked.append({"row": n, "key": key, "needs": list(needs), "label": out.data.get("label"),
+                              "role": said_role, **mark})
+                if key is not None:
+                    keys[key] = n
+                continue
             choices = (out.data or {}).get("choices") if isinstance(out.data, dict) else None
             if choices:
                 waiting += [
@@ -374,7 +430,10 @@ def propose_rows(
                     keys[key] = n
                 continue
             reason = out.message or "This row cannot be changed."
-            skipped.append({"row": n, "key": key, "reason": reason, "cells": _cells(definition, args, None), **mark})
+            skipped.append({
+                "row": n, "key": key, "reason": reason, "cells": _cells(definition, args, None),
+                "args": copy.deepcopy(args) if isinstance(args, dict) else None, **mark,
+            })
             continue
         if key is not None:
             keys[key] = n
@@ -404,19 +463,15 @@ def _sent_keys(definition: writes.WriteDef, rows: list) -> set:
 
 def carried_skips(
     write: str, sent_keys: set, steps: list[dict], skipped: list[dict], waiting: list[dict],
-    previous: dict | None,
+    previous: dict | None, pick_changes_key: bool = False,
 ) -> list[dict]:
     """The not-changed rows of the earlier table turn that this call left out (AGENT-BATCH-NOTCHANGED). Only on that
     table's pick follow-up: the same write, and at least one row of this call is a row that turn left waiting. The
     current request is then still that table, so its not-changed rows stay listed with their earlier reason,
     whatever rows the model chose to send. A new table, or another write, inherits none. A row this call sent
     (same phone, or same row number when the row has no phone) is never carried: it was checked again."""
-    previous = previous or {}
-    earlier = previous.get("skipped") or []
-    if not earlier or previous.get("write") != write:
-        return []
-    waiting_keys = {w.get("key") for w in previous.get("waiting") or [] if w.get("key") is not None}
-    if not (waiting_keys & sent_keys):
+    earlier = _follow_up_skips(write, sent_keys, previous)
+    if not earlier:
         return []
     sent_rows = {s.get("row") for s in steps} | {s.get("row") for s in skipped} | {w.get("row") for w in waiting}
     out = []
@@ -426,8 +481,65 @@ def carried_skips(
         key = s.get("key")
         if (key in sent_keys) if key is not None else (s.get("row") in sent_rows):
             continue
-        out.append({"row": s.get("row"), "key": key, "reason": s["reason"], "cells": dict(s.get("cells") or {})})
+        # A write whose key a pick or a corrected cell may change (customer agent): the same table row number sent
+        # again is that row, checked again, so the earlier copy is not carried next to it.
+        if pick_changes_key and s.get("row") in sent_rows:
+            continue
+        out.append({
+            "row": s.get("row"), "key": key, "reason": s["reason"], "cells": dict(s.get("cells") or {}),
+            "args": s.get("args"),
+        })
     return out
+
+
+def _follow_up_skips(write: str, sent_keys: set, previous: dict | None) -> list[dict]:
+    """The earlier table turn's not-changed rows when this call is that table's pick follow-up (the same write, and
+    a row it left waiting is sent again); [] otherwise."""
+    previous = previous or {}
+    earlier = previous.get("skipped") or []
+    if not earlier or previous.get("write") != write:
+        return []
+    waiting_keys = {w.get("key") for w in previous.get("waiting") or [] if w.get("key") is not None}
+    return earlier if waiting_keys & sent_keys else []
+
+
+def _filled(args: Any) -> dict:
+    """The row's non-empty arguments, strings compared case and spacing aside."""
+    if not isinstance(args, dict):
+        return {}
+    out = {}
+    for k, v in args.items():
+        if isinstance(v, str):
+            v = " ".join(v.split()).lower()
+        elif isinstance(v, list):
+            v = [" ".join(x.split()).lower() if isinstance(x, str) else x for x in v if x not in (None, "")]
+        if v not in (None, "", []):
+            out[k] = v
+    return out
+
+
+def keep_earlier_reasons(write: str, sent_keys: set, skipped: list[dict], previous: dict | None) -> None:
+    """On the pick follow-up of the same table, a not-changed row the model sent again with cells dropped and
+    nothing new (its arguments a strict part of the earlier ones) keeps the earlier reason: a dropped cell is not
+    the user's correction (crew W3 live: 'Name the sales agent.' replaced 'No sales agent named ...'). Structured
+    arguments only; a row with any new or changed value is the user's correction and keeps its new check."""
+    earlier = _follow_up_skips(write, sent_keys, previous)
+    if not earlier:
+        return
+    for s in skipped:
+        now = _filled(s.get("args"))
+        if not now:
+            continue
+        key = s.get("key")
+        match = [e for e in earlier if isinstance(e, dict) and e.get("args") and (
+            e.get("key") == key if key is not None and e.get("key") is not None else e.get("row") == s.get("row")
+        )]
+        if not match:
+            continue
+        before = _filled(match[0]["args"])
+        if len(now) < len(before) and all(before.get(k) == v for k, v in now.items()):
+            # The earlier arguments go with the reason, so the next follow-up compares against the full row again.
+            s["reason"], s["args"] = match[0]["reason"], match[0]["args"]
 
 
 def propose(
@@ -437,6 +549,9 @@ def propose(
     previous_waiting: list[dict] | None = None,
     closed: dict | None = None,
     previous: dict | None = None,
+    attached: bool = False,
+    earlier_keys: set | None = None,
+    asked_out: list[dict] | None = None,
 ) -> ToolResult:
     """The loop's entry: check the call, then replace this turn's batch with the rows' steps. A batch stands alone:
     it is refused next to single changes of the same turn."""
@@ -451,28 +566,55 @@ def propose(
     if definition is None or not definition.batchable or definition.runs_as != "user" or write == writes.CREATE_IDEA:
         return ToolResult("invalid", message=f"{write} cannot be proposed for a table.")
     if definition.name not in {d.name for d in batchable_writes(db, ctx)}:
-        return ToolResult("denied", message=f"{write} is outside this user's access.")
+        return ToolResult("denied", data={"say": writes.NO_ACCESS_SAY}, message=f"{write} is outside this user's access.")
     if not isinstance(rows, list) or not rows:
         return ToolResult("invalid", message="rows must be a list of at least one row.")
     if len(rows) > MAX_ROWS:
         return ToolResult(
-            "invalid", message=f"At most {MAX_ROWS} rows per confirmation; ask the user to split the table."
+            "invalid", data={"say": TOO_MANY_SAY},
+            message=f"At most {MAX_ROWS} rows per confirmation; ask the user to split the table.",
         )
     if any(not s.get("batch") for s in steps):
         return ToolResult("invalid", message="Propose the table on its own, not with other changes in the same turn.")
     left: list[dict] = []
+    asked: list[dict] = []
     new_steps, skipped, waiting = propose_rows(
         db, ctx, write, rows, seen_ids=seen_ids, user_text=user_text, previous_waiting=previous_waiting,
         closed=closed, previous_typed=(previous or {}).get("typed"), expired_waiting=(previous or {}).get("expired"),
         previous_skipped=(previous or {}).get("skipped"), left_out=left, previous_card=(previous or {}).get("card"),
-        previous_ready=(previous or {}).get("ready"),
+        previous_ready=(previous or {}).get("ready"), attached=attached, earlier_keys=earlier_keys, asked=asked,
+        held=(previous or {}).get("held"), picture_keys=(previous or {}).get("picture"),
+        asked_keys=(previous or {}).get("asked"),
     )
+    if asked:
+        # A row lacks what the user did not say: no card yet. The ready rows wait with them, so the answer gives ONE
+        # card for every row; they are kept (key and what was typed) for that follow-up.
+        asked += [
+            {"row": s["row"], "key": definition.batch_key(s.get("args") or {}) if definition.batch_key else None,
+             "held": True,
+             # The role the user stated for it (None: read from the record), kept for the answer turn (review B1).
+             "role": (s.get("args") or {}).get("role") if (s.get("args") or {}).get("role") in ("owner", "employee")
+             else None,
+             **({"typed": s["typed"]} if s.get("typed") else {})}
+            for s in new_steps
+        ]
+        new_steps = []
+    if left and not (new_steps or skipped or waiting):
+        # Every row was left out: the user still sees who and why, never an empty turn (owner hand test 14 Nov).
+        # Display only: no key, so the next turn never counts them as this card's people (security review, F4).
+        skipped = [
+            {"row": x["row"], "key": None, "reason": x["reason"], "cells": {"Phone": x["phone"]}} for x in left
+        ]
+        left = []
     # `previous`: the earlier table turn's {"write", "waiting", "skipped"} (loop._previous_waiting). A left-out row
     # was not sent as far as this card goes (UAC F4).
     sent = _sent_keys(definition, rows) - {x["phone"] for x in left}
-    carried = carried_skips(write, sent, new_steps, skipped, waiting, previous)
+    keep_earlier_reasons(write, sent, skipped, previous)
+    carried = carried_skips(write, sent, new_steps, skipped, waiting, previous, definition.pick_changes_key)
     skipped += carried
     steps[:] = new_steps
+    if asked_out is not None:
+        asked_out[:] = asked
     if skipped_out is not None:
         skipped_out[:] = skipped
     if waiting_out is not None:
@@ -490,6 +632,12 @@ def propose(
     }
     if left:
         data["left_out"] = left
+    if asked:
+        data["asked"] = [{"row": a["row"], "needs": a["needs"]} for a in asked if not a.get("held")]
+        return ToolResult(
+            "invalid", data=data,
+            message="Nothing is proposed yet. The user is asked the missing company or role; do not ask it again.",
+        )
     if not new_steps:
         if waiting:
             return ToolResult(
@@ -510,6 +658,25 @@ def propose(
             "table. When needs_choice is not empty, ask which account(s), tag(s) or agent to use for each waiting row (codes or tag names, or all)."
         ),
     )
+
+
+def question_reply(asked: list[dict], skipped: list[dict], waiting: list[dict] | tuple = ()) -> str:
+    """The turn's reply when a row lacks the company or role the user did not say: ONE plain question naming those
+    people ('Owner or employee for X, Y?'), then any row that needs a pick or cannot change, as tables."""
+    from app.services.chatbot.agent.contact_grant import question
+
+    groups: dict[tuple, list[str]] = {}
+    for a in asked:
+        if not a.get("held"):
+            # A label is a name the model read (a screenshot): cleaned like a table cell (review S4).
+            groups.setdefault(tuple(sorted(set(a["needs"]))), []).append(_cell(a.get("label") or a.get("key") or ""))
+    parts = [" ".join(question(list(needs), labels) for needs, labels in groups.items())]
+    if skipped or waiting:
+        # The tables only: their closing line ("Nothing can change yet ...") would contradict the question (S3).
+        block = preview_block([], skipped, waiting)
+        # Only the "Nothing can change yet" closing goes; a pick's instruction stays (review round 2, S-a).
+        parts.append(block if waiting else block.rsplit("\n\n", 1)[0])
+    return "\n\n".join(parts)
 
 
 MAX_CELL_CHARS = 200

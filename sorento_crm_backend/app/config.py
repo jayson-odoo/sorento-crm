@@ -276,7 +276,9 @@ class Settings(BaseSettings):
     rate_limit_reset_window_seconds: int = 900
     rate_limit_portal_otp_max: int = 30        # portal OTP requests per window per IP
     rate_limit_portal_otp_window_seconds: int = 60
-    rate_limit_portal_link_max: int = 10       # portal-link session exchanges per window per IP
+    # Portal-link session exchanges per window per IP (`/auth/portal-link`); the same numbers also
+    # cap the portal's CRM-session bridge (`/public/portal/session-from-crm`) per user.
+    rate_limit_portal_link_max: int = 10
     rate_limit_portal_link_window_seconds: int = 300
     # PASSKEY-LOGIN: passkey sign-in options and verify, per window per IP, each in its own bucket.
     rate_limit_passkey_max: int = 30

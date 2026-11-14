@@ -418,28 +418,44 @@ def resolver_embed(monkeypatch):
     return er
 
 
-def test_f5_tier3_narrowed_to_a_non_hot_source_sets_the_iterative_scan(db, resolver_embed):
+def _scan_requests(monkeypatch):
+    """Record each request for the iterative scan instead of sending it.
+
+    The SET itself only goes out on pgvector >= 0.8 (`tests/test_pgvector_iterative_scan_guard.py`
+    pins that); cloud sandboxes run Ubuntu's 0.6, where the guard rightly skips it. What F-5 pins
+    is the resolver asking for it on a narrowed non-hot read, which holds on any server."""
+    import app.services.embedding_indexes as embedding_indexes
+
+    calls: list[bool] = []
+    monkeypatch.setattr(embedding_indexes, "set_iterative_scan", lambda db: calls.append(True))
+    return calls
+
+
+def test_f5_tier3_narrowed_to_a_non_hot_source_sets_the_iterative_scan(db, resolver_embed, monkeypatch):
     from app.services.company_scope import set_company_scope
 
     set_company_scope(db, None)
-    seen = _sql_seen(db, lambda: resolver_embed._tier3_embedding_lookup(db, f"zzt promo {uuid.uuid4().hex}", frozenset({"promotion"})))
-    assert any("iterative_scan" in s for s in seen), "no SET LOCAL hnsw.iterative_scan before the narrowed read"
+    calls = _scan_requests(monkeypatch)
+    resolver_embed._tier3_embedding_lookup(db, f"zzt promo {uuid.uuid4().hex}", frozenset({"promotion"}))
+    assert calls, "no iterative scan requested before the narrowed read"
 
 
-def test_f5_rag_phrase_narrowed_to_a_non_hot_source_sets_the_iterative_scan(db, resolver_embed):
+def test_f5_rag_phrase_narrowed_to_a_non_hot_source_sets_the_iterative_scan(db, resolver_embed, monkeypatch):
     from app.services.company_scope import set_company_scope
 
     set_company_scope(db, None)
-    seen = _sql_seen(db, lambda: resolver_embed._rag_resolve_phrase(db, f"zzt promo {uuid.uuid4().hex}", frozenset({"promotion"})))
-    assert any("iterative_scan" in s for s in seen)
+    calls = _scan_requests(monkeypatch)
+    resolver_embed._rag_resolve_phrase(db, f"zzt promo {uuid.uuid4().hex}", frozenset({"promotion"}))
+    assert calls
 
 
-def test_f5_a_read_of_hot_sources_only_does_not_need_it(db, resolver_embed):
+def test_f5_a_read_of_hot_sources_only_does_not_need_it(db, resolver_embed, monkeypatch):
     from app.services.company_scope import set_company_scope
 
     set_company_scope(db, None)
-    seen = _sql_seen(db, lambda: resolver_embed._tier3_embedding_lookup(db, f"zzt spec {uuid.uuid4().hex}", frozenset({"product"})))
-    assert not any("iterative_scan" in s for s in seen)
+    calls = _scan_requests(monkeypatch)
+    resolver_embed._tier3_embedding_lookup(db, f"zzt spec {uuid.uuid4().hex}", frozenset({"product"}))
+    assert not calls
 
 
 # ================================================================== F-6 / F-12: settings PUT
