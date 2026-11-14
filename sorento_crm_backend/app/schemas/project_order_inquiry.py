@@ -432,6 +432,9 @@ class OrderInquiryWorklistRow(BaseModel):
     #: inquiry raised since carries one. The S/O no beside it does not answer the same
     #: question: an amendment raises a SECOND inquiry on the same sales order.
     inquiry_no: Optional[str] = None
+    #: SPARE-PART-OR-B (U2.7): the row's header's OI- number (a spare part request past
+    #: final approval); null otherwise.
+    oi_no: Optional[str] = None
     #: SPARE-PART-ORDER-REQUEST: `sales_order` | `spare_part_request`; a spare part
     #: request's unit price and line total, and the qty / unit price its requester
     #: SUBMITTED (the "was" mark when an approver changed them). Null on a sales-order row.
@@ -1522,6 +1525,9 @@ class OrderInquiryHeaderOut(BaseModel):
 
     id: str
     inquiry_no: Optional[str] = None
+    #: SPARE-PART-OR-B (U2.7): a spare part request's OI- number from its final approval
+    #: (its `inquiry_no` is the OR- one); null on a sales-order inquiry.
+    oi_no: Optional[str] = None
     #: The pre-renumber value (S1) - kept so a number quoted in an old email still
     #: finds this OI. `None` for every header born after the renumber.
     legacy_inquiry_no: Optional[str] = None
@@ -1588,6 +1594,8 @@ class OrderInquiryHeaderDetailOut(OrderInquiryHeaderOut):
     can_decide: bool = False
     can_edit: bool = False
     can_revise: bool = False
+    #: SPARE-PART-OR-B (U4.2): an open revision's state, so the actions offer what it allows.
+    revision_state: Optional[str] = None
     #: A spare part request's amount (qty x unit price, lines still standing); null on a
     #: sales-order inquiry and for a reader who may not see its prices.
     total: Optional[str] = None

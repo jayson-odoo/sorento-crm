@@ -2156,6 +2156,7 @@ def get_order_inquiry_header(
             header.can_decide = spare_part_request_service.can_decide(db, inquiry, uid)
             header.can_edit = spare_part_request_service.can_edit(inquiry, uid)
             header.can_revise = spare_part_request_service.can_revise(db, inquiry, uid)
+            header.revision_state = inquiry.revision_state
             if spare_part_request_service.prices_visible(db, inquiry, uid):
                 header.total = spare_part_request_service.request_total(db, inquiry)
         return header

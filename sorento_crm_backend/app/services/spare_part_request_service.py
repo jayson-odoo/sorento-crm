@@ -24,11 +24,11 @@ from sqlalchemy import and_, false, or_, true
 from sqlalchemy.orm import Session
 
 from app.models.project_so import (
-    ACK_ACKNOWLEDGED,
     ACK_AWAITING,
-    ACK_CHANGED,
+    INQUIRY_ACTIONED,
     INQUIRY_CANCELLED,
     INQUIRY_DRAFT,
+    INQUIRY_NO_PREFIX,
     INQUIRY_PENDING_APPROVAL,
     INQUIRY_PRE_APPROVAL_STATES,
     INQUIRY_RAISED,
@@ -37,9 +37,10 @@ from app.models.project_so import (
     IV_REPLENISH,
     OI_RAISE_RAISED,
     OrderInquiry,
-    OrderInquiryLink,
     OrderInquiryRaise,
     OrderInquiryRow,
+    next_inquiry_no,
+    numbering_date,
 )
 from app.services.audit_service import log_audit
 from app.services.error_handler import AppException
@@ -54,6 +55,11 @@ _EDITABLE = (INQUIRY_DRAFT, INQUIRY_REJECTED)
 #: G5 (hand-test round): the requester may also edit while it waits for approval; that edit
 #: restarts approval at the first level (`update`).
 _REQUESTER_EDITABLE = (*_EDITABLE, INQUIRY_PENDING_APPROVAL)
+#: SPARE-PART-OR-B (U4.2): the header states a revision opens on (purchasing keeps working the
+#: approved request meanwhile). A revision's own state is `revision_state`: draft / rejected
+#: (the requester changes qtys) or pending_approval (a decider decides).
+_APPROVED = (INQUIRY_RAISED, INQUIRY_ACTIONED)
+_REVISION_ONLY_QTY = "During a revision only the quantities of the existing lines can change."
 _ZERO = Decimal("0")
 
 
@@ -163,10 +169,24 @@ def _on_stage_team(db: Session, tracker, user_id: str, company_id: Optional[str]
     return tier is not None
 
 
+def in_revision(inquiry: OrderInquiry) -> bool:
+    """U4.2: a revision of the approved request is open on it."""
+    return inquiry.revision_state is not None
+
+
+def awaiting_decision(inquiry: OrderInquiry) -> bool:
+    """Pending approval: the request itself before its first approval, or a revision of it
+    after (U4.4)."""
+    return (
+        inquiry.state == INQUIRY_PENDING_APPROVAL
+        or inquiry.revision_state == INQUIRY_PENDING_APPROVAL
+    )
+
+
 def can_decide(db: Session, inquiry: OrderInquiry, user_id: Optional[str]) -> bool:
     """A2: a member of the CURRENT stage's team, or an admin; never the requester, and only
-    while the request is pending approval."""
-    if inquiry.inquiry_type != KIND or inquiry.state != INQUIRY_PENDING_APPROVAL:
+    while the request (or a revision of it) is pending approval."""
+    if inquiry.inquiry_type != KIND or not awaiting_decision(inquiry):
         return False
     if not user_id or is_requester(inquiry, user_id):
         return False
@@ -179,49 +199,28 @@ def can_decide(db: Session, inquiry: OrderInquiry, user_id: Optional[str]) -> bo
 
 
 def can_edit(inquiry: OrderInquiry, user_id: Optional[str]) -> bool:
-    """G5: the requester, while Draft, Pending approval or Rejected."""
-    return (
-        inquiry.inquiry_type == KIND
-        and inquiry.state in _REQUESTER_EDITABLE
-        and is_requester(inquiry, user_id)
-    )
+    """G5: the requester, while Draft, Pending approval or Rejected. During a revision
+    (U4.3): the requester while the revision is a draft or rejected, and then only the
+    line quantities."""
+    if inquiry.inquiry_type != KIND or not is_requester(inquiry, user_id):
+        return False
+    if in_revision(inquiry):
+        return inquiry.revision_state in _EDITABLE
+    return inquiry.state in _REQUESTER_EDITABLE
 
 
 def _can_edit_draft(inquiry: OrderInquiry, user_id: Optional[str]) -> bool:
     return can_edit(inquiry, user_id) and inquiry.state in _EDITABLE
 
 
-def _taken_on(db: Session, inquiry: OrderInquiry) -> bool:
-    """Purchasing has started on it: a row acknowledged (or acknowledged and since changed),
-    or any document linked to a row."""
-    acknowledged = (
-        db.query(OrderInquiryRow.id)
-        .filter(
-            OrderInquiryRow.order_inquiry_id == inquiry.id,
-            or_(
-                OrderInquiryRow.ack_state.in_((ACK_ACKNOWLEDGED, ACK_CHANGED)),
-                OrderInquiryRow.acknowledged_at.isnot(None),
-            ),
-        )
-        .first()
-    )
-    if acknowledged is not None:
-        return True
-    linked = (
-        db.query(OrderInquiryLink.id)
-        .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquiryLink.row_id)
-        .filter(OrderInquiryRow.order_inquiry_id == inquiry.id)
-        .first()
-    )
-    return linked is not None
-
-
 def can_revise(db: Session, inquiry: OrderInquiry, user_id: Optional[str]) -> bool:
+    """U4.2: the requester, on an approved request with no revision open, whatever
+    purchasing has done with it."""
     return (
         inquiry.inquiry_type == KIND
-        and inquiry.state == INQUIRY_RAISED
+        and inquiry.state in _APPROVED
+        and not in_revision(inquiry)
         and is_requester(inquiry, user_id)
-        and not _taken_on(db, inquiry)
     )
 
 
@@ -277,7 +276,13 @@ def decidable_ids(
     pending = {
         str(row.id): row
         for row in db.query(OrderInquiry.id, OrderInquiry.requested_by, OrderInquiry.company_id)
-        .filter(OrderInquiry.id.in_(ids), OrderInquiry.state == INQUIRY_PENDING_APPROVAL)
+        .filter(
+            OrderInquiry.id.in_(ids),
+            or_(
+                OrderInquiry.state == INQUIRY_PENDING_APPROVAL,
+                OrderInquiry.revision_state == INQUIRY_PENDING_APPROVAL,
+            ),
+        )
         .all()
     }
     member: Dict[tuple, bool] = {}
@@ -381,9 +386,12 @@ def detail(db: Session, inquiry: OrderInquiry, user_id: Optional[str]) -> Dict[s
         )
     }
     total = request_total(db, inquiry)
+    revising = in_revision(inquiry)
     lines = []
     for row in rows:
         product = products.get(str(row.product_id)) if row.product_id else None
+        # U4.6: the OR page reads the revision's qty while one is open.
+        qty = row.revised_qty if revising and row.revised_qty is not None else row.qty
         lines.append(
             {
                 "id": str(row.id),
@@ -392,7 +400,7 @@ def detail(db: Session, inquiry: OrderInquiry, user_id: Optional[str]) -> Dict[s
                 "item_code": row.item_code,
                 "description": row.description,
                 "stock_location": row.stock_location,
-                "qty": _num(row.qty) or "0",
+                "qty": _num(qty) or "0",
                 "unit_price": _num(row.unit_price) if show_prices else None,
                 "total": (_num(_line_total(row)) or "0") if show_prices else None,
                 "requested_qty": _num(row.requested_qty),
@@ -405,8 +413,10 @@ def detail(db: Session, inquiry: OrderInquiry, user_id: Optional[str]) -> Dict[s
     return {
         "id": str(inquiry.id),
         "inquiry_no": inquiry.inquiry_no,
+        "oi_no": inquiry.oi_no,
         "inquiry_type": inquiry.inquiry_type,
         "state": inquiry.state,
+        "revision_state": inquiry.revision_state,
         "currency": inquiry.currency,
         "needed_by": inquiry.needed_by,
         "default_location": inquiry.default_location,
@@ -544,7 +554,9 @@ def list_requests(
             {
                 "id": str(inquiry.id),
                 "inquiry_no": inquiry.inquiry_no,
+                "oi_no": inquiry.oi_no,
                 "state": inquiry.state,
+                "revision_state": inquiry.revision_state,
                 "currency": inquiry.currency,
                 "requested_by": inquiry.requested_by,
                 "requested_by_name": names.get(str(inquiry.requested_by)) if inquiry.requested_by else None,
@@ -681,6 +693,8 @@ def update(db: Session, inquiry: OrderInquiry, data: Dict[str, Any], actor: str)
     values become the edited ones and 'submitted' is emitted again."""
     if not is_requester(inquiry, actor):
         raise _forbidden("Only the requester can edit this request.")
+    if in_revision(inquiry):
+        raise _conflict(_REVISION_ONLY_QTY)
     if inquiry.state not in _REQUESTER_EDITABLE:
         raise _conflict("Only a draft, pending or rejected request can be edited.")
     restart = inquiry.state == INQUIRY_PENDING_APPROVAL
@@ -835,9 +849,12 @@ def _void_stages(db: Session, inquiry: OrderInquiry, reason: str) -> None:
 
 
 def submit(db: Session, inquiry: OrderInquiry, actor: str) -> OrderInquiry:
-    """R5 / A1: Draft or Rejected -> Pending approval at the first configured stage."""
+    """R5 / A1: Draft or Rejected -> Pending approval at the first configured stage. A
+    revision (U4.4) goes to approval the same way, once a qty has changed."""
     if not is_requester(inquiry, actor):
         raise _forbidden("Only the requester can submit this request.")
+    if in_revision(inquiry):
+        return _submit_revision(db, inquiry, actor)
     if inquiry.state not in _EDITABLE:
         raise _conflict("Only a draft or rejected request can be submitted.")
     rows = _validate_submit(db, inquiry)
@@ -851,16 +868,57 @@ def submit(db: Session, inquiry: OrderInquiry, actor: str) -> OrderInquiry:
     return inquiry
 
 
+def _submit_revision(db: Session, inquiry: OrderInquiry, actor: str) -> OrderInquiry:
+    """U4.4: a revision draft (or a rejected one) to approval, through the same Form SLA
+    submit as a first submit; 422 when no line's qty moved."""
+    if inquiry.revision_state not in _EDITABLE:
+        raise _conflict("This revision is already waiting for approval.")
+    rows = _live_rows(db, inquiry)
+    if not any(_revised(row) != Decimal(row.qty or 0) for row in rows):
+        raise _invalid("lines", "Nothing changed. Change a quantity before submitting.")
+    if not any(_revised(row) > 0 for row in rows):
+        raise _invalid("lines", "Every line is at 0. Change a quantity above 0.")
+    _assert_has_stage(db)
+    was_rejected = inquiry.revision_state == INQUIRY_REJECTED
+    _audit(
+        db, inquiry, "SPR_SUBMITTED",
+        "Revision resubmitted for approval" if was_rejected else "Revision submitted for approval",
+        actor,
+    )
+    _start_approval(db, inquiry, rows, actor, "Submitted again", revision=True)
+    return inquiry
+
+
+def _live_rows(db: Session, inquiry: OrderInquiry) -> List[OrderInquiryRow]:
+    return [r for r in _rows(db, inquiry) if r.state != INQUIRY_CANCELLED]
+
+
+def _revised(row: OrderInquiryRow) -> Decimal:
+    """The qty a revision proposes for the row (its approved qty when none was set)."""
+    return Decimal(row.revised_qty if row.revised_qty is not None else row.qty or 0)
+
+
 def _start_approval(
-    db: Session, inquiry: OrderInquiry, rows: List[OrderInquiryRow], actor: str, void_reason: str
+    db: Session,
+    inquiry: OrderInquiry,
+    rows: List[OrderInquiryRow],
+    actor: str,
+    void_reason: str,
+    *,
+    revision: bool = False,
 ) -> None:
     """Pending approval at the first configured level, from the values as they stand now:
-    the submit (A1) and the requester's edit while pending (G5) both go through here."""
+    the submit (A1), the requester's edit while pending (G5) and a revision's submit (U4.4,
+    `revision`: the header stays raised for purchasing, only `revision_state` moves) all go
+    through here."""
     _assert_has_stage(db)
-    for row in rows:
-        row.requested_qty = row.qty
-        row.requested_unit_price = row.unit_price
-    inquiry.state = INQUIRY_PENDING_APPROVAL
+    if revision:
+        inquiry.revision_state = INQUIRY_PENDING_APPROVAL
+    else:
+        for row in rows:
+            row.requested_qty = row.qty
+            row.requested_unit_price = row.unit_price
+        inquiry.state = INQUIRY_PENDING_APPROVAL
     inquiry.submitted_at = datetime.utcnow()
     inquiry.reject_reason = None
     db.flush()
@@ -891,7 +949,7 @@ def _row_or_404(db: Session, inquiry: OrderInquiry, row_id: Any) -> OrderInquiry
 
 
 def _require_pending(inquiry: OrderInquiry, verb: str) -> None:
-    if inquiry.state != INQUIRY_PENDING_APPROVAL:
+    if not awaiting_decision(inquiry):
         raise _conflict(f"Only a request pending approval can be {verb}.")
 
 
@@ -987,7 +1045,13 @@ def edit_line(
 ) -> OrderInquiryRow:
     """A3: the approver changes a line's qty (0 allowed) or unit price. The submitted values
     stay on the row; each change is a History entry. The price is audited under the COST key
-    `unit_cost` (it is the expected supplier cost), so History masks it like any cost."""
+    `unit_cost` (it is the expected supplier cost), so History masks it like any cost.
+
+    During a revision (U4.3) only the qty changes, into `revised_qty` (`qty` stays the
+    approved figure purchasing works to): by the requester while the revision is a draft or
+    rejected, by a decider while it is pending."""
+    if in_revision(inquiry):
+        return _edit_revised_qty(db, inquiry, row_id, actor, qty=qty, unit_price=unit_price)
     inquiry, _stage = _authorise(db, inquiry, actor, "changed", need_stage=False)
     row = _row_or_404(db, inquiry, row_id)
     changes = (
@@ -1008,6 +1072,40 @@ def edit_line(
             old={"row_id": str(row.id), "item_code": row.item_code, audit_key: _plain(before)},
             new={"row_id": str(row.id), "item_code": row.item_code, audit_key: _plain(value)},
         )
+    db.flush()
+    return row
+
+
+def _edit_revised_qty(
+    db: Session, inquiry: OrderInquiry, row_id: Any, actor: str, *, qty: Any, unit_price: Any
+) -> OrderInquiryRow:
+    if unit_price is not None and not (isinstance(unit_price, str) and not unit_price.strip()):
+        raise _conflict(_REVISION_ONLY_QTY)
+    if inquiry.revision_state == INQUIRY_PENDING_APPROVAL:
+        inquiry, _stage = _authorise(db, inquiry, actor, "changed", need_stage=False)
+    else:
+        if not is_requester(inquiry, actor):
+            raise _forbidden("Only the requester can change this revision.")
+        inquiry = _lock(db, inquiry)
+        if inquiry.revision_state not in _EDITABLE:
+            raise _conflict(_STALE_DECISION, "SPARE_PART_REQUEST_STALE")
+    row = _row_or_404(db, inquiry, row_id)
+    if row.state == INQUIRY_CANCELLED:
+        raise _conflict("That line is cancelled.")
+    value = _decimal(qty, "qty")
+    if value is None:
+        return row
+    before = _revised(row)
+    if before == value:
+        return row
+    row.revised_qty = value
+    _audit(
+        db, inquiry, "SPR_LINE_CHANGED",
+        f"Qty of {row.item_code or 'a line'} changed",
+        actor,
+        old={"row_id": str(row.id), "item_code": row.item_code, "qty": _plain(before)},
+        new={"row_id": str(row.id), "item_code": row.item_code, "qty": _plain(value)},
+    )
     db.flush()
     return row
 
@@ -1107,8 +1205,10 @@ def approve(
     inquiry, stage = _authorise(
         db, inquiry, actor, "approved", need_stage=True, seen_submitted_at=seen_submitted_at
     )
-    rows = [r for r in _rows(db, inquiry) if r.state != INQUIRY_CANCELLED]
-    if not any(Decimal(r.qty or 0) > 0 for r in rows):
+    revising = in_revision(inquiry)
+    rows = _live_rows(db, inquiry)
+    proposed = _revised if revising else (lambda r: Decimal(r.qty or 0))
+    if not any(proposed(r) > 0 for r in rows):
         raise _invalid("lines", "Every line is at 0. Reject the request instead.")
     orchestrator = FormSLAOrchestrator(db)
     next_config = orchestrator.next_stage_config(stage, "approved")
@@ -1137,6 +1237,8 @@ def approve(
         raise _conflict(_NEXT_STAGE_CANNOT_START, "SPARE_PART_REQUEST_NEXT_STAGE")
     if still_open:
         return inquiry  # the next (or a parallel) level decides; its team is told by the SLA machinery
+    if revising:
+        return _approve_revision(db, inquiry, rows, actor)
 
     from app.services.project_order_inquiry_service import _record_cancel
 
@@ -1145,6 +1247,7 @@ def approve(
     inquiry.approved_at = now
     inquiry.approved_by = str(actor)
     inquiry.raised_at = now
+    _assign_oi_no(db, inquiry)
     to_buy: List[OrderInquiryRow] = []
     for row in rows:
         if Decimal(row.qty or 0) > 0:
@@ -1169,6 +1272,42 @@ def approve(
     return inquiry
 
 
+def _approve_revision(
+    db: Session, inquiry: OrderInquiry, rows: List[OrderInquiryRow], actor: str
+) -> OrderInquiry:
+    """U4.5: the revision's final approval. Each row whose qty moved is restated through the
+    SO-change path (`restate_row`: previous_qty, "Was N", back to purchasing as changed, the
+    order inquiry email); a row taken to 0 is cancelled the way a line CS cancels is
+    (`cancel_row_told`); an unchanged row is left alone. Then the revision closes on the
+    same record, oi_no unchanged."""
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+    oi = ProjectOrderInquiryService(db)
+    moved = [row for row in rows if _revised(row) != Decimal(row.qty or 0)]
+    # The handover lines are queued as an SO change queues them; whether this approval may
+    # send them is FP-EMAIL-ONE-TRIGGER's call (`mark_purchasing_email_trigger` has only the
+    # owner's two callers), so outside a marked press the drain drops them.
+    for row in moved:
+        new_qty = _revised(row)
+        if new_qty <= 0:
+            oi.cancel_row_told(
+                row, cause="revised_to_zero", stamp="Revised to 0", actor_user_id=str(actor)
+            )
+            continue
+        had_link = bool(oi._links_of(row.id))  # noqa: SLF001
+        oi.restate_row(row, new_qty, None, base_note=row.note, actor_user_id=str(actor))
+        db.flush()
+        oi._dispatch_changed_with_links(inquiry, row, had_link=had_link)  # noqa: SLF001
+    for row in _rows(db, inquiry):
+        row.revised_qty = None
+    inquiry.revision_state = None
+    inquiry.reject_reason = None
+    inquiry.approved_at = datetime.utcnow()
+    inquiry.approved_by = str(actor)
+    db.flush()
+    return inquiry
+
+
 def reject(
     db: Session,
     inquiry: OrderInquiry,
@@ -1186,7 +1325,11 @@ def reject(
     reason = _text(reason)
     if not reason:
         raise _invalid("reason", "Enter the reason for rejecting.")
-    inquiry.state = INQUIRY_REJECTED
+    if in_revision(inquiry):
+        # U4.4: the revision goes back to the requester; the approved request stands.
+        inquiry.revision_state = INQUIRY_REJECTED
+    else:
+        inquiry.state = INQUIRY_REJECTED
     inquiry.reject_reason = reason
     _audit(db, inquiry, "SPR_REJECTED", f"Rejected: {reason}", actor, new={"reason": reason})
     db.flush()
@@ -1204,40 +1347,70 @@ def reject(
 
 
 def revise(db: Session, inquiry: OrderInquiry, actor: str) -> OrderInquiry:
-    """V1 / V2: back to Draft until purchasing has acknowledged a line or linked a document."""
+    """U4.2: open a revision of an approved request, on the same record, whatever purchasing
+    has done with it. The header stays raised (or actioned) and every row is left exactly as
+    it is, so purchasing keeps working the approved request; each live row's `revised_qty`
+    starts at its qty. Only the qtys change from here (`edit_line`), and only the revision's
+    final approval restates the rows (`_approve_revision`)."""
     if not is_requester(inquiry, actor):
         raise _forbidden("Only the requester can revise this request.")
-    if inquiry.state != INQUIRY_RAISED:
+    inquiry = _lock(db, inquiry)
+    if inquiry.state not in _APPROVED:
         raise _conflict("Only an approved request can be revised.")
-    if _taken_on(db, inquiry):
-        raise _conflict(
-            "Purchasing has already started on this request, so it can no longer be revised.",
-            "SPARE_PART_REQUEST_TAKEN_ON",
-        )
-    inquiry.state = INQUIRY_DRAFT
-    inquiry.submitted_at = None
-    inquiry.approved_at = None
-    inquiry.approved_by = None
+    if in_revision(inquiry):
+        raise _conflict("A revision of this request is already open.")
+    inquiry.revision_state = INQUIRY_DRAFT
     inquiry.reject_reason = None
-    for row in _rows(db, inquiry):
-        # A clean slate: purchasing's earlier refusal was about the request as approved,
-        # and the request is about to change and be approved again.
-        row.state = INQUIRY_DRAFT
-        row.ack_state = ACK_AWAITING
-        row.rejected_by = None
-        row.rejected_at = None
-        row.rejected_reason = None
-        row.acknowledged_by = None
-        row.acknowledged_at = None
-        row.ack_override = None
-        row.ack_override_by = None
-        row.ack_override_at = None
-        row.actioned_by = None
-        row.actioned_at = None
+    for row in _live_rows(db, inquiry):
+        row.revised_qty = row.qty
     _void_stages(db, inquiry, "Revised by the requester")
-    _audit(db, inquiry, "SPR_REVISED", "Revised: back to draft", actor)
+    _audit(db, inquiry, "SPR_REVISED", "Revised", actor)
     db.flush()
     return inquiry
+
+
+# ------------------------------------------------------------------ OI number (U2)
+
+
+def _oi_number(bind, company_id: Optional[str], inquiry_no: Optional[str], raised_at) -> str:
+    """U2.2b: a legacy request already numbered in the OI- series keeps its own number;
+    every other one takes the next OI- number of its raise month (`next_inquiry_no` counts
+    inquiry_no and oi_no, U2.4)."""
+    if inquiry_no and inquiry_no.startswith(INQUIRY_NO_PREFIX):
+        return inquiry_no
+    return next_inquiry_no(bind, company_id, numbering_date(raised_at))
+
+
+def _assign_oi_no(db: Session, inquiry: OrderInquiry) -> None:
+    """U2.3: the final approval numbers the request once; a re-approval keeps it (U2.5)."""
+    if inquiry.oi_no:
+        return
+    db.flush()  # the series read below sees every number this session already issued
+    inquiry.oi_no = _oi_number(db, inquiry.company_id, inquiry.inquiry_no, inquiry.raised_at)
+    db.flush()
+
+
+def backfill_oi_numbers(bind) -> int:
+    """U2.2: every approved spare part request without an oi_no takes one, in raised_at
+    order (then inquiry_no). Core statements only, so the migration can run it on its own
+    connection; a Session works too (flushes, never commits). Idempotent. Returns how many
+    headers it numbered."""
+    from sqlalchemy import select, update
+
+    table = OrderInquiry.__table__
+    pending = bind.execute(
+        select(table.c.id, table.c.company_id, table.c.inquiry_no, table.c.raised_at)
+        .where(
+            table.c.inquiry_type == KIND,
+            table.c.oi_no.is_(None),
+            table.c.state.notin_(INQUIRY_PRE_APPROVAL_STATES),
+        )
+        .order_by(table.c.raised_at, table.c.inquiry_no, table.c.id)
+    ).all()
+    for header in pending:
+        number = _oi_number(bind, header.company_id, header.inquiry_no, header.raised_at)
+        bind.execute(update(table).where(table.c.id == header.id).values(oi_no=number))
+    return len(pending)
 
 
 # ------------------------------------------------------------------ delete draft (G1)
@@ -1345,11 +1518,7 @@ def price_visible_ids(db: Session, inquiries, user_id: Optional[str]) -> Set[str
     if not rest:
         return shown
     shown |= decidable_ids(db, uid, among={str(i.id) for i in rest})
-    pending = {
-        str(i.id)
-        for i in rest
-        if i.inquiry_type == KIND and i.state == INQUIRY_PENDING_APPROVAL
-    }
+    pending = {str(i.id) for i in rest if i.inquiry_type == KIND and awaiting_decision(i)}
     if pending - shown and is_admin(db, uid):
         shown |= pending
     left = {str(i.id) for i in rest} - shown

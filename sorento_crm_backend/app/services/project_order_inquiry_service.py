@@ -6447,20 +6447,51 @@ class ProjectOrderInquiryService:
         A row purchasing had acknowledged goes back to them as CHANGED (R2).
         """
         row.supply_decision_id = decision.id
-        required_date = entry.get("required_date")
-        previous_qty = _dec(row.qty)
-        previous_date = row.delivery_date
-        moves = handover_moves(previous_qty, previous_date, qty, required_date)
+        moves = self.restate_row(
+            row,
+            qty,
+            entry.get("required_date"),
+            # The entry's note restates the quantity ("Order-back: X lent 8 to ..."), and
+            # `_is_borrow_order_back` reads its prefix.
+            base_note=entry.get("note") or row.note,
+            actor_user_id=actor_user_id,
+            borrow_hole=True,
+        )
         if not moves:
             # Nothing for purchasing to act on. The note follows the entry's own wording
             # (a provisional ref becomes the AutoCount number) without a word to them.
             note = entry.get("note")
             if note and (row.note or "").split("; ")[0] != note:
                 row.note = note
-            return
+
+    def restate_row(
+        self,
+        row: OrderInquiryRow,
+        qty: Decimal,
+        delivery_date: Any,
+        *,
+        base_note: Optional[str],
+        actor_user_id: Optional[str] = None,
+        borrow_hole: Optional[bool] = None,
+    ) -> Dict[str, Any]:
+        """THE restate of one live row to a new qty (and date): the borrow-hole Confirm
+        (`_restate_borrow_hole`) and a spare part request's approved revision
+        (SPARE-PART-OR-B U4.5) both go through here.
+
+        Moved: the SAME row takes the new figures, keeps the old ones in `previous_qty` /
+        `previous_delivery_date` for the Was / Now table, appends "Was N ..." to
+        `base_note`, goes back to purchasing as CHANGED when they had acknowledged it
+        (`_amended_by_cs`), and the handover email prints one line old -> new. A new date
+        of None is no date move. Returns what moved (`handover_moves`); empty means the
+        row was left exactly as it was and nobody is told."""
+        previous_qty = _dec(row.qty)
+        previous_date = row.delivery_date
+        moves = handover_moves(previous_qty, previous_date, qty, delivery_date)
+        if not moves:
+            return moves
         row.qty = qty
         if "delivery_date" in moves:
-            row.delivery_date = required_date
+            row.delivery_date = delivery_date
         row.previous_qty = previous_qty
         row.previous_delivery_date = previous_date
         was_note = (
@@ -6468,15 +6499,13 @@ class ProjectOrderInquiryService:
             if previous_date
             else f"Was {_qty_str(previous_qty)}, no previous delivery date"
         )
-        # The entry's note restates the quantity ("Order-back: X lent 8 to ..."), and
-        # `_is_borrow_order_back` reads its prefix.
-        base_note = entry.get("note") or row.note
         row.note = f"{base_note}; {was_note}" if base_note else was_note
         self._amended_by_cs(row)
         self._record_handover(
             row, kind="settled", was=dict(moves), actor_user_id=actor_user_id,
-            borrow_hole=True,
+            borrow_hole=borrow_hole,
         )
+        return moves
 
     def release_removed_lines(
         self,
@@ -6614,27 +6643,47 @@ class ProjectOrderInquiryService:
             .all()
         )
         for row, core_id in found:
-            was_qty = _dec(row.qty)
-            links = self._links_of(row.id)
-            if links:
-                self._remove_links(row, links)
-            row.state = INQUIRY_CANCELLED
-            _record_cancel(self.db, row, "cancel_so", actor_user_id=actor_user_id)
-            stamp = note_text or f"Transferred to Cancel SO: {reason_by_core[str(core_id)]}"
-            row.note = f"{row.note}; {stamp}" if row.note else stamp
-            self._drop_suggested_links([row])
-            self.db.flush()
-            if links:
-                inquiry = (
-                    self.db.query(OrderInquiry)
-                    .filter(OrderInquiry.id == row.order_inquiry_id)
-                    .one()
-                )
-                self._dispatch_changed_with_links(inquiry, row, had_link=True)
-            self._record_handover(
-                row, kind="cancelled", was={"qty": was_qty}, actor_user_id=actor_user_id
+            self.cancel_row_told(
+                row,
+                cause="cancel_so",
+                stamp=note_text or f"Transferred to Cancel SO: {reason_by_core[str(core_id)]}",
+                actor_user_id=actor_user_id,
             )
         return len(found)
+
+    def cancel_row_told(
+        self,
+        row: OrderInquiryRow,
+        *,
+        cause: str,
+        stamp: str,
+        actor_user_id: Optional[str] = None,
+    ) -> None:
+        """Cancel one live row whose line went away, and tell purchasing: placements go
+        back, the reason `stamp` is appended to the note, `cause` is audited
+        (`_record_cancel`), a linked row fires `order_inquiry_changed_with_links`, and the
+        handover email prints the cancel. A line CS transferred to Cancel SO
+        (`retire_rows_for_cancelled_lines`) and a spare part request line a revision took
+        to 0 (SPARE-PART-OR-B U4.5) both go through here."""
+        was_qty = _dec(row.qty)
+        links = self._links_of(row.id)
+        if links:
+            self._remove_links(row, links)
+        row.state = INQUIRY_CANCELLED
+        _record_cancel(self.db, row, cause, actor_user_id=actor_user_id)
+        row.note = f"{row.note}; {stamp}" if row.note else stamp
+        self._drop_suggested_links([row])
+        self.db.flush()
+        if links:
+            inquiry = (
+                self.db.query(OrderInquiry)
+                .filter(OrderInquiry.id == row.order_inquiry_id)
+                .one()
+            )
+            self._dispatch_changed_with_links(inquiry, row, had_link=True)
+        self._record_handover(
+            row, kind="cancelled", was={"qty": was_qty}, actor_user_id=actor_user_id
+        )
 
     def _retire_uncovered_rows(
         self,

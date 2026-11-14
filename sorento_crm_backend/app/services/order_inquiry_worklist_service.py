@@ -1037,6 +1037,8 @@ _COLUMNS = (
     # second opinion about which inquiry a row belongs to. The S/O no cannot stand in for
     # it: an amendment raises a SECOND inquiry on the same sales order.
     OrderInquiry.inquiry_no.label("inquiry_no"),
+    # SPARE-PART-OR-B (U2.7): a spare part request's OI- number, off the same header.
+    OrderInquiry.oi_no.label("oi_no"),
     # PLAN-oi-bundled-row-host-change.md: the key `_host_changes_for_rows` groups a
     # bundled row's HOST rows by, on the SAME order inquiry header.
     OrderInquiryRow.order_inquiry_id.label("order_inquiry_id"),
@@ -2826,6 +2828,7 @@ class OrderInquiryWorklistService:
             # OI-BULK-RESERVE v4: the header's id, so the Lines page can commit per order inquiry.
             "order_inquiry_id": row.order_inquiry_id,
             "inquiry_no": row.inquiry_no,
+            "oi_no": row.oi_no,
             "so_date": row.so_date,
             "so_number": row.so_number,
             "item_code": row.item_code,
