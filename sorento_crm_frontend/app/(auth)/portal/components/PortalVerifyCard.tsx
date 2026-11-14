@@ -9,12 +9,13 @@
  *   (possibly expired) token via fetchTokenInfo.
  *
  * Minimal card per r8 D-V1: masked-number line, "Not your number?" directly
- * under it, the code input, and a single Resend button. The sixth digit
+ * under it, the code input, and a single Send / Resend button. Nothing is sent
+ * until the user presses it (SIGNIN-2FA-NOT-ROLE AC-10). The sixth digit
  * verifies automatically; no separate "Verify and continue" button and no
  * WhatsApp escape hatch on this card (recovery is Resend only).
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { getSession } from 'next-auth/react';
 import { AlertCircle, MessageCircle } from 'lucide-react';
@@ -56,7 +57,6 @@ async function salespersonHomePath(): Promise<string | null> {
   }
 }
 
-const SENT_KEY_PREFIX = 'sorento.portal.otpSent.';
 const RESEND_COOLDOWN_S = 60;
 
 // Human labels for the submission kind passed via ?type= on deep-link verify
@@ -76,8 +76,6 @@ const WA_TEXT = 'Hi, I need my portal link.';
 interface Props {
   /** Stable contact slug - present on the slug tree, absent on legacy. */
   slug?: string;
-  /** Request a code on mount (default). False inside the CRM while an admin views as the salesperson. */
-  autoSend?: boolean;
 }
 
 type CardState =
@@ -88,7 +86,7 @@ type CardState =
   | 'request-link' // "Not your number?" - ask for own portal link
   | 'lookup-failed'; // transient slug-info/token-info failure - offer retry
 
-export function PortalVerifyCard({ slug, autoSend = true }: Props) {
+export function PortalVerifyCard({ slug }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
   // Viewing as the salesperson: "Not your number?" would clear the admin's own device sign-in.
@@ -98,7 +96,7 @@ export function PortalVerifyCard({ slug, autoSend = true }: Props) {
   // Submission kind from the deep-link verify redirect - its presence means the
   // user followed a link to a specific form on a device with no session, so we
   // gate on an explicit "log in with this number?" confirmation before sending
-  // a code (instead of silently auto-firing).
+  // a code.
   const entityType = searchParams?.get('type') || null;
   const entityLabel = entityType ? TYPE_LABELS[entityType] ?? 'form' : null;
 
@@ -113,28 +111,19 @@ export function PortalVerifyCard({ slug, autoSend = true }: Props) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [cooldown, setCooldown] = useResendCooldown();
-  const otpFiredRef = useRef(false);
 
   const sendCode = useCallback(
-    async (cid: string, sid: string, opts: { silent?: boolean } = {}): Promise<boolean> => {
+    async (cid: string, sid: string): Promise<boolean> => {
       setPending(true);
       try {
         const result = await requestOtp(cid, sid);
         setSentTo(result.sent_to);
         setCooldown(RESEND_COOLDOWN_S);
-        if (!opts.silent) toast.success('Verification code sent.');
+        toast.success('Verification code sent.');
         setError(null);
         return true;
       } catch (e) {
-        const msg = e instanceof Error ? e.message : 'Failed to send code.';
-        // On silent auto-fire, ignore "please wait" cooldown errors - the
-        // previous code is presumably still valid and the user has it.
-        if (opts.silent && /please wait/i.test(msg)) {
-          setSentTo((prev) => prev ?? 'your registered contact');
-          setCooldown(RESEND_COOLDOWN_S);
-          return true;
-        }
-        setError(msg);
+        setError(e instanceof Error ? e.message : 'Failed to send code.');
         return false;
       } finally {
         setPending(false);
@@ -143,29 +132,10 @@ export function PortalVerifyCard({ slug, autoSend = true }: Props) {
     [setCooldown],
   );
 
-  // Bootstrap: resolve identity from slug (slug tree) or token (legacy),
-  // then auto-fire the OTP unless the user just logged out.
+  // Bootstrap: resolve identity from slug (slug tree) or token (legacy). No
+  // code goes on mount: the user presses Send code (SIGNIN-2FA-NOT-ROLE AC-10).
   useEffect(() => {
     let cancelled = false;
-
-    const autoFire = async (cid: string, sid: string, guardKey: string) => {
-      const reasonNow = searchParams?.get('reason');
-      if (reasonNow === 'logout' || !autoSend) return;
-      const sentKey = SENT_KEY_PREFIX + guardKey;
-      const alreadyFired =
-        typeof window !== 'undefined' && sessionStore.getItem(sentKey) === '1';
-      if (!otpFiredRef.current && !alreadyFired) {
-        otpFiredRef.current = true;
-        const sent = await sendCode(cid, sid, { silent: true });
-        // Persist the guard ONLY after a successful dispatch - a failed send
-        // must not advertise a phantom "code sent" on the next reload.
-        if (sent && typeof window !== 'undefined') {
-          sessionStore.setItem(sentKey, '1');
-        }
-      } else if (alreadyFired) {
-        setSentTo((prev) => prev ?? 'your registered contact');
-      }
-    };
 
     (async () => {
       try {
@@ -181,13 +151,8 @@ export function PortalVerifyCard({ slug, autoSend = true }: Props) {
           setContactName(info.name ?? null);
           setMaskedPhone(info.masked_phone);
           setWhatsappNumber(info.whatsapp_number);
-          // Deep link → confirm identity before sending. Otherwise auto-fire.
-          if (entityType) {
-            setState('confirm-identity');
-            return;
-          }
-          setState('otp');
-          await autoFire(info.contact_id, info.space_id, slug);
+          // Deep link → confirm identity before sending.
+          setState(entityType ? 'confirm-identity' : 'otp');
           return;
         }
         // Legacy token mode.
@@ -204,12 +169,7 @@ export function PortalVerifyCard({ slug, autoSend = true }: Props) {
         setContactName(info.name ?? null);
         setMaskedPhone(info.masked_phone ?? null);
         setWhatsappNumber(info.whatsapp_number ?? null);
-        if (entityType) {
-          setState('confirm-identity');
-          return;
-        }
-        setState('otp');
-        await autoFire(info.contact_id, info.space_id, token);
+        setState(entityType ? 'confirm-identity' : 'otp');
       } catch (e) {
         if (cancelled) return;
         // Transient lookup failure (5xx / network): the OTP form would be a
@@ -236,11 +196,8 @@ export function PortalVerifyCard({ slug, autoSend = true }: Props) {
   const handleConfirmIdentity = useCallback(async () => {
     if (!contactId || !spaceId) return;
     setState('otp');
-    const sent = await sendCode(contactId, spaceId);
-    if (sent && slug && typeof window !== 'undefined') {
-      sessionStore.setItem(SENT_KEY_PREFIX + slug, '1');
-    }
-  }, [contactId, spaceId, sendCode, slug]);
+    await sendCode(contactId, spaceId);
+  }, [contactId, spaceId, sendCode]);
 
   const handleVerify = useCallback(async () => {
     setError(null);
@@ -272,9 +229,6 @@ export function PortalVerifyCard({ slug, autoSend = true }: Props) {
       }
       if (typeof window !== 'undefined') {
         sessionStore.setItem('sorento.portalTokenWrittenAt', String(Date.now()));
-        sessionStore.keys()
-          .filter((k) => k.startsWith(SENT_KEY_PREFIX))
-          .forEach((k) => sessionStore.removeItem(k));
       }
       toast.success('Verified.');
       const desiredType = searchParams?.get('type');

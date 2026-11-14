@@ -1008,6 +1008,36 @@ export async function endCrmSession(): Promise<void> {
 }
 
 /**
+ * POST /api/v1/public/portal/session-from-crm (SIGNIN-2FA-NOT-ROLE): a signed-in CRM user opening
+ * their OWN contact's portal gets a verified portal token with no code. Null on any refusal or
+ * failure (the caller shows the verify card instead). A plain fetch, not apiFetch: a refused or
+ * dead CRM session here must never trigger the app-wide sign-out redirect.
+ */
+export async function openPortalFromCrm(
+  slug: string,
+): Promise<{ token: string; expires_at: string } | null> {
+  try {
+    const { getAuthToken } = await import('@/lib/api');
+    const bearer = await getAuthToken();
+    if (!bearer) return null;
+    const res = await fetch('/api/v1/public/portal/session-from-crm', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${bearer}`,
+      },
+      body: JSON.stringify({ slug }),
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { token?: unknown; expires_at?: unknown };
+    if (typeof data?.token !== 'string' || !data.token) return null;
+    return { token: data.token, expires_at: String(data.expires_at ?? '') };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * POST /api/v1/public/portal/logout - revokes the active token server-side
  * (clearing client storage alone would leave a copied token valid).
  */
