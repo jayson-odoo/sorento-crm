@@ -311,6 +311,12 @@ export const POIntakeLinesGrid = React.forwardRef<
   const visibleLines =
     view === 'flagged' ? flagged : view === 'suggested' ? suggested : lines;
   const nothingLeftToShow = flaggedOnly && visibleLines.length === 0;
+
+  // Once the last suggestion is accepted the Suggested view is empty, but a line with no qty
+  // can still hold Confirm: fall back to "Need attention" rather than "Nothing left to fix".
+  React.useEffect(() => {
+    if (view === 'suggested' && suggested.length === 0) setView('flagged');
+  }, [view, suggested.length]);
   // When the filter has emptied itself the way back lives in the all-clear panel, so the
   // toolbar toggle stands down rather than offering the same thing twice.
   const showFilterToggle =
