@@ -90,6 +90,10 @@ const ENTITY_ROUTES: Record<string, { base: string; label: string }> = {
     base: '/procurement-management/new-product-applications',
     label: 'New product application',
   },
+  order_change_notice: {
+    base: '/procurement-management/order-change-notices',
+    label: 'Order change notice',
+  },
 };
 
 type AnyTask = MyPendingSLAItem | TeamPendingItem;
