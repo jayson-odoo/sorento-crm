@@ -1,9 +1,17 @@
 # PLAN: price tag designer feedback (14 Nov)
 
-Status: Plan (size L, LEAD pattern). Slice 1 = bugs 2, 4, 9; slice 2 = items 1, 3, 5-8.
+Status: Build slice 1 (size L, LEAD pattern). Slice 1 = bugs 2, 4, 9 on PR #2414. Slice 2 = items 1, 3, 5-8 on a separate PRICETAG-DESIGNER-FEEDBACK B PR, built on #2349 after it merges.
 
 Owner feedback list (9 items) lives in the lane brief. Discovery (file:line causes), the behaviour
 card and the UAC land here before any code.
+
+## Owner answers (14 Nov 16:25, mock v1 approved "ok")
+
+- Q1 item 3: the accessory photo is saved per main product + accessory link (one nullable column, like product_accessories.image_id).
+- Q2 item 8: show/hide per product on each tag; fallback to the template's Spec icons box if the request has no per-tag override store.
+- Q3 item 1: the inspector font list (uploaded fonts included) and sizes in pt.
+- Q4 items 5, 7: Columns and Rows both set with more items than cells: shrink, then drop with the existing warning.
+- Q5 item 6: picking several images makes one box per image.
 
 ## Discovery (main @ 94f041b8; file:line causes)
 
