@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Send } from 'lucide-react';
+import { Plus, Send } from 'lucide-react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -52,6 +52,16 @@ import { useParkedSendActions } from '../../_shared/hooks/useParkedSendActions';
 import { formatInquiryQty } from '../../_shared/lib/orderInquiryWorklist';
 import { ConsignmentBadge } from '@/app/(protected)/scm/lib/docType';
 import {
+  INQUIRY_TYPE_LABEL,
+  INQUIRY_TYPE_OPTIONS,
+  inquiryTypeLabel,
+  isPreApproval,
+  isSparePartInquiry,
+  sparePartStateLabel,
+  sparePartStateVariant,
+  SPARE_PART_CREATE_PERMISSION,
+} from '../../_shared/lib/sparePartRequest';
+import {
   ORDER_INQUIRY_RESERVE_STATUSES,
   orderInquiryHeaderStatusLabel,
   orderInquiryHeaderStatusVariant,
@@ -63,6 +73,7 @@ import {
 import type {
   OrderInquiryHeader,
   OrderInquiryHeaderListParams,
+  OrderInquiryType,
 } from '../../_shared/types/orderInquiry.types';
 
 /** `PLAN-oi-header-list-detail.md`, AC-HL-02: keyed under the same permission the row
@@ -75,6 +86,10 @@ type StateFilter = 'all' | 'outstanding' | 'completed';
 const ACTION_PERMISSION = 'projects.order_inquiry.action';
 /** The send route's own cap (`HandoverResendIn`). */
 const MAX_RESEND = 50;
+
+function typesFrom(values: string[]): OrderInquiryType[] {
+  return values.filter((v): v is OrderInquiryType => v in INQUIRY_TYPE_LABEL);
+}
 
 function stateFrom(value: string | null): StateFilter {
   return value === 'all' || value === 'completed' ? value : 'outstanding';
@@ -136,6 +151,10 @@ export function OrderInquiryHeadersList() {
   const [projectFilter, setProjectFilter] = useState<string[]>(() =>
     splitText(searchParams.getAll('project')),
   );
+  // SPARE-PART-ORDER-REQUEST (P3): Sales order and / or Spare part request.
+  const [typeFilter, setTypeFilter] = useState<OrderInquiryType[]>(() =>
+    typesFrom(splitMulti(searchParams.get('inquiry_type'))),
+  );
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: Math.max(0, Number(searchParams.get('page') ?? '1') - 1),
     pageSize: Number(searchParams.get('limit') ?? '25'),
@@ -164,6 +183,7 @@ export function OrderInquiryHeadersList() {
     for (const title of projectFilter) next.append('project', title);
     if (reserveFilter) next.set('reserve', reserveFilter);
     if (inquiryNoFilter) next.set('inquiry_no', inquiryNoFilter);
+    if (typeFilter.length) next.set('inquiry_type', joinMulti(typeFilter));
     const nextQuery = next.toString();
     if (nextQuery === searchParams.toString()) return;
     router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname, { scroll: false });
@@ -179,6 +199,7 @@ export function OrderInquiryHeadersList() {
     projectFilter,
     reserveFilter,
     inquiryNoFilter,
+    typeFilter,
     pathname,
     router,
     searchParams,
@@ -192,6 +213,7 @@ export function OrderInquiryHeadersList() {
     projectFilter,
     reserveFilter,
     inquiryNoFilter,
+    typeFilter,
   ]);
   // A tick on a row the new filter excludes is not a selection any more.
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
@@ -205,6 +227,7 @@ export function OrderInquiryHeadersList() {
     projectFilter,
     reserveFilter,
     inquiryNoFilter,
+    typeFilter,
   ]);
   const [resendIds, setResendIds] = useState<string[] | null>(null);
   const closeResend = useCallback(() => setResendIds(null), []);
@@ -218,6 +241,7 @@ export function OrderInquiryHeadersList() {
       project: projectFilter.length ? projectFilter : undefined,
       reserve: reserveFilter || undefined,
       inquiry_no: inquiryNoFilter || undefined,
+      inquiry_type: typeFilter.length ? typeFilter : undefined,
       sort: sorting[0]?.id ?? 'raised_at',
       dir: sorting[0]?.desc ? 'desc' : 'asc',
       page: pagination.pageIndex + 1,
@@ -231,6 +255,7 @@ export function OrderInquiryHeadersList() {
       projectFilter,
       reserveFilter,
       inquiryNoFilter,
+      typeFilter,
       sorting,
       pagination.pageIndex,
       pagination.pageSize,
@@ -264,6 +289,8 @@ export function OrderInquiryHeadersList() {
   const worklistSummary = useOrderInquiryWorklistSummary({});
 
   const canAct = useHasPermission(ACTION_PERMISSION);
+  // SPARE-PART-ORDER-REQUEST: a requester raises a spare part request from this list.
+  const canCreateSparePart = useHasPermission(SPARE_PART_CREATE_PERMISSION);
   const reserveSummary = useReserveStatusSummary();
   const { actions: sendActions, dialog: parkedSendDialog } = useParkedSendActions();
 
@@ -299,6 +326,7 @@ export function OrderInquiryHeadersList() {
           raised_by: raisedByFilter || undefined,
           reserve: reserveFilter || undefined,
           inquiry_no: inquiryNoFilter || undefined,
+          inquiry_type: typeFilter.length ? joinMulti(typeFilter) : undefined,
         },
       );
     if (!projectFilter.length && !agentFilter.length) return base;
@@ -318,6 +346,7 @@ export function OrderInquiryHeadersList() {
     projectFilter,
     reserveFilter,
     inquiryNoFilter,
+    typeFilter,
   ]);
   const detailHref = useCallback(
     (header: OrderInquiryHeader) =>
@@ -352,12 +381,26 @@ export function OrderInquiryHeadersList() {
       },
       {
         accessorKey: 'inquiry_no',
-        header: ({ column }) => <DataGridColumnHeader title="OI no" column={column} />,
+        header: ({ column }) => <DataGridColumnHeader title="Doc no" column={column} />,
         size: 140,
-        meta: { headerTitle: 'OI no', skeleton: <Skeleton className="h-4 w-20" /> },
+        meta: { headerTitle: 'Doc no', skeleton: <Skeleton className="h-4 w-20" /> },
         cell: ({ row }) => (
           <span className="block truncate tabular-nums font-medium" title={row.original.inquiry_no}>
             {row.original.inquiry_no}
+          </span>
+        ),
+      },
+      {
+        // SPARE-PART-ORDER-REQUEST (P3): sorted by the server on `inquiry_type`.
+        id: 'inquiry_type',
+        accessorFn: (row) => inquiryTypeLabel(row),
+        header: ({ column }) => <DataGridColumnHeader title="Type" column={column} />,
+        // D7: "Spare part request" whole, with the sort control beside it.
+        size: 190,
+        meta: { headerTitle: 'Type', skeleton: <Skeleton className="h-4 w-24" /> },
+        cell: ({ row }) => (
+          <span className="block truncate" title={inquiryTypeLabel(row.original)}>
+            {inquiryTypeLabel(row.original)}
           </span>
         ),
       },
@@ -516,15 +559,21 @@ export function OrderInquiryHeadersList() {
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
         size: 130,
         meta: { headerTitle: 'Status' },
-        cell: ({ row }) => (
-          <Badge
-            variant={orderInquiryHeaderStatusVariant(row.original.status)}
-            appearance="light"
-            size="md"
-          >
-            {orderInquiryHeaderStatusLabel(row.original.status)}
-          </Badge>
-        ),
+        cell: ({ row }) =>
+          // A spare part request before purchasing sees it reads its approval state.
+          isSparePartInquiry(row.original) && isPreApproval(row.original.state) ? (
+            <Badge variant={sparePartStateVariant(row.original.state)} appearance="light" size="md">
+              {sparePartStateLabel(row.original.state)}
+            </Badge>
+          ) : (
+            <Badge
+              variant={orderInquiryHeaderStatusVariant(row.original.status)}
+              appearance="light"
+              size="md"
+            >
+              {orderInquiryHeaderStatusLabel(row.original.status)}
+            </Badge>
+          ),
       },
     ],
     [canAct],
@@ -552,7 +601,8 @@ export function OrderInquiryHeadersList() {
     (agentFilter.length ? 1 : 0) +
     (projectFilter.length ? 1 : 0) +
     (reserveFilter ? 1 : 0) +
-    (inquiryNoFilter ? 1 : 0);
+    (inquiryNoFilter ? 1 : 0) +
+    (typeFilter.length ? 1 : 0);
   const isFiltered = Boolean(searchQuery) || filtersActive > 0;
 
   // AC-HL-07: Outstanding empty is a work-queue empty state with a way out; All empty is
@@ -612,6 +662,16 @@ export function OrderInquiryHeadersList() {
             }
             secondaryActions={sendActions}
             secondaryActionsAsMenu
+            primaryAction={
+              canCreateSparePart ? (
+                <Button asChild>
+                  <Link href="/procurement-management/spare-part-requests/new">
+                    <Plus className="size-4" aria-hidden />
+                    Create
+                  </Link>
+                </Button>
+              ) : undefined
+            }
             bulkActions={
               canAct
                 ? [
@@ -658,6 +718,19 @@ export function OrderInquiryHeadersList() {
               ],
               content: (
                 <div className="space-y-4">
+                  <div>
+                    <Label htmlFor="oi-header-type" className="mb-1 block">
+                      Type
+                    </Label>
+                    <SearchableMultiSelect
+                      id="oi-header-type"
+                      value={typeFilter}
+                      onChange={(value) => setTypeFilter(typesFrom(value))}
+                      options={INQUIRY_TYPE_OPTIONS}
+                      placeholder="Any type"
+                      clearable
+                    />
+                  </div>
                   <div>
                     <Label htmlFor="oi-header-reserve" className="mb-1 block">
                       Reserve
@@ -735,6 +808,7 @@ export function OrderInquiryHeadersList() {
                           setProjectFilter([]);
                           setReserveFilter('');
                           setInquiryNoFilter('');
+                          setTypeFilter([]);
                         }}
                       >
                         Clear filters

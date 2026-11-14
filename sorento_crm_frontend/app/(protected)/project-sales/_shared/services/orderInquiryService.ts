@@ -906,6 +906,7 @@ export async function listOrderInquiryHeaders(
       project: params.project,
       reserve: params.reserve,
       inquiry_no: params.inquiry_no,
+      inquiry_type: params.inquiry_type,
     },
   );
   const response = await apiFetch(`${BASE}/order-inquiry-headers?${search.toString()}`);
