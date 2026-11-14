@@ -208,6 +208,27 @@ def scope_for_snapshot_row(db: Session, snapshot_id: str, row_id: str) -> PoLink
 NOT_IN_AUTOCOUNT = "Not in AutoCount yet"
 
 
+def _crm_copy_of(db: Session, line: Optional[SalesOrderLine]) -> Dict[str, Any]:
+    """The CRM copy's own values for a skipped row (nulls when the row has no CRM SO line)."""
+    out: Dict[str, Any] = {k: None for k in ("so_number", "line_no", "location_code", "delivery_date", "open_qty")}
+    if line is None:
+        return out
+    order = db.query(SalesOrder).filter(SalesOrder.id == line.sales_order_id).first()
+    code = (
+        db.query(Warehouse.warehouse_code).filter(Warehouse.id == line.warehouse_id).scalar()
+        if line.warehouse_id else None
+    )
+    open_qty = db.query(demand_qty()).select_from(SalesOrderLine).filter(SalesOrderLine.id == line.id).scalar()
+    out.update(
+        so_number=order.so_number if order is not None else None,
+        line_no=line.line_no,
+        location_code=code,
+        delivery_date=_iso(line.required_date),
+        open_qty=float(open_qty) if open_qty is not None else None,
+    )
+    return out
+
+
 def scope_for_oi_rows(db: Session, row_ids: Sequence[str]) -> PoLinkScope:
     """Ticked Order Inquiry rows -> their AutoCount SO lines (any products), the rest named."""
     from app.models.project_so import OrderInquiry, OrderInquiryRow, ProjectSalesOrderLine
@@ -224,6 +245,11 @@ def scope_for_oi_rows(db: Session, row_ids: Sequence[str]) -> PoLinkScope:
         str(l.id): l
         for l in (db.query(SalesOrderLine).filter(SalesOrderLine.id.in_(sorted(core_ids))).all() if core_ids else [])
     }
+    crm_lines = {
+        str(l.id): l
+        for l in (db.query(SalesOrderLine).filter(SalesOrderLine.id.in_(sorted(core_ids))).all() if core_ids else [])
+        if _keys(l.source_ref) is None
+    }
     ids: set = set()
     products: set = set()
     skipped: List[Dict[str, Any]] = []
@@ -231,7 +257,10 @@ def scope_for_oi_rows(db: Session, row_ids: Sequence[str]) -> PoLinkScope:
     for row, inquiry_no, core_id in rows:
         line = lines.get(str(core_id)) if core_id else None
         if line is None or _keys(line.source_ref) is None:
-            skipped.append({"inquiry_no": inquiry_no, "item_code": row.item_code, "reason": NOT_IN_AUTOCOUNT})
+            skipped.append({
+                "inquiry_no": inquiry_no, "item_code": row.item_code, "reason": NOT_IN_AUTOCOUNT,
+                **_crm_copy_of(db, crm_lines.get(str(core_id)) if core_id else None),
+            })
             continue
         ids.add(str(line.id))
         products.add(str(line.product_id))
@@ -268,27 +297,6 @@ class PoLinkService:
 
     def _company_code(self, company_id: Optional[str]) -> str:
         return _company_code_of(self.db, company_id)
-
-    def capabilities(self, company_code: str) -> Dict[str, Dict[str, Any]]:
-        """Each action enabled or not, with the plain reason, read from SS now."""
-        try:
-            body = FoundryxAutocountClient(self.db).write_capabilities(company_code)
-        except FoundryxPullError:
-            return {a: {"enabled": False, "reason": UNREACHABLE} for a in ACTIONS}
-        entries = {
-            e.get("op"): e
-            for e in (body.get("capabilities") or [])
-            if isinstance(e, dict) and e.get("kind") == _PO_KIND
-        }
-        out = {}
-        for action in ACTIONS:
-            entry = entries.get(action)
-            if entry is not None and entry.get("enabled") is True:
-                out[action] = {"enabled": True, "reason": None}
-            else:
-                code = (entry or {}).get("reasonCode")
-                out[action] = {"enabled": False, "reason": _REASONS.get(code, WAITING)}
-        return out
 
     def _open_lines(self, product_id: str):
         return (
@@ -353,7 +361,7 @@ class PoLinkService:
             .all()
         }
         return {
-            "capabilities": self.capabilities(self.scope.company_code),
+            "capabilities": {a: {"enabled": True, "reason": None} for a in ACTIONS},
             "po_lines": po_lines,
             "so_books": so_books,
             "so_products": so_products,

@@ -292,6 +292,11 @@ class OiPoLinkSkipped(BaseModel):
     inquiry_no: Optional[str] = None
     item_code: Optional[str] = None
     reason: str
+    so_number: Optional[str] = None
+    line_no: Optional[int] = None
+    location_code: Optional[str] = None
+    delivery_date: Optional[str] = None
+    open_qty: Optional[float] = None
 
 
 class OiPoLinkOptions(PoLinkOptions):
