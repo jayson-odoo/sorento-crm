@@ -1,6 +1,6 @@
 # PLAN: Dealer access - customer names on chips; Add people also makes the Respond.io contact
 
-Status: Plan (behaviour card filed as crew-ask, waiting on answers). Track: M, LEAD pattern (external write to
+Status: Plan (behaviour card v3 filed on the PR as crew-ask 6874477083, waiting on answers Q1-Q5). Track: M, LEAD pattern (external write to
 Respond.io, so security-reviewer joins).
 
 Lane: DEALER-ACCESS-NAMES. Follows `PLAN-dealer-access-screen-09nov.md` (#2294) and `PLAN-dealer-access-portal-09nov.md`
@@ -45,4 +45,9 @@ creating here also create like a contact in respond and grant access to this con
 | Respond.io find-or-create | `respond_io_tasks.ensure_respond_contact` | reuse; extend with an integration log row |
 | Respond.io log | `IntegrationLogService` (`integration_service.py:866`) | reuse |
 
-Rest of the plan follows the crew's answers to the behaviour card.
+## Owner follow-ups (14 Nov 16:25, 16:30)
+
+Company multi-select in Add people; no silent add for a phone that already has access ("already has access" + Edit
+link, nothing written); drop "also another account"; a default, removable "My customers" filter over a wider list;
+a multi-select Customer filter (server search by name and code). Rules R1-R8 and questions Q1-Q5 are in card v3 on
+the PR. The rest of the plan follows the answers.
