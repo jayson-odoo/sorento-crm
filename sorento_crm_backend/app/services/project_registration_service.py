@@ -680,11 +680,14 @@ def _missing(values: Dict[str, Any]) -> List[str]:
 
 
 def _linked_user_id(db: Session, contact_id: Optional[str]) -> Optional[str]:
+    """The staff CRM user linked to the contact, or None. A dealer's own user (roles all non-staff,
+    `user_service.only_non_staff_roles`) is not one."""
     if not contact_id:
         return None
     from app.models.user import User
+    from app.services.user_service import only_non_staff_roles
 
-    return db.query(User.id).filter(User.respond_contact_id == str(contact_id)).scalar()
+    return db.query(User.id).filter(User.respond_contact_id == str(contact_id), ~only_non_staff_roles()).scalar()
 
 
 def portal_submit(

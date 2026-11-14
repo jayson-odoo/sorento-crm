@@ -1,0 +1,100 @@
+[
+  {
+    "id": "OWN1",
+    "message": "i want to report this is not the answer i want to the IT team",
+    "previous_response": "Okay. What would you like to check?",
+    "contact": "staff",
+    "expect": {"domain_hint": "ideate", "suggested_team": null}
+  },
+  {
+    "id": "OWN2",
+    "message": "i want to report this is not the answer i want to the IT team",
+    "previous_response": "(none)",
+    "contact": "staff",
+    "expect": {"domain_hint": "ideate", "suggested_team": null}
+  },
+  {
+    "id": "OWN3",
+    "message": "i want to report to the IT team",
+    "previous_response": "(none)",
+    "contact": "staff",
+    "expect": {"domain_hint": "ideate", "suggested_team": null}
+  },
+  {
+    "id": "G05",
+    "message": "hi good morning, the sales order list keeps loading and never opens",
+    "previous_response": "(none)",
+    "contact": "staff",
+    "expect": {"domain_hint": "ideate", "suggested_team": null}
+  },
+  {
+    "id": "G01",
+    "message": "the stock page shows a blank screen on my phone",
+    "previous_response": "(none)",
+    "contact": "dealer",
+    "expect": {"domain_hint": "ideate", "suggested_team": null}
+  },
+  {
+    "id": "G03",
+    "message": "I want to report a problem",
+    "previous_response": "(none)",
+    "contact": "dealer",
+    "expect": {"domain_hint": "ideate", "suggested_team": null}
+  },
+  {
+    "id": "G08",
+    "message": "the basin we delivered to the customer arrived cracked",
+    "previous_response": "(none)",
+    "contact": "dealer",
+    "expect": {"domain_hint": "portal_link", "message_type_not": "request_for_help"}
+  },
+  {
+    "id": "G09",
+    "message": "get me IT support",
+    "previous_response": "(none)",
+    "contact": "staff",
+    "expect": {"message_type": "request_for_help"}
+  },
+  {
+    "id": "GD2",
+    "message": "my order shows the wrong status",
+    "previous_response": "(none)",
+    "contact": "dealer",
+    "expect": {"domain_hint": "order", "message_type_not": "request_for_help", "domain_hint_not": "ideate"}
+  },
+  {
+    "id": "G10",
+    "message": "how many SRTWC8152 do we have in stock",
+    "previous_response": "(none)",
+    "contact": "staff",
+    "expect": {"domain_hint": "inventory"}
+  },
+  {
+    "id": "GH1",
+    "message": "can someone call me about my quotation",
+    "previous_response": "(none)",
+    "contact": "staff",
+    "expect": {"message_type": "request_for_help", "domain_hint_not": "ideate"}
+  },
+  {
+    "id": "L2",
+    "message": "hi, the AI bot gave me the wrong stok number for my oder yesterday",
+    "previous_response": "(none)",
+    "contact": "staff",
+    "expect": {"domain_hint": "ideate", "suggested_team": null}
+  },
+  {
+    "id": "L3",
+    "message": "Salam, sistem CRM tak boleh buka page quotation, keluar eror",
+    "previous_response": "(none)",
+    "contact": "staff",
+    "expect": {"domain_hint": "ideate", "suggested_team": null}
+  },
+  {
+    "id": "A222",
+    "message": "SRTWC 8366-S (300MM) picture",
+    "previous_response": "(none)",
+    "contact": "staff",
+    "expect": {"domain_hint": "product_attachment", "entity_raw_contains": "8366"}
+  }
+]

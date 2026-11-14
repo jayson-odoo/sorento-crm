@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 TOOL_NAME = "crm_ideation_turn"
 #: The words today's panel answers an idea with (`ai_assistant_service._serve_ideate_redirect`).
-PANEL_IDEAS_REPLY = "Love the idea! You can capture and track product ideas on the Ideas board - open it here: /ideas"
+PANEL_IDEAS_REPLY = "Thanks! You can log and track feedback on the Ideas board - open it here: /ideas"
 
 ASK_NAME = "ideation"
 ASK_QUESTION = "What is the idea? Tell me the problem or what you would like built."
@@ -49,7 +49,9 @@ def _resolve_problem(_db: Any, word: str, _extras: dict[str, Any]) -> rf.Resolve
 #: The one required field is the idea. The core turn decides (`ask_idea`) and speaks in the
 #: user's language. The question, `cancelled` and `give_up` texts are the helper's required
 #: fallbacks and are never shown: the lane never passes a reply to `rf.collect`, so a "cancel"
-#: reply reaches the core as an answer and gets the core's own give-up line.
+#: reply reaches the core as an answer. The core decides: an issue ask is ended by a cancel and files
+#: nothing (`cancelled`), and otherwise never gives up (it files the user's words); an idea ask that is
+#: answered with no idea gets the core's give-up line.
 IDEATION_ASK = rf.register(rf.AskType(
     name=ASK_NAME,
     fields=(rf.FieldSpec(

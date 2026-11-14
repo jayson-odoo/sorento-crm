@@ -100,7 +100,7 @@ def test_AC8_the_find_label_does_not_claim_the_whole_crm():
 def test_AC8_the_list_has_no_repeats_and_keeps_the_existing_labels():
     labels = router_labels()
     assert len(labels) == len(set(labels))
-    for existing in ("your customer asks", "approve or reject a purchase request", "your ideas"):
+    for existing in ("your customer asks", "approve or reject a purchase request", "your feedback"):
         assert existing in labels
 
 

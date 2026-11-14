@@ -127,12 +127,12 @@ async function inFilters(user: ReturnType<typeof userEvent.setup>, option: strin
 }
 const shown = () => ['A', 'B', 'C', 'D'].filter((k) => screen.queryByText(`ZZT idea ${k}`) !== null).join('');
 
-describe('Ideas - multi Status, Submitter and Channel filters', () => {
-  it('are three multi controls', async () => {
+describe('Ideas - multi Status, Submitter, Channel and Type filters', () => {
+  it('are four multi controls (Type added by WA-COMPLAINT-INTAKE)', async () => {
     const user = userEvent.setup();
     await open(user);
     const boxes = await screen.findAllByRole('listbox');
-    expect(boxes).toHaveLength(3);
+    expect(boxes).toHaveLength(4);
     for (const box of boxes) expect(box.hasAttribute('multiple')).toBe(true);
   });
 

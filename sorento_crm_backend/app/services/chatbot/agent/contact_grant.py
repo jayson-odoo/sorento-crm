@@ -368,23 +368,10 @@ def _find_contact(db, phone: str):
 
 
 def _is_staff(db, phone: str, contact_id: str | None) -> bool:
-    """Is this phone staff (UAC A9, A16)? A CRM user's contact number (by digits, with or without the leading 6), or,
-    for a contact already in the CRM, a user's or a sales agent's own contact. Never granted dealer access."""
-    from sqlalchemy import func
+    """Is this phone staff (UAC A9, A16)? The core rule, `user_service.is_staff_phone`."""
+    from app.services.user_service import is_staff_phone
 
-    from app.models.base import company_scope
-    from app.models.sales_agent import SalesAgent
-    from app.models.user import User
-
-    full = phone.lstrip("+")
-    digits = func.regexp_replace(User.contact_number, r"\D", "", "g")
-    with company_scope(db, None):
-        if db.query(User.id).filter(digits.in_({full, full[1:]})).first() is not None:
-            return True
-        return contact_id is not None and (
-            db.query(User.id).filter(User.respond_contact_id == contact_id).first() is not None
-            or db.query(SalesAgent.id).filter(SalesAgent.contact_id == contact_id).first() is not None
-        )
+    return is_staff_phone(db, phone, contact_id)
 
 
 def plan(db, user: dict, args: dict) -> dict:

@@ -47,7 +47,7 @@ CRM = "https://crm.zzt.example"
 SIMILAR_PATH = "/ideation/intake/ideas/similar-own"
 CREATE_PATH = "/ideation/intake/ideas"
 UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I)
-OWN_ONLY_MSG = "You can only edit your own ideas."
+OWN_ONLY_MSG = "You can only edit your own feedback."
 
 PROBLEM = "The stock list is too long to scroll on my phone"
 FIELDS = {
@@ -248,9 +248,9 @@ def test_the_registry_names():
     for name in (CREATE, UPDATE, LIST):
         entry = writes.WRITES.get(name) or writes.USER_READS.get(name)
         assert entry.user_permission == BOARD_VIEW
-    assert tools.TOOL_LABELS[CREATE] == "record a suggestion or wish for what the system should have or do, an idea or a feature request"
-    assert tools.TOOL_LABELS[UPDATE] == "change one of your ideas"
-    assert tools.TOOL_LABELS[LIST] == "your ideas"
+    assert tools.TOOL_LABELS[CREATE] == "record feedback: a wish or feature request, or a problem with the CRM system or the assistant"
+    assert tools.TOOL_LABELS[UPDATE] == "change your feedback"
+    assert tools.TOOL_LABELS[LIST] == "your feedback"
 
 
 # ------------------------------------------------------------------ AC-R2-1 exposure
@@ -473,7 +473,7 @@ def test_AC_R2_6_the_reply_names_the_number_the_link_and_the_gaps_and_no_test_no
     assert f"{CRM}/ideas/{idea_id}" in reply
     for label in ("Desired outcome", "Use cases", "Current workaround"):
         assert label in reply
-    assert "test idea" not in reply.lower()  # S6: a real idea
+    assert "test feedback" not in reply.lower()  # S6: a real idea
 
 
 def test_AC_R2_6_a_create_with_no_idea_number_never_says_none(db, ss):

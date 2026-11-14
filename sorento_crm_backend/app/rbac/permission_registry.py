@@ -810,6 +810,11 @@ PERMISSION_REGISTRY.extend([
         "name": "Manage ideas",
         "description": "Triage ideas: move status, edit, merge, reorder, archive, delete and promote to a business requirement.",
     },
+    {
+        "slug": "ideation.ideas.submit",
+        "name": "Submit ideas and issues",
+        "description": "File a feature request or an issue through the WhatsApp assistant. Opens no Ideas page.",
+    },
 ])
 
 

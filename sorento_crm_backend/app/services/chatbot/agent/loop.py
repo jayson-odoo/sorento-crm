@@ -1056,7 +1056,10 @@ def _propose(
     return ToolResult(
         "proposed",
         data=data,
-        message="Proposed, not done. The user must confirm in a later message.",
+        message=(
+            "Proposed, not done. In this reply, ask the user to confirm in your own words: say what will change,"
+            " then ask them to reply yes or say what to change."
+        ),
     )
 
 
@@ -1097,7 +1100,7 @@ def _decide(db, ctx, name: str, args: Any, turn_id: str, notes: list[str], waiti
         message = (
             "The ticket link is added to your reply automatically. Do not write it."
             if tools == {writes.CREATE_TICKET}
-            else "The idea's number and link are added to your reply automatically. Do not write them."
+            else "The feedback's number and link are added to your reply automatically. Do not write them."
         )
     return ToolResult(
         "ok", data={"status": outcome.status, "reply_text": reply_text, "steps": outcome.steps}, message=message
@@ -2638,7 +2641,8 @@ def _run(
             logger.warning("agent: expiring the previous proposal failed", exc_info=True)
             db.rollback()
     if status != "failed" and steps:
-        # After verification: the block is built by code from the stored steps, so its figures are not flagged.
+        # After verification. A normal proposal reply is the model's own text (owner 14 Nov): no confirm block is
+        # appended; the dealer-flow card and a batch table are still built by code from the stored steps.
         try:
             stored = actions.store_proposal(
                 db, ctx, conversation_id=conversation_id, turn_id=turn_id, steps=steps, action_id=action_id
@@ -2649,8 +2653,6 @@ def _run(
                 reply = _batch_reply(stored.steps, batch_skipped, batch_waiting, confirm_notes)
             elif dealer_flow:
                 reply = proposal_block(lines)  # the card alone (review round S6)
-            else:
-                reply = f"{reply}\n\n{proposal_block(lines)}"
         except Exception:  # noqa: BLE001 - the turn still closes
             logger.warning("agent: storing the proposal failed", exc_info=True)
             db.rollback()

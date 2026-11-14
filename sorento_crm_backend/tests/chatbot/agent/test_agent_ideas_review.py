@@ -451,7 +451,7 @@ def test_AC_RV_2_a_console_confirm_of_an_idea_keeps_its_full_reply(db, ss):
     outcome = confirm(db, w, row)
     assert "IDEA-0184" in outcome.reply_text and f"{CRM}/ideas/{idea_id}" in outcome.reply_text
     assert NOTE_TEXT in outcome.reply_text
-    assert "test idea" not in outcome.reply_text.lower()
+    assert "test feedback" not in outcome.reply_text.lower()
 
 
 # ------------------------------------------------------------------ AC-RC-1 the model never receives the note or the link
@@ -638,7 +638,16 @@ def test_AC_RC_7_a_value_of_only_format_characters_counts_as_not_given(db, ss, f
     _, row = store(db, w, [(CREATE, args)])
     confirm(db, w, row)
     (call,) = posts(ss, CREATE_PATH)
-    assert not call["json"].get("title") if field == "title" else not call["json"].get("use_cases")
+    if field == "title":
+        # Round 13 (owner, 14 Nov: a title is always set): a title of only format characters is not given, so the
+        # shared builder falls back to the problem's own words; the format characters never reach ss.
+        from app.services.ideation_extractor import normalise_title
+
+        title = call["json"].get("title")
+        assert title == normalise_title("Plain problem")
+        assert "\u200b" not in title and "\u202e" not in title
+    else:
+        assert not call["json"].get("use_cases")
 
 
 def test_AC_RC_7_a_problem_of_only_format_characters_is_invalid(db, ss):
@@ -736,7 +745,10 @@ def test_AC_RC_11_the_update_tool_tells_the_model_to_use_only_what_the_user_said
 
 # ------------------------------------------------------------------ AC-RC-12 the proposed message stays as it was
 
-PROPOSED_MESSAGE = "Proposed, not done. The user must confirm in a later message."
+PROPOSED_MESSAGE = (
+    "Proposed, not done. In this reply, ask the user to confirm in your own words: say what will change,"
+    " then ask them to reply yes or say what to change."
+)  # owner 14 Nov 20:05: the agent writes its own confirm question
 
 
 def _proposed_message(db, w, call):

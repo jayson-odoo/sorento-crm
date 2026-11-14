@@ -131,8 +131,12 @@ def _who(db: Session, contact_respond_id: str) -> dict[str, Any]:
         .order_by(_LINKS.c.is_primary.desc(), _LINKS.c.id.asc())
         .limit(1)
     ).first()
+    from app.services.user_service import only_non_staff_roles
+
+    # A dealer's own linked user (roles all non-staff) is not staff. Users and roles are not
+    # company-owned, so the rule reads the same on this unscoped session.
     is_staff = db.execute(
-        select(_USERS.c.id).where(_USERS.c.respond_contact_id == contact_id).limit(1)
+        select(_USERS.c.id).where(_USERS.c.respond_contact_id == contact_id, ~only_non_staff_roles()).limit(1)
     ).first()
     if is_staff is not None:
         audience, contact_type = "staff", "office"

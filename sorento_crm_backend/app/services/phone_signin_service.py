@@ -94,13 +94,17 @@ def mask(num: str) -> Optional[str]:
 
 def _eligible_user_clauses() -> tuple:
     """Who may sign in by phone or by portal link: ACTIVE, not trashed, not an
-    integration, with a linked WhatsApp contact. Shared by :func:`find_eligible`
+    integration, with a linked WhatsApp contact, and not a dealer's own user whose
+    roles are all non-staff (WA-COMPLAINT-INTAKE D-7). Shared by :func:`find_eligible`
     and :func:`eligible_user_for_contact` so the two cannot drift."""
+    from app.services.user_service import only_non_staff_roles
+
     return (
         User.status == "ACTIVE",
         User.is_trashed.is_(False),
         User.is_integration.is_(False),
         User.respond_contact_id.isnot(None),
+        ~only_non_staff_roles(),
     )
 
 

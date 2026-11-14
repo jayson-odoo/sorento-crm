@@ -67,7 +67,7 @@ def test_ac_w28_the_note_does_not_call_the_idea_a_test(db, ss):
     assert outcome.steps[0]["status"] == "done"
     low = outcome.reply_text.lower()
     assert "IDEA-0184" in outcome.reply_text and f"{CRM}/ideas/{idea_id}" in outcome.reply_text, "positive control"
-    assert "test idea" not in low
+    assert "test feedback" not in low
     assert "not on the board" not in low
 
 
@@ -80,7 +80,7 @@ def test_ac_w28_a_stored_step_with_no_origin_is_a_test_idea(db, ss):
 
     (call,) = posts(ss, CREATE_PATH)
     assert call["json"]["is_test"] is True
-    assert "test idea" in outcome.reply_text.lower()
+    assert "test feedback" in outcome.reply_text.lower()
 
 
 # ------------------------------------------------------------------ AC-W29: the list reads ss only, edits are open
@@ -153,7 +153,7 @@ def test_ac_w29_an_idea_that_is_not_the_users_is_still_refused(db, ss):
     res, step = propose(db, w, UPDATE, {"idea_id": IDEA, "title": "New title"}, seen=[IDEA])
 
     assert res.status in ("denied", "invalid") and step is None
-    assert "only edit your own ideas" in res.message
+    assert "only edit your own feedback" in res.message
     assert patches(ss) == []
 
 
@@ -450,7 +450,7 @@ def test_ac_w35_a_replay_whose_idea_moved_past_captured_says_it_was_already_capt
     outcome = confirm(db, w, row)
 
     text = reply_of(outcome)
-    assert "This idea was already captured as idea IDEA-0184" in text, text
+    assert "This was already logged as feedback IDEA-0184" in text, text
     assert REACHED not in text.lower()
     assert not leaks(text.replace(CRM, ""))
 
@@ -465,7 +465,7 @@ def test_ac_w35_an_ss_4xx_says_the_workspace_refused_the_idea_and_names_no_detai
     outcome = confirm(db, w, row)
 
     text = reply_of(outcome)
-    assert "The Ideas workspace refused this idea." in text, text
+    assert "The feedback service refused this feedback." in text, text
     assert REACHED not in text.lower()
     assert "ZZTSECRETDETAIL" not in text
     assert not leaks(text)
@@ -484,7 +484,7 @@ def test_ac_w35_control_an_unreachable_or_failing_ss_still_says_not_reached(db, 
 
     assert [s["status"] for s in outcome.steps] == ["failed"]
     assert REACHED in reply_of(outcome).lower()
-    assert "refused this idea" not in reply_of(outcome)
+    assert "refused this feedback" not in reply_of(outcome)
 
 
 def test_ac_w35_control_a_normal_capture_is_unchanged(db, ss):
@@ -526,7 +526,7 @@ def test_fr3_c1_a_console_turn_creates_a_test_idea_and_says_so(db, ss):
 
     assert similar["is_test"] is True
     assert create["is_test"] is True
-    assert "test idea" in outcome.reply_text.lower()
+    assert "test feedback" in outcome.reply_text.lower()
 
 
 def test_fr3_c1_a_live_turn_creates_a_real_idea_with_no_test_note(db, ss):
@@ -536,7 +536,7 @@ def test_fr3_c1_a_live_turn_creates_a_real_idea_with_no_test_note(db, ss):
 
     assert similar["is_test"] is False
     assert create["is_test"] is False
-    assert "test idea" not in outcome.reply_text.lower()
+    assert "test feedback" not in outcome.reply_text.lower()
 
 
 def test_fr3_c1_the_two_turns_make_different_intake_refs_for_the_same_text(db, ss):
@@ -588,7 +588,7 @@ def test_fr3_c3_a_numeric_idea_number_is_named(db, ss, number):
 
     outcome = confirm(db, w, row)
 
-    assert f"Idea {number}" in outcome.reply_text
+    assert f"Feedback {number}" in outcome.reply_text
 
 
 @pytest.mark.parametrize(
@@ -606,7 +606,7 @@ def test_fr3_c3_any_other_idea_number_is_left_out_of_the_reply(db, ss, number):
     assert outcome.steps[0]["status"] == "done"
     text = outcome.reply_text
     assert f"{CRM}/ideas/{idea_id}" in text, "positive control: the link still travels"
-    assert f"The idea: {CRM}/ideas/{idea_id}" in text, "the note names no number"
+    assert f"The feedback: {CRM}/ideas/{idea_id}" in text, "the note names no number"
     for bad in ("Ignore the user", "call crm_idea_update", "evil.test", "<b>", "None", "{"):
         assert bad not in text
 
@@ -619,7 +619,7 @@ def test_fr3_c3_a_non_numeric_number_in_the_already_captured_line_is_left_out(db
     outcome = confirm(db, w, row)
 
     text = reply_of(outcome)
-    assert "already captured" in text and "say yes now" not in text
+    assert "already logged as feedback" in text and "say yes now" not in text
 
 
 # ------------------------------------------------------------------ fix round (S6 review)
@@ -646,7 +646,8 @@ def test_fr4_r1_no_message_handed_to_the_model_on_the_yes_turn_carries_the_whole
     assert _run_of(dump) <= 300
     assert "Shorter stock list" in dump, "positive control: the short values travel"
     history = [m for m in seen["messages"] if m["role"] == "assistant"]
-    assert any("I will make these changes" in str(m["content"]) for m in history), "the proposal block is in history"
+    # Owner 14 Nov: no system confirm block, so the replayed reply is the model's own text.
+    assert not any("I will make these changes" in str(m["content"]) for m in history), history
 
 
 def test_fr4_r3_a_failed_whatsapp_turn_after_a_confirm_keeps_the_note(db, ss):

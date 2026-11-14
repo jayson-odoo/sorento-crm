@@ -85,11 +85,33 @@ portal link.
 In the Chatbot Console these requests are a test: the yes shows what would happen and the reply
 ends with *"Test turn: nothing was sent."* Nothing is created, changed or deleted.
 
-## Ideas sent by staff over WhatsApp
+## Feature requests and issues sent over WhatsApp
 
-A linked staff contact can log an idea through the agent. The agent shows the idea and asks for a
-yes first. On a WhatsApp message the confirmed idea is a real idea on the Ideas board. An idea
-made from a Chatbot Console turn stays a test idea and does not appear on the board.
+Staff (salespeople included) and dealers can send a feature request, or report an issue (something
+wrong with the CRM or the AI assistant). The assistant works out which one it is from your message.
+Write in English, Malay or Chinese and it replies in the same language. For staff, the agent shows
+the item and asks for a yes first. On a WhatsApp message the confirmed item is a real item on the
+**Ideas** board. One made from a Chatbot Console turn stays a test item and does not appear on the board.
+
+On WhatsApp the assistant calls every item **feedback** (Malay *maklum balas*, Chinese *反馈*) and names its
+type: **Problem report** for an issue, **Feature request** for a wish.
+
+* If an issue has no description, the assistant asks *"What went wrong? Tell me what you saw and where."*
+  It asks once: if your answer still does not say what went wrong, it logs the issue with your own words.
+* When you say the assistant's last answer was wrong or not what you wanted, that is enough to log an
+  issue, and the item keeps the question and the answer you complained about.
+* Screenshots or photos you sent in the 30 minutes before, and did not already send with an earlier
+  item, are attached to the item (up to 10). If a photo cannot be attached, the item is still logged.
+* The reply starts with *"Your feedback has been logged: Problem report - "* (or *Feature request*) and
+  the title, then the number on its own line (for example *Number: IDEA-0123*), the photo count when
+  there are photos, and a link for staff.
+* A complaint about a product or an order still gets the complaint form link, not this.
+
+**Dealers:** the first time a dealer files, the system creates the dealer's own CRM user. The dealer
+cannot sign in to the CRM with it, and gets WhatsApp updates on the item's status. Later items use
+the same user, and a dealer's items count as theirs on the board.
+
+See [Ideas board: feature requests and issues](./ideas-board.md) for the **Type** column and filter.
 
 ## When the agent cannot answer
 
@@ -109,5 +131,6 @@ agent made as made by the contact, through the agent.
 ## See also
 
 * [Chatbot Console and Agent mode](./chatbot-console-agent-mode.md)
+* [Ideas board: feature requests and issues](./ideas-board.md)
 * [Let the AI answer from uploaded documents](./ai-reads-uploaded-documents.md)
 * [Escalate a task or enquiry](../_shared/escalate-a-task-or-enquiry.md)

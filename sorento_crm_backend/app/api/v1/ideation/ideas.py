@@ -20,15 +20,25 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import require_permission, require_permission_with_api_key
 from app.services.error_handler import AppException
+from app.services.submission_types import known_type, ss_fields_for_type
 from app.services.user_service import UserPermissionService
-from app.services.ideation_gateway_service import UNREACHABLE, call_ss, relay, relay_masked, require_uuid, ss_path
+from app.services.ideation_gateway_service import (
+    UNREACHABLE,
+    call_ss,
+    relay,
+    relay_masked,
+    require_uuid,
+    ss_path,
+    upload_idea_attachment,
+)
 
 VIEW = "ideation.board.view"
 MANAGE = "ideation.ideas.manage"
 #: ss's own upload ceiling (ss `routers/embed.py`); read at most one byte past it.
 ATTACHMENT_CAP_BYTES = 25 * 1024 * 1024
-#: The idea fields a create or an edit may carry to ss. The last three are legacy (retired from the
-#: CRM UI, still forwardable for old clients and the chatbot).
+#: The idea fields a create or an edit may carry to ss. `proposedSolution`, `impact` and `department`
+#: are legacy (retired from the CRM UI, still forwardable for old clients and the chatbot). The
+#: submission `type` is not here: it crosses only through `ss_fields_for_type`.
 IDEA_FIELDS = (
     "title",
     "problem",
@@ -91,7 +101,7 @@ def _masked_comment(resp: httpx.Response) -> Response:
 
 @router.get("/ideas")
 def list_ideas(request: Request, user: dict = _read, db: Session = Depends(get_db)):
-    params = {k: v for k, v in request.query_params.items() if k in ("filter", "search")}
+    params = {k: v for k, v in request.query_params.items() if k in ("filter", "search", "type")}
     if request.query_params.get("mine") == "true":
         params["mine"] = "true"
     return _forward(db, user, "GET", ss_path("embed", "ideas"), params=params)
@@ -135,7 +145,8 @@ def list_comments(idea_id: UUID, user: dict = _read, db: Session = Depends(get_d
 
 @router.post("/ideas", status_code=201)
 def create_idea(payload: dict = Body(...), user: dict = _write, db: Session = Depends(get_db)):
-    body = _pick(payload, IDEA_FIELDS)
+    # An unknown type creates an idea (nothing sent), as every other caller of the mapping.
+    body = {**_pick(payload, IDEA_FIELDS), **ss_fields_for_type(payload.get("type"))}
     return _forward(db, user, "POST", ss_path("embed", "ideas"), json=body)
 
 
@@ -155,8 +166,7 @@ def upload_attachment(
     content = file.file.read(ATTACHMENT_CAP_BYTES + 1)
     if len(content) > ATTACHMENT_CAP_BYTES:
         raise AppException(413, "File is too large.", code="PAYLOAD_TOO_LARGE")
-    files = {"file": (file.filename or "file", content, file.content_type or "application/octet-stream")}
-    return _forward(db, user, "POST", ss_path("embed", "ideas", str(idea_id), "attachments"), files=files)
+    return relay(upload_idea_attachment(db, user, idea_id, file.filename, content, file.content_type))
 
 
 @router.post("/ideas/{idea_id}/comments", status_code=201)
@@ -192,6 +202,10 @@ def edit_comment(
 def update_idea(idea_id: UUID, payload: dict = Body(...), user: dict = _write, db: Session = Depends(get_db)):
     # The product is the workspace's, never edited from here, so `productId` is not forwarded.
     body = _pick(payload, IDEA_FIELDS)
+    if "type" in payload:
+        if known_type(payload["type"]) is None:
+            raise AppException(422, "Type must be Feature request or Issue.", code="VALIDATION_ERROR")
+        body.update(ss_fields_for_type(payload["type"], explicit=True))
     path = ss_path("embed", "ideas", str(idea_id))
     # A manager edits any idea. Anyone else (view only) edits only their own, and ss alone says
     # whose it is (`isMine`); a non-2xx on the lookup is relayed by `call_ss` (404 stays 404).

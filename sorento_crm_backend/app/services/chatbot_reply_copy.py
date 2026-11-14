@@ -270,43 +270,56 @@ CHATBOT_REPLY_HANDOVER_SALESPERSON = {
 # lines are built in code between the lead and the reply line.
 # --------------------------------------------------------------------------- #
 IDEATION_CAPTURE_NO_ACCESS = {
-    "en": (
-        "You need a CRM login with Ideas access to submit ideas here. Please ask your "
-        "Sorento contact for one."
-    ),
+    "en": "You need a CRM login with access to send feedback here. Please ask your Sorento contact for one.",
     "ms": (
-        "Anda perlukan log masuk CRM dengan akses Idea untuk menghantar idea di sini. "
+        "Anda perlukan log masuk CRM dengan akses untuk menghantar maklum balas di sini. "
         "Sila minta daripada orang perhubungan Sorento anda."
     ),
-    "zh": "您需要拥有 Ideas 权限的 CRM 登录账号，才能在这里提交创意。请向您的 Sorento 联系人申请。",
+    "zh": "您需要拥有相应权限的 CRM 登录账号，才能在这里提交反馈。请向您的 Sorento 联系人申请。",
 }
 IDEATION_CAPTURE_UNCONFIGURED = {
     "en": (
-        "Idea capture isn't set up here yet, so I couldn't log that. Please try again "
-        "later or reach out to the team."
+        "Feedback isn't set up here yet, so I couldn't log that. Please try again later or reach out "
+        "to the team."
     ),
     "ms": (
-        "Penghantaran idea belum disediakan di sini, jadi saya tidak dapat merekodkannya. "
+        "Maklum balas belum disediakan di sini, jadi saya tidak dapat merekodkannya. "
         "Sila cuba lagi nanti atau hubungi pasukan kami."
     ),
-    "zh": "这里还没有开通创意提交功能，所以我无法记录。请稍后再试，或联系我们的团队。",
+    "zh": "这里还没有开通反馈功能，所以我无法记录。请稍后再试，或联系我们的团队。",
 }
 IDEATION_CAPTURE_ASK_IDEA = {
-    "en": "Sure, what's your idea? Tell me what you'd like changed, in one message.",
-    "ms": "Boleh! Apakah idea anda? Beritahu saya apa yang anda mahu ubah, dalam satu mesej.",
-    "zh": "好的！您的创意是什么？请用一条消息告诉我您想改进什么。",
+    "en": "Sure, what would you like changed? Tell me in one message.",
+    "ms": "Boleh! Apa yang anda mahu ubah? Beritahu saya dalam satu mesej.",
+    "zh": "好的！您希望改进什么？请用一条消息告诉我。",
 }
-#: The ask-back was answered twice without an idea in it: a statement, not another question.
+#: The ask-back was answered twice with nothing to file in it: a statement, not another question.
 IDEATION_CAPTURE_GIVE_UP = {
+    "en": "I still couldn't tell what you'd like changed. When you're ready, send it in one message.",
+    "ms": (
+        "Saya masih tidak pasti apa yang anda mahu ubah. Bila anda sudah bersedia, hantarkannya "
+        "dalam satu mesej."
+    ),
+    "zh": "我还是没能看出您想改进什么。准备好后，请用一条消息发送给我。",
+}
+#: WA-COMPLAINT-INTAKE round 14: an issue flow's answer held no words to file. The general word
+#: (owner 14 Nov 23:20): feedback / maklum balas / 反馈, never idea.
+IDEATION_CAPTURE_GIVE_UP_ISSUE = {
     "en": (
-        "I still couldn't find an idea in that. When you're ready, send your idea in one "
-        "message, for example what you'd like changed."
+        "I still could not tell what went wrong. When you are ready, send what you saw and where, "
+        "in one message, and I will log it as feedback."
     ),
     "ms": (
-        "Saya masih tidak menjumpai idea dalam mesej itu. Bila anda sudah bersedia, hantar "
-        "idea anda dalam satu mesej, contohnya apa yang anda mahu ubah."
+        "Saya masih tidak dapat tahu apa yang tidak kena. Bila anda sudah bersedia, hantar apa yang "
+        "anda nampak dan di mana dalam satu mesej, dan saya akan merekodkannya sebagai maklum balas."
     ),
-    "zh": "我还是没能从中找到创意。准备好后，请用一条消息发送您的创意，例如您想改进什么。",
+    "zh": "我还是没能弄清楚出了什么问题。准备好后，请在一条消息里告诉我您看到了什么、在哪里看到的，我会把它记录为反馈。",
+}
+#: Rounds 14-15 review B1: the answer to the issue ask was a cancel. Nothing was filed.
+IDEATION_CAPTURE_CANCELLED = {
+    "en": "Okay, I've dropped that. Nothing was logged.",
+    "ms": "Baik, saya batalkan. Tiada apa-apa direkodkan.",
+    "zh": "好的，已取消，没有记录任何内容。",
 }
 #: AI-KEY-PER-PROVIDER: the message could not be read at all (provider or key error, timeout).
 #: Not "no idea": a plain statement of what happened, no apology, no question.
@@ -316,19 +329,22 @@ IDEATION_CAPTURE_READ_FAILED = {
     "zh": "我刚才无法读取这条消息，请再发送一次。",
 }
 IDEATION_CAPTURE_SIMILAR_OFFERED = {
-    "en": "You already have ideas like this:",
-    "ms": "Anda sudah ada idea yang serupa:",
-    "zh": "您已经有类似的创意：",
+    "en": "You already sent feedback like this:",
+    "ms": "Anda sudah menghantar maklum balas yang serupa:",
+    "zh": "您已经提交过类似的反馈：",
 }
 IDEATION_CAPTURE_SIMILAR_OFFERED_REPLY = {
-    "en": "Reply a number to edit that one, or NEW to log this as a new idea.",
-    "ms": "Balas dengan nombor untuk mengedit idea itu, atau NEW untuk merekod sebagai idea baharu.",
-    "zh": "回复编号即可编辑该创意，或回复 NEW 记录为新创意。",
+    "en": "Reply a number to edit that one, or NEW to log this as new feedback.",
+    "ms": (
+        "Balas dengan nombor untuk mengedit yang itu, atau NEW untuk merekod ini sebagai "
+        "maklum balas baharu."
+    ),
+    "zh": "回复编号即可编辑该反馈，或回复 NEW 记录为新反馈。",
 }
 IDEATION_CAPTURE_SIMILAR_OFFERED_SEE_ALL = {
-    "en": "See all your ideas: {{link}}",
-    "ms": "Lihat semua idea anda: {{link}}",
-    "zh": "查看您的全部创意：{{link}}",
+    "en": "See all your feedback: {{link}}",
+    "ms": "Lihat semua maklum balas anda: {{link}}",
+    "zh": "查看您的全部反馈：{{link}}",
 }
 IDEATION_CAPTURE_SIMILAR_PICKED = {
     "en": "Open {{idea_number}} to add this: {{link}}",
@@ -337,25 +353,28 @@ IDEATION_CAPTURE_SIMILAR_PICKED = {
 }
 #: No CRM base URL to build a link from: point at the page instead of a blank link.
 IDEATION_CAPTURE_SIMILAR_PICKED_NO_LINK = {
-    "en": "Open {{idea_number}} in the CRM Ideas page to add this.",
-    "ms": "Buka {{idea_number}} di halaman Idea CRM untuk menambah ini.",
-    "zh": "请在 CRM 的创意页面打开 {{idea_number}} 补充这些内容。",
+    "en": "Open {{idea_number}} in the CRM to add this.",
+    "ms": "Buka {{idea_number}} di CRM untuk menambah ini.",
+    "zh": "请在 CRM 中打开 {{idea_number}} 补充这些内容。",
 }
 IDEATION_CAPTURE_COMPLETE = {
     "en": (
-        "Idea {{idea_number}} is in: {{title}}\n"
+        "Your feedback has been logged: Feature request - {{title}}\n"
+        "Number: {{idea_number}}\n"
         "Open it to add what I didn't catch:\n"
         "{{missing}}\n"
         "{{link}}"
     ),
     "ms": (
-        "Idea {{idea_number}} sudah diterima: {{title}}\n"
+        "Maklum balas anda telah direkodkan: Permintaan ciri - {{title}}\n"
+        "Nombor: {{idea_number}}\n"
         "Buka untuk menambah apa yang saya tidak tangkap:\n"
         "{{missing}}\n"
         "{{link}}"
     ),
     "zh": (
-        "创意 {{idea_number}} 已收到：{{title}}\n"
+        "您的反馈已记录：功能需求 - {{title}}\n"
+        "编号：{{idea_number}}\n"
         "打开它补充我没有记录到的内容：\n"
         "{{missing}}\n"
         "{{link}}"
@@ -364,20 +383,60 @@ IDEATION_CAPTURE_COMPLETE = {
 #: Created, but no safe CRM link could be built: a DIFFERENT sentence, not the one
 #: above with a blank link (the same two-key rule as `escalate_offer`).
 IDEATION_CAPTURE_COMPLETE_NO_LINK = {
-    "en": "Idea {{idea_number}} is in: {{title}}",
-    "ms": "Idea {{idea_number}} sudah diterima: {{title}}",
-    "zh": "创意 {{idea_number}} 已收到：{{title}}",
+    "en": "Your feedback has been logged: Feature request - {{title}}\nNumber: {{idea_number}}",
+    "ms": "Maklum balas anda telah direkodkan: Permintaan ciri - {{title}}\nNombor: {{idea_number}}",
+    "zh": "您的反馈已记录：功能需求 - {{title}}\n编号：{{idea_number}}",
+}
+#: WA-COMPLAINT-INTAKE (UAC I-2, I-3): an issue (something wrong with the CRM or the assistant).
+#: The filed reply is one fact per line (round 15: the head line names the type and the title, then the
+#: number); the Photos line (only when photos landed) and the link line are added by code after these two.
+IDEATION_CAPTURE_ASK_ISSUE = {
+    "en": "What went wrong? Tell me what you saw and where.",
+    "ms": "Apa yang tidak kena? Beritahu saya apa yang anda nampak dan di mana.",
+    "zh": "出了什么问题？请告诉我您看到了什么，在哪里看到的。",
+}
+IDEATION_CAPTURE_COMPLETE_ISSUE = {
+    "en": "Your feedback has been logged: Problem report - {{title}}\nNumber: {{idea_number}}",
+    "ms": "Maklum balas anda telah direkodkan: Laporan masalah - {{title}}\nNombor: {{idea_number}}",
+    "zh": "您的反馈已记录：问题报告 - {{title}}\n编号：{{idea_number}}",
+}
+IDEATION_CAPTURE_COMPLETE_ISSUE_PHOTOS = {
+    "en": "Photos: {{count}}",
+    "ms": "Gambar: {{count}}",
+    "zh": "照片：{{count}}",
+}
+#: WA-COMPLAINT-INTAKE D-4: a console (test) turn of a dealer with no CRM user yet creates nothing.
+IDEATION_CAPTURE_TEST_TURN = {
+    "en": "Test turn: nothing was sent.",
+    "ms": "Giliran ujian: tiada apa-apa dihantar.",
+    "zh": "测试对话：没有发送任何内容。",
+}
+#: Round 6 (review 5): the dealer's own CRM user could not be set up (its phone already on another
+#: user, the role missing). Said plainly; the cause is logged.
+IDEATION_CAPTURE_ACCOUNT_FAILED = {
+    "en": "I couldn't set up your account to file this. Please ask your salesperson.",
+    "ms": "Saya tidak dapat menyediakan akaun anda untuk menghantar ini. Sila tanya jurujual anda.",
+    "zh": "我无法为您设置账户来提交这个内容。请联系您的销售人员。",
+}
+#: SS #235: ss refused the item's type (a 422 `unknown_type` on create only). Plain words, no retry.
+IDEATION_CAPTURE_TYPE_REFUSED = {
+    "en": "I couldn't file this: feedback of this type can't be taken yet.",
+    "ms": "Saya tidak dapat menghantar ini: maklum balas jenis ini belum boleh diterima.",
+    "zh": "我无法提交这个：暂时不接受此类型的反馈。",
 }
 IDEATION_CAPTURE_ERROR = {
-    "en": "Sorry, I couldn't save that idea just now. Please try again in a moment.",
-    "ms": "Maaf, saya tidak dapat menyimpan idea itu sekarang. Sila cuba lagi sebentar nanti.",
-    "zh": "抱歉，我暂时无法保存这个创意，请稍后再试。",
+    "en": "Sorry, I couldn't save that feedback just now. Please try again in a moment.",
+    "ms": "Maaf, saya tidak dapat menyimpan maklum balas itu sekarang. Sila cuba lagi sebentar nanti.",
+    "zh": "抱歉，我暂时无法保存这条反馈，请稍后再试。",
 }
 
 IDEATION_CAPTURE_CONFIG_ERROR = {
-    "en": "Idea capture isn't set up correctly here, so I couldn't save that. Please let your Sorento contact know.",
-    "ms": "Penangkapan idea tidak disediakan dengan betul di sini, jadi saya tidak dapat menyimpannya. Sila maklumkan kepada wakil Sorento anda.",
-    "zh": "此处的创意收集设置不正确，所以我无法保存。请告知您的 Sorento 联系人。",
+    "en": "Feedback isn't set up correctly here, so I couldn't save that. Please let your Sorento contact know.",
+    "ms": (
+        "Maklum balas tidak disediakan dengan betul di sini, jadi saya tidak dapat menyimpannya. "
+        "Sila maklumkan kepada wakil Sorento anda."
+    ),
+    "zh": "此处的反馈设置不正确，所以我无法保存。请告知您的 Sorento 联系人。",
 }
 
 # DEV-FAILURES RC-B (owner approved 12 Oct): a portal link reply names the form the link opens;
@@ -455,6 +514,8 @@ FALLBACK_REPLY_COPY: dict[str, tuple[dict[str, str], tuple[str, ...]]] = {
     "ideation_capture_unconfigured": (IDEATION_CAPTURE_UNCONFIGURED, ()),
     "ideation_capture_ask_idea": (IDEATION_CAPTURE_ASK_IDEA, ()),
     "ideation_capture_give_up": (IDEATION_CAPTURE_GIVE_UP, ()),
+    "ideation_capture_give_up_issue": (IDEATION_CAPTURE_GIVE_UP_ISSUE, ()),
+    "ideation_capture_cancelled": (IDEATION_CAPTURE_CANCELLED, ()),
     "ideation_capture_read_failed": (IDEATION_CAPTURE_READ_FAILED, ()),
     "ideation_capture_similar_offered": (IDEATION_CAPTURE_SIMILAR_OFFERED, ()),
     "ideation_capture_similar_offered_reply": (IDEATION_CAPTURE_SIMILAR_OFFERED_REPLY, ()),
@@ -469,6 +530,12 @@ FALLBACK_REPLY_COPY: dict[str, tuple[dict[str, str], tuple[str, ...]]] = {
         ("idea_number", "title", "missing", "link"),
     ),
     "ideation_capture_complete_no_link": (IDEATION_CAPTURE_COMPLETE_NO_LINK, ("idea_number", "title")),
+    "ideation_capture_ask_issue": (IDEATION_CAPTURE_ASK_ISSUE, ()),
+    "ideation_capture_complete_issue": (IDEATION_CAPTURE_COMPLETE_ISSUE, ("idea_number", "title")),
+    "ideation_capture_complete_issue_photos": (IDEATION_CAPTURE_COMPLETE_ISSUE_PHOTOS, ("count",)),
+    "ideation_capture_test_turn": (IDEATION_CAPTURE_TEST_TURN, ()),
+    "ideation_capture_account_failed": (IDEATION_CAPTURE_ACCOUNT_FAILED, ()),
+    "ideation_capture_type_refused": (IDEATION_CAPTURE_TYPE_REFUSED, ()),
     "ideation_capture_error": (IDEATION_CAPTURE_ERROR, ()),
     "ideation_capture_config_error": (IDEATION_CAPTURE_CONFIG_ERROR, ()),
 }

@@ -281,6 +281,20 @@ def call_ss(
     return _call(db, user, method, path, _kwargs(params, json, files), portal=False)
 
 
+def upload_idea_attachment(
+    db: Session,
+    user: dict[str, Any],
+    idea_id: Any,
+    filename: Optional[str],
+    content: bytes,
+    content_type: Optional[str],
+) -> httpx.Response:
+    """Upload one file onto an idea as `user` (ss `POST /embed/ideas/{id}/attachments`, multipart).
+    The one upload: the staff route (which owns the size cap) and the chat-photo attach both call it."""
+    files = {"file": (filename or "file", content, content_type or "application/octet-stream")}
+    return call_ss(db, user, "POST", ss_path("embed", "ideas", str(idea_id), "attachments"), files=files)
+
+
 def call_portal(
     db: Session,
     user: dict[str, Any],

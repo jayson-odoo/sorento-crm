@@ -20,12 +20,11 @@ from app.services.chatbot_reply_copy import (
     FALLBACK_LANGUAGES,
     language_suffix,
 )
+from app.services.submission_types import SUBMISSION_TYPES, display_number, normalise_type
 
 logger = logging.getLogger(__name__)
 
 _PREFIX = "ideation_capture_"
-#: Reply kinds whose copy key differs from the kind.
-_COPY_NAME = {"ask_idea_gave_up": "give_up"}
 
 
 def _template(name: str, language: str, db: Any) -> str:
@@ -63,6 +62,9 @@ def render_reply(
     used only to read the registry's live wording.
     """
     lang = language if language in FALLBACK_LANGUAGES else "en"
+    if facts.get("idea_number"):
+        # Every number a user reads goes through the one display seam (round 15).
+        facts = {**facts, "idea_number": display_number(facts["idea_number"])}
 
     if kind == "similar_offered":
         lines = [_template("similar_offered", lang, db)]
@@ -75,6 +77,32 @@ def render_reply(
         if facts.get("see_all"):
             lines.append(_fill(_template("similar_offered_see_all", lang, db), link=facts["see_all"]))
         return "\n".join(lines)
+
+    row = SUBMISSION_TYPES[normalise_type(facts.get("type"))]
+
+    if kind == "ask_idea":
+        return _template(row.ask_copy, lang, db)
+
+    if kind == "ask_idea_gave_up":
+        return _template(row.give_up_copy, lang, db)
+
+    if kind == "complete" and row.complete_copy != "complete":
+        # One fact per line: what was logged, the title, the photos that landed, the link.
+        lines = [
+            _fill(_template(row.complete_copy, lang, db), idea_number=facts.get("idea_number"), title=facts.get("title"))
+        ]
+        if facts.get("photos"):
+            lines.append(_fill(_template(f"{row.complete_copy}_photos", lang, db), count=facts["photos"]))
+        if facts.get("link"):
+            lines.append(str(facts["link"]))
+        return "\n".join(lines)
+
+    if kind == "complete" and not facts.get("missing"):
+        # Nothing left to add: the head line and the link only, no "add what I didn't catch" intro.
+        head = _fill(
+            _template("complete_no_link", lang, db), idea_number=facts.get("idea_number"), title=facts.get("title")
+        )
+        return f"{head}\n{facts['link']}" if facts.get("link") else head
 
     if kind == "complete":
         name = "complete" if facts.get("link") else "complete_no_link"
@@ -94,4 +122,4 @@ def render_reply(
             link=facts.get("link"),
         )
 
-    return _template(_COPY_NAME.get(kind, kind), lang, db)
+    return _template(kind, lang, db)

@@ -178,10 +178,38 @@ def member_serves_brand(member_brand_codes, brand_code: Optional[str]) -> bool:
 NON_STAFF_ROLE_SLUGS = frozenset({"portal_user", "guest"})
 
 
-def _holds_staff_role():
+def holds_staff_role():
+    """The ONE staff rule: the user holds a live (not trashed) role outside `NON_STAFF_ROLE_SLUGS`.
+    A dealer's own CRM user (`portal_user` only) and a trashed staff role make no one staff."""
     return User.role_assignments.any(
-        UserRoleAssignment.role.has(UserRole.slug.notin_(NON_STAFF_ROLE_SLUGS))
+        UserRoleAssignment.role.has(UserRole.slug.notin_(NON_STAFF_ROLE_SLUGS) & UserRole.is_trashed.is_(False))
     )
+
+
+def only_non_staff_roles():
+    """The user holds at least one role and none counts as staff (`holds_staff_role`): a dealer's own
+    CRM user (WA-COMPLAINT-INTAKE D-7, D-8). A user with no role at all is not one."""
+    return User.role_assignments.any() & ~holds_staff_role()
+
+
+def is_staff_phone(db: Session, phone: str, contact_id: Optional[str]) -> bool:
+    """Is this phone staff (UAC A9, A16)? A CRM user's contact number (by digits, with or without the leading 6), or,
+    for a contact already in the CRM, a user's or a sales agent's own contact. Never granted dealer access. A dealer's
+    own CRM user (roles all non-staff, `only_non_staff_roles`) does not make it staff. Read by the chatbot's contact
+    grant and the WhatsApp dealer check (`ideation_capture_service._dealer_eligible`)."""
+    from app.models.base import company_scope
+    from app.models.sales_agent import SalesAgent
+
+    full = phone.lstrip("+")
+    digits = func.regexp_replace(User.contact_number, r"\D", "", "g")
+    staff_user = ~only_non_staff_roles()
+    with company_scope(db, None):
+        if db.query(User.id).filter(digits.in_({full, full[1:]}), staff_user).first() is not None:
+            return True
+        return contact_id is not None and (
+            db.query(User.id).filter(User.respond_contact_id == contact_id, staff_user).first() is not None
+            or db.query(SalesAgent.id).filter(SalesAgent.contact_id == contact_id).first() is not None
+        )
 
 class UserService:
     """Service for user operations."""
@@ -365,7 +393,7 @@ class UserService:
         """Holds a role other than the portal / guest ones, and is not an integration account."""
         return (
             self.db.query(User.id)
-            .filter(User.id == str(user_id), User.is_integration == False, _holds_staff_role())  # noqa: E712
+            .filter(User.id == str(user_id), User.is_integration == False, holds_staff_role())  # noqa: E712
             .first()
             is not None
         )
@@ -389,7 +417,7 @@ class UserService:
         q = self.db.query(User).filter(
             User.is_trashed == False,  # noqa: E712
             User.is_integration == False,  # noqa: E712
-            _holds_staff_role(),
+            holds_staff_role(),
         )
         if not include_inactive:
             q = q.filter(User.status == UserStatus.ACTIVE.value)

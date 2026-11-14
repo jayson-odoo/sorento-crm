@@ -54,9 +54,12 @@ def _actor(token: PortalToken) -> svc.Actor:
 
 
 def _linked_user_id(db: Session, contact_id: str) -> Optional[str]:
-    """The CRM user whose linked contact this is (`users.respond_contact_id`), or None.
-    It is the applicant of record, so staff notices (PQ2 (a)) reach the salesman."""
-    return db.query(User.id).filter(User.respond_contact_id == str(contact_id)).scalar()
+    """The staff CRM user whose linked contact this is (`users.respond_contact_id`), or None.
+    It is the applicant of record, so staff notices (PQ2 (a)) reach the salesman. A dealer's own
+    user (roles all non-staff, `user_service.only_non_staff_roles`) is not one."""
+    from app.services.user_service import only_non_staff_roles
+
+    return db.query(User.id).filter(User.respond_contact_id == str(contact_id), ~only_non_staff_roles()).scalar()
 
 
 def _own(db: Session, token: PortalToken, application_id: str, *, for_update: bool = False):

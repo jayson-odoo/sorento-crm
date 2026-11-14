@@ -226,7 +226,7 @@ def test_ac24_write_permissions_are_pinned():
     assert perms["crm_complaint_close"] == "complaint_management.complaints.close"
     assert perms["crm_purchase_request_approve"] == "procurement.purchase_requests.approve"
     assert perms["crm_purchase_request_reject"] == "procurement.purchase_requests.approve"
-    assert perms["crm_ideation_turn"] == "ideation.board.view"
+    assert perms["crm_ideation_turn"] == "ideation.ideas.manage"
     assert perms["crm_sales_opportunity_log"] == "sales.opportunities.add"
     assert "crm_order_cancel" not in perms, "the UI cancel path is auth-only; chat must not be stricter"
 

@@ -31,6 +31,12 @@ from typing import Any, Callable
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
+from app.services.chat_exchanges import (  # noqa: F401  (moved to core: the ideation capture reads them)
+    _CONSOLE_INGRESS,
+    _envelope_text,
+    _newest_turn_first,
+    recent_exchanges,
+)
 from app.services.chatbot import jsc
 from app.services.chatbot import principal as staff_principal
 from app.services.chatbot.contracts import (
@@ -330,10 +336,7 @@ def resolve_contact_pk(
     return str(rows[0][0]), rows[0][1]
 
 
-# `console` is its own world: a console turn replays against the operator's own thread
-# and must never read the customer's live reply as its "previous response" (nor the other
-# way round). Every other ingress - webhook, poller, retry - is the same live stream.
-_CONSOLE_INGRESS = "console"
+# `console` is its own world; the constant lives with `recent_exchanges` in core (`chat_exchanges`).
 
 
 def previous_reply_text(
@@ -388,75 +391,6 @@ def previous_reply_text(
     return str(text_value) if text_value else None
 
 
-def _envelope_text(envelope: Any) -> str | None:
-    """The message text a stored envelope carries (the respond.io payload,
-    `message.message.message.text`), else an attachment's description."""
-    inner = envelope
-    for key in ("message", "message", "message"):
-        inner = inner.get(key) if isinstance(inner, dict) else None
-    if not isinstance(inner, dict):
-        return None
-    text = inner.get("text")
-    if not (isinstance(text, str) and text.strip()):
-        attachment = inner.get("attachment")
-        text = attachment.get("description") if isinstance(attachment, dict) else None
-    return text if isinstance(text, str) and text.strip() else None
-
-
-def _newest_turn_first(model: Any) -> tuple[Any, ...]:
-    """Newest turn first: `created_at`, then `started_at` for rows that tie on it."""
-    return (model.created_at.desc(), model.started_at.desc().nullslast())
-
-
-def recent_exchanges(
-    db: Session,
-    *,
-    contact_respond_id: str,
-    ingress: str | None,
-    is_test: bool,
-    limit: int = 3,
-    test_run_id: str | None = None,
-) -> list[tuple[str, str]]:
-    """The last `limit` completed exchanges with this contact, oldest first, as (what
-    the contact said, what the bot answered) - the parser's "Recent exchanges" lines
-    (PR #1247 round 8: the owner's "is the context too less already?").
-
-    Read from the same rows and under the same three scopes as `previous_reply_text`,
-    so the newest pair's answer IS the Previous response. A row with no reply text is
-    skipped; a row whose envelope carries no text (a photo or voice note) is "(media)".
-    A lookup failure is no exchanges, never a failed turn.
-    """
-    from app.models.chatbot_turn import ChatbotTurn
-
-    try:
-        query = db.query(ChatbotTurn.envelope, ChatbotTurn.response).filter(
-            ChatbotTurn.contact_respond_id == str(contact_respond_id),
-            ChatbotTurn.status == "done",
-            ChatbotTurn.is_test.is_(bool(is_test)),
-        )
-        if str(ingress or "") == _CONSOLE_INGRESS:
-            query = query.filter(ChatbotTurn.ingress == _CONSOLE_INGRESS)
-            if test_run_id:
-                # REPORT-SMART-L S5-1: a console Reset is a new run id; only this run's turns are history.
-                query = query.filter(ChatbotTurn.envelope["test_run_id"].astext == str(test_run_id))
-        else:
-            query = query.filter(ChatbotTurn.ingress != _CONSOLE_INGRESS)
-        rows = query.order_by(*_newest_turn_first(ChatbotTurn)).limit(limit * 2).all()
-    except Exception:  # noqa: BLE001 - no history is no lines, never a failure
-        logger.warning(
-            "chatbot: recent exchanges lookup failed for %s", contact_respond_id, exc_info=True
-        )
-        return []
-    pairs: list[tuple[str, str]] = []
-    for envelope, response in rows:
-        reply = response.get("reply") if isinstance(response, dict) else None
-        answer = reply.get("text") if isinstance(reply, dict) else None
-        if not (isinstance(answer, str) and answer.strip()):
-            continue
-        pairs.append((_envelope_text(envelope) or "(media)", answer))
-        if len(pairs) == limit:
-            break
-    return list(reversed(pairs))
 
 
 def load_profile(

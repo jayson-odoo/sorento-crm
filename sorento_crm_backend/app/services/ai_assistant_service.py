@@ -1669,8 +1669,7 @@ class AIAssistantChatService:
         Zero answer-LLM (the parser call already ran); mirrors the capability
         short-circuit's persist / usage-log / trace-finalize (AC-06)."""
         redirect_text = (
-            "Love the idea! You can capture and track product ideas on the "
-            "Ideas board - open it here: /ideas"
+            "Thanks! You can log and track feedback on the Ideas board - open it here: /ideas"
         )
         if self._turn_trace is not None:
             self._turn_trace.add_span(
@@ -1874,11 +1873,11 @@ class AIAssistantChatService:
         # chat stricter than the UI. The Confirm click is the gate.
         #
         # The ideation turn endpoint itself is external-key gated and carries no
-        # user permission of its own, so the module's only user-facing slug is the
-        # gate: a user who cannot see the Ideas board must not be able to write to
-        # it through the assistant. No new slug, so no grant sweep - migration 411
-        # already grants this to superadmin and admin.
-        "crm_ideation_turn": "ideation.board.view",
+        # user permission of its own, and it files in the name of the contact it is
+        # given. Salespeople hold `ideation.board.view` since WA-COMPLAINT-INTAKE
+        # (migration wa_0001_idea_submit_perm), so the gate is the manage slug: only
+        # an Ideas manager may file for someone else through the assistant.
+        "crm_ideation_turn": "ideation.ideas.manage",
         # SALES-TARGET-CHAT slice 2: it creates a sales opportunity, so the confirming user
         # needs the CRM's own create permission for one.
         "crm_sales_opportunity_log": "sales.opportunities.add",

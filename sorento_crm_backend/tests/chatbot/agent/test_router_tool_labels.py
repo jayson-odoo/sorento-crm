@@ -44,8 +44,8 @@ EXPECTED_LABELS = [
     "change a dealer contact",
     "approve or reject a purchase request",
     "take back a purchase request action",
-    "record a suggestion or wish for what the system should have or do, an idea or a feature request",
-    "change one of your ideas",
+    "record feedback: a wish or feature request, or a problem with the CRM system or the assistant",
+    "change your feedback",
     # AGENTIC-UNIFY PR 4: the three writes.
     "close a complaint",
     "cancel an order",
@@ -67,7 +67,7 @@ EXPECTED_LABELS = [
     # AGENTIC-UNIFY PR 4: the two finds (user reads), then the ported reads (PORTED_READS, in registry order).
     "finding a complaint by its number",
     "finding a project by its code",
-    "your ideas",
+    "your feedback",
     # AI-QUERY-CORE: the general read over the assistant registry, on both channels.
     "reading CRM records, totals and groupings",
     "listing the CRM records you can read",
@@ -369,7 +369,7 @@ def test_AC_R1_9_a_jev_failure_still_goes_to_chat(db, jev):
 # ------------------------------------------------------------------ AC-HT-5 the owner's message
 
 OWNER_MESSAGE = "I think we need to have sorento agentic ai"
-NEW_IDEA_LABEL = "record a suggestion or wish for what the system should have or do, an idea or a feature request"
+NEW_IDEA_LABEL = "record feedback: a wish or feature request, or a problem with the CRM system or the assistant"
 OLD_IDEA_LABEL = "submit a new idea or feature request"
 
 
@@ -398,7 +398,7 @@ def _sent_labels(db, jev, contact):
     return jev.calls[-1]["criteria"]["agent"]["tools"]
 
 
-IDEA_LABEL = "record a suggestion or wish for what the system should have or do, an idea or a feature request"
+IDEA_LABEL = "record feedback: a wish or feature request, or a problem with the CRM system or the assistant"
 
 
 def test_fr4_r2_an_unlinked_contact_is_told_of_no_write_or_user_read(db, jev):
@@ -422,6 +422,6 @@ def test_fr4_r2_a_linked_user_without_the_idea_slug_gets_no_idea_label_and_with_
     no_idea = _sent_labels(db, jev, without)
     has_idea = _sent_labels(db, jev, with_slug)
 
-    assert IDEA_LABEL not in no_idea and "your ideas" not in no_idea
-    assert IDEA_LABEL in has_idea and "your ideas" in has_idea
+    assert IDEA_LABEL not in no_idea and "your feedback" not in no_idea
+    assert IDEA_LABEL in has_idea and "your feedback" in has_idea
     assert "change a dealer contact" not in has_idea, "only the tools this user may use"

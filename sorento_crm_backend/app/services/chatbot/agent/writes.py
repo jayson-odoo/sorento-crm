@@ -21,6 +21,7 @@ from fastapi import HTTPException
 from sqlalchemy import or_
 
 from app.services.chatbot import principal as staff_principal
+from app.services.submission_types import SUBMISSION_TYPES, display_number, normalise_type, type_of_idea
 from app.services.chatbot.agent.tools import (
     ToolResult, _check_ids, _collect_uuids, _permitted, cap_result, clean_detail, panel_closed,
 )
@@ -581,7 +582,7 @@ def propose_step(
         return ToolResult(
             "invalid",
             data={"say": PANEL_IDEAS_REPLY},
-            message="No idea was created and nothing is waiting for a yes. Ideas are logged on the Ideas board: /ideas",
+            message="Nothing was created and nothing is waiting for a yes. Feedback is logged on the Ideas board: /ideas",
         ), None
     # `loop`: an argument or id problem is guidance for the model, never the user's reply (#2256 owner hand test).
     problem = _args_problem(definition, args)
@@ -2239,10 +2240,12 @@ LIST_IDEAS = "crm_ideas_list"
 MAX_SIMILAR_IDEAS = 3
 MAX_USE_CASES = 5
 IDEA_PROBLEM_CHARS = 120
-IDEA_NOT_CREATED = "The idea was not created because the Ideas workspace could not be reached. Try again later."
-IDEA_OWN_ONLY = "You can only edit your own ideas."
-IDEA_ALREADY_CAPTURED = "This idea was already captured as idea {number}."
-IDEA_REFUSED = "The Ideas workspace refused this idea."
+IDEA_NOT_CREATED = "The feedback was not created because the feedback service could not be reached. Try again later."
+IDEA_OWN_ONLY = "You can only edit your own feedback."
+IDEA_ALREADY_CAPTURED = "This was already logged as feedback {number}."
+IDEA_REFUSED = "The feedback service refused this feedback."
+#: SS #235: ss answers 422 `unknown_type` when it will not take the item's type; any other 422 is IDEA_REFUSED.
+IDEA_TYPE_REFUSED = IDEA_REFUSED + " It does not accept that type."
 #: The most characters of the user's own message sent as the create's raw transcript (I7).
 RAW_TRANSCRIPT_CHARS = 4000
 #: Characters a person cannot see, besides the format characters (Cf): variation selectors, the combining
@@ -2349,20 +2352,28 @@ def _check_use_cases(args: dict) -> None:
         )
 
 
+def _idea_photos_go(args: dict) -> bool:
+    """Do the user's chat photos go onto this create? Only on a live turn of the contact: never a test
+    (console) item and never the staff web panel, whose user sent no chat photos."""
+    return not _idea_is_test(args) and staff_principal.current() is None
+
+
 def _idea_create_read_before(db, user: dict, args: dict) -> dict:
     from app.services.error_handler import AppException
-    from app.services.ideation_capture_service import IdeationServiceError, _valid_uuid, call_similar_own
+    from app.services.ideation_capture_service import (
+        IdeationServiceError, _valid_uuid, call_similar_own, count_chat_photos,
+    )
     from app.services.ideation_turn_service import _resolve_ideation_config
 
     _check_use_cases(args)
     given = _idea_given(args)
     if not given.get("problem"):
-        raise AppException(status_code=422, message="Give the problem the idea solves.", code="VALIDATION_ERROR")
+        raise AppException(status_code=422, message="Give the problem to log.", code="VALIDATION_ERROR")
     if user["id"] != user["linked_user_id"]:
         # The console operator creating in another user's name must manage ideas, as for an edit (I2).
         if not holds(db, user["id"], IDEA_MANAGE):
             raise AppException(
-                status_code=403, message="You need permission to manage ideas to create for someone else.", code="FORBIDDEN"
+                status_code=403, message="You need permission to manage the Ideas board to create feedback for someone else.", code="FORBIDDEN"
             )
         return {}  # the lookup is the linked user's, so no ss call as the operator
     # Best effort: the proposal never depends on the shared service, so a lookup that cannot run adds no line.
@@ -2387,7 +2398,9 @@ def _idea_create_read_before(db, user: dict, args: dict) -> dict:
             ][:MAX_SIMILAR_IDEAS]
     except (IdeationServiceError, HTTPException):
         logger.warning("agent: the similar-ideas lookup failed", exc_info=True)
-    return {"_show": {"similar": similar}}
+    # The proposal states the photos the create will attach (the same selection, nothing uploaded).
+    photos = count_chat_photos(db, user_id=user["linked_user_id"]) if _idea_photos_go(args) else 0
+    return {"_show": {"similar": similar, "photos": photos}}
 
 
 #: The backslash and every double quote or look-alike (ASCII, curly, low and reversed, double prime, guillemets,
@@ -2414,11 +2427,17 @@ def _idea_values(given: dict, keys: tuple[str, ...], joiner: str) -> list[str]:
 
 def _idea_create_summary(args: dict, before: dict) -> str:
     given = _idea_given(args)
-    line = f"Log idea {_q(given['title'])}" if given.get("title") else "Log idea"
+    head = f"Log feedback ({SUBMISSION_TYPES[normalise_type(args.get('type'))].label})"
+    line = f"{head} {_q(given['title'])}" if given.get("title") else head
+    photos = before.get("photos") or 0
+    if photos:
+        line += f" with {photos} photo{'' if photos == 1 else 's'}"
     line += ": " + ", ".join(_idea_values(given, ("problem", "desired_outcome", "use_cases", "current_workaround"), " "))
     similar = before.get("similar") or []
     if similar:
-        line += ". Similar ideas of yours: " + "; ".join(_line(f"{s['number']} {s['title']}") for s in similar)
+        line += ". Similar feedback of yours: " + "; ".join(
+            _line(f"{display_number(s['number'])} {s['title']}") for s in similar
+        )
     return line
 
 
@@ -2427,7 +2446,8 @@ def _idea_create_execute(db, user: dict, args: dict) -> dict:
 
     from app.services.error_handler import AppException
     from app.services.ideation_capture_service import (
-        IdeationServiceError, _CREATE_PATH, _idea_link, _missing_list, _post_json, _valid_uuid, build_create_payload,
+        IdeationServiceError, _CREATE_PATH, _idea_link, _missing_list, _post_json, _ss_code, _valid_uuid,
+        attach_chat_photos, build_create_payload, is_unknown_type,
     )
     from app.services.ideation_turn_service import _resolve_ideation_config
 
@@ -2454,14 +2474,17 @@ def _idea_create_execute(db, user: dict, args: dict) -> dict:
             # idea proposed again must land on the same idea.
             intake_ref=str(uuid.uuid5(uuid.NAMESPACE_OID, f"{user['linked_user_id']}\n{is_test}\n{text}")),
             is_test=is_test,
+            submission_type=args.get("type"),
         )
         result = _post_json(config.base_url, config.api_key, _CREATE_PATH, payload, "create idea")
     except IdeationServiceError as exc:
         code = exc.status_code
         if isinstance(code, int) and 400 <= code < 500 and code not in (408, 429):
-            # A permanent refusal (scope, key, payload): its own line, with no detail from ss.
-            logger.warning("agent: the idea create was refused by ss (%s)", code, exc_info=True)
-            raise AppException(status_code=422, message=IDEA_REFUSED, code="IDEATION_REFUSED")
+            # A permanent refusal (scope, key, payload): its own line, with no detail from ss. Only a 422
+            # `unknown_type` is ss refusing the item's type (SS #235): said so, never retried.
+            logger.warning("agent: the idea create was refused by ss (%s %s)", code, _ss_code(exc), exc_info=True)
+            message = IDEA_TYPE_REFUSED if is_unknown_type(exc) else IDEA_REFUSED
+            raise AppException(status_code=422, message=message, code="IDEATION_REFUSED")
         logger.warning("agent: the idea create failed", exc_info=True)
         raise AppException(status_code=502, message=IDEA_NOT_CREATED, code="IDEATION_UNREACHABLE")
     except HTTPException:
@@ -2478,19 +2501,25 @@ def _idea_create_execute(db, user: dict, args: dict) -> dict:
         number = idea_number(result.get("idea_number"))
         raise AppException(
             status_code=409,
-            message=IDEA_ALREADY_CAPTURED.format(number=number) if number else "This idea was already captured.",
+            message=IDEA_ALREADY_CAPTURED.format(number=display_number(number)) if number else "This was already logged as feedback.",
             code="IDEA_ALREADY_CAPTURED",
         )
     link = _idea_link(result.get("idea_id"))
     number = idea_number(result.get("idea_number"))
-    missing = ", ".join(_missing_list(payload))
+    # The user's recent chat photos go onto the new item: a live turn of the contact only (I-5).
+    photos = attach_chat_photos(db, user_id=user["linked_user_id"], idea_id=result["idea_id"]) if _idea_photos_go(args) else 0
+    missing = ", ".join(_missing_list(payload, photos))
     number = number or None  # ss may send none: the note then names no number
-    note = (f"Idea {number}" if number else "The idea") + (f": {link}" if link else "") + f". Not given: {missing}."
+    note = (f"Feedback {display_number(number)}" if number else "The feedback") + (f": {link}" if link else "") + "."
+    if missing:
+        note += f" Not given: {missing}."
     if is_test:
-        note += " This is a test idea, so it is not on the board."
+        note += " This is test feedback, so it is not on the board."
+    elif photos:
+        note += f" Photos: {photos}."
     return {
         "id": str(result["idea_id"]),
-        "after": {"idea_number": number, "title": result.get("title") or given.get("title")},
+        "after": {"idea_number": number, "title": payload.get("title") or result.get("title")},
         "note": note,
     }
 
@@ -2506,12 +2535,12 @@ def _idea_update_read_before(db, user: dict, args: dict) -> dict:
     if user["id"] != user["linked_user_id"]:
         # The console operator acting for someone else: they must manage ideas. No ss call as them.
         if not holds(db, user["id"], IDEA_MANAGE):
-            raise AppException(status_code=403, message="You need permission to manage ideas to edit for someone else.", code="FORBIDDEN")
+            raise AppException(status_code=403, message="You need permission to manage the Ideas board to edit someone else's feedback.", code="FORBIDDEN")
         return {}
     try:
         idea = call_ss(db, user, "GET", ss_path("embed", "ideas", idea_id)).json()
     except ValueError:
-        raise AppException(status_code=502, message="The Ideas workspace could not be reached.", code="IDEATION_UNREACHABLE")
+        raise AppException(status_code=502, message="The feedback service could not be reached.", code="IDEATION_UNREACHABLE")
     # The board lets even a manager edit only their own here; other people's ideas stay on the board.
     if not (isinstance(idea, dict) and idea.get("isMine") is True):
         raise AppException(status_code=403, message=IDEA_OWN_ONLY, code="FORBIDDEN")
@@ -2523,7 +2552,7 @@ def _idea_update_read_before(db, user: dict, args: dict) -> dict:
 def _idea_update_summary(args: dict, before: dict) -> str:
     given = _idea_given(args)
     changes = _idea_values(given, ("title", "problem", "desired_outcome", "use_cases", "current_workaround"), " to ")
-    head = f"Idea {_line(before.get('number'))} {_q(before.get('idea_title'))}: change "
+    head = f"Feedback {_line(display_number(before.get('number')))} {_q(before.get('idea_title'))}: change "
     return head + " and ".join(changes)
 
 
@@ -2540,14 +2569,15 @@ def _idea_update_execute(db, user: dict, args: dict) -> dict:
 
 def _idea_changes(args: dict, before: dict, after: dict, shown: dict) -> list[dict]:
     words = lambda v: "; ".join(v) if isinstance(v, list) else v  # noqa: E731
-    record = shown.get("idea_title") or f"Idea {shown.get('number', '')}".strip()
+    record = shown.get("idea_title") or f"Feedback {display_number(shown.get('number', ''))}".strip()
     return _diff(record, [(_IDEA_FIELDS[k][1].capitalize(), words(before.get(k)), words(v)) for k, v in after.items()])
 
 
 def _idea_row(idea: dict) -> dict:
     return {
-        "id": idea["id"], "idea_number": idea.get("ideaNumber"), "title": idea.get("title"),
+        "id": idea["id"], "idea_number": display_number(idea.get("ideaNumber")), "title": idea.get("title"),
         "status": idea.get("status"), "is_test": bool(idea.get("isTest")),
+        "type": SUBMISSION_TYPES[type_of_idea(idea)].label,
         "problem": _line(idea.get("problem"))[:IDEA_PROBLEM_CHARS],
         "use_cases": [_line(c) for c in (idea.get("useCases") if isinstance(idea.get("useCases"), list) else []) if isinstance(c, str)][:MAX_USE_CASES],
     }
@@ -2562,7 +2592,7 @@ def _ideas_list(db, ctx, args: dict) -> ToolResult:
     # A manage operator needs the ids, so the list is not linked-only; a view-only one sees none of it.
     operator = people(ctx)[1:]
     if operator and not holds(db, operator[0], IDEA_MANAGE):
-        return ToolResult("denied", message="Listing someone else's ideas needs permission to manage ideas.")
+        return ToolResult("denied", message="Listing someone else's feedback needs permission to manage the Ideas board.")
     params = {"mine": "true", **({"search": args["search"]} if args.get("search") else {})}
 
     def read(user: dict) -> list[dict]:
@@ -2574,7 +2604,7 @@ def _ideas_list(db, ctx, args: dict) -> ToolResult:
         rows = run_as_user(db, ctx, read, tool_name=LIST_IDEAS)
     except Exception:  # noqa: BLE001
         logger.warning("agent: the ideas list failed", exc_info=True)
-        return ToolResult("error", message="Your ideas could not be read right now.")
+        return ToolResult("error", message="Your feedback could not be read right now.")
     data, more = cap_result({"ideas": rows[:MAX_LIST]})
     return ToolResult("ok", data=data, more=more)
 
@@ -2587,11 +2617,26 @@ WRITES[CREATE_IDEA] = WriteDef(
         "function": {
             "name": CREATE_IDEA,
             "description": (
-                "Propose logging one new idea or feature request from the user. Nothing is created until the "
-                "user confirms. Use only what the user said: write a short title from their words and leave any "
-                "other field out. As soon as you have the problem, propose it: do not ask the user to adjust or add more first. Call once per idea."
+                "Propose logging one piece of feedback from the user: a wish or feature request (type idea), or a "
+                "problem they report with the CRM system or the AI assistant (type issue; problem = what went wrong, "
+                "where). Nothing is created until the user confirms. Use only what the user said: write a short title "
+                "from their words and leave any other field out. As soon as you have the problem, propose it: do not "
+                "ask the user to adjust or add more first. Call once per piece of feedback. When talking to the user, "
+                "call it feedback and name its type (Problem report or Feature request), never an idea."
             ),
-            "parameters": {"type": "object", "properties": {"problem": {"type": "string", "maxLength": MAX_NOTE_CHARS}, **_IDEA_PROPS}, "required": ["problem"]},
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "problem": {"type": "string", "maxLength": MAX_NOTE_CHARS},
+                    **_IDEA_PROPS,
+                    "type": {
+                        "type": "string",
+                        "enum": sorted(SUBMISSION_TYPES),
+                        "description": "issue = something wrong with the CRM system or the AI assistant; idea = a wish or feature request.",
+                    },
+                },
+                "required": ["problem"],
+            },
         },
     },
     read_before=_idea_create_read_before,
@@ -2608,10 +2653,10 @@ WRITES[UPDATE_IDEA] = WriteDef(
         "function": {
             "name": UPDATE_IDEA,
             "description": (
-                "Propose a change to one of the user's own ideas: any of its title, problem, desired outcome, "
-                "use cases or current workaround. Nothing changes until the user confirms. idea_id must come "
-                "from crm_ideas_list. Use only what the user said and "
-                "leave other fields out. Call once per idea."
+                "Propose a change to one of the user's own feedback items: any of its title, problem, desired "
+                "outcome, use cases or current workaround. Nothing changes until the user confirms. idea_id must "
+                "come from crm_ideas_list. Use only what the user said and "
+                "leave other fields out. Call once per item. Call it feedback when talking to the user, never an idea."
             ),
             "parameters": {
                 "type": "object",
@@ -2633,7 +2678,7 @@ USER_READS[LIST_IDEAS] = UserRead(
         "type": "function",
         "function": {
             "name": LIST_IDEAS,
-            "description": "The user's own ideas, with the idea_id to use in crm_idea_update. Optional search text.",
+            "description": "The user's own feedback items, with the idea_id to use in crm_idea_update. Optional search text.",
             "parameters": {"type": "object", "properties": {"search": {"type": "string"}}},
         },
     },

@@ -71,6 +71,8 @@ def access_denied_text(db: Session, ctx: Mapping[str, Any], copy: CannedCopy) ->
     # ATTACHMENT-MULTI: the agent is a slug (`incoming_stock_enquiries`); the customer reads
     # "incoming stock enquiries". The `ideation` check below reads the raw value.
     folded = jsc.js_string(agent if jsc.truthy(agent) else "").replace(EM_DASH, "-").replace("_", " ")
+    if agent == "ideation":
+        folded = "feedback"  # the user-facing word for the ideation agent (round 15)
     fallback_text = copy.render("access_denied", team=folded)
     if agent != "ideation":
         return fallback_text

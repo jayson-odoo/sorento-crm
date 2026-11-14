@@ -355,7 +355,7 @@ def test_ac_uw001_open_window_sends_the_session_text(db, monkeypatch):
     send = FakeRespondClient.sent[0]
     assert send["kind"] == "text"
     assert send["identifier"] == c.respond_io_id
-    assert send["text"] == f"Hi Ali, update on your idea IDEA-0010: it is now Discussed. Track it here: {URL10}"
+    assert send["text"] == f"Hi Ali, update on your feedback IDEA-0010: it is now Discussed. Track it here: {URL10}"
     (row,) = _rows(db, ev["event_id"])
     assert row.status == "success"
     p = _payload(row)
@@ -410,7 +410,7 @@ def test_ac_uw004_no_contact_name_means_no_greeting(db, monkeypatch):
     svc.poll_ideation_status_events(db, fetch=FakeFeed([ev]))
 
     text = FakeRespondClient.sent[0]["text"]
-    assert text == f"Update on your idea IDEA-0010: it is now Discussed. Track it here: {URL10}"
+    assert text == f"Update on your feedback IDEA-0010: it is now Discussed. Track it here: {URL10}"
     assert "Hi -" not in text
     assert not text.startswith("Hi")
 

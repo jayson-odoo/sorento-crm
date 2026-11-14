@@ -19,6 +19,8 @@ import math
 from dataclasses import dataclass
 from typing import Any
 
+from app.services.chat_exchanges import EXCHANGE_TEXT_CAP, exchange_text  # noqa: F401
+
 #: security review 26 Sep 2026 (S2): L5's project/about/note/list values are
 #: JSON-quoted so a value carrying `;` or a newline can never be mistaken for a
 #: segment boundary or a line of its own - the SAME reason L5 is built from a
@@ -58,19 +60,7 @@ def est_tokens(value: str) -> int:
     return math.ceil(len(value.encode("utf-8")) / 3)
 
 
-#: How much of one exchange's text the parser reads (PR #1247 round 8). A ten-line
-#: point-form question is about 250 characters; a stock answer for ten products is
-#: longer, and its head is what a short reply refers to. Lives here, not in
-#: `head/parser.py`, so the assembler and `parser.build_user_block` share one copy.
-EXCHANGE_TEXT_CAP = 500
-
-
-def exchange_text(value: Any) -> str:
-    """One line of one exchange: newlines become " / ", at most `EXCHANGE_TEXT_CAP`."""
-    text = " / ".join(part.strip() for part in str(value or "").splitlines() if part.strip())
-    if len(text) > EXCHANGE_TEXT_CAP:
-        return text[:EXCHANGE_TEXT_CAP] + "..."
-    return text
+# `EXCHANGE_TEXT_CAP` and `exchange_text` live in core (`chat_exchanges`), shared with the ideation capture.
 
 
 def recent_exchange_lines(
