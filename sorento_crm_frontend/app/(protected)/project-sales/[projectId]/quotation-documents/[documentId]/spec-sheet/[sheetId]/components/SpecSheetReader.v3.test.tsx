@@ -126,6 +126,10 @@ vi.mock('@/hooks/useDeferredAction', () => ({
     countdown: null,
   }),
 }));
+// v3 fix round (AC-C6.2): Manage fonts needs dealer_kit.library.manage; this user has it.
+vi.mock('@/hooks/usePermissions', () => ({
+  useHasPermission: (slug: string) => slug === 'dealer_kit.library.manage',
+}));
 let mobile = false;
 vi.mock('@/hooks/use-mobile', () => ({ useIsMobile: () => mobile }));
 

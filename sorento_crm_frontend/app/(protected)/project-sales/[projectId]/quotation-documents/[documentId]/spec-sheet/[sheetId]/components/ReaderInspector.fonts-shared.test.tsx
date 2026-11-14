@@ -27,6 +27,11 @@ vi.mock('@/services/pendingActionService', () => ({
     last_outcome: null,
   })),
 }));
+// v3 fix round (AC-C6.2): Manage fonts needs dealer_kit.library.manage.
+const granted = vi.hoisted(() => ({ slugs: new Set<string>(['dealer_kit.library.manage']) }));
+vi.mock('@/hooks/usePermissions', () => ({
+  useHasPermission: (slug: string) => granted.slugs.has(slug),
+}));
 vi.mock('@/app/(protected)/dealer-kit/services/assetService', () => ({
   uploadAsset: vi.fn(),
   renameAsset: vi.fn(),
@@ -105,5 +110,25 @@ describe('one font dialog for the spec sheet (AC-C6.1, the toolbar and the Inspe
     expect(onManageFonts).toHaveBeenCalledTimes(1);
     await Promise.resolve();
     expect(screen.queryByRole('dialog', { name: 'Brand fonts' })).toBeNull();
+  });
+
+  it('without dealer_kit.library.manage there is no Manage fonts at all (AC-C6.2)', () => {
+    granted.slugs = new Set();
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ReaderInspector
+          pageKey="k1"
+          layer={LAYER}
+          layers={[LAYER]}
+          controller={{ updateLayer: vi.fn(), updateLayerProps: vi.fn() } as never}
+          mode="page"
+          onModeChange={vi.fn()}
+          onApplyAll={vi.fn()}
+          onManageFonts={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+    expect(screen.queryByRole('button', { name: 'Manage fonts' })).toBeNull();
+    granted.slugs = new Set(['dealer_kit.library.manage']);
   });
 });

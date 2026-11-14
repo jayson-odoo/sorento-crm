@@ -29,6 +29,11 @@ vi.mock('@/services/pendingActionService', () => ({
     last_outcome: null,
   })),
 }));
+// v3 fix round (AC-C6.2): Manage fonts needs dealer_kit.library.manage.
+const granted = vi.hoisted(() => ({ slugs: new Set<string>(['dealer_kit.library.manage']) }));
+vi.mock('@/hooks/usePermissions', () => ({
+  useHasPermission: (slug: string) => granted.slugs.has(slug),
+}));
 vi.mock('@/app/(protected)/dealer-kit/services/assetService', () => ({
   uploadAsset: vi.fn(),
   renameAsset: vi.fn(),
