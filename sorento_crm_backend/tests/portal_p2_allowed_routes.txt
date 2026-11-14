@@ -82,6 +82,7 @@ GET /projects/
 GET /projects/{project_id}
 GET /projects/{project_id}/collaborators
 GET /projects/{project_id}/delivery-schedules
+GET /projects/{project_id}/order-change-notices
 GET /projects/{project_id}/order-inquiry-export
 GET /projects/{project_id}/order-inquiry-rows
 GET /projects/{project_id}/order-inquiry-summary

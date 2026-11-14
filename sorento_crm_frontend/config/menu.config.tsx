@@ -75,6 +75,7 @@ const MY_REQUEST_ICONS: Partial<Record<(typeof LANDING_KINDS)[number], LucideIco
   sponsorship_form: Gift,
   sample_request: Package,
   new_product_application: FileText,
+  order_change_notice: FileText,
   price_tag_request: Receipt,
   sales_opportunity: TrendingUp,
 };
@@ -903,6 +904,14 @@ const STAFF_SIDEBAR: MenuConfig = [
         title: 'Sponsorship Forms',
         path: '/procurement-management/sponsorship-forms',
         permission: 'procurement.sponsorship_forms.view',
+      },
+      {
+        title: 'Order Change Notices',
+        path: '/procurement-management/order-change-notices',
+        permissionsAny: [
+          'procurement.order_change_notices.view',
+          'procurement.order_change_notices.view_own',
+        ],
       },
       {
         title: 'Sponsorship Report',
@@ -2243,6 +2252,14 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         title: 'Sponsorship Forms',
         path: '/procurement-management/sponsorship-forms',
         permission: 'procurement.sponsorship_forms.view',
+      },
+      {
+        title: 'Order Change Notices',
+        path: '/procurement-management/order-change-notices',
+        permissionsAny: [
+          'procurement.order_change_notices.view',
+          'procurement.order_change_notices.view_own',
+        ],
       },
       {
         title: 'Sponsorship Report',

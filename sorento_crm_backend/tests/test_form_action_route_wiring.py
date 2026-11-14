@@ -21,6 +21,9 @@ ROUTE_FILES = [
     "app/api/v1/procurement/stock_inquiries.py",
     "app/api/v1/complaints/complaints.py",
     "app/api/v1/tickets/tickets.py",
+    # OCN-ORDER-CHANGE-NOTICE: the order change notice runs the PR chain's deferred actions
+    # (`ocn.*`, form_actions `_declare_approval_chain`).
+    "app/api/v1/procurement/order_change_notices.py",
 ]
 
 _BACKEND_ROOT = Path(__file__).resolve().parents[1]
@@ -57,6 +60,10 @@ def test_routes_dispatch_at_least_the_wired_surface():
         "cx.decide",
         "cx.finalize",
         "tk.resolve",
+        "ocn.approval_decision",
+        "ocn.send_for_approval",
+        "ocn.reject_submitted",
+        "ocn.finalize",
     } <= keys
 
 
@@ -87,4 +94,5 @@ def test_registry_covers_every_form_type_the_routes_dispatch_for():
         "stock_inquiry",
         "complaint",
         "ticket",
+        "order_change_notice",
     } <= covered
