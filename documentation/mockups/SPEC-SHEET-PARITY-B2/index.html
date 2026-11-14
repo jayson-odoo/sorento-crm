@@ -113,14 +113,22 @@ code{font-size:11.5px;background:var(--muted);padding:0 4px;border-radius:4px}
 .qs{background:#fff;border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin:8px 0;font-size:13px}
 .qs b{display:block;margin-bottom:4px}
 .note{font-size:12px;background:var(--new-soft);border:1px solid #fcd34d;border-radius:8px;padding:8px 10px;margin:8px 0;max-width:980px}
+
+.tbk{border-collapse:collapse;width:100%;font-size:1.05cqw;line-height:1.35;font-family:Arial,sans-serif;text-transform:uppercase}
+.tbk td{border:.6px solid #3f7d3a;padding:.5cqw .6cqw;vertical-align:top}
+.tbk .lb{font-weight:700}
+.tbk td.cur{outline:2px solid var(--primary);outline-offset:-1px}
+.split{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px}
+@media(max-width:900px){.split{grid-template-columns:1fr}}
+.bind td{font-size:12px}
 </style>
 </head>
 <body>
 <div class="doc">
 <h1>Spec sheet: one toolbar row, editable table cells, same table in the template editor <span class="newtag">MOCK v2</span></h1>
 <p class="intro">Lane SPEC-SHEET-PARITY-B2 (PR #2349). Owner 14 Nov: too many bars taking space, table cells hard to fill with values and variables, table not seen in the template editor. Case shape: SS1 of a project quotation, 2 pages (cover + one item page). All names, refs and text are made up.</p>
-<div class="note"><b>v2 changes (owner notes on v1, 14 Nov):</b> page counter and up/down removed from the toolbar, page navigation is the left Pages side bar only (click a page; the current page is highlighted, "Page 2 of 2" under it); Q1-Q5 decided as (a); the font picker offers "Manage fonts" (upload, rename, delete), the same dialog as the template editor (section G).</div>
-<div class="nav"><a href="#a">A. One toolbar row</a><a href="#b">B. Fill a table cell</a><a href="#c">C. Field picker</a><a href="#d">D. Template editor</a><a href="#e">E. Phone 375</a><a href="#f">F. Cover "Fetching image"</a><a href="#g">G. Fonts</a><a href="#h">H. What is shared</a><a href="#map">Component map</a><a href="#q">Questions</a></div>
+<div class="note"><b>v2 changes (owner notes on v1, 14 Nov):</b> page counter and up/down removed from the toolbar, page navigation is the left Pages side bar only (click a page; the current page is highlighted, "Page 2 of 2" under it); Q1-Q5 decided as (a); the font picker offers "Manage fonts" (upload, rename, delete), the same dialog as the template editor (section G); the right-edge title block built with one table and field chips (section I); Remove page / Put back from the Pages side bar (section J).</div>
+<div class="nav"><a href="#a">A. One toolbar row</a><a href="#b">B. Fill a table cell</a><a href="#c">C. Field picker</a><a href="#d">D. Template editor</a><a href="#e">E. Phone 375</a><a href="#f">F. Cover "Fetching image"</a><a href="#g">G. Fonts</a><a href="#h">H. What is shared</a><a href="#i">I. Title block</a><a href="#j">J. Remove a page</a><a href="#map">Component map</a><a href="#q">Questions</a></div>
 
 <!-- ============ A ============ -->
 <section id="a">
@@ -346,6 +354,105 @@ code{font-size:11.5px;background:var(--muted);padding:0 4px;border-radius:4px}
 <div class="note">With v2, the spec sheet's page bar and separate format bar go away (A), so the only part still different is the frame: the side bar with pages (spec sheet) or layers (template editor), and Save / Publish (template editor only, the spec sheet autosaves).</div>
 </section>
 
+<!-- ============ I ============ -->
+<section id="i">
+<h2>I. The title block at the right edge, built with one table <span class="newtag">NEW v2</span></h2>
+<p class="why">Owner's sample (values replaced with made-up ones): a tall narrow column at the right of the page, ONE single-column table with thin green borders. Each cell is fixed label text followed by a field chip. Built in the template editor once; every spec sheet page then prints its own values. All the fields below already exist in the field list today (Spec sheet group).</p>
+<div class="split">
+ <div class="card">
+  <div style="padding:8px 12px;font-size:12px;color:var(--muted-fg);border-bottom:1px solid var(--border)">Template editor: editing the table (chips show the field name)</div>
+  <div style="background:var(--viewer);padding:16px;display:flex;justify-content:center">
+   <div class="pg" style="max-width:560px">
+    <div class="abs txt" style="left:4%;top:5%"><span class="chip">Name</span></div>
+    <div class="abs ph-img" style="left:4%;top:13%;width:38%;height:60%">Product photo</div>
+    <div class="abs" style="left:45%;top:13%;width:30%;font-size:1.2cqw"><span class="chip">Spec sheet description</span></div>
+    <div class="abs" style="right:2%;top:3%;width:19%;height:94%">
+     <table class="tbk" style="height:100%">
+      <tr style="height:44%"><td><span class="chip r">Subject title</span></td></tr>
+      <tr><td><span class="lb">REF :</span> <span class="chip r">Ref</span></td></tr>
+      <tr><td><span class="lb">AREA :</span> <span class="chip r">Area</span></td></tr>
+      <tr><td class="cur"><span class="lb">PREPARED BY :</span> <span class="chip r">Prepared by</span> <span class="chip r">Prepared by phone</span><span class="caret"></span></td></tr>
+      <tr><td><span class="lb">DATE :</span> <span class="chip r">Date</span></td></tr>
+      <tr><td><span class="lb">COMMENT :</span></td></tr>
+      <tr style="height:16%"><td></td></tr>
+     </table>
+    </div>
+   </div>
+  </div>
+ </div>
+ <div class="card">
+  <div style="padding:8px 12px;font-size:12px;color:var(--muted-fg);border-bottom:1px solid var(--border)">Spec sheet page / PDF: each page prints its own values</div>
+  <div style="background:var(--viewer);padding:16px;display:flex;justify-content:center">
+   <div class="pg" style="max-width:560px">
+    <div class="abs txt" style="left:4%;top:5%"><b>WALL HUNG WATER CLOSET</b></div>
+    <div class="abs ph-img" style="left:4%;top:13%;width:38%;height:60%">Product photo</div>
+    <div class="abs" style="left:45%;top:13%;width:30%;font-size:1.2cqw;line-height:1.4">WALL HUNG WC<br>- L520 x W360 x H340MM</div>
+    <div class="abs" style="right:2%;top:3%;width:19%;height:94%">
+     <table class="tbk" style="height:100%">
+      <tr style="height:44%"><td>APPLICATION FOR PLANNING PERMISSION FOR A PROPOSED MIXED DEVELOPMENT ON LOT 0000, SAMPLE TOWN, SAMPLE DISTRICT: PHASE 1 (I) TOWER A, 32 STOREYS, 400 UNITS SERVICED APARTMENTS; PHASE 2, 2 BLOCKS OF 5 STOREY SHOP OFFICES; PHASE 3, ONE BLOCK OF COMMUNITY HALL AND SURAU, FOR MESSRS EXAMPLE DEVELOPER SDN BHD.</td></tr>
+      <tr><td><span class="lb">REF :</span> ABC/XYZ/COVE/0000/ADD-PES</td></tr>
+      <tr><td><span class="lb">AREA :</span> UNIT</td></tr>
+      <tr><td><span class="lb">PREPARED BY :</span> ALEX TAN 012-000 0000</td></tr>
+      <tr><td><span class="lb">DATE :</span> 14/10/2026</td></tr>
+      <tr><td><span class="lb">COMMENT :</span></td></tr>
+      <tr style="height:16%"><td></td></tr>
+     </table>
+    </div>
+   </div>
+  </div>
+ </div>
+</div>
+<h3 style="font-size:13.5px;margin:18px 0 6px">How each cell is bound (click the cell, type the label, then Insert field or type "{")</h3>
+<div class="card"><table class="map bind">
+<tr><th>Row</th><th>Typed text</th><th>Field picked (Insert field &gt; Spec sheet)</th><th>Comes from</th></tr>
+<tr><td>1 (tall)</td><td>none</td><td>Subject title</td><td>the quotation's Subject (<code>project_spec_sheet_service.py:779</code>)</td></tr>
+<tr><td>2</td><td>REF :</td><td>Ref (your ref, else quotation no)</td><td>the quotation's Your ref, else its number (<code>:774</code>)</td></tr>
+<tr><td>3</td><td>AREA :</td><td>Area</td><td>the quotation line's area (Areas tab)</td></tr>
+<tr><td>4</td><td>PREPARED BY :</td><td>Prepared by, then Prepared by phone</td><td>the user who prepared the quotation, and their contact number (<code>:776-777</code>)</td></tr>
+<tr><td>5</td><td>DATE :</td><td>Date</td><td>the quotation's date, else the day it was issued (<code>:766-778</code>)</td></tr>
+<tr><td>6</td><td>COMMENT :</td><td>none (or Comment, the line's comment)</td><td>left for handwriting</td></tr>
+<tr><td>7 (tall)</td><td>none</td><td>none</td><td>empty writing space</td></tr>
+</table></div>
+<div class="note">Built with the actions from B: Add Table, then right-click &gt; Delete column (1 column left), "+" under the table until there are 7 rows, drag the bottom edge of row 1 and row 7 to make them tall, select the whole table and set the border to green 0.2 mm (All sides). Labels are typed in capitals. The column snaps to the page's right edge with the existing guides.</div>
+<div class="qs"><b>6. Date in the title block</b>(a) 14/10/2026, the standing date rule <i>(recommended)</i>; (b) 14 OCT 2026 as in your sample, for this field only.</div>
+<div class="qs"><b>7. Row height</b>(a) drag a row's bottom edge to make it taller, and a tall row stays that tall whatever the text <i>(recommended: the comment space stays blank)</i>; (b) rows grow only with their text.</div>
+<div class="qs"><b>8. Capitals</b>your sample prints the subject in capitals. (a) an "ALL CAPS" switch in the text format (cell or whole table), so the stored subject keeps its own case <i>(recommended)</i>; (b) type the subject in capitals on the quotation.</div>
+
+</section>
+
+<!-- ============ J ============ -->
+<section id="j">
+<h2>J. Remove a page you do not need, from the Pages side bar <span class="newtag">NEW v2</span></h2>
+<p class="why">Today a page is left out with the "Leave out" button in the strip above that page (<code>ReaderPage.tsx:527-539</code>); the side bar only dims it (<code>PageRail.tsx:123</code>) and has no menu, so it is easy to miss. v2: every page thumbnail (accessory pages made automatically included; the cover excepted) has a "&#8943;" menu and right-click with <b>Remove page</b>. A removed page leaves the list, stops printing and exporting, and sits under <b>Removed pages (N)</b> at the bottom of the side bar, where "Put back" returns it to its place. It is the same Leave out / Put back the sheet already saves, so nothing is deleted.</p>
+<div class="split">
+ <div class="card"><div class="work" style="grid-template-columns:200px minmax(0,1fr);height:520px">
+  <div class="rail" style="position:relative">
+   <div style="font-size:11px;font-weight:600;color:var(--muted-fg);text-transform:uppercase;letter-spacing:.05em">Pages</div>
+   <div class="th" style="position:relative"><span class="n">1</span><div class="mini" style="display:flex;align-items:flex-end;justify-content:center;font-size:10px;color:var(--muted-fg);padding:3px">Cover</div></div>
+   <div class="th" style="position:relative"><span class="n">2</span><div class="mini" style="display:flex;align-items:flex-end;justify-content:center;font-size:10px;color:var(--muted-fg);padding:3px">Water closet</div></div>
+   <div class="th on" style="position:relative"><span class="n">3</span><div class="mini" style="display:flex;align-items:flex-end;justify-content:center;font-size:10px;color:var(--muted-fg);padding:3px">Angle valve</div><span style="position:absolute;right:4px;top:3px;background:#fff;border:1px solid var(--border);border-radius:5px;font-size:12px;padding:0 5px">&#8943;</span></div>
+   <div class="th" style="position:relative"><span class="n">4</span><div class="mini" style="display:flex;align-items:flex-end;justify-content:center;font-size:10px;color:var(--muted-fg);padding:3px">Flexible hose</div></div>
+   <div class="menu" style="left:150px;top:300px;width:170px"><div>Remove page</div><div>Reset to template</div></div>
+  </div>
+  <div class="stack"><div class="pg" style="max-width:520px;display:flex;align-items:center;justify-content:center;color:var(--muted-fg);font-size:13px">Page 3: Angle valve (accessory page)</div></div>
+ </div></div>
+ <div class="card"><div class="work" style="grid-template-columns:200px minmax(0,1fr);height:520px">
+  <div class="rail">
+   <div style="font-size:11px;font-weight:600;color:var(--muted-fg);text-transform:uppercase;letter-spacing:.05em">Pages</div>
+   <div class="th" style="position:relative"><span class="n">1</span><div class="mini" style="display:flex;align-items:flex-end;justify-content:center;font-size:10px;color:var(--muted-fg);padding:3px">Cover</div></div>
+   <div class="th" style="position:relative"><span class="n">2</span><div class="mini" style="display:flex;align-items:flex-end;justify-content:center;font-size:10px;color:var(--muted-fg);padding:3px">Water closet</div></div>
+   <div class="th" style="position:relative"><span class="n">3</span><div class="mini" style="display:flex;align-items:flex-end;justify-content:center;font-size:10px;color:var(--muted-fg);padding:3px">Flexible hose</div></div>
+   <div style="margin-top:auto;border-top:1px solid var(--border);padding-top:8px">
+    <div style="font-size:11.5px;font-weight:600;color:var(--muted-fg)">Removed pages (1) &#9662;</div>
+    <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;margin-top:6px"><span style="opacity:.6">Angle valve</span><span class="btn" style="padding:2px 8px;font-size:11.5px">Put back</span></div>
+   </div>
+  </div>
+  <div class="stack"><div class="pg" style="max-width:520px;display:flex;align-items:center;justify-content:center;color:var(--muted-fg);font-size:13px">Page 3: Flexible hose (the next page moves up)</div></div>
+ </div></div>
+</div>
+<div class="note">The "Leave out" button above each page goes away (one place for it: the side bar). On a phone the same menu is on a long-press of the page strip thumbnail, and "Removed pages" sits at the end of the strip.</div>
+</section>
+
 <!-- ============ map ============ -->
 <section id="map">
 <h2>Component map (every element reuses existing code)</h2>
@@ -363,6 +470,7 @@ code{font-size:11.5px;background:var(--muted);padding:0 4px;border-radius:4px}
 <tr><td>Phone Add menu, Properties sheet</td><td><code>CanvasToolbar</code> overflow, the reader's existing phone Properties sheet</td><td>none new</td></tr>
 <tr><td>Pages side bar (only page navigation)</td><td><code>spec-sheet/.../components/PageRail.tsx</code> (desktop rail and phone strip, <code>SpecSheetReader.tsx:1064</code>, <code>:1115</code>)</td><td>Shows "Page N of M" under the thumbnails</td></tr>
 <tr><td>Manage fonts</td><td><code>tag-templates/components/FontUploadDialog.tsx:170</code> and the Inspector's "Manage fonts" button (<code>InspectorPanel.tsx:1110-1118</code>), as the template editor wires them (<code>TagCanvasEditor.tsx:5962</code>, <code>:6120-6140</code>)</td><td>Spec sheet's <code>ReaderInspector.tsx:132</code> passes <code>onUploadFont</code> and renders the same dialog; <code>FormatBar.tsx</code> font list gets the same "Manage fonts" entry. Fonts are the shared kit library, so a font uploaded on either screen shows in both</td></tr>
+<tr><td>Remove page / Removed pages</td><td>the sheet's existing Leave out / Put back (<code>ReaderPage.tsx:527-539</code>, saved as the page's <code>hidden</code> flag); <code>PageRail.tsx</code>; <code>components/ui/context-menu</code> and <code>dropdown-menu</code></td><td>Menu + right-click on each thumbnail; removed pages listed at the bottom of the rail with Put back</td></tr>
 <tr><td>Image placeholder</td><td><code>KonvaTagLayer.tsx</code> <code>ImageContent</code>, <code>useHtmlImage.ts</code></td><td>Return a failed state; draw "Image not available"</td></tr>
 </table></div>
 </section>
