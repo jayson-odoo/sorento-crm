@@ -477,11 +477,16 @@ VIDEO_PHONES = ["012-000 1401", "012-000 1402"]
 
 
 def reset_video_rows(db):
-    from app.models.access import RespondContact, RespondContactCustomer
+    from app.models.access import (
+        RespondContact, RespondContactCustomer, respond_contact_access_types, respond_contact_tags,
+    )
 
     for phone in VIDEO_PHONES:
         for row in db.query(RespondContact).filter(RespondContact.phone_number.in_([contact_phone(phone), msisdn(phone)])):
             db.query(RespondContactCustomer).filter_by(contact_id=row.id).delete()
+            # Their level too (Business owner is a tag plus access types), so Add people starts from Employee.
+            for table in (respond_contact_tags, respond_contact_access_types):
+                db.execute(table.delete().where(table.c.contact_id == row.id))
             say(f"unlinked video contact {row.name}")
     # Complaints and price tag requests the salesperson filed in a video (child rows cascade).
     from app.models.complaints import Complaint
@@ -490,6 +495,16 @@ def reset_video_rows(db):
     sam = db.query(RespondContact).filter(
         RespondContact.phone_number.in_([contact_phone(SALES["phone"]), msisdn(SALES["phone"])])).first()
     if sam is not None:
+        # A request's tag sheet (dealer_kit.page, slug tag-sheet-<doc number>) outlives it with request_id
+        # nulled, and the restarted numbering then collides with the old slug on Approve.
+        from app.models.dealer_kit import Page
+
+        mine = db.query(PriceTagRequest.id).filter(PriceTagRequest.contact_id == sam.id)
+        n = db.query(Page).filter(Page.kind == "tag_sheet").filter(
+            (Page.request_id.in_(mine.scalar_subquery())) | Page.request_id.is_(None)
+        ).delete(synchronize_session=False)
+        if n:
+            say(f"removed {n} video tag sheets")
         for model, what in ((Complaint, "complaints"), (PriceTagRequest, "price tag requests")):
             n = db.query(model).filter(model.contact_id == sam.id).delete(synchronize_session=False)
             if n:

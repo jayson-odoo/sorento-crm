@@ -90,8 +90,18 @@ export default {
       },
     },
     {
-      en: 'Check each tag: product, code and price. Use Back to edit to change anything.',
-      ms: 'Semak setiap tanda: produk, kod dan harga. Guna Back to edit untuk membuat perubahan.',
+      en: 'Zoom in and check each tag: product, code and price.',
+      ms: 'Zum masuk dan semak setiap tanda: produk, kod dan harga.',
+      run: async ({ page, click, sleep }) => {
+        await click(page.getByRole('button', { name: 'Zoom level' }));
+        await sleep(400);
+        await click(page.getByRole('menuitem', { name: '100%', exact: true }).first());
+        await sleep(2500);
+      },
+    },
+    {
+      en: 'Use Back to edit to change anything.',
+      ms: 'Guna Back to edit untuk membuat perubahan.',
       run: async ({ page, point }) => point(page.getByRole('button', { name: 'Back to edit', exact: true }), 1200),
     },
     {
