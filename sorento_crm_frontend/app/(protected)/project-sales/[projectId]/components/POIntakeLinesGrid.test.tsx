@@ -834,7 +834,9 @@ describe('POIntakeLinesGrid numeric cells: no remount, stable format, live amoun
 
     await user.type(qty, '1.');
     // jsdom's number box reads "1." as "1." or ""; either way it is not rewritten to a figure.
-    expect(['1.', '']).toContain(box('Quantity on line 1').value);
+    // A browser's number box reports '' for the partial "1." (it still shows the typed
+    // characters); jsdom reports '1'. Either way nothing rewrote the entry.
+    expect(['1.', '', '1']).toContain(box('Quantity on line 1').value);
     await user.type(qty, '5');
     expect(box('Quantity on line 1').value).toBe('1.5');
     expect(onUpdateLine).not.toHaveBeenCalled();
