@@ -28,7 +28,9 @@ export default {
     {
       en: 'Your complaints are listed here. Click Create to file a new one.',
       ms: 'Aduan anda disenaraikan di sini. Klik Create untuk membuat aduan baharu.',
-      run: async ({ page, click }) => {
+      run: async ({ page, click, point }) => {
+        // The list area: its empty state on a clean seed, else the first card.
+        await point(page.getByRole('main').getByText(/No complaint submissions yet|CMP-/).first(), 1500);
         await click(page.getByRole('link', { name: 'Create', exact: true }).first());
         await page.getByRole('heading', { name: 'Create Complaint', level: 1 }).waitFor({ timeout: 60000 });
       },
@@ -121,8 +123,10 @@ export default {
     {
       en: 'Your complaint is now on your list. Click it to open the record.',
       ms: 'Aduan anda kini dalam senarai anda. Klik untuk membuka rekod.',
-      run: async ({ page, click, sleep }) => {
-        await click(page.getByRole('main').getByRole('link', { name: /CMP-/ }).first());
+      run: async ({ page, click, point, sleep }) => {
+        const card = page.getByRole('main').getByRole('link', { name: /CMP-/ }).first();
+        await point(card, 1500);
+        await click(card);
         await page.getByRole('heading', { name: 'Complaint', exact: true, level: 1 }).waitFor({ timeout: 60000 });
         await sleep(1200);
       },

@@ -60,13 +60,16 @@ export default {
       },
     },
     {
-      en: 'Adding several people at once? Click Add person for each one.',
-      ms: 'Menambah beberapa orang sekaligus? Klik Add person untuk setiap orang.',
-      run: async ({ page, click, type }) => {
+      en: 'Adding several people at once? Click Add person for each one. Nora is staff, so she is an Employee.',
+      ms: 'Menambah beberapa orang sekaligus? Klik Add person untuk setiap orang. Nora ialah pekerja, jadi dia Employee.',
+      run: async ({ page, click, type, sleep }) => {
         const dlg = page.getByRole('dialog');
         await click(dlg.getByRole('button', { name: 'Add person', exact: true }));
         await type(dlg.getByLabel('Name', { exact: true }).nth(1), 'Nora Aziz');
         await type(dlg.getByLabel('Phone 2'), '120001402', { delay: 90 });
+        await click(dlg.getByRole('combobox', { name: 'Access 2' }));
+        await sleep(500);
+        await click(page.getByRole('option', { name: 'Employee', exact: true }).first());
       },
     },
     {
@@ -87,8 +90,8 @@ export default {
       },
     },
     {
-      en: 'Make the change and click Save.',
-      ms: 'Buat perubahan dan klik Save.',
+      en: 'Make the change, here Employee to Business Owner, and click Save.',
+      ms: 'Buat perubahan, di sini Employee kepada Business Owner, dan klik Save.',
       run: async ({ page, click, sleep }) => {
         const dlg = page.getByRole('dialog');
         await click(dlg.getByRole('combobox', { name: 'Access' }));

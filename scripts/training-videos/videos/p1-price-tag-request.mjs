@@ -90,8 +90,8 @@ export default {
       },
     },
     {
-      en: 'Zoom in and check each tag: product, code and price.',
-      ms: 'Zum masuk dan semak setiap tanda: produk, kod dan harga.',
+      en: "Zoom in and check each tag's product and code.",
+      ms: 'Zum masuk dan semak produk dan kod pada setiap tanda.',
       run: async ({ page, click, sleep }) => {
         await click(page.getByRole('button', { name: 'Zoom level' }));
         await sleep(400);
