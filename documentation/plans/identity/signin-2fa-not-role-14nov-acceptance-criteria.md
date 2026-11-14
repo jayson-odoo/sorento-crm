@@ -1,7 +1,6 @@
 # UAC: SIGNIN-2FA-NOT-ROLE
 
-Status: v2, after the owner's 14 Nov 13:30 correction (landing unchanged). Behaviour card v2 on PR #2411; remaining
-questions proceed on the recommendations (no new CRM 2FA, 30-day sliding, no data delete).
+Status: v2 FINAL, owner answers 14 Nov ~13:30: Q1 2FA in a separate PR; Q2 sliding, same as login; Q3 signed-in user enters OWN portal with no code; Q4 staff on a dealer link get verify card + Send code; Q5 clock fix only.
 
 ## Landing unchanged
 - AC-1 `home_path_for_user` (`phone_signin_service.py:351`) returns exactly what it returns on main for every role mix
