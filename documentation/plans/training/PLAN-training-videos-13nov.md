@@ -1,6 +1,6 @@
 # PLAN: training videos for the 16 Nov and 18 Nov meetings
 
-Status: Review (14 Nov: drafts of #1 #2 #3 #5 #6 recorded on current main and delivered on the private page; #4 spec ready, recording deferred by crew until the chatbot PRs #2395 + #2394 are live; #7 and #8 wait for #2384 and #2381 to merge; finals re-recorded with the same commands after crew says functions are frozen). Track: M, no product code (recordings only).
+Status: Review (14 Nov: drafts of #1 #2 #3 #5 #6 #7 #8 recorded on current main and delivered on the private page; #7 order change notice 1:30 and #8 order request 1:58 recorded in the cloud sandbox from seeder part p3; #4 spec ready, recording deferred by crew until the chatbot PRs #2395 + #2394 are live; finals re-recorded with the same commands after crew says functions are frozen). Track: M, no product code (recordings only).
 
 Lane: TRAINING-VIDEOS. Owner ask 13 Nov: short screen-recorded videos of the real app flows with
 captions and a voice-over.
@@ -16,8 +16,8 @@ Priority 1 (Mon 16 Nov, sales team):
 Priority 2 (Wed 18 Nov, Project CS):
 5. Split delivery (`p2-split-delivery`)
 6. Order inquiry (OI) lines and states, recorded as CS, view only (`p2-order-inquiry`)
-7. Order change notice (only once #2384 is merged to main)
-8. Spare part request, CS requests and CS manager approves (only once #2381 is merged to main)
+7. Order change notice, recorded as CS: read an approved notice and mark it done (`p2-order-change-notice`, p3 seed)
+8. Spare part request (UI name: Order Request), CS raises and the CS manager edits + approves (`p2-order-request`, p3 seed)
 
 ## Method
 
@@ -38,7 +38,7 @@ Not the public repo. Crew answers 13 Nov:
   `.ms.srt` subtitle file that needs a native read before use.
 - Chatbot video (#4): crew 14 Nov 09:20 deferred it (answers change with #2395 + #2394, and the dev
   OpenAI key has no credit); the spec is kept ready for crew to re-open.
-- Spare part request (#8) waits for PR #2381 (lane SPARE-PART-ORDER-REQUEST) to merge.
+- Spare part request (#8): PR #2381 merged, recorded 14 Nov.
 - Delivery: a private claude.ai page (drafts and finals); fallback is crew re-recording locally.
 
 ## Re-run contract
