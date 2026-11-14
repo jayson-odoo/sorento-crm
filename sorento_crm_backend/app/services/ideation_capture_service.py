@@ -343,6 +343,12 @@ def _missing_list(sent: dict[str, Any], photos: int = 0) -> list[str]:
     return missing if photos else [*missing, _PHOTOS]
 
 
+def item_title(title: str, fields: dict[str, str]) -> str:
+    """The item's title: the given one, else the problem statement cut to a label (round 13: a filed item
+    always carries a title, owner 14 Nov). "" only while there is no problem statement."""
+    return title or normalise_title(fields.get("problem", ""))
+
+
 def build_create_payload(
     config: Any,
     *,
@@ -375,7 +381,7 @@ def build_create_payload(
         payload["use_cases"] = use_cases
     if name:
         payload["submitter_name"] = name
-    if title:
+    if title := item_title(title, fields):
         payload["title"] = title
     if contact.submitter_tier:
         payload["submitter_tier"] = contact.submitter_tier
@@ -729,7 +735,7 @@ def handle_capture_turn(
     photos = 0 if is_test else attach_chat_photos(db, user_id=user.id, idea_id=result.get("idea_id"))
     facts = {
         "idea_number": result.get("idea_number"),
-        "title": result.get("title") or title,
+        "title": result.get("title") or payload.get("title"),
         "link": link,
         "missing": _missing_list(payload, photos),
         "type": submission_type,

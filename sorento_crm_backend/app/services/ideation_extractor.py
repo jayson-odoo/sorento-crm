@@ -171,8 +171,8 @@ IDEATE_EXTRACTION_JSON_SCHEMA: dict[str, Any] = {
             "description": (
                 "A short label for the idea, at most 8 words, generated from the "
                 "problem statement, in the same language as the user's message (English "
-                "stays English), never translated. Empty string when the draft has no problem "
-                "statement yet."
+                "stays English), never translated. It is never empty once there is a problem statement, "
+                "whatever the language. Empty string only when the draft has no problem statement yet."
             ),
         },
         "review_action": {

@@ -1,6 +1,6 @@
 """WA-COMPLAINT-INTAKE: a report of a CRM or assistant problem is ideate (an issue to log), in the STORED parser
 prompt. Production runs the stored `chatbot_semantic_parser` version, not `parser_template.TEMPLATE`, so the rule
-ships as five anchored edits of the stored text (documentation/plans/chatbot/PROMPT-wa-issue-ideate.md). One
+ships as six anchored edits of the stored text (documentation/plans/chatbot/PROMPT-wa-issue-ideate.md). One
 function: the committed candidate file and migration `wa_0002_parser_issue_ideate` both come from it. Pure."""
 from __future__ import annotations
 
@@ -39,6 +39,15 @@ OUTRANK_OLD = (
     "mentions a product or order."
 )
 OUTRANK_NEW = OUTRANK_OLD + " It never outranks a report of a CRM system or assistant problem (rule 1)."
+#: Edit 6, the DECISIVE signal-word rule: a report that the assistant or a screen got it wrong sets no domain,
+#: appended in place.
+DECISIVE_OLD = "Only with NO decisive term AND a genuinely ambiguous domain \u2192 domain_hint and intent_hint null."
+DECISIVE_NEW = DECISIVE_OLD + (
+    " One exception: when the user says the assistant (the bot, the AI, its answer) or a CRM screen got "
+    "something wrong, a signal word only names what the problem was about and sets no domain; that report is "
+    "ideate (see the ideate bullet). A user who questions or disputes a record's own figure or status, without "
+    "blaming the assistant or a screen, keeps the domain."
+)
 
 
 def _once(count: int, anchor: str) -> None:
@@ -47,7 +56,7 @@ def _once(count: int, anchor: str) -> None:
 
 
 def apply_issue_rule(text: str) -> str | None:
-    """`text` with the five edits, each changing a line in place (no line added). None when it already
+    """`text` with the six edits, each changing a line in place (no line added). None when it already
     carries the rule (`SHARED_PHRASE`). Raises ValueError when an anchor does not occur exactly once or edit
     2's anchor is not on the ideate bullet's own line. Lines split and join on "\\n" only, so every other
     byte (a trailing newline included) is kept."""
@@ -59,12 +68,13 @@ def apply_issue_rule(text: str) -> str | None:
     _once(lines.count(ROUTING_OLD), ROUTING_OLD)
     _once(text.count(RULE1_OLD), RULE1_OLD)
     _once(text.count(OUTRANK_OLD), OUTRANK_OLD)
+    _once(text.count(DECISIVE_OLD), DECISIVE_OLD)
     bullet = next(n for n, line in enumerate(lines) if BULLET_OLD in line)
     if HUMAN_OLD not in lines[bullet]:
         raise ValueError(f"issue rule anchor is not on the ideate bullet line: {HUMAN_OLD!r}")
     lines[lines.index(ROUTING_OLD)] = ROUTING_NEW
     lines[bullet] = lines[bullet].replace(BULLET_OLD, BULLET_NEW).replace(HUMAN_OLD, HUMAN_NEW)
-    for old, new in ((RULE1_OLD, RULE1_NEW), (OUTRANK_OLD, OUTRANK_NEW)):
+    for old, new in ((RULE1_OLD, RULE1_NEW), (OUTRANK_OLD, OUTRANK_NEW), (DECISIVE_OLD, DECISIVE_NEW)):
         n = next(n for n, line in enumerate(lines) if old in line)
         lines[n] = lines[n].replace(old, new)
     return "\n".join(lines)

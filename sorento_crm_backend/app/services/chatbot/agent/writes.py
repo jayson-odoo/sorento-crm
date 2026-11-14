@@ -2517,7 +2517,7 @@ def _idea_create_execute(db, user: dict, args: dict) -> dict:
         note += f" Photos: {photos}."
     return {
         "id": str(result["idea_id"]),
-        "after": {"idea_number": number, "title": result.get("title") or given.get("title")},
+        "after": {"idea_number": number, "title": result.get("title") or payload.get("title")},
         "note": note,
     }
 
