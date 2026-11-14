@@ -31,6 +31,7 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     CheckConstraint,
     Column,
@@ -49,6 +50,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.orm import relationship
 
 from app.database import Base
 from app.models.base import CompanyScopedMixin
@@ -476,6 +478,17 @@ class ProjectSalesOrder(Base, CompanyScopedMixin):
     area_group = Column(String(80), nullable=True)
     provisional_ref = Column(String(80), nullable=False)
     autocount_doc_no = Column(String(80), nullable=True)
+    # AC-QTSO-CRM: written only by a `done` create/update answer. The key is never shown;
+    # `last_modified` is the raw string from the SS read-back, sent back as expectedLastModified.
+    autocount_doc_key = Column(String(80), nullable=True)
+    autocount_last_modified = Column(String(64), nullable=True)
+    # A done cancel in AutoCount: when, and by whom (a user id; no FK, it is a marker).
+    autocount_cancelled_at = Column(DateTime(timezone=False), nullable=True)
+    autocount_cancelled_by = Column(String(100), nullable=True)
+    # The AutoCount book the key belongs to (R8): SS's name at create, or the adopted source_ref's.
+    autocount_book = Column(String(40), nullable=True)
+    # Owner 11 Nov: the key + exact body of a create whose outcome is not known yet (write-ahead).
+    autocount_pending_create = Column(JSON(none_as_null=True), nullable=True)
     status = Column(String(24), nullable=False, server_default=SO_STATUS_DRAFT)
 
     # A parking route: the customer on the document is a convenience, the project is the
@@ -653,20 +666,45 @@ VERB_REPOINT_SO = "REPOINT_SO"
 VERB_MODEL_CHANGE = "MODEL_CHANGE"
 
 
+#: The change types an order change notice names (UAC A5). A lookup seeded by migration
+#: `ocn_0001_order_change_notice` with no company column: every company reads the same four.
+class OrderChangeType(Base):
+    """Advance, Exchange, Cancellation, Delay: each with its risk level and a guide text."""
+
+    __tablename__ = "order_change_types"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    name = Column(String(64), nullable=False)
+    risk_level = Column(String(16), nullable=False)  # Low | High | Highest
+    guide_text = Column(Text, nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True, server_default=text("true"))
+    position = Column(Integer, nullable=False, default=0, server_default=text("0"))
+
+    __table_args__ = ({"schema": "projects"},)
+
+
 class OrderChangeNotice(Base, CompanyScopedMixin):
     """The client's only trusted hard gate (D15), auto drafted from the computed delta.
 
     Required for every amendment to a PUBLISHED SO. Editing an unpublished draft is not an
     amendment and raises none (finding G9).
+
+    OCN-ORDER-CHANGE-NOTICE: also raised by hand (`source = crm`) and run through the purchase
+    request's approval chain (`app.services.order_change_notice_service`). The lifecycle
+    columns carry the purchase request's names AND values, so the shared rules
+    (`app.services.approval_chain_rules`) and the deferred-action column captures apply as is.
     """
 
     __tablename__ = "order_change_notices"
     __audit_track__ = True
+    #: Pinned by tests/test_ocn_history.py; the History tab reads this entity type.
+    __audit_entity_type__ = "order_change_notice"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     ocn_number = Column(String(64), nullable=False)
+    #: Optional (UAC A3): deleting a project keeps its notices, with no project.
     project_id = Column(
-        UUID(as_uuid=False), ForeignKey("projects.projects.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=False), ForeignKey("projects.projects.id", ondelete="SET NULL"), nullable=True
     )
     purchase_order_id = Column(
         UUID(as_uuid=False),
@@ -680,13 +718,95 @@ class OrderChangeNotice(Base, CompanyScopedMixin):
     source_document_kind = Column(String(32), nullable=True)  # revised_po | revised_schedule | none
     source_document_id = Column(UUID(as_uuid=False), nullable=True)
     change_table_json = Column(JSONB, nullable=True)
+    #: The user who approved it (set by the approval decision).
     approver_id = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     approved_at = Column(DateTime(timezone=False), nullable=True)
     created_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
+    # ---- the form (OCN-ORDER-CHANGE-NOTICE)
+    #: crm (raised by hand) | amendment (drafted from an SO amendment).
+    source = Column(String(16), nullable=False, default="crm", server_default="crm")
+    ocn_date = Column(Date, nullable=True)
+    change_type_id = Column(
+        UUID(as_uuid=False), ForeignKey("projects.order_change_types.id", ondelete="SET NULL"), nullable=True
+    )
+    customer_id = Column(
+        UUID(as_uuid=False), ForeignKey("customers.id", ondelete="SET NULL"), nullable=True
+    )
+    #: The typed name, kept as the display fallback beside the picked customer (UAC A7).
+    customer_name = Column(String(255), nullable=True)
+    customer_po_no = Column(String(128), nullable=True)
+    so_no_text = Column(String(128), nullable=True)
+    #: "Requested by" (UAC I7), the purchase request's pair: the requestor contact and the
+    #: label stamped from its name by requestor_options_service.apply_requestor_contact.
+    requested_by_contact_id = Column(
+        Text, ForeignKey("respond_contacts.id", ondelete="SET NULL"), nullable=True
+    )
+    requested_by = Column(Text, nullable=True)
+    cs_in_charge_user_id = Column(
+        String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    description = Column(Text, nullable=True)
+    cs_comment = Column(Text, nullable=True)
+
+    # ---- the lifecycle, the purchase request's columns and values
+    status = Column(String(32), nullable=False, default="draft", server_default="draft")
+    approval_status = Column(String(32), nullable=True)
+    #: The decision maker's display name (the purchase request's `approved_by`).
+    approved_by = Column(String(255), nullable=True)
+    approval_comments = Column(Text, nullable=True)
+    rejected_by_id = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    requested_approval_by_user_id = Column(
+        String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    submitted_at = Column(DateTime(timezone=False), nullable=True)
+    voided_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    voided_at = Column(DateTime(timezone=False), nullable=True)
+    void_reason = Column(Text, nullable=True)
+    revision_no = Column(Integer, nullable=False, default=0, server_default=text("0"))
+
+    lines = relationship(
+        "OrderChangeNoticeLine",
+        back_populates="notice",
+        cascade="all, delete-orphan",
+        order_by="OrderChangeNoticeLine.position",
+    )
+    change_type = relationship("OrderChangeType", lazy="joined")
+
     __table_args__ = (
         UniqueConstraint("company_id", "ocn_number", name="uq_ocn_number"),
+        {"schema": "projects"},
+    )
+
+
+class OrderChangeNoticeLine(Base):
+    """One changed product (UAC A6): always a catalogue product, never free text, and the
+    quantities are never capped by stock."""
+
+    __tablename__ = "order_change_notice_lines"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    ocn_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.order_change_notices.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    position = Column(Integer, nullable=False, default=0, server_default=text("0"))
+    product_id = Column(
+        UUID(as_uuid=False), ForeignKey("products.id", ondelete="RESTRICT"), nullable=False
+    )
+    qty_before = Column(Numeric(18, 4), nullable=True)
+    qty_after = Column(Numeric(18, 4), nullable=True)
+    date_before = Column(Date, nullable=True)
+    date_after = Column(Date, nullable=True)
+    delivered_qty = Column(Numeric(18, 4), nullable=True)
+    remark = Column(Text, nullable=True)
+
+    notice = relationship("OrderChangeNotice", back_populates="lines")
+
+    __table_args__ = (
+        Index("ix_order_change_notice_lines_ocn", "ocn_id"),
         {"schema": "projects"},
     )
 
@@ -715,10 +835,20 @@ class SOAmendment(Base, CompanyScopedMixin):
     row_decisions = Column(JSONB, nullable=True)
     status = Column(String(16), nullable=False, server_default=AMENDMENT_PROPOSED)
     published_at = Column(DateTime(timezone=False), nullable=True)
+    # AC-QTSO-CRM: the one AutoCount step an amendment takes (the PATCH of its line edits), set
+    # when AutoCount answered done, so a second press never sends it again.
+    autocount_edit_sent_at = Column(DateTime(timezone=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     __table_args__ = (
         Index("ix_so_amendments_order", "project_sales_order_id"),
+        # One amendment per order change notice (OCN-ORDER-CHANGE-NOTICE, migration ocn_0001).
+        Index(
+            "uq_so_amendments_ocn_id",
+            "ocn_id",
+            unique=True,
+            postgresql_where=text("ocn_id IS NOT NULL"),
+        ),
         {"schema": "projects"},
     )
 
@@ -738,6 +868,20 @@ class SOAmendment(Base, CompanyScopedMixin):
 INQUIRY_RAISED = "raised"
 INQUIRY_ACTIONED = "actioned"
 INQUIRY_CANCELLED = "cancelled"
+#: SPARE-PART-ORDER-REQUEST (`PLAN-spare-part-order-request-12nov.md`): the states a
+#: spare part request's HEADER holds before its final approval, and the state its ROWS hold
+#: until then. Purchasing never sees a header in one of these states; a `draft` row is out
+#: of every purchasing read (`oi_row_visibility.live_row_clause`) and every committed-demand
+#: reader (they count `raised` / `partly_linked` only).
+INQUIRY_DRAFT = "draft"
+INQUIRY_PENDING_APPROVAL = "pending_approval"
+INQUIRY_REJECTED = "rejected"
+INQUIRY_PRE_APPROVAL_STATES = (INQUIRY_DRAFT, INQUIRY_PENDING_APPROVAL, INQUIRY_REJECTED)
+#: What an inquiry was raised from: a sales order (every inquiry before this lane), or a
+#: spare part request a requester raised with no sales order behind it.
+INQUIRY_TYPE_SALES_ORDER = "sales_order"
+INQUIRY_TYPE_SPARE_PART = "spare_part_request"
+INQUIRY_TYPES = (INQUIRY_TYPE_SALES_ORDER, INQUIRY_TYPE_SPARE_PART)
 #: A raised ORDER/RESERVE_AND_ORDER row tagged onto a specific outstanding supplier PO
 #: line (PLAN-demo-followups-19aug-ladder-v2.md section G, "identify which outstanding
 #: PO has quantity to fulfil this order inquiry, tag it"). `committed_v`'s confirmed leg
@@ -811,6 +955,10 @@ IV_ORDER_BACK = "ORDER_BACK"
 #: stored value. Bound to the new value rather than deleted, so a reader written against
 #: the old spelling keeps meaning the same thing while it is renamed; nothing writes it.
 IV_BORROW_SHORTFALL = IV_ORDER_BACK
+#: A spare part request's row (crew ruling 12 Nov 2026): buying work for purchasing like
+#: ORDER, but never customer demand - `scm.committed_v` and the reorder plan count
+#: ORDER / ORDER_BACK only, so stock replenished this way enters SCM through the PO alone.
+IV_REPLENISH = "REPLENISH"
 
 
 class OrderInquiry(Base, CompanyScopedMixin):
@@ -836,13 +984,29 @@ class OrderInquiry(Base, CompanyScopedMixin):
     # in an old email still finds its OI (search matches it too). NULL for every header
     # born after that migration.
     legacy_inquiry_no = Column(String(20), nullable=True)
+    # Required for a sales-order inquiry (`ck_order_inquiries_type_needs_so`); a spare part
+    # request has none.
     project_sales_order_id = Column(
-        UUID(as_uuid=False), ForeignKey("projects.sales_orders.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=False), ForeignKey("projects.sales_orders.id", ondelete="CASCADE"), nullable=True
+    )
+    inquiry_type = Column(
+        String(32), nullable=False, server_default=INQUIRY_TYPE_SALES_ORDER,
+        default=INQUIRY_TYPE_SALES_ORDER,
     )
     amendment_id = Column(
         UUID(as_uuid=False), ForeignKey("projects.so_amendments.id", ondelete="SET NULL"), nullable=True
     )
     state = Column(String(16), nullable=False, server_default=INQUIRY_RAISED)
+    # SPARE-PART-ORDER-REQUEST: the request's own fields. NULL on every sales-order inquiry.
+    currency = Column(String(3), nullable=True)
+    requested_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    needed_by = Column(Date, nullable=True)
+    default_location = Column(String(80), nullable=True)
+    reason = Column(Text, nullable=True)
+    submitted_at = Column(DateTime(timezone=False), nullable=True)
+    approved_at = Column(DateTime(timezone=False), nullable=True)
+    approved_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    reject_reason = Column(Text, nullable=True)
     # The FIRST raise (R5) - written once, at insert, and never re-stamped by a
     # reconfirm since S1 (`523_oi_monthly_no_raises`). Every later raise/reconfirm is
     # its own row on `OrderInquiryRaise` instead; these two columns stay the header's
@@ -853,6 +1017,14 @@ class OrderInquiry(Base, CompanyScopedMixin):
 
     __table_args__ = (
         UniqueConstraint("company_id", "inquiry_no", name="uq_project_order_inquiry_no"),
+        CheckConstraint(
+            "inquiry_type IN ('sales_order', 'spare_part_request')",
+            name="ck_order_inquiries_type",
+        ),
+        CheckConstraint(
+            "inquiry_type <> 'sales_order' OR project_sales_order_id IS NOT NULL",
+            name="ck_order_inquiries_type_needs_so",
+        ),
         Index("ix_project_order_inquiries_order", "project_sales_order_id"),
         # One inquiry per publish, enforced by the database rather than by remembering
         # to check: republishing must not double what purchasing is told to buy.
@@ -879,32 +1051,38 @@ class OrderInquiry(Base, CompanyScopedMixin):
 #: flat `OI-000001` (six digits, no month) migration `523_oi_monthly_no_raises`
 #: renumbers - the old value survives on `legacy_inquiry_no`.
 INQUIRY_NO_PREFIX = "OI-"
+#: SPARE-PART-ORDER-REQUEST (owner hand test, 13 Nov): an Order Request has its OWN series,
+#: `OR-2611-0001`, per company per month, independent of the OI- one.
+ORDER_REQUEST_NO_PREFIX = "OR-"
 INQUIRY_NO_DIGITS = 4
 #: Every date this file numbers by is Asia/Kuala_Lumpur (R3): a header raised at
 #: 2026-09-30 17:30 UTC is already 1 Oct there, and must number under October.
 _MY_TZ = ZoneInfo("Asia/Kuala_Lumpur")
 
 
-def _inquiry_no_prefix(ref_date) -> str:
-    """`OI-2609-` for any `date`/`datetime` in September 2026."""
-    return f"{INQUIRY_NO_PREFIX}{ref_date:%y%m}-"
+def _inquiry_no_prefix(ref_date, inquiry_type: str = INQUIRY_TYPE_SALES_ORDER) -> str:
+    """`OI-2609-` for any `date`/`datetime` in September 2026; `OR-2609-` for an Order
+    Request (`inquiry_type` `spare_part_request`)."""
+    series = ORDER_REQUEST_NO_PREFIX if inquiry_type == INQUIRY_TYPE_SPARE_PART else INQUIRY_NO_PREFIX
+    return f"{series}{ref_date:%y%m}-"
 
 
-def next_inquiry_no(bind, company_id, ref_date) -> str:
+def next_inquiry_no(bind, company_id, ref_date, inquiry_type: str = INQUIRY_TYPE_SALES_ORDER) -> str:
     """The next inquiry number for one company, for one MONTH: the highest already
     issued in that month, plus one.
 
     HIGHEST plus one, never the count: a number that has been issued is in somebody's
     email, so a departed inquiry must not hand it to a different one. Scoped to the
     month's own prefix rather than the whole series, so October opens at `-0001` no
-    matter how many September numbers already exist (R3).
+    matter how many September numbers already exist (R3). The prefix also carries the
+    series (OI- or OR-), so each series counts only its own numbers.
 
     Per COMPANY, matching `uq_project_order_inquiry_no` and `provisional_ref` one table
     over. `bind` is whatever can execute a statement - the flush's own Connection when this
     runs from the stamp below, a Session when a caller asks directly - so the number is
     minted by ONE piece of code however it is reached.
     """
-    prefix = _inquiry_no_prefix(ref_date)
+    prefix = _inquiry_no_prefix(ref_date, inquiry_type)
     table = OrderInquiry.__table__
     latest = bind.execute(
         select(table.c.inquiry_no)
@@ -941,7 +1119,8 @@ def _stamp_inquiry_no(_mapper, connection, target) -> None:
     raised_at = getattr(target, "raised_at", None)
     ref_moment = raised_at if raised_at is not None else datetime.utcnow()
     ref_date = ref_moment.replace(tzinfo=timezone.utc).astimezone(_MY_TZ).date()
-    target.inquiry_no = next_inquiry_no(connection, target.company_id, ref_date)
+    inquiry_type = getattr(target, "inquiry_type", None) or INQUIRY_TYPE_SALES_ORDER
+    target.inquiry_no = next_inquiry_no(connection, target.company_id, ref_date, inquiry_type)
 
 
 #: The two things `OrderInquiryRaise.kind` can be (R5): the header's FIRST raise, and
@@ -1111,6 +1290,19 @@ class OrderInquiryRow(Base, CompanyScopedMixin):
     #: the "was X" beside the new code. Same writer and same overwrite rule as the two
     #: columns above.
     previous_item_code = Column(String(120), nullable=True)
+    #: SPARE-PART-ORDER-REQUEST: a spare part request's line names its catalogue product
+    #: itself (it has no sales order line to read one off), its description and unit price,
+    #: and the qty / unit price the requester SUBMITTED, kept when an approver changes them
+    #: ("was ..."). NULL on every sales-order inquiry row.
+    product_id = Column(
+        UUID(as_uuid=False), ForeignKey("products.id", ondelete="SET NULL"), nullable=True
+    )
+    description = Column(Text, nullable=True)
+    unit_price = Column(Numeric(15, 4), nullable=True)
+    requested_qty = Column(Numeric(15, 4), nullable=True)
+    requested_unit_price = Column(Numeric(15, 4), nullable=True)
+    #: The order the requester entered a spare part request's lines in (1-based).
+    line_no = Column(Integer, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     #: PLAN-scm-supplied-with-companions.md section 3.2. DERIVED, never typed - the one
     #: writer is `ProjectOrderInquiryService.derive_bundles`. How much of THIS row's

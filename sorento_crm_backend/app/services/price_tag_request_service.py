@@ -27,6 +27,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.models.base import company_scope
 from app.models.price_tag import PriceTagRequest, PriceTagRequestLine
 from app.services.error_handler import AppException
+from app.utils.last_activity import last_activity_order, last_activity_range
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +137,14 @@ def sales_agents_for_contact(db: Session, contact_id: str) -> list:
     from app.services.sales.portal_agent import agents_for_contact
 
     return agents_for_contact(db, contact_id)
+
+
+def _item_key(line_data: dict) -> tuple:
+    """A payload line's (product_id, product_set_id), compared the way the stored columns read."""
+    return tuple(
+        str(line_data.get(field)).lower() if line_data.get(field) else None
+        for field in ("product_id", "product_set_id")
+    )
 
 
 class PriceTagRequestService:
@@ -326,8 +335,7 @@ class PriceTagRequestService:
         request: PriceTagRequest,
         lines: list[dict],
         *,
-        carry_tags: dict[tuple, list[dict]] | None = None,
-        kept_picks: set[tuple] | None = None,
+        old_lines: list[dict] | None = None,
         viewer=None,
     ) -> None:
         """Append lines in the order given, which is the order the form shows.
@@ -343,17 +351,19 @@ class PriceTagRequestService:
         ever leaves a stale value behind.
 
         Every line gets its TAGS here too (D3): exactly one, carrying the line's
-        quantity and an empty `choices`, unless ``carry_tags`` hands over the set
-        a surviving line already had. ``replace_lines`` passes that map, keyed by
-        ``(product_id, product_set_id)``, since the form payload has no field for
-        any of it - a re-save with just a new remark used to silently wipe a
-        marketing-set override, and would now silently un-split the line.
+        quantity and an empty `choices`, unless it claims one of ``old_lines``
+        (``replace_lines``' snapshot of the rows it just cleared), whose tag set
+        and template pick it then keeps - the form payload has no field for any
+        of it, and a re-save with just a new remark must not wipe a marketing-set
+        override or un-split the line. PRICETAG-ALA-CARTE AC-12: a payload line
+        claims the old line its own ``id`` names; one without a known id claims
+        the first unclaimed old line with the same (product, set, package). Each
+        old line is claimed at most once, so a repeated product never swaps tags.
 
         Raises 422 ``DUPLICATE_LINE`` (round 3, R3-7/AC-R4) naming the code
-        the FIRST time the same product or set repeats within ``lines`` -
-        before any insert, so the table's own
-        ``uq_ptag_line_request_product`` / ``uq_ptag_line_request_set``
-        constraints never get the chance to answer with a 500.
+        the FIRST time the same SET repeats within ``lines`` - before any
+        insert, so the table's own ``uq_ptag_line_request_set`` never gets the
+        chance to answer with a 500. A product may repeat (PRICETAG-ALA-CARTE).
 
         ``viewer`` (AC-S6-5, AC-S7-2) decides which promotions a line's own
         ``promotion_id`` may be validated and priced against - see
@@ -365,7 +375,22 @@ class PriceTagRequestService:
 
         viewer = viewer or staff_viewer()
         PriceTagRequestService._raise_on_duplicate_line(db, lines)
-        carry_tags = carry_tags or {}
+        old_lines = old_lines or []
+        old_by_id = {old["id"]: old for old in old_lines}
+        claimed: set[str] = set()
+        claims: dict[int, dict] = {}
+        # Claims by id first, so a line without one can never take an old line a
+        # later payload line names. An id is a claim only on a saved line of the
+        # SAME product or set (review): otherwise the line is treated as new.
+        for idx, line_data in enumerate(lines):
+            old = old_by_id.get(str(line_data.get("id") or ""))
+            if (
+                old is not None
+                and old["id"] not in claimed
+                and old["key"][:2] == _item_key(line_data)
+            ):
+                claims[idx] = old
+                claimed.add(old["id"])
         for idx, line_data in enumerate(lines):
             sort_order = line_data.get("sort_order")
             # Re-review finding: the line's own host id arrives from the
@@ -382,7 +407,13 @@ class PriceTagRequestService:
             product_set_id = PriceTagRequestService._part_uuid(
                 line_data.get("product_set_id"), idx
             )
-            key = (product_id, product_set_id)
+            if not product_id and not product_set_id:
+                raise AppException(
+                    status_code=422,
+                    message="Pick a set or a product for every line.",
+                    detail=f"line:{idx}",
+                    code="EMPTY_LINE",
+                )
             # Security review: the line's own host id must be visible to
             # THIS request's company, the same reason `_add_line_parts`
             # scopes a part - written straight through with no company check
@@ -430,6 +461,14 @@ class PriceTagRequestService:
             combo_id = PriceTagRequestService._resolve_combo_id(
                 db, line_data, request.company_id
             )
+            old = claims.get(idx)
+            if old is None:
+                key = (product_id, product_set_id, combo_id)
+                old = next(
+                    (o for o in old_lines if o["id"] not in claimed and o["key"] == key), None
+                )
+                if old is not None:
+                    claimed.add(old["id"])
             basis = "list"
             if product_id:
                 parts_data = line_data.get("parts") or []
@@ -584,11 +623,13 @@ class PriceTagRequestService:
                         price_type=price_type,
                         # AC-37: a re-sent pick equal to the one this line already stored, for
                         # the same price type, is not re-checked.
-                        kept={
-                            template_id
-                            for (pid, cid, ptype, template_id) in (kept_picks or set())
-                            if pid == product_id and cid == combo_id and ptype == price_type
-                        },
+                        kept=(
+                            {old["tag_template_id"]}
+                            if old is not None
+                            and old["tag_template_id"]
+                            and old["pick_key"] == (product_id, combo_id, price_type)
+                            else set()
+                        ),
                     ),
                 )
             )
@@ -601,7 +642,9 @@ class PriceTagRequestService:
                 index=idx,
                 company_id=request.company_id,
             )
-            PriceTagRequestService._add_line_tags(db, line, carry_tags.get(key))
+            PriceTagRequestService._add_line_tags(
+                db, line, old["tags"] if old is not None else None
+            )
 
     @staticmethod
     def _clean_excluded_variants(db: Session, product_id, sent, idx: int) -> list[str]:
@@ -964,8 +1007,8 @@ class PriceTagRequestService:
         print somebody else's package on this one.
 
         A combo that fails any of those is stored as None rather than refused:
-        the S2 guard then says "No package chosen" on the row, which is the
-        warn-and-allow rule the whole slice is built on (AC-S2-5).
+        the line is then ala carte (PRICETAG-ALA-CARTE), the same warn-and-allow
+        rule the whole slice is built on (AC-S2-5).
         """
         from app.models.product import Product
         from app.models.product_combo import ProductCombo
@@ -1003,19 +1046,12 @@ class PriceTagRequestService:
 
     @staticmethod
     def _raise_on_duplicate_line(db: Session, lines: list[dict]) -> None:
-        """The first repeated product or set in ``lines``, named by code, as a
-        422 - before ``_add_lines`` inserts a second row the table's own
-        unique constraint would otherwise refuse with an unhandled 500."""
-        seen_products: set[str] = set()
+        """The first repeated set in ``lines``, named by code, as a 422 - before
+        ``_add_lines`` inserts a second row the table's own unique constraint
+        would otherwise refuse with an unhandled 500. A product may repeat, on
+        any packages (PRICETAG-ALA-CARTE AC-11)."""
         seen_sets: set[str] = set()
         for line_data in lines:
-            product_id = line_data.get("product_id")
-            if product_id:
-                if product_id in seen_products:
-                    raise PriceTagRequestService._duplicate_line_refusal(
-                        db, product_id=product_id
-                    )
-                seen_products.add(product_id)
             set_id = line_data.get("product_set_id")
             if set_id:
                 if set_id in seen_sets:
@@ -1053,53 +1089,55 @@ class PriceTagRequestService:
     ) -> None:
         """Swap a draft's lines for the ones the form just posted.
 
-        A re-save sends the whole table, not a diff: the rows are unsaved form
-        state on the client and carry no stable identity there. Deleting through
-        the relationship keeps ``delete-orphan`` in charge, so nothing is left
+        A re-save sends the whole table, not a diff. Deleting through the
+        relationship keeps ``delete-orphan`` in charge, so nothing is left
         pointing at the request.
 
-Marketing's own work is not part of the form's payload, so it is captured
-        from the OLD rows before they are cleared and carried onto whichever new
-        row keeps the same product or set. Since S3 that work lives on the TAGS
+        Marketing's own work is not part of the form's payload, so it is captured
+        from the OLD rows before they are cleared and carried onto the new row
+        that claims each one (by the line ``id`` a saved line sends back, else
+        the first unclaimed old line with the same product, set and package; see
+        ``_add_lines``). Since S3 that work lives on the TAGS
         (D3), so what is carried is the tag set itself - its split, its choices,
         its quantities and its overrides - rather than one override per line: a
         salesperson fixing a typo in a remark must not un-split a line marketing
         already turned into four tags.
         """
-        carry_tags = {
-            (old.product_id, old.product_set_id): [
-                {
-                    # AC-S8-3: a re-save with unchanged parts keeps the SAME
-                    # tag rows, id included - the id is what lets the split
-                    # survive the delete-and-reinsert `lines.clear()` below
-                    # does, so the saved tag sheet document's own
-                    # placements (keyed on it) keep pointing at the right tag.
-                    "id": tag.id,
-                    "sort_order": tag.sort_order,
-                    "quantity": tag.quantity,
-                    "choices": dict(tag.choices or {}),
-                    "marketing_price_override": tag.marketing_price_override,
-                    "marketing_override_reason": tag.marketing_override_reason,
-                    # AC-S6-10: "Not printed" survives a revise on a tag whose
-                    # choice set is unchanged, same as quantity and overrides.
-                    "print_excluded": bool(tag.print_excluded),
-                }
-                for tag in sorted(
-                    old.tags or [], key=lambda t: (t.sort_order or 0, t.id)
-                )
-            ]
+        old_lines = [
+            {
+                "id": str(old.id),
+                "key": (old.product_id, old.product_set_id, old.combo_id),
+                "pick_key": (
+                    old.product_id,
+                    old.combo_id,
+                    old.price_type or request.price_mode,
+                ),
+                "tag_template_id": old.tag_template_id,
+                "tags": [
+                    {
+                        # AC-S8-3: a re-save with unchanged parts keeps the SAME
+                        # tag rows, id included - the id is what lets the split
+                        # survive the delete-and-reinsert `lines.clear()` below
+                        # does, so the saved tag sheet document's own
+                        # placements (keyed on it) keep pointing at the right tag.
+                        "id": tag.id,
+                        "sort_order": tag.sort_order,
+                        "quantity": tag.quantity,
+                        "choices": dict(tag.choices or {}),
+                        "marketing_price_override": tag.marketing_price_override,
+                        "marketing_override_reason": tag.marketing_override_reason,
+                        # AC-S6-10: "Not printed" survives a revise on a tag whose
+                        # choice set is unchanged, same as quantity and overrides.
+                        "print_excluded": bool(tag.print_excluded),
+                    }
+                    for tag in sorted(old.tags or [], key=lambda t: (t.sort_order or 0, t.id))
+                ],
+            }
             for old in request.lines
-        }
-        kept_picks = {
-            (old.product_id, old.combo_id, old.price_type or request.price_mode, old.tag_template_id)
-            for old in request.lines
-            if old.tag_template_id
-        }
+        ]
         request.lines.clear()
         db.flush()
-        PriceTagRequestService._add_lines(
-            db, request, lines, carry_tags=carry_tags, kept_picks=kept_picks, viewer=viewer
-        )
+        PriceTagRequestService._add_lines(db, request, lines, old_lines=old_lines, viewer=viewer)
         db.flush()
         # `_add_lines` inserts the new rows via `db.add(...)`, not
         # `request.lines.append(...)`, so the in-memory collection is left
@@ -2406,13 +2444,15 @@ Marketing's own work is not part of the form's payload, so it is captured
             return None
 
         if not line.combo_id:
+            # PRICETAG-ALA-CARTE AC-17: no combo on a host that has some is the
+            # salesperson's ala carte choice, not a warning.
             has_combos = (
                 db.query(ProductCombo)
                 .filter(ProductCombo.host_product_id == line.product_id)
                 .first()
                 is not None
             )
-            return "No package chosen" if has_combos else "No package defined"
+            return None if has_combos else "No package defined"
 
         combo_parts = (
             db.query(ProductComboPart)
@@ -2464,6 +2504,19 @@ Marketing's own work is not part of the form's payload, so it is captured
             db.query(PriceTagRequest)
             .filter(PriceTagRequest.id == request_id)
             .first()
+        )
+
+    @staticmethod
+    def list_page_versions(db: Session, page_id: str) -> list:
+        """Every saved version of a request's design page, newest first (D19). One read, shared
+        by the Versions sheet and the History tab."""
+        from app.models.dealer_kit import PageVersion
+
+        return (
+            db.query(PageVersion)
+            .filter(PageVersion.page_id == page_id)
+            .order_by(PageVersion.version.desc())
+            .all()
         )
 
     @staticmethod
@@ -2849,9 +2902,14 @@ Marketing's own work is not part of the form's payload, so it is captured
         status: list[str] | str | None,
         search: str | None,
         include_drafts: bool,
+        last_activity_from=None,
+        last_activity_to=None,
     ):
         """The filtered query both the whole-list and the paged reads run."""
         q = db.query(PriceTagRequest)
+        in_range = last_activity_range(PriceTagRequest.last_activity_at, last_activity_from, last_activity_to)
+        if in_range is not None:
+            q = q.filter(in_range)
         if contact_id:
             q = q.filter(PriceTagRequest.contact_id == contact_id)
         if not include_drafts:
@@ -2903,6 +2961,7 @@ Marketing's own work is not part of the form's payload, so it is captured
         "status": PriceTagRequest.status,
         "needed_by_date": PriceTagRequest.needed_by_date,
         "created_at": PriceTagRequest.created_at,
+        "last_activity_at": PriceTagRequest.last_activity_at,
         "data_changed_tag_count": PriceTagRequest.data_changed_tag_count,
     }
 
@@ -2947,6 +3006,8 @@ Marketing's own work is not part of the form's payload, so it is captured
         limit: int = 50,
         sort: str | None = None,
         direction: str = "asc",
+        last_activity_from=None,
+        last_activity_to=None,
     ) -> tuple[list[PriceTagRequest], int]:
         """One page of requests, and how many there are in total.
 
@@ -2961,20 +3022,28 @@ Marketing's own work is not part of the form's payload, so it is captured
             status=status,
             search=search,
             include_drafts=include_drafts,
+            last_activity_from=last_activity_from,
+            last_activity_to=last_activity_to,
         )
         total = q.order_by(None).count()
 
         column = PriceTagRequestService._sort_expression(sort)
-        if column is None:
+        if sort == "last_activity_at":
+            ordering = last_activity_order(
+                PriceTagRequest.last_activity_at, PriceTagRequest.created_at, PriceTagRequest.id, direction
+            )
+            column = None
+        elif column is None:
             # Newest first is the queue's own order, and it is what an unknown
             # or a resolved-only column falls back to rather than a 400 the
             # reader can do nothing about.
             ordering = [PriceTagRequest.created_at.desc()]
         else:
             ordering = [column.desc() if direction == "desc" else column.asc()]
-        # Ends with the id, because created_at ties inside one transaction and a
-        # tie makes page 2 repeat a row page 1 already showed.
-        ordering.append(PriceTagRequest.id)
+        if sort != "last_activity_at":
+            # Ends with the id, because created_at ties inside one transaction and a
+            # tie makes page 2 repeat a row page 1 already showed.
+            ordering.append(PriceTagRequest.id)
 
         rows = (
             q.order_by(*ordering)
@@ -2988,7 +3057,7 @@ Marketing's own work is not part of the form's payload, so it is captured
     def lookup_tag_items(
         db: Session,
         query: str | None = None,
-        limit: int = 20,
+        limit: int = 50,
     ) -> list[dict]:
         """Sets and products in ONE list, for the lines table's single Item picker.
 
@@ -3019,6 +3088,7 @@ Marketing's own work is not part of the form's payload, so it is captured
                 # The override only: the computed figure needs every member
                 # and its product loaded, per set, for a dropdown row.
                 "list_price": row.list_price_override or None,
+                "is_discontinued": False,
             }
             for row in tag_data_service.search_product_sets(db, query, limit=limit)
         ]
@@ -3029,6 +3099,7 @@ Marketing's own work is not part of the form's payload, so it is captured
                 "code": row.product_code,
                 "name": row.product_name or "",
                 "list_price": row.list_price or None,
+                "is_discontinued": bool(row.is_discontinued),
             }
             for row in tag_data_service.search_products(db, query, limit=limit)
         )

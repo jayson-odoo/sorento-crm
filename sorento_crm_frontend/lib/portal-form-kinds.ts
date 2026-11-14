@@ -101,11 +101,20 @@ export const SAMPLE_REQUEST_KIND = 'sample_request' as const;
  */
 export const NEW_PRODUCT_APPLICATION_KIND = 'new_product_application' as const;
 
+/**
+ * Order Change Notice (OCN-ORDER-CHANGE-NOTICE round 20, UAC I1/I2): grantable per contact like
+ * `sample_request` (tag, market segment or the contact's own switch). The CRM raises it from
+ * MY REQUESTS (`MY_REQUEST_STAFF_PAGES`); its portal pages are slice 2 (UAC I5), so until then
+ * the portal landing does not offer it (`PORTAL_PAGES_PENDING`).
+ */
+export const ORDER_CHANGE_NOTICE_KIND = 'order_change_notice' as const;
+
 export type PortalLandingKind =
   | PortalSubmissionKind
   | typeof GATED_FORM_TYPE
   | typeof SAMPLE_REQUEST_KIND
   | typeof NEW_PRODUCT_APPLICATION_KIND
+  | typeof ORDER_CHANGE_NOTICE_KIND
   | typeof SALES_OPPORTUNITY_KIND
   | typeof CUSTOMER_ASKS_KIND
   | typeof CONVERSATION_KIND;
@@ -115,11 +124,19 @@ export const LANDING_KINDS: readonly PortalLandingKind[] = [
   ...SUBMISSION_KINDS,
   SAMPLE_REQUEST_KIND,
   NEW_PRODUCT_APPLICATION_KIND,
+  ORDER_CHANGE_NOTICE_KIND,
   GATED_FORM_TYPE,
   SALES_OPPORTUNITY_KIND,
   CUSTOMER_ASKS_KIND,
   CONVERSATION_KIND,
 ] as const;
+
+/**
+ * Kinds the CRM grants and serves but the portal has no pages for yet, so the portal landing
+ * leaves them out of its selector even when they are visible (UAC I6). Order Change Notice
+ * leaves this list when its portal pages ship (UAC I5, slice 2).
+ */
+export const PORTAL_PAGES_PENDING: readonly PortalLandingKind[] = [ORDER_CHANGE_NOTICE_KIND];
 
 /**
  * The landing's order for a set of kinds: Stock Inquiry first (the dealers' main form, the one
@@ -162,6 +179,7 @@ export const LANDING_LABELS: Record<PortalLandingKind, string> = {
   price_tag_request: 'Price Tag Request',
   sample_request: 'Sample Request',
   new_product_application: 'New Product Application',
+  order_change_notice: 'Order Change Notice',
   sales_opportunity: 'Sales Opportunity',
   customer_asks: 'Customer asks',
   conversation: 'Conversation',

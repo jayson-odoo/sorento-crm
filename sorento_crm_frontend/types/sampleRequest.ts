@@ -141,6 +141,7 @@ export interface SampleRequestDetail extends SampleRequestWrite, SampleRequestDa
 
 /** A list row. Never carries the site contact phone or the ship-to address. */
 export interface SampleRequestRow extends SampleRequestDateAnswer {
+  last_activity_at?: string | null;
   id: string;
   request_no: string;
   status: SampleRequestStatus;

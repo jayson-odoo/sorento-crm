@@ -28,6 +28,9 @@ export const VERB_LABEL: Record<string, string> = {
   ORDER_BACK: 'ORDER BACK',
   BORROW_SHORTFALL: 'ORDER BACK',
   RELEASE: 'RELEASE',
+  // SPARE-PART-ORDER-REQUEST: a spare part request's line. Bought like an ORDER, never
+  // customer demand.
+  REPLENISH: 'REPLENISH',
 };
 
 /**
@@ -51,6 +54,7 @@ export const VERB_PALETTE_KEY: Record<string, string> = {
   // still money about to be spent, just no longer for this line (PLAN-so-book-diff
   // -replanning.md section 6).
   RELEASE: 'pending',
+  REPLENISH: 'pending',
 };
 
 /**
@@ -58,7 +62,7 @@ export const VERB_PALETTE_KEY: Record<string, string> = {
  * location oversold, or CS wrote ORDER BACK on the form, and either way the hole has to
  * be bought (PLAN-fulfilment-planning 13.11).
  */
-export const BUYING_VERBS = ['ORDER', 'RESERVE_AND_ORDER', 'ORDER_BACK', 'BORROW_SHORTFALL'];
+export const BUYING_VERBS = ['ORDER', 'RESERVE_AND_ORDER', 'ORDER_BACK', 'BORROW_SHORTFALL', 'REPLENISH'];
 
 /**
  * Which raised rows can be linked to a document - the same set the backend's
@@ -66,7 +70,7 @@ export const BUYING_VERBS = ['ORDER', 'RESERVE_AND_ORDER', 'ORDER_BACK', 'BORROW
  * shortfall against something already ordered or already shipped, so it is the ONE verb
  * that may name an SPO allocation as well as a purchase order line (captain, 25 Aug).
  */
-export const PLACEABLE_VERBS = ['ORDER', 'RESERVE_AND_ORDER', 'ORDER_BACK'];
+export const PLACEABLE_VERBS = ['ORDER', 'RESERVE_AND_ORDER', 'ORDER_BACK', 'REPLENISH'];
 
 /** The verbs whose links may name an SPO allocation. Only the order back (4b). */
 export const SPO_LINKABLE_VERBS = ['ORDER_BACK'];
@@ -129,6 +133,9 @@ export function OrderInquiryStatePill({ state }: { state: string }) {
  */
 const LINE_STATE: Record<string, { label: string; palette: string }> = {
   line_cancelled: { label: 'Line cancelled', palette: 'voided' },
+  // OI-WHOLE-SO-CANCEL v2 (AC-V2-5): never a stored state, chosen by the status pill.
+  so_cancelled: { label: 'SO cancelled', palette: 'voided' },
+  waiting_for_cs: { label: 'Waiting for CS', palette: 'pending' },
   nothing_to_buy: { label: 'Nothing to buy', palette: 'draft' },
   // AC-ND-7 (review B1): a live row CS amended after purchasing took it on.
   to_confirm: { label: 'To order', palette: 'pending' },
@@ -138,7 +145,7 @@ export function OrderInquiryLineStatePill({ state }: { state: string }) {
   const own = LINE_STATE[state];
   if (!own) return <OrderInquiryStatePill state={state} />;
   return (
-    <span className={`${STATUS_PILL_BASE} ${statusPillClass(own.palette)}`}>{own.label}</span>
+    <span className={`${STATUS_PILL_BASE} normal-case ${statusPillClass(own.palette)}`}>{own.label}</span>
   );
 }
 

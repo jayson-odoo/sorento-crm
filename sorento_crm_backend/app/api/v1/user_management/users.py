@@ -16,6 +16,7 @@ from app.services.uuid_path_param import validate_uuid_path
 from app.database import get_db
 from app.dependencies import get_current_user, require_permission, require_any_permission
 from app.models.auth import VerificationToken
+from app.schemas.auth import PasskeyItem
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.schemas.user import (
     UserCreate,
@@ -50,6 +51,15 @@ class UserCompaniesUpdateRequest(BaseModel):
 
 class DailySummarySubscriptionUpdateRequest(BaseModel):
     subscribed: bool
+
+
+class PasskeyEnabledUpdateRequest(BaseModel):
+    enabled: bool
+
+
+class PasskeyEnabledResponse(BaseModel):
+    user_id: str
+    passkey_enabled: bool
 
 router = APIRouter()
 
@@ -386,6 +396,42 @@ def update_user_daily_sla_summary_subscription(
         raise handle_internal_error(str(e))
 
 
+@router.get("/{user_id}/passkeys", response_model=list[PasskeyItem])
+def get_user_passkeys(
+    user_id: str,
+    current_user: dict = Depends(require_permission("user_management.users.view")),
+    db: Session = Depends(get_db),
+):
+    """Admin: that user's passkeys, newest first (PASSKEY-LOGIN AC-30). Removal is the
+    `user_passkey.delete` record action; there is no admin add or rename."""
+    from app.services import passkey_service
+
+    validate_uuid_path(user_id, resource="User")
+    UserService(db).get_user(user_id)
+    return [
+        PasskeyItem(**passkey_service.serialize(r)) for r in passkey_service.list_passkeys(db, user_id)
+    ]
+
+
+@router.patch(
+    "/{user_id}/passkey-enabled", response_model=PasskeyEnabledResponse, status_code=status.HTTP_200_OK
+)
+def update_user_passkey_enabled(
+    user_id: str,
+    body: PasskeyEnabledUpdateRequest,
+    current_user: dict = Depends(require_permission("user_management.users.edit")),
+    db: Session = Depends(get_db),
+):
+    """Admin: the per-user "Passkey sign-in" switch (PASSKEY-LOGIN AC-33). Off keeps the
+    stored passkeys and ends the user's passkey sessions (AC-28). An admin may set it on their
+    own row."""
+    from app.services import passkey_service
+
+    validate_uuid_path(user_id, resource="User")
+    user = UserService(db).get_user(user_id)
+    return passkey_service.set_enabled(db, user, body.enabled)
+
+
 @router.get("/respond-users", status_code=status.HTTP_200_OK)
 def get_respond_users(
     current_user: dict = Depends(require_permission("user_management.users.view")),
@@ -504,6 +550,7 @@ def _salesperson_me(db: Session, user) -> Optional[dict]:
     from app.services.phone_signin_service import is_salesperson
     from app.services.portal_form_visibility_service import resolve_visible_form_types
     from app.services.portal_service import PortalService
+    from app.services.requestor_options_service import contact_display_name
 
     if not is_salesperson(db, user):
         return None
@@ -514,6 +561,7 @@ def _salesperson_me(db: Session, user) -> Optional[dict]:
         "portal_kinds": sorted(resolve_visible_form_types(db, contact.id)),
         "portal_slug": PortalService(db).get_or_create_slug(contact),
         "contact_id": str(contact.id),
+        "contact_name": contact_display_name(contact),
     }
 
 

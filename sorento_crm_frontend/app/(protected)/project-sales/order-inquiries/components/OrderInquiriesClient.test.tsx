@@ -543,7 +543,7 @@ describe('AC-CF-11/12/13 (PLAN-oi-confirm-per-so): To order (was To confirm) is 
     expect(screen.queryByLabelText(/^Clear filter:/)).not.toBeInTheDocument();
   });
 
-  it('the Status filter offers To order, Done, ..., Rejected, All (AC-CF-13, AC-AC-18)', async () => {
+  it('the Status filter offers the Status column\'s words and All (AC-CF-13, AC-AC-18; owner F1 12 Nov)', async () => {
     getOrderInquiryWorklistSummary.mockResolvedValue({
       ...MOCK_WORKLIST_SUMMARY,
       ack: {
@@ -560,7 +560,10 @@ describe('AC-CF-11/12/13 (PLAN-oi-confirm-per-so): To order (was To confirm) is 
     openFilters();
     const select = (await screen.findByLabelText('Any')) as HTMLSelectElement;
     const labels = [...select.options].map((option) => option.textContent);
-    expect(labels).toEqual(['Any', 'To order (1)', 'Done (1)', 'Rejected (0)', 'All']);
+    expect(labels).toEqual([
+      'Any', 'To order (1)', 'Done (1)', 'Rejected (0)',
+      'Waiting for CS', 'SO cancelled', 'Line cancelled', 'All',
+    ]);
     expect(labels.join('|')).not.toMatch(/To confirm|Confirmed/);
   });
 });
@@ -1345,103 +1348,4 @@ describe('AC-OH-70: the Filters popover scrolls (`oi-worklist-one-header-accepta
   });
 });
 
-describe('AC-OH-61: a State filter in the Filters popover (`oi-worklist-one-header-acceptance-criteria.md` R2/S5)', () => {
-  /**
-   * TEST-FIRST: today `filtersContent` in `OrderInquiriesClient.tsx` has no State field at
-   * all - the backend already accepts `state=` and returns `by_state` on the summary
-   * (AC-OH-51/52; `OrderInquiryWorklistSummary.by_state` is already typed), the frontend
-   * never wires either. This fails until the coder adds, in `filtersContent`, a
-   * `<Label>State</Label>` next to a clearable `SearchableSelect` (placeholder
-   * "Every state", so `getByLabelText('Every state')` resolves it - same convention as
-   * "Every location"/"Every agent"/"Every month"), options built from
-   * `summary.data?.by_state` (`raised`/`partly_linked`/`actioned`/`cancelled`/`placed` -
-   * `total` is a count, not a filterable state, and must not appear as an option),
-   * labelled with the SAME words `OrderInquiryStatePill`'s own `STATE_LABEL` map already
-   * uses elsewhere (`_shared/components/OrderInquiryVerbPill.tsx`: Raised / Partly linked
-   * / Actioned / Cancelled / Linked for `placed`), each suffixed `(${count})` the same way
-   * Location/Agent/Confirmed already are, and a `state` entry threaded into both the
-   * `filters` memo (so it reaches `listOrderInquiryWorklist`) and the URL-sync effect
-   * (alongside `location`/`agent`/`so_month`/...), cleared meaning the param is dropped.
-   *
-   * Selectors asserted on: the `<label>` element reading exactly "State" (found the same
-   * way the AC-OH-70 block above disambiguates "Confirmed" the label from "Confirmed" the
-   * chip text - `tagName === 'LABEL'`); the `<select aria-label="Every state">` the
-   * `SearchableSelect` mock renders for it; and `listOrderInquiryWorklist`'s own call
-   * arguments for the `state` key. The coder may name the internal state variable and its
-   * setter anything - only the label text, the placeholder, the option labels/counts and
-   * the `state` key in the worklist call are pinned.
-   */
-  it('renders a State label and a select offering every by_state key with its existing label and count', async () => {
-    renderClient();
-    await screen.findByText('SO385126');
-
-    openFilters();
-    const stateLabel = (await screen.findAllByText('State')).find(
-      (node) => node.tagName === 'LABEL',
-    );
-    expect(stateLabel).toBeDefined();
-
-    const select = (await screen.findByLabelText(
-      'Every state',
-    )) as HTMLSelectElement;
-    const optionTexts = Array.from(select.options).map(
-      (option) => option.textContent,
-    );
-    // S5 (`PLAN-board-oi-mechanical-22sep.md`, AC-B5-1, owner's pick, 22 Sep 2026): the
-    // filter's own labels read off the SAME `STATE_LABEL` map the pill does, which now
-    // spells the words differently - same counts, new words.
-    expect(optionTexts).toEqual(
-      expect.arrayContaining([
-        'To buy (2)',
-        'Partly on PO/SPO (2)',
-        'Done (1)',
-        'Cancelled (1)',
-        'On PO/SPO (1)',
-      ]),
-    );
-    // `total` is a count, not a state a row can be filtered to.
-    expect(optionTexts.some((text) => /total/i.test(text ?? ''))).toBe(false);
-  });
-
-  it('choosing Cancelled sends state=cancelled to the worklist call', async () => {
-    renderClient();
-    await screen.findByText('SO385126');
-
-    openFilters();
-    const select = await screen.findByLabelText('Every state');
-    fireEvent.change(select, { target: { value: 'cancelled' } });
-
-    await waitFor(() =>
-      expect(listOrderInquiryWorklist).toHaveBeenCalledWith(
-        expect.objectContaining({ state: 'cancelled' }),
-      ),
-    );
-  });
-
-  it('a URL carrying state=cancelled seeds the select, and clearing it drops state from the worklist call', async () => {
-    currentSearchParams = new URLSearchParams('state=cancelled');
-    renderClient();
-    await screen.findByText('SO385126');
-
-    await waitFor(() =>
-      expect(listOrderInquiryWorklist).toHaveBeenCalledWith(
-        expect.objectContaining({ state: 'cancelled' }),
-      ),
-    );
-
-    openFilters();
-    const select = (await screen.findByLabelText(
-      'Every state',
-    )) as HTMLSelectElement;
-    expect(select.value).toBe('cancelled');
-
-    fireEvent.change(select, { target: { value: '' } });
-
-    await waitFor(() => {
-      const last = listOrderInquiryWorklist.mock.calls.at(-1)?.[0] as
-        | Record<string, unknown>
-        | undefined;
-      expect(last?.state).toBeUndefined();
-    });
-  });
-});
+// State filter removed (crew F1c 12 Nov, item 11 / AC-D15); the state= URL param still filters, covered by inquiryNoFilter / filterCarry tests.

@@ -22,6 +22,7 @@ import logging
 from typing import Optional
 
 from sqlalchemy.orm import Session
+from app.services.integration_service import respond_endpoint
 
 logger = logging.getLogger(__name__)
 
@@ -212,7 +213,7 @@ def _send(db: Session, request, *, identifier: str, text: str) -> None:
                 external_reference=identifier,
                 direction="outbound",
                 endpoint=(
-                    f"https://api.respond.io/v2/contact/id:{identifier}/message"
+                    respond_endpoint(f"/v2/contact/id:{identifier}/message")
                 ),
                 http_method="POST",
                 status="success",
@@ -234,7 +235,7 @@ def _send(db: Session, request, *, identifier: str, text: str) -> None:
                     external_reference=identifier,
                     direction="outbound",
                     endpoint=(
-                        f"https://api.respond.io/v2/contact/id:{identifier}/message"
+                        respond_endpoint(f"/v2/contact/id:{identifier}/message")
                     ),
                     http_method="POST",
                     status="failed",

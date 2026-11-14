@@ -24,6 +24,7 @@ import { buildSelectColumn, selectedRowIds } from '@/components/ui/data-grid-sel
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Label } from '@/components/ui/label';
+import { LastActivityFilter, lastActivityActive, lastActivityLabel } from '@/components/common/LastActivityFilter';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { idFilterLabels, joinMulti, multiChipLabel, splitMulti } from '@/lib/list-filters/multiValue';
 import { APPEALED_LABEL } from '@/lib/submission-status';
@@ -61,7 +62,7 @@ const STATUS_OPTIONS = [
 ];
 
 /** The listing's shipped default, used until the user has left one behind. */
-const DEFAULT_SORTING: SortingState = [{ id: 'created_at', desc: true }];
+const DEFAULT_SORTING: SortingState = [{ id: 'last_activity_at', desc: true }];
 
 /**
  * Shape of what this page stores in the opaque `filters` blob (PLAN-listing-view-memory,
@@ -75,6 +76,8 @@ type ComplaintsFilters = {
   status?: string;
   root_cause_ids?: string[];
   resolution_ids?: string[];
+  last_activity_from?: string;
+  last_activity_to?: string;
 };
 
 /**
@@ -121,6 +124,10 @@ function StaffComplaintsList() {
   const statusFilter = viewFilters?.status ?? '';
   const rootCauseFilter = useMemo(() => viewFilters?.root_cause_ids ?? [], [viewFilters]);
   const resolutionFilter = useMemo(() => viewFilters?.resolution_ids ?? [], [viewFilters]);
+  const lastActivity = useMemo(
+    () => ({ from: viewFilters?.last_activity_from, to: viewFilters?.last_activity_to }),
+    [viewFilters],
+  );
 
   // Merges a change over the current filters, drops empties, resets to page 1. Every filter
   // control goes through this ONE path, so the chip's Clear and "Clear filters" agree.
@@ -132,6 +139,8 @@ function StaffComplaintsList() {
       if (merged.status) cleaned.status = merged.status;
       if (merged.root_cause_ids?.length) cleaned.root_cause_ids = merged.root_cause_ids;
       if (merged.resolution_ids?.length) cleaned.resolution_ids = merged.resolution_ids;
+      if (merged.last_activity_from) cleaned.last_activity_from = merged.last_activity_from;
+      if (merged.last_activity_to) cleaned.last_activity_to = merged.last_activity_to;
       setViewFilters(Object.keys(cleaned).length ? cleaned : null);
       setPagination((p) => ({ ...p, pageIndex: 0 }));
     },
@@ -169,20 +178,23 @@ function StaffComplaintsList() {
     status: statusFilter || undefined,
     root_cause_ids: rootCauseFilter.length ? rootCauseFilter : undefined,
     resolution_ids: resolutionFilter.length ? resolutionFilter : undefined,
+    last_activity_from: lastActivity.from,
+    last_activity_to: lastActivity.to,
     // One fetch, with the remembered view already applied (AC-B3).
     enabled: !isViewPrefsLoading,
   });
 
+  // Every staff member, keyed by CRM user id (ASSIGNED-FILTER-ALL-STAFF): the backend
+  // matches a complaint stored under that user's CRM id or Respond.io id.
   const {
-    data: respondSyncedUsers = [],
-    error: respondSyncedUsersError,
-    refetch: refetchRespondSyncedUsers,
+    data: assigneeOptions = [],
+    error: assigneeOptionsError,
+    refetch: refetchAssigneeOptions,
   } = useQuery({
-    queryKey: ['user-lookup', 'respond-synced', 'with-inactive'],
-    queryFn: () => getUserLookup({ respond_synced: true, include_inactive: true }),
+    queryKey: ['user-lookup', 'with-inactive'],
+    queryFn: () => getUserLookup({ include_inactive: true }),
     staleTime: 60_000,
   });
-  const assigneeOptions = respondSyncedUsers.filter((u) => u.respond_user_id);
   // Active-only master data, the same source the complaint form's pickers use.
   const {
     data: rootCauseOptions = [],
@@ -199,7 +211,8 @@ function StaffComplaintsList() {
     (assignedToFilter ? 1 : 0) +
     (statusFilter ? 1 : 0) +
     (rootCauseFilter.length ? 1 : 0) +
-    (resolutionFilter.length ? 1 : 0);
+    (resolutionFilter.length ? 1 : 0) +
+    lastActivityActive(lastActivity);
 
   // The chip above the grid that states the remembered filter in plain words, with Clear.
   const activeFilterLabel = (() => {
@@ -207,7 +220,7 @@ function StaffComplaintsList() {
     const assignee = (v: string) =>
       v === '__unassigned__'
         ? 'Unassigned'
-        : assigneeOptions.find((u) => u.respond_user_id === v)?.name || 'Selected';
+        : assigneeOptions.find((u) => u.id === v)?.name || 'Selected';
     const assignees = splitMulti(assignedToFilter).map(assignee);
     if (assignees.length) parts.push(multiChipLabel('Assigned to', assignees));
     const statuses = splitMulti(statusFilter).map(
@@ -222,6 +235,8 @@ function StaffComplaintsList() {
       (v) => resolutionOptions.find((r) => r.id === v)?.name ?? 'Selected',
     );
     if (resolutions.length) parts.push(multiChipLabel('Resolution', resolutions));
+    const range = lastActivityLabel(lastActivity);
+    if (range) parts.push(range);
     return parts.join(', ');
   })();
 
@@ -244,6 +259,8 @@ function StaffComplaintsList() {
         resolution_ids: resolutionFilter.length
           ? resolutionFilter.join(',')
           : undefined,
+        last_activity_from: lastActivity.from,
+        last_activity_to: lastActivity.to,
       },
     );
     const qs = search ? `?${search}` : '';
@@ -298,6 +315,20 @@ function StaffComplaintsList() {
             : '-',
         size: 160,
         meta: { headerTitle: 'Created at', skeleton: <Skeleton className="h-4 w-28" /> },
+      },
+      {
+        accessorKey: 'last_activity_at',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Last activity" column={column} />
+        ),
+        cell: ({ row }) => {
+          const raw = row.original.last_activity_at;
+          if (!raw) return '-';
+          const text = formatDateTimeInMalaysia(raw) || '-';
+          return <span className="truncate" title={text}>{text}</span>;
+        },
+        size: 190,
+        meta: { headerTitle: 'Last activity', skeleton: <Skeleton className="h-4 w-28" /> },
       },
       {
         accessorKey: 'customer_name',
@@ -526,12 +557,12 @@ function StaffComplaintsList() {
                     <SearchableMultiSelect
                       value={splitMulti(assignedToFilter)}
                       onChange={(v) => applyFilters({ assigned_to: joinMulti(v) })}
-                      loadError={respondSyncedUsersError}
-                      onRetry={() => void refetchRespondSyncedUsers()}
+                      loadError={assigneeOptionsError}
+                      onRetry={() => void refetchAssigneeOptions()}
                       options={[
                         { value: '__unassigned__', label: 'Unassigned' },
                         ...assigneeOptions.map((u) => ({
-                          value: u.respond_user_id!,
+                          value: u.id,
                           label: u.name || 'Unnamed user',
                         })),
                       ]}
@@ -588,6 +619,11 @@ function StaffComplaintsList() {
                       triggerClassName="mt-1"
                     />
                   </div>
+                  <LastActivityFilter
+                    id="cmp-last-activity"
+                    value={lastActivity}
+                    onChange={(v) => applyFilters({ last_activity_from: v.from, last_activity_to: v.to })}
+                  />
                   {filtersActiveCount > 0 && (
                     <div className="flex justify-end">
                       <Button

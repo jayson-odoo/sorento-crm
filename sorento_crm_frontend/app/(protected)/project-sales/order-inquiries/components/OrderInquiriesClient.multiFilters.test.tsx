@@ -235,7 +235,7 @@ beforeEach(() => {
 const FILTERS: [string, string, string][] = [
   ['location', 'ZZT-WH-A', 'ZZT-WH-B'],
   ['agent', 'ag-1', 'ag-2'],
-  ['state', 'raised', 'actioned'],
+  // State filter removed (crew F1c 12 Nov, item 11 / AC-D15); the state= URL param still filters, covered by inquiryNoFilter / filterCarry tests.
   ['supplier_id', 'sup-1', 'sup-2'],
   ['project', 'ALPHA', 'BETA'],
   ['raised_by', 'user-cindy', 'user-contact-aa'],

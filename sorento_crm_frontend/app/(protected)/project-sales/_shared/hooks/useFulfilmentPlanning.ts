@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { type QueryClient, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
+import { isOverridableRefusal } from '../lib/nonCancellable';
 import {
   adoptSalesOrder,
   confirmMany,
@@ -431,11 +432,22 @@ export function useStockDetail(
    * caller already knows its target before this hook is called.
    */
   enabled = true,
+  /** `grants`: the location may belong to another company the caller is granted. */
+  companyScope?: 'grants',
 ) {
   const key = (lineIds ?? []).join(',');
   return useQuery({
-    queryKey: [STOCK_DETAIL_KEY, productId, group ?? warehouseId, key],
-    queryFn: () => getStockDetail(productId, warehouseId, lineIds ?? [], group),
+    queryKey: [
+      STOCK_DETAIL_KEY,
+      productId,
+      group ?? warehouseId,
+      key,
+      ...(companyScope ? [companyScope] : []),
+    ],
+    queryFn: () =>
+      companyScope
+        ? getStockDetail(productId, warehouseId, lineIds ?? [], group, companyScope)
+        : getStockDetail(productId, warehouseId, lineIds ?? [], group),
     enabled: enabled && Boolean(warehouseId || group),
     retry: 1,
   });
@@ -515,7 +527,8 @@ export function useConfirmManyMutation() {
       // the pill from Saved/Rejected back to Confirmed once the real state arrives.
       queryClient.invalidateQueries({ queryKey: [PLANNING_BOARD_KEY] });
       queryClient.invalidateQueries({ queryKey: [FULFILMENT_PLANNING_KEY] });
-      toast.error(error.message);
+      // An overridable refusal opens the board's override dialog instead of a toast.
+      if (!isOverridableRefusal(error)) toast.error(error.message);
     },
   });
 }
@@ -533,6 +546,7 @@ export function usePreviewConfirmManyMutation() {
     onError: (error: Error) => {
       // A dry run this screen cancelled (a newer one replaced it) is not a failure.
       if (error.name === 'AbortError') return;
+      if (isOverridableRefusal(error)) return;
       toast.error(error.message);
     },
   });

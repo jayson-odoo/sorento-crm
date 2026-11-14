@@ -430,7 +430,18 @@ def test_creating_an_amendment_auto_drafts_its_change_notice_from_the_same_delta
     assert len(ocn.change_table_json["phase_summary"]) == 12
 
 
-def test_publishing_an_amendment_is_refused_without_an_approver(seeded):
+def _approve(ocn, owner) -> None:
+    """The order change notice's approval, as its chain records it (OCN-ORDER-CHANGE-NOTICE E3:
+    publishing reads `approval_status`, no longer a bare `approver_id`)."""
+    from datetime import datetime
+
+    ocn.status = "approved"
+    ocn.approval_status = "approved"
+    ocn.approver_id = owner
+    ocn.approved_at = datetime.utcnow()
+
+
+def test_publishing_an_amendment_is_refused_until_its_notice_is_approved(seeded):
     db, company_id, owner = seeded
     project, po, po_version, _r1, phases, orders, products = _tuju(db, company_id, owner)
     r2 = _revision(db, project, po, po_version, phases, products)
@@ -445,7 +456,8 @@ def test_publishing_an_amendment_is_refused_without_an_approver(seeded):
     with pytest.raises(AppException) as excinfo:
         service.publish_amendment(created["amendment_id"], actor_user_id=owner)
     assert excinfo.value.status_code == 409
-    assert "approver" in str(excinfo.value.detail).lower()
+    assert excinfo.value.detail["code"] == "amendment_ocn_unapproved"
+    assert "not approved" in str(excinfo.value.detail).lower()
 
 
 def test_publishing_an_amendment_applies_the_dates_and_amends_the_order(seeded):
@@ -463,7 +475,7 @@ def test_publishing_an_amendment_applies_the_dates_and_amends_the_order(seeded):
         actor_user_id=owner,
     )
     ocn = db.query(OrderChangeNotice).filter(OrderChangeNotice.id == created["ocn_id"]).one()
-    ocn.approver_id = owner
+    _approve(ocn, owner)
     db.flush()
 
     body = service.publish_amendment(created["amendment_id"], actor_user_id=owner)
@@ -624,7 +636,7 @@ def _created_amendment(db, orders, r2, owner):
     )
     amendment = db.query(SOAmendment).filter(SOAmendment.id == created["amendment_id"]).one()
     ocn = db.query(OrderChangeNotice).filter(OrderChangeNotice.id == created["ocn_id"]).one()
-    ocn.approver_id = owner
+    _approve(ocn, owner)
     db.flush()
     return service, amendment, ocn
 

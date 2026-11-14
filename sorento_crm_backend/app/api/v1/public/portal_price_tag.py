@@ -815,7 +815,7 @@ def register_price_tag_routes(router: APIRouter, token_dependency: Callable[...,
     @router.get("/lookups/price-tag-items", response_model=list[TagItemLookupItem])
     def portal_lookup_tag_items(
         q: Optional[str] = Query(None),
-        limit: int = Query(20, ge=1, le=50),
+        limit: int = Query(50, ge=1, le=50),
         token: PortalToken = Depends(token_dependency),
         db: Session = Depends(get_db),
     ):

@@ -45,6 +45,9 @@ export interface DraftPart {
 
 export interface DraftLine {
   key: string; // client-side key for React
+  /** PRICETAG-ALA-CARTE AC-12: the server id of a line loaded from the server; absent on a line
+   *  added in the form or copied by Duplicate. Sent back so tags carry by line, not by product. */
+  saved_id?: string | null;
   line_type: 'product' | 'product_set';
   product_id: string | null;
   product_set_id: string | null;
@@ -56,7 +59,7 @@ export interface DraftLine {
   /** Free-text note on the line (D6). */
   remarks: string;
   guard_error: string | null;
-  /** The catalogue package this line is asked for as (D2). Null = none chosen. */
+  /** The catalogue package this line is asked for as (D2). Null = ala carte. */
   combo_id: string | null;
   /** What the picked product is sold as. Answered by the combos lookup, which
    *  runs once per product on the line - so an empty list before `combos_loaded`
@@ -147,7 +150,7 @@ export interface DraftLineSource {
 }
 
 let partKeySeq = 0;
-export function newPartKey(): string {
+function newPartKey(): string {
   partKeySeq += 1;
   return `part-${Date.now()}-${partKeySeq}`;
 }
@@ -219,45 +222,6 @@ export function partsFromCombo(combo: ProductComboOption): DraftPart[] {
   return out;
 }
 
-/** Whether a line row is the one the combo row `row` describes: a group or the upgrade by role, a fixed part by product. */
-function isSameComboRow(held: DraftPart, row: DraftPart): boolean {
-  return row.role ? held.role === row.role : !held.role && held.product_id === row.product_id;
-}
-
-/**
- * The combo's own rows the line does not hold (P2), each with a stable id and the label the Add
- * part select shows: a choice group or "Upgrade" by name, a fixed part by code. The rows are the
- * ones `partsFromCombo` builds, in combo order.
- */
-export function missingComboRows(line: DraftLine): { id: string; label: string; row: DraftPart }[] {
-  const combo = comboOfLine(line);
-  if (!combo) return [];
-  return partsFromCombo(combo)
-    .filter((row) => !line.parts.some((held) => isSameComboRow(held, row)))
-    .map((row) => ({
-      id: row.role ? `role:${row.role}` : `part:${row.product_id}`,
-      label: row.role ?? row.code,
-      row,
-    }));
-}
-
-/** The line's parts with the missing combo row `id` back at its combo position (an a la carte part stays after). */
-export function insertComboRow(line: DraftLine, id: string): DraftPart[] {
-  const combo = comboOfLine(line);
-  const missing = missingComboRows(line).find((m) => m.id === id);
-  if (!combo || !missing) return line.parts;
-  const order = partsFromCombo(combo);
-  const placeOf = (part: DraftPart) => {
-    const at = order.findIndex((row) => isSameComboRow(part, row));
-    return at < 0 ? Infinity : at;
-  };
-  const mine = order.findIndex((row) => isSameComboRow(missing.row, row));
-  const before = line.parts.findIndex((held) => placeOf(held) > mine);
-  const parts = [...line.parts];
-  parts.splice(before < 0 ? parts.length : before, 0, missing.row);
-  return parts;
-}
-
 /**
  * The package warning, computed exactly as the server computes it at submit
  * (D2) so the row says the same thing before and after. Submit is never refused
@@ -267,9 +231,10 @@ export function packageWarningFor(line: DraftLine): string | null {
   if (line.line_type !== 'product' || !line.product_id) return null;
   if (!line.combos_loaded) return null;
   if (!line.combo_id) {
-    // Whether a package is expected at all is the server's call (guarded families only).
+    // Whether a package is expected at all is the server's call (guarded families only). A host
+    // with combos and none chosen is ala carte, not a warning (PRICETAG-ALA-CARTE AC-17).
     if (!line.host_guarded) return null;
-    return line.combos.length === 0 ? 'No package defined' : 'No package chosen';
+    return line.combos.length === 0 ? 'No package defined' : null;
   }
   // A chosen package says what it holds, on any host: removing a part of it is always worth a note.
   const combo = comboOfLine(line);
@@ -410,6 +375,7 @@ export function restoreGroupCandidates(parts: DraftPart[], combo: ProductComboOp
 export function lineToDraft(line: DraftLineSource, requestMode?: PriceMode): DraftLine {
   return {
     key: line.id,
+    saved_id: line.id,
     line_type: line.line_type,
     product_id: line.product_id,
     product_set_id: line.product_set_id,
@@ -546,6 +512,18 @@ export function noTemplateForTypeMessage(line: DraftLine, priceType: 'list' | 's
 /** The Submit-time check (AC-10, client side): a many-template line needs a pick. */
 export const EMPTY_LINE = 'Pick a set or a product for this line.';
 
+/** The rows with no set or product picked (Submit's blank-row check, shared with Save Draft). */
+export function emptyRowIndexes(lines: DraftLine[]): number[] {
+  return lines
+    .map((l, index) => (l.product_id || l.product_set_id ? -1 : index))
+    .filter((index) => index >= 0);
+}
+
+/** A row nothing was done to: no item, quantity still 1, no remarks. Save Draft drops it silently. */
+export function isUntouchedBlankLine(line: DraftLine): boolean {
+  return !line.product_id && !line.product_set_id && line.quantity === 1 && !line.remarks;
+}
+
 export const MISSING_TAG_TEMPLATE = 'Pick a tag template for this line.';
 
 export function lineNeedsTemplate(line: DraftLine, priceMode?: PriceMode | null): boolean {
@@ -603,6 +581,7 @@ export function draftLinesPayload(
   priceMode?: PriceMode,
 ): PriceTagRequestLineInput[] {
   return lines.map((l) => ({
+    ...(l.saved_id ? { id: l.saved_id } : {}),
     line_type: l.line_type,
     product_id: l.product_id,
     product_set_id: l.product_set_id,

@@ -5,6 +5,8 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
   ClipboardList,
+  CloudOff,
+  CloudUpload,
   Download,
   FileDiff,
   GitCompareArrows,
@@ -64,6 +66,8 @@ import { DismissReasonDialog } from '../../../components/DismissReasonDialog';
 import { SalesOrderLinesTable } from '../../../components/SalesOrderLinesTable';
 import { formatMoney, sumMoney } from '../../../components/SalesOrderMoney';
 import { SalesOrderPublishDialog } from '../../../components/SalesOrderPublishDialog';
+import { AutocountWriteDialog } from '../../../../_shared/components/AutocountWriteDialog';
+import { useSalesOrderAutocountActions } from '../../../../_shared/hooks/useSalesOrderAutocountActions';
 import { SalesOrderRegroupDialog } from '../../../components/SalesOrderRegroupDialog';
 import { SalesOrderStatusPill } from '../../../components/SalesOrderStatusPill';
 import { ReviewStatePill } from '../../../../_shared/components/ReviewStatePill';
@@ -108,6 +112,8 @@ export function SalesOrderDetailClient({
   );
   const removeOrder = useSalesOrderDelete(projectId);
   const importFile = useSalesOrderImportFile(psoId);
+  // AutoCount create / cancel / update from the detail page: the shared rules and hooks.
+  const autocount = useSalesOrderAutocountActions(salesOrder.data);
   const edit = useSalesOrderEditSession(
     salesOrder.data ? { area_group: salesOrder.data.area_group } : undefined,
   );
@@ -519,6 +525,55 @@ export function SalesOrderDetailClient({
                   </span>
                 </DropdownMenuItem>
               )}
+              {/* AutoCount actions (owner, round 5): the same rules as the worksheet and the list.
+                  Greyed with the reason, never hidden, once the switch and the permission allow. */}
+              {autocount.access && autocount.createState && (
+                <DropdownMenuItem
+                  disabled={!autocount.createState.enabled || autocount.pending}
+                  onSelect={autocount.runCreate}
+                >
+                  <CloudUpload className="size-4" aria-hidden />
+                  <span className="min-w-0">
+                    Create in AutoCount
+                    {autocount.createState.reason && (
+                      <span className="block text-xs text-muted-foreground">
+                        {autocount.createState.reason}
+                      </span>
+                    )}
+                  </span>
+                </DropdownMenuItem>
+              )}
+              {autocount.access && so.status === 'amended' && so.in_autocount && (
+                <DropdownMenuItem asChild disabled={!autocount.updateState.enabled}>
+                  <Link href={`/project-sales/${projectId}/sales-orders/${psoId}/revisions`}>
+                    <CloudUpload className="size-4" aria-hidden />
+                    <span className="min-w-0">
+                      Update in AutoCount
+                      {autocount.updateState.reason && (
+                        <span className="block text-xs text-muted-foreground">
+                          {autocount.updateState.reason}
+                        </span>
+                      )}
+                    </span>
+                  </Link>
+                </DropdownMenuItem>
+              )}
+              {autocount.access && autocount.cancelState && (
+                <DropdownMenuItem
+                  disabled={!autocount.cancelState.enabled || autocount.pending}
+                  onSelect={autocount.runCancel}
+                >
+                  <CloudOff className="size-4" aria-hidden />
+                  <span className="min-w-0">
+                    Cancel in AutoCount
+                    {autocount.cancelState.reason && (
+                      <span className="block text-xs text-muted-foreground">
+                        {autocount.cancelState.reason}
+                      </span>
+                    )}
+                  </span>
+                </DropdownMenuItem>
+              )}
               {/* Edit's ENTRY POINT. Only the way IN is here: once a session is open, Cancel
                   and Save are the header's controls, up above. */}
               {canEdit && (
@@ -730,6 +785,17 @@ export function SalesOrderDetailClient({
           onConfirm={(groups) => regroup.mutateAsync(groups)}
         />
       )}
+
+      <AutocountWriteDialog
+        open={autocount.result !== null}
+        onOpenChange={(open) => {
+          if (!open) autocount.clearResult();
+        }}
+        title="AutoCount"
+        result={autocount.result}
+        onRetry={autocount.retry}
+        retrying={autocount.pending}
+      />
 
       {publishing && (
         <SalesOrderPublishDialog

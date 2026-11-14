@@ -17,7 +17,7 @@ version", "a mismatch is flagged, never blocked") live in exactly one place.
 from __future__ import annotations
 
 import logging
-from typing import List
+from typing import List, Literal, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
 from sqlalchemy.orm import Session
@@ -25,8 +25,9 @@ from sqlalchemy.orm import Session
 from app.api.v1.projects._common import permission_slugs
 from app.database import get_db
 from app.dependencies import require_any_permission, require_permission
-from app.schemas.common import ListResponse
+from app.schemas.common import MAX_PAGE_LIMIT, ListResponse
 from app.schemas.projects import (
+    ProjectOrderChangeNoticeResponse,
     ProjectPurchaseOrderCreate,
     ProjectPurchaseOrderLineCreate,
     ProjectPurchaseOrderLineResponse,
@@ -38,8 +39,10 @@ from app.schemas.projects import (
     ProjectSampleUpdate,
     ProjectSponsorshipResponse,
     ProjectSponsorshipRollupResponse,
+    RelatedRecordsResponse,
     SponsorshipConversionResponse,
 )
+from app.services.project_related_records import SORT_KEYS as RELATED_SORT_KEYS
 from app.services import after_response
 from app.services import project_po_service as po_svc
 from app.services import project_sample_service as sample_svc
@@ -523,6 +526,82 @@ def list_project_sponsorships(
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 
+# --------------------------------------------------------------- order change notices
+
+
+@router.get(
+    "/projects/{project_id}/order-change-notices",
+    response_model=ListResponse[ProjectOrderChangeNoticeResponse],
+)
+def list_project_order_change_notices(
+    project_id: str,
+    # The amendment dialog's pick: only the notices an amendment may take (`linkable_clause`).
+    linkable: bool = Query(False),
+    user: dict = Depends(
+        require_any_permission(
+            ["procurement.order_change_notices.view", "procurement.order_change_notices.view_own"]
+        )
+    ),
+    db: Session = Depends(get_db),
+):
+    """That project's order change notices, newest first (OCN-ORDER-CHANGE-NOTICE F1). Gated by
+    the notice's own view permission, like its list; a `.view_own` holder sees their own."""
+    try:
+        validate_uuid_path(project_id, resource="Project")
+        projects.get_project_or_404(db, project_id)
+        from app.services import order_change_notice_service as ocn
+
+        actor = ocn.actor_from_slugs(user["id"], permission_slugs(db, user["id"]))
+        return _envelope(ocn.list_for_project(db, project_id, actor=actor, linkable=linkable))
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.get(
+    "/projects/{project_id}/related-records",
+    response_model=RelatedRecordsResponse,
+)
+def list_project_related_records(
+    project_id: str,
+    type: Optional[List[str]] = Query(None, description="Record kinds (repeat or comma-join)"),
+    status: Optional[List[str]] = Query(None, description="Raw status values (repeat or comma-join)"),
+    query: Optional[str] = Query(None, description="Number, subject or raised by contains"),
+    sort: Literal[RELATED_SORT_KEYS] = Query("date"),
+    dir: Literal["asc", "desc"] = Query("desc"),
+    page: int = Query(1, ge=1),
+    limit: int = Query(25, ge=1, le=MAX_PAGE_LIMIT),
+    user: dict = Depends(require_any_permission(READ)),
+    db: Session = Depends(get_db),
+):
+    """Every stock inquiry, complaint, purchase request, sponsorship form and new product
+    application linked to this project (PROJECT-RELATED-RECORDS), one grid, sorted, searched,
+    filtered and paged on the server. Each type follows the viewer's own request rule."""
+    from app.services import own_scope
+    from app.services import project_related_records as related
+    from app.services.cost_access import can_view_cost
+    from app.utils.multi_value import multi_values
+
+    try:
+        validate_uuid_path(project_id, resource="Project")
+        projects.get_project_or_404(db, project_id)
+        return related.list_related_records(
+            db,
+            project_id=project_id,
+            perms=permission_slugs(db, user["id"]),
+            me=own_scope.me(db, user["id"]),
+            types=multi_values(type, "type"),
+            statuses=multi_values(status, "status"),
+            query=query,
+            sort=sort,
+            direction=dir,
+            page=page,
+            limit=limit,
+            cost_visible=can_view_cost(db, user["id"]),
+        )
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
 @router.get(
     "/projects/{project_id}/sponsorships/rollup",
     response_model=ProjectSponsorshipRollupResponse,
@@ -532,13 +611,30 @@ def project_sponsorship_rollup(
     _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
-    """AC-F7, per project and per year."""
+    """AC-F7, per project and per year. Sponsorship data, so it follows the Related tab's rule for
+    sponsorship forms (`own_scope.request_access`, AC-B2): none -> 403, view_own -> their own
+    forms' totals only, view -> every form."""
     try:
         validate_uuid_path(project_id, resource="Project")
         projects.get_project_or_404(db, project_id)
+        from app.models.procurement import PurchaseRequestHeader
+        from app.services import own_scope
         from app.services import sponsorship_link_service as links
+        from app.services.error_handler import AppException
 
-        return links.sponsorship_rollup(db, project_id=project_id)
+        access = own_scope.request_access(permission_slugs(db, _user["id"]), links.SPONSORSHIP_TYPE)
+        if access is None:
+            raise AppException(
+                status_code=403,
+                message="Permission required: procurement.sponsorship_forms.view",
+                code="FORBIDDEN",
+            )
+        clause = (
+            own_scope.request_clause(PurchaseRequestHeader, own_scope.me(db, _user["id"]))
+            if access == "own"
+            else None
+        )
+        return links.sponsorship_rollup(db, project_id=project_id, clause=clause)
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 

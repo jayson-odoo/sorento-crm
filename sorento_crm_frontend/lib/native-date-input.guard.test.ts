@@ -14,8 +14,6 @@ const root = path.resolve(__dirname, '..');
 
 const PENDING = [
   'app/(auth)/portal/components/LandingToolbar.tsx',
-  'app/(auth)/portal/components/SampleRequestForm.tsx',
-  'app/(auth)/portal/components/SubmissionForm.tsx',
   'app/(auth)/portal/sales_opportunity/components/SalesOpportunityPortalDetail.tsx',
   'app/(auth)/portal/sales_opportunity/components/SalesOpportunityPortalForm.tsx',
   'app/(protected)/account/notifications/components/coverage-manager.tsx',
@@ -38,7 +36,6 @@ const PENDING = [
   'app/(protected)/project-sales/_shared/components/ProjectForm.tsx',
   'app/(protected)/project-sales/order-inquiries/components/OrderInquiriesClient.tsx',
   'app/(protected)/project-sales/sample-requests/components/SampleRequestDetail.tsx',
-  'app/(protected)/project-sales/sample-requests/components/SampleRequestForm.tsx',
   'app/(protected)/resource-management/attachments/components/AttachmentBrowser.tsx',
   'app/(protected)/sales/opportunities/[id]/components/SalesOpportunityDetail.tsx',
   'app/(protected)/sales/opportunities/components/SalesOpportunityModal.tsx',

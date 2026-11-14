@@ -1958,10 +1958,13 @@ _SET_PRICE_KEYS: frozenset[str] = frozenset({"list_price", "selling_price"})
 _SET_PRICE_LABELS: frozenset[str] = frozenset({"List Price", "Selling Price"})
 
 
-def _group_set_rows(e: dict[str, Any], set_by_code: dict[str, list[str]]) -> None:
+def _group_set_rows(e: dict[str, Any], set_by_code: dict[str, list[str]], typed: Any = None) -> None:
     """CHAT-CODE-LOOKUP R2 (U2.3): the rows that are members of a typed product set drop their
     price and sit under their own "Set <code>" heading, one block per set; a plain product's
-    row keeps its price and sits under no set (its block comes first, with no heading)."""
+    row keeps its price and sits under no set (its block comes first, with no heading).
+    CHATBOT-CODE-MATCH AC-29: `typed` (the set codes the customer typed) limits the price drop
+    to those sets; a set a family word only heads keeps its rows' prices. None: every set
+    (a caller with no typed list)."""
     plain: list[Any] = []
     by_set: dict[str, list[Any]] = {}
     for row in e.get("items") or []:
@@ -1973,6 +1976,10 @@ def _group_set_rows(e: dict[str, Any], set_by_code: dict[str, list[str]]) -> Non
         owners = set_by_code.get(code) if code else None
         if not owners:
             plain.append(row)
+            continue
+        if typed is not None and not any(owner in typed for owner in owners):
+            for owner in owners:
+                by_set.setdefault(owner, []).append(row)
             continue
         row["fields"] = [
             f for f in fields
@@ -3444,7 +3451,7 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
         drop_restricted_fields(e, granted, group_axis(ctx))
 
     if ctx.get("set_by_code") and not e.get("groups"):
-        _group_set_rows(e, ctx["set_by_code"])
+        _group_set_rows(e, ctx["set_by_code"], ctx.get("set_typed"))
 
     # -- requested-attribute projection ------------------------------------- #
     # The CRM dumps every clearance field the caller may see, by design: it prevents the

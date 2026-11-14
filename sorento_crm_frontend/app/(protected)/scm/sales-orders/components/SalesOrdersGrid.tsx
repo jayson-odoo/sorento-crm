@@ -1,8 +1,10 @@
 'use client';
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { buildDetailSearch } from '@/lib/listNavQuery';
+import { addSearchChips } from '@/lib/searchChips';
+import { cn } from '@/lib/utils';
 import {
   ColumnDef,
   PaginationState,
@@ -279,6 +281,16 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
     isSettling: searchSettling,
     reset: resetSearchQuery,
   } = useDebouncedSearch();
+  // Search chips (SEARCH-CHIPS): each chip and the typed text is one value; a row matching
+  // any of them is listed (the backend's rule, `app/utils/list_search.py`).
+  const [searchChips, setSearchChips] = useState<string[]>([]);
+  const searchTerms = useMemo(
+    () => addSearchChips(searchChips, [searchQuery]).chips,
+    [searchChips, searchQuery],
+  );
+  const searchTermsKey = searchTerms.join('\n');
+  // The address-bar search this list last wrote itself, so reading it back is a no-op.
+  const writtenSearch = useRef<string | null>(null);
 
   // The sort and every filter are remembered per user, per listing. Page number and search
   // text are deliberately NOT remembered (AC-D1/D2).
@@ -347,8 +359,13 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
   // Only pagination and search are restored from it now: sort and filter come from the
   // remembered view, which already holds what was active when the row was clicked.
   useListStateFromUrl((state) => {
+    if (writtenSearch.current !== null && window.location.search.slice(1) === writtenSearch.current) {
+      return;
+    }
     setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
-    resetSearchQuery(state.searchQuery);
+    // Every `query` comes back as a chip, so the restored list is the one that was left.
+    setSearchChips(addSearchChips([], state.searchQueries ?? []).chips);
+    resetSearchQuery('');
   });
 
   // Create-only: editing happens on the detail page in place (A5), the same shape as the
@@ -372,7 +389,7 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
-    searchQuery,
+    searchQuery: searchTerms,
     status: statusFilter || null,
     priority: priorityFilter || null,
     source: sourceFilter || null,
@@ -398,7 +415,7 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
   // query string, landing every "Back to sales orders" on page 1. Filter changes reset the
   // page themselves (`applyFilters`/`clearFilters`); search is the only thing left that
   // needs its own reset here.
-  useResetPageOnFilterChange(setPagination, [searchQuery]);
+  useResetPageOnFilterChange(setPagination, [searchTermsKey]);
 
   const rows = useMemo<SalesOrder[]>(() => data?.data ?? [], [data]);
 
@@ -407,7 +424,12 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
   const detailSearch = useMemo(
     () =>
       buildDetailSearch(
-        { pageIndex: pagination.pageIndex, pageSize: pagination.pageSize, sorting, searchQuery },
+        {
+          pageIndex: pagination.pageIndex,
+          pageSize: pagination.pageSize,
+          sorting,
+          searchQuery: searchTerms,
+        },
         {
           status: statusFilter || undefined,
           priority: priorityFilter || undefined,
@@ -425,7 +447,7 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
       pagination.pageIndex,
       pagination.pageSize,
       sorting,
-      searchQuery,
+      searchTerms,
       statusFilter,
       priorityFilter,
       sourceFilter,
@@ -438,6 +460,29 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
       transferableFilter,
     ],
   );
+
+  // Once the search has changed, the list keeps its whole state in the address bar (Q5b), so a
+  // refresh keeps the chips. Not inside an agent's record: that URL is the record's own.
+  const searchTermsSeen = useRef<string | null>(null);
+  const searchTouched = useRef(false);
+  useEffect(() => {
+    if (pinnedToAgent) return;
+    if (searchTermsSeen.current === null) {
+      searchTermsSeen.current = searchTermsKey;
+      return;
+    }
+    if (searchTermsSeen.current !== searchTermsKey) {
+      searchTermsSeen.current = searchTermsKey;
+      searchTouched.current = true;
+    }
+    if (!searchTouched.current || window.location.search.slice(1) === detailSearch) return;
+    writtenSearch.current = detailSearch;
+    window.history.replaceState(
+      window.history.state,
+      '',
+      detailSearch ? `?${detailSearch}` : window.location.pathname,
+    );
+  }, [detailSearch, searchTermsKey, pinnedToAgent]);
 
   const detailHref = (so: SalesOrder) =>
     `/scm/sales-orders/${so.id}${detailSearch ? `?${detailSearch}` : ''}`;
@@ -1004,7 +1049,7 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
   // Inside an agent's record the third answer is neither: the book is full, this agent simply
   // has none of it, and pointing them at an upload would be pointing at the wrong screen.
   const emptyMessage =
-    filtersActive || searchQuery ? (
+    filtersActive || searchTerms.length ? (
       'No sales order matches this search and filter.'
     ) : pinnedToAgent ? (
       'No sales orders for this agent.'
@@ -1042,14 +1087,18 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
               searchSlot={
                 <ListSearchInput
                   value={searchInput}
-                  onChange={setSearchInput}
-                  isSettling={isSearchInFlight(searchSettling, isFetching, searchQuery)}
+                  // Emptied text (a chip committed, Clear) settles at once: a debounced
+                  // stale word would send one more request with it.
+                  onChange={(next) => (next === '' ? resetSearchQuery('') : setSearchInput(next))}
+                  chips={searchChips}
+                  onChipsChange={setSearchChips}
+                  isSettling={isSearchInFlight(searchSettling, isFetching, searchTermsKey)}
                   // Four things, because those are the four a person holds when they come
                   // looking: the document number, who it is for, what is on it, and who
                   // sold it. The backend's `query` matches all four (`sales_order_service
                   // .list`), so the placeholder is not a promise the search cannot keep.
                   placeholder="Search SO, customer, product or agent..."
-                  className="w-64"
+                  className={cn('w-full', searchChips.length ? 'md:w-[420px]' : 'md:w-64')}
                 />
               }
               filters={{
