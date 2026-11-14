@@ -9184,13 +9184,19 @@ def _run_stages_body(  # noqa: PLR0915
                 from app.services.chatbot.lanes.business import answer as business_answer
 
                 class_terms = turn_runtime.class_scope_terms(verdict)
-                qualifying = int((predicate or {}).get("qualifying_total") or 0)
+                # A turn records a browse page only when its fetch actually listed that browse.
+                carry_predicate = (
+                    predicate
+                    if plan.fetch and turn_runtime.predicate_rides(plan.fetch[0], compatible_entities)
+                    else None
+                )
+                qualifying = int((carry_predicate or {}).get("qualifying_total") or 0)
                 asked = named_count(verdict.get("top_n"))
                 # Fix round 9 on PR #833: a long set lists what fits, and is carried like
                 # a named count so "another N" continues it (SET-STOCK-RENDER, owner 16
                 # Oct 2026: every long set, never withheld for a breakdown).
                 listed_to_the_limit = (
-                    predicate is not None
+                    carry_predicate is not None
                     and plan.fetch
                     and spec_tier
                     and qualifying > business_answer.SET_LIST_MAX
@@ -9200,7 +9206,7 @@ def _run_stages_body(  # noqa: PLR0915
                 # named fewer than qualify) is carried too, so their own "another N"
                 # continues it. The reply never offers that.
                 partly_listed = (
-                    predicate is not None
+                    carry_predicate is not None
                     and plan.fetch
                     and spec_tier
                     and asked is not None
@@ -9215,11 +9221,13 @@ def _run_stages_body(  # noqa: PLR0915
                 window_last = (
                     int(window["last"]) if isinstance(window, dict) and window.get("last") else None
                 )
-                members = (predicate or {}).get("members") if isinstance(predicate, dict) else None
+                members = (
+                    (carry_predicate or {}).get("members") if isinstance(carry_predicate, dict) else None
+                )
                 members_total = int((members or {}).get("total") or 0) if isinstance(members, dict) else 0
                 members_listed = len((members or {}).get("codes") or []) if isinstance(members, dict) else 0
                 cut_small = bool(
-                    predicate is not None
+                    carry_predicate is not None
                     and plan.fetch
                     and spec_tier
                     and window_last is not None
@@ -9228,7 +9236,7 @@ def _run_stages_body(  # noqa: PLR0915
                 )
                 members_paged = bool(
                     composers.enabled()
-                    and predicate is not None
+                    and carry_predicate is not None
                     and plan.fetch
                     and not qualifying
                     and members_total > members_listed > 0
@@ -9275,7 +9283,7 @@ def _run_stages_body(  # noqa: PLR0915
                     state_out.focus.set_page = None
                 elif members_paged:
                     state_out.focus.set_page = turn_runtime.set_page_carry(
-                        {**predicate, "qualifying_total": members_total},
+                        {**carry_predicate, "qualifying_total": members_total},
                         plan.fetch[0],
                         class_terms,
                         access_levels=(envelopes[0].get("access_levels_used") if envelopes else None),
@@ -9290,7 +9298,7 @@ def _run_stages_body(  # noqa: PLR0915
                             state_out.focus.set_page["set_key"]["offer_team"] = first_team
                 elif partly_listed or listed_to_the_limit or cut_small:
                     state_out.focus.set_page = turn_runtime.set_page_carry(
-                        predicate,
+                        carry_predicate,
                         plan.fetch[0],
                         class_terms,
                         access_levels=(
@@ -9309,13 +9317,13 @@ def _run_stages_body(  # noqa: PLR0915
                             envelopes[0].get("attachment_type_ids") if envelopes else None
                         ),
                     )
-                elif predicate is not None and plan.fetch and spec_tier and (
-                    predicate.get("other_brands") or predicate.get("set_brands")
+                elif carry_predicate is not None and plan.fetch and spec_tier and (
+                    carry_predicate.get("other_brands") or carry_predicate.get("set_brands")
                 ):
                     # Round 7 item 6: the reply closed with "Other brands ... Name one to
                     # see them.", so the brand named next narrows this set.
                     state_out.focus.set_page = turn_runtime.set_page_carry(
-                        predicate,
+                        carry_predicate,
                         plan.fetch[0],
                         class_terms,
                         access_levels=(

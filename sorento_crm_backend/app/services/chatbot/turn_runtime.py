@@ -4308,7 +4308,7 @@ def make_tool_runner(
         # that set is not the fetch's subject and never rides it.
         if page_predicate is not None:
             block = page_predicate
-        elif scoped_to_a_resolved_product(spec) and not _spec_is_the_set(spec, compatible_entities):
+        elif not predicate_rides(spec, compatible_entities):
             block = None
             gate.pop("predicate", None)
         else:
@@ -5950,6 +5950,12 @@ def scoped_to_a_resolved_product(spec: FetchSpec) -> bool:
     with uuids too), which is why the gate reads it together with `_spec_is_the_set`."""
     return bool(_spec_product_ids(spec))
 
+
+def predicate_rides(spec: FetchSpec, compatible: list[dict[str, Any]]) -> bool:
+    """Does the turn's set predicate ride this fetch? Not when the spec names a resolved
+    product that is not the set the resolver placed this turn (`_spec_is_the_set`): that
+    fetch lists the product, not the browse."""
+    return not (scoped_to_a_resolved_product(spec) and not _spec_is_the_set(spec, compatible))
 
 def _spec_is_the_set(spec: FetchSpec, compatible: list[dict[str, Any]]) -> bool:
     """Are the spec's products exactly the product rows the RESOLVER placed this turn?
