@@ -127,14 +127,12 @@ function writeStoredContact(contact: StoredContact): void {
   }
 }
 
-/** Item 6: the version the console pins when the operator has not chosen one - the NEWEST
- * `full` body, never the newest overall and never the production label (which locally
- * sits on the compact lineage: the owner's turns ran the compact base twice unnoticed).
- * Null when no full version exists. */
+/** CONSOLE-DEFAULT-PROMPT: the version the console pins when the operator has not chosen
+ * one - the version production serves (`serving`, read by the backend through the live
+ * parser's own lookup). Null when none is labelled: the turn then runs the code prompt, the
+ * same as production. */
 export function defaultPromptVersionId(versions: ConsolePromptVersion[]): string | null {
-  const full = versions.filter((v) => v.base === 'full');
-  if (full.length === 0) return null;
-  return full.reduce((best, v) => (v.version > best.version ? v : best)).id;
+  return versions.find((v) => v.serving)?.id ?? null;
 }
 
 /** A contact row's display label, the same "no UUIDs in the UI" rule every other picker
@@ -325,6 +323,12 @@ export function useChatbotConsole() {
     setPromptVersionIdState(defaultPromptVersionId(promptVersions));
   }, [promptVersions]);
 
+  // What a turn sends: no pin when the chosen row is the one production serves. A pinned
+  // parser id also pins the span prompt published with it (`engine._span_override`), which a
+  // live turn never does, so only "no pin" runs exactly what production runs.
+  const servingPromptVersionId = promptVersions?.find((v) => v.serving)?.id ?? null;
+  const turnPromptVersionId = promptVersionId === servingPromptVersionId ? null : promptVersionId;
+
   const setPromptVersionId = useCallback((id: string | null) => {
     promptChoiceApplied.current = true;
     setPromptVersionIdState(id);
@@ -508,7 +512,7 @@ export function useChatbotConsole() {
           contact_respond_id: contactId,
           text: trimmed,
           session_vars: sessionVars,
-          prompt_version_id: promptVersionId,
+          prompt_version_id: turnPromptVersionId,
           run_id: runId,
           ...(quote ? { reply_to: { id: quote.id, text: quote.text, source: quote.source } } : {}),
           ...(options?.forceAgent ? { force_agent: true } : {}),
@@ -544,7 +548,7 @@ export function useChatbotConsole() {
         if (generationRef.current === generation) setSending(false);
       }
     },
-    [contactId, contactLabelState, promptVersionId, refreshThread, runId, sending, sessionVars],
+    [contactId, contactLabelState, refreshThread, runId, sending, sessionVars, turnPromptVersionId],
   );
 
   // -------------------------------------------------------------------------------- //
@@ -564,7 +568,7 @@ export function useChatbotConsole() {
           contact_respond_id: contactId,
           text,
           session_vars: sessionVars,
-          prompt_version_id: promptVersionId,
+          prompt_version_id: turnPromptVersionId,
           run_id: runId,
           ...(quote ? { reply_to: quote } : {}),
         });
@@ -582,7 +586,7 @@ export function useChatbotConsole() {
         toast.error(err instanceof Error ? err.message : 'Failed to run the turn');
       }
     },
-    [contactId, promptVersionId, refreshThread, runId, sessionVars],
+    [contactId, refreshThread, runId, sessionVars, turnPromptVersionId],
   );
 
   const pollMediaStatus = useCallback(
@@ -651,7 +655,7 @@ export function useChatbotConsole() {
           contact_respond_id: contactId,
           text: caption,
           session_vars: sessionVars,
-          prompt_version_id: promptVersionId,
+          prompt_version_id: turnPromptVersionId,
           run_id: runId,
           media,
           // A quoted voice note or image carries the quote like a text does.
@@ -711,7 +715,7 @@ export function useChatbotConsole() {
         if (generationRef.current === generation) setSending(false);
       }
     },
-    [contactId, contactLabelState, pollMediaStatus, promptVersionId, runId, sessionVars],
+    [contactId, contactLabelState, pollMediaStatus, runId, sessionVars, turnPromptVersionId],
   );
 
   const readFileAsBase64 = (file: File): Promise<string> =>
