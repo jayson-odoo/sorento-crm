@@ -77,7 +77,7 @@ def test_the_compaction_call_gets_no_images_but_the_rounds_do(db, contact):
 
     run(db, contact, provider, images=[IMAGE])
 
-    assert [s["effort"] for s in provider.seen] == [None, "low"], "the first call was not the compaction call"
+    assert [s["effort"] for s in provider.seen] == [None, "medium"], "the first call was not the compaction call"
     assert not provider.kwargs[0].get("images"), "the summary call was sent the image"
     assert provider.kwargs[1].get("images") == [IMAGE]
 
