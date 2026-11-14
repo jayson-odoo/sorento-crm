@@ -156,16 +156,19 @@ _PHONE_RUN = re.compile(r"\+?\d[\d\s().-]{5,}\d")
 _MATCH_DIGITS = 9
 
 
-def role_in_users_words(args: dict, user_text: str | None) -> dict:
+def role_in_users_words(args: dict, user_text: str | None, stated: str | None = None) -> dict:
     """On the answer to a company or role question, a row the question asked about takes a role only when the user's
     own words give it: the model's copy of the access word (`access_as_written`) must be in this message, as the
     dealer name and the company must (A17, A18). A copy check, never a word list. Otherwise the role is unsaid again:
     the record decides, or the role is asked (crew re-pass b549042d: 'Mocha' made everyone Employee)."""
     if args.get("role") not in ("owner", "employee"):
         return args
+    if stated and args["role"] == stated:
+        return args  # the role the user gave in the request the question came from (review blocker 1)
     said = " ".join(str(args.get("access_as_written") or "").split()).lower()
     text = " ".join(str(user_text or "").split()).lower()
-    if said and re.search(rf"(?<![0-9a-z]){re.escape(said)}(?![0-9a-z])", text):
+    # The start of a word in the message: "owners" holds "owner" (review should-fix).
+    if said and re.search(rf"(?<![0-9a-z]){re.escape(said)}", text):
         return args
     return {**args, "role": "unknown", "access_as_written": ""}
 
@@ -280,7 +283,7 @@ def propose_rows(
     previous_skipped: list[dict] | None = None, left_out: list[dict] | None = None,
     previous_card: list[str] | None = None, previous_ready: list[str] | None = None, attached: bool = False,
     earlier_keys: set | None = None, asked: list[dict] | None = None, held: dict | None = None,
-    picture_keys: list | None = None, asked_keys: list | None = None,
+    picture_keys: list | None = None, asked_keys: dict | None = None,
 ) -> tuple[list[dict], list[dict], list[dict]]:
     """(steps, skipped, waiting) for the rows, in input order. A skipped row: {"row", "reason", "cells"}. A waiting
     item (a row whose only problem is a customer name that fits several accounts; one per such name):
@@ -341,8 +344,8 @@ def propose_rows(
             if use_given and valid(given):
                 n = given
         key = definition.batch_key(args) if definition.batch_key is not None and isinstance(args, dict) else None
-        if this_message and key is not None and key in (asked_keys or ()) and isinstance(args, dict):
-            args = role_in_users_words(args, user_text)
+        if this_message and key is not None and key in (asked_keys or {}) and isinstance(args, dict):
+            args = role_in_users_words(args, user_text, (asked_keys or {}).get(key))
         if (
             this_message and key is not None and key in (held or {}) and isinstance(args, dict)
             and not (_said(key, user_text) or _asked_again(args, key, user_text))
@@ -406,7 +409,11 @@ def propose_rows(
             if needs and asked is not None:
                 # Only the company and/or role are missing: asked in one question (`question_reply`), never listed
                 # as not changed (crew decision 14 Nov).
-                asked.append({"row": n, "key": key, "needs": list(needs), "label": out.data.get("label"), **mark})
+                # The role the user gave for it, if any, so the answer that adds the company keeps it (review 1).
+                said_role = args.get("role") if args.get("role") in ("owner", "employee") and args.get(
+                    "access_as_written") else None
+                asked.append({"row": n, "key": key, "needs": list(needs), "label": out.data.get("label"),
+                              "role": said_role, **mark})
                 if key is not None:
                     keys[key] = n
                 continue

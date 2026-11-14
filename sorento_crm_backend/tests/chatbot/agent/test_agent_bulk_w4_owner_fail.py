@@ -1012,3 +1012,42 @@ def test_f14c_a_business_owner_asked_only_the_company_stays_owner(db):
     second, _ = screenshot_turn(db, w, [_batch([guessed], "b2"), answer_("Done.")], text_="Mocha", images=False)
     assert second.pending_action is not None, second.reply_text
     assert "Business owner (Mocha), their current role" in " | ".join(second.pending_action["lines"]), second.pending_action
+
+
+def test_a_role_stated_in_the_request_survives_an_answer_that_gives_only_the_company(db):
+    """Review blocker 1: 'grant them owner access' (no company) -> 'Sorento or Mocha?' -> 'Mocha': the role the user
+    already gave is kept, never asked again."""
+    w = make_world(db)
+    people = [dealer(db, w, name=f"ZZT Said Owner {i}") for i in range(2)]
+    rows = [{**_unsaid(c, n, companies=()), "role": "owner", "access_as_written": "owner"} for n, c in enumerate(people, 1)]
+    first, _ = screenshot_turn(db, w, [_batch(rows), answer_("Done.")], text_="Please grant them owner access to the chatbot")
+    assert first.reply_text.strip() == f"Sorento or Mocha for {people[0].name}, {people[1].name}?", first.reply_text
+    mocha = [{**r, "companies": ["MCH"]} for r in rows]
+    second, _ = screenshot_turn(db, w, [_batch(mocha, "b2"), answer_("Done.")], text_="Mocha", images=False)
+    assert second.pending_action is not None, second.reply_text
+    assert all("Business owner (Mocha)" in line for line in second.pending_action["lines"]), second.pending_action
+
+
+def test_a_single_grant_answer_that_gives_only_the_company_never_decides_the_role(db):
+    """Review blocker 2: the single-grant path of the role check."""
+    w = make_world(db)
+    c = dealer(db, w, name="ZZT Single Co Only")
+    args = {k: v for k, v in _unsaid(c, 1, companies=()).items() if k != "row"}
+    first, _ = screenshot_turn(db, w, [round_of(tc(GRANT, args, "g1")), answer_("Done.")],
+                               text_=f"give {local(c.phone_number)} chatbot access", images=False)
+    assert first.reply_text.strip() == f"Sorento or Mocha, and owner or employee, for {c.name}?", first.reply_text
+    guessed = {**args, "companies": ["MCH"], "role": "employee", "access_as_written": "employee"}
+    second, _ = screenshot_turn(db, w, [round_of(tc(GRANT, guessed, "g2")), answer_("Done.")], text_="Mocha", images=False)
+    assert second.pending_action is None, second.reply_text
+    assert second.reply_text.strip() == f"Owner or employee for {c.name}?", second.reply_text
+
+
+def test_a_plural_answer_counts_as_the_users_word(db):
+    """Review should-fix: 'Mocha, both owners' with the model copying 'owner' is the user's word."""
+    w = make_world(db)
+    people = [dealer(db, w, name=f"ZZT Plural {i}") for i in range(2)]
+    rows = [_unsaid(c, n, companies=()) for n, c in enumerate(people, 1)]
+    screenshot_turn(db, w, [_batch(rows), answer_("Done.")], text_="Please grant them access to the chatbot")
+    answered = [{**r, "companies": ["MCH"], "role": "owner", "access_as_written": "owner"} for r in rows]
+    second, _ = screenshot_turn(db, w, [_batch(answered, "b2"), answer_("Done.")], text_="Mocha, both owners", images=False)
+    assert second.pending_action is not None, second.reply_text

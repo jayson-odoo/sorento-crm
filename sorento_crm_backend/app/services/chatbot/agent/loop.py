@@ -888,8 +888,10 @@ def _propose(
         # The dealer name and company are the user's own words, never the model's re-search (UAC A17, A18), as in a
         # table row: what the immediately preceding pick verified for this person counts (review round S7).
         key = contact_grant._batch_key(args)
-        if key is not None and key in ((previous or {}).get("asked") or ()):
-            args = batch.role_in_users_words(args, user_text)  # the answer to its question (crew re-pass b549042d)
+        asked_roles = (previous or {}).get("asked") or {}
+        if key is not None and key in asked_roles:
+            # The answer to its question (crew re-pass b549042d); a role the request already gave stays.
+            args = batch.role_in_users_words(args, user_text, asked_roles.get(key))
         # The same guard as a table row (crew short live check, round 6): a closed pick's codes are refused here too.
         args, problem = batch.grant_row_guard(
             args, key, 1, current=(previous or {}).get("waiting"), earlier_typed=(previous or {}).get("typed"),
@@ -912,8 +914,10 @@ def _propose(
         if typed is not None and needs and asked is not None:
             # A single row asked for its company or role: kept like a table row's, so the answer carries what the
             # user typed (review S1, crew decision 14 Nov).
+            said_role = args.get("role") if args.get("role") in ("owner", "employee") and args.get(
+                "access_as_written") else None
             asked.append({"row": 1, "key": typed["key"], "needs": list(needs), "label": out.data.get("label"),
-                          "typed": typed})
+                          "typed": typed, "role": said_role})
         if typed is not None and choices and single_waiting is not None:
             # A single row's pick is a pick like a table row's: the next turn may answer it (UAC F3, S7).
             single_waiting += [
@@ -1741,9 +1745,10 @@ def _previous_waiting(db, conv, turn_id: str, *, immediate: bool = True) -> dict
             if isinstance(a, dict) and a.get("held") and a.get("key")
         },
         # The rows that question asked about: on the answer their role must be in the user's words (crew re-pass).
-        "asked": [
-            a["key"] for a in got.get("batch_asked") or [] if isinstance(a, dict) and a.get("key") and not a.get("held")
-        ],
+        "asked": {
+            a["key"]: a.get("role") for a in got.get("batch_asked") or []
+            if isinstance(a, dict) and a.get("key") and not a.get("held")
+        },
         # The rows of that question's turn read from a picture: the answer's card names them by the record (B2).
         "picture": [
             a["key"] for a in got.get("batch_asked") or [] if isinstance(a, dict) and a.get("key")
@@ -2534,7 +2539,7 @@ def _run(
         turn.response["batch_write"] = batch_write
         # The rows of a table that asked for the company or role, ready rows held alike: the answer's card (F4).
         turn.response["batch_asked"] = [
-            {"row": a.get("row"), "key": a.get("key"), **({"held": True, "role": a.get("role")} if a.get("held") else {})}
+            {"row": a.get("row"), "key": a.get("key"), "role": a.get("role"), **({"held": True} if a.get("held") else {})}
             for a in batch_asked
         ]
         if batch_asked and (images or file_text):
@@ -2549,7 +2554,9 @@ def _run(
         turn.response["batch_waiting"] = []
         turn.response["batch_skipped"] = []
         turn.response["batch_write"] = contact_grant_write()
-        turn.response["batch_asked"] = [{"row": a.get("row"), "key": a.get("key")} for a in batch_asked]
+        turn.response["batch_asked"] = [
+            {"row": a.get("row"), "key": a.get("key"), "role": a.get("role")} for a in batch_asked
+        ]
         turn.response["batch_typed"] = [{"row": a.get("row"), **a["typed"]} for a in batch_asked if a.get("typed")]
     elif single_waiting:
         # A single row that waits for a pick is the table the next turn may answer (UAC F3, review round S7).
