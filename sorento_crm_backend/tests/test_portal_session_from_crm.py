@@ -110,9 +110,14 @@ def _user(
     is_trashed: bool = False,
     role_slug: str | None = None,
     is_integration: bool = False,
+    contact_number: str | None = "same",
 ):
     from app.models.user import User, UserRole, UserRoleAssignment
 
+    # Fix round 1 S1: the user's own number must still match the linked contact's (the
+    # `eligible_user_for_contact` rule), so by default the user carries the contact's number.
+    if contact_number == "same":
+        contact_number = contact.phone_number if contact else None
     user = User(
         id=str(uuid.uuid4()),
         email=f"{unique_code('s2f', alpha=True)}@example.com".lower(),
@@ -121,6 +126,7 @@ def _user(
         is_trashed=is_trashed,
         respond_contact_id=contact.id if contact else None,
         is_integration=is_integration,
+        contact_number=contact_number,
     )
     db.add(user)
     db.flush()
@@ -138,10 +144,10 @@ def _user(
     return user
 
 
-def _bearer(db, user) -> dict:
+def _bearer(db, user, auth_method: str = "password") -> dict:
     from app.services.user_session_service import mint_session
 
-    return {"Authorization": f"Bearer {mint_session(db, str(user.id), auth_method='password').token}"}
+    return {"Authorization": f"Bearer {mint_session(db, str(user.id), auth_method=auth_method).token}"}
 
 
 def _tokens(db, contact_id: str) -> list[PortalToken]:
@@ -384,6 +390,103 @@ def test_ac5_admin_with_own_contact_impersonating_is_403_for_either_slug(client,
     for slug, cid in ((target_slug, target_contact.id), (admin_slug, admin_contact.id)):
         res = client.post(ROUTE, json={"slug": slug}, headers=headers)
         _assert_refused_without_token(res, cid, db, statuses={403})
+
+
+# --------------------------------------------------------------------------------------
+# Fix round 1 S1: a stale contact link (user's own number no longer matches) never mints
+# --------------------------------------------------------------------------------------
+
+
+def test_s1_user_whose_number_no_longer_matches_the_contact_is_403(client, db):
+    ws = _workspace(db)
+    contact = _contact(db, ws)
+    slug = _slug(db, contact)
+    user = _user(db, contact=contact, contact_number=f"+6019{uuid.uuid4().int % 10_000_000:07d}")
+
+    res = client.post(ROUTE, json={"slug": slug}, headers=_bearer(db, user))
+    _assert_refused_without_token(res, contact.id, db, statuses={403})
+
+
+def test_s1_user_with_no_number_of_their_own_is_403(client, db):
+    ws = _workspace(db)
+    contact = _contact(db, ws)
+    slug = _slug(db, contact)
+    user = _user(db, contact=contact, contact_number=None)
+
+    res = client.post(ROUTE, json={"slug": slug}, headers=_bearer(db, user))
+    _assert_refused_without_token(res, contact.id, db, statuses={403})
+
+
+def test_s1_same_number_in_another_format_still_mints(client, db):
+    """The match is on the normalised number, not the raw string."""
+    ws = _workspace(db)
+    contact = _contact(db, ws)
+    slug = _slug(db, contact)
+    digits = contact.phone_number.lstrip("+")
+    user = _user(db, contact=contact, contact_number=digits)
+
+    res = client.post(ROUTE, json={"slug": slug}, headers=_bearer(db, user))
+    assert res.status_code == 200, res.text
+
+
+# --------------------------------------------------------------------------------------
+# Fix round 1 S2: only a real sign-in session (password, passkey, phone code) may bridge
+# --------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("auth_method", ["portal_link", "dev_login"])
+def test_s2_session_minted_by_portal_link_or_dev_login_is_403(client, db, auth_method):
+    ws = _workspace(db)
+    contact = _contact(db, ws)
+    slug = _slug(db, contact)
+    user = _user(db, contact=contact)
+
+    res = client.post(ROUTE, json={"slug": slug}, headers=_bearer(db, user, auth_method))
+    _assert_refused_without_token(res, contact.id, db, statuses={403})
+
+
+@pytest.mark.parametrize("auth_method", ["password", "passkey", "phone_otp"])
+def test_s2_password_passkey_or_phone_code_session_mints(client, db, auth_method):
+    ws = _workspace(db)
+    contact = _contact(db, ws)
+    slug = _slug(db, contact)
+    user = _user(db, contact=contact)
+
+    res = client.post(ROUTE, json={"slug": slug}, headers=_bearer(db, user, auth_method))
+    assert res.status_code == 200, res.text
+    assert len(_tokens(db, contact.id)) == 1
+
+
+# --------------------------------------------------------------------------------------
+# Fix round 1 R5: the bridge is rate limited and mints nothing when over the limit
+# --------------------------------------------------------------------------------------
+
+
+def test_r5_over_the_rate_limit_is_429_and_mints_nothing(client, db, monkeypatch):
+    from app.services import rate_limit
+
+    ws = _workspace(db)
+    contact = _contact(db, ws)
+    slug = _slug(db, contact)
+    user = _user(db, contact=contact)
+    headers = _bearer(db, user)
+
+    buckets: list[str] = []
+
+    def _deny(bucket, ident, *, limit, window_seconds):
+        buckets.append(bucket)
+        return rate_limit.RateResult(allowed=False, retry_after_seconds=42)
+
+    monkeypatch.setattr(rate_limit, "hit", _deny)
+    res = client.post(ROUTE, json={"slug": slug}, headers=headers)
+    assert res.status_code == 429, res.text
+    assert buckets, "the bridge must consult the rate limiter"
+    assert _tokens(db, contact.id) == []
+    try:
+        body = res.json()
+    except ValueError:
+        body = {}
+    assert not (isinstance(body, dict) and body.get("token"))
 
 
 # --------------------------------------------------------------------------------------

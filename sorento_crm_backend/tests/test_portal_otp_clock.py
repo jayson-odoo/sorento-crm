@@ -158,3 +158,68 @@ def test_ac12_daily_cap_still_holds_inside_24_hours(seoul_db, no_send, monkeypat
     with pytest.raises(AppException) as ei:
         svc.request_otp(contact.id, ws.space_id)
     assert "Daily verification limit" in str(ei.value.detail)
+
+
+# --------------------------------------------------------------------------------------
+# Fix round 1 S6: rows written before the fix carry a created_at ~9h in the FUTURE (Seoul
+# local time stored as naive). On deploy day they must not lock the contact out or shadow
+# the new code.
+# --------------------------------------------------------------------------------------
+
+
+def _future_stamped_row(db, contact, ws) -> PortalOtpCode:
+    """A pre-fix row: created_at in Seoul local time (utc+9h), already expired, unconsumed."""
+    row = PortalOtpCode(
+        contact_id=contact.id,
+        space_id=ws.space_id,
+        code_hash=ps._hash_otp("999999"),
+        expires_at=datetime.utcnow() - timedelta(minutes=5),
+        created_at=datetime.utcnow() + timedelta(hours=9),
+        purpose="sign_in",
+    )
+    db.add(row)
+    db.commit()
+    return row
+
+
+def test_s6_future_stamped_pre_fix_row_does_not_trigger_please_wait(seoul_db, no_send):
+    contact, ws = _seed(seoul_db)
+    _future_stamped_row(seoul_db, contact, ws)
+
+    # Must not raise "Please wait before requesting another verification code."
+    PortalService(seoul_db).request_otp(contact.id, ws.space_id)
+    assert no_send.call_count == 1
+
+
+def test_s6_future_stamped_pre_fix_rows_do_not_count_toward_the_daily_cap(
+    seoul_db, no_send, monkeypatch
+):
+    contact, ws = _seed(seoul_db)
+    for _ in range(ps.OTP_DAILY_CAP):
+        _future_stamped_row(seoul_db, contact, ws)
+    # The cap is what this test is about; the cooldown has its own test above.
+    monkeypatch.setattr(ps, "OTP_REQUEST_COOLDOWN", timedelta(days=-3650))
+
+    # Must not raise "Daily verification limit reached. Please try again tomorrow."
+    PortalService(seoul_db).request_otp(contact.id, ws.space_id)
+    assert no_send.call_count == 1
+
+
+def test_s6_verify_picks_the_new_code_not_the_future_stamped_old_one(
+    seoul_db, no_send, monkeypatch
+):
+    contact, ws = _seed(seoul_db)
+    _future_stamped_row(seoul_db, contact, ws)
+    # Lift the cooldown so this test isolates the verify pick (the cooldown has its own test).
+    monkeypatch.setattr(ps, "OTP_REQUEST_COOLDOWN", timedelta(days=-3650))
+
+    svc = PortalService(seoul_db)
+    svc.request_otp(contact.id, ws.space_id)
+    assert no_send.call_count == 1
+    # enqueue_job(task, otp_id, identifier, otp_text, code, space_id, ...)
+    new_code = no_send.call_args.args[4]
+
+    # Must not raise "Verification code expired." (the stale future-stamped row picked).
+    token = svc.verify_otp(contact.id, ws.space_id, new_code)
+    assert token.contact_id == contact.id
+    assert token.verified_at is not None

@@ -12,9 +12,13 @@
  * new export of `app/(auth)/portal/lib/portal-client.ts`; it is added in the mock factory so this
  * file fails on behaviour, not on an import.
  *
+ * Fix round 1 R1 (nothing hangs): the page does NOT ask next-auth `getSession` (it can hang);
+ * with no device token it calls `openPortalFromCrm(slug)` straight away, and a null answer (no
+ * CRM session, refusal, failure) is the verify redirect. R4: one bridge call under StrictMode.
+ *
  * Contract: documentation/plans/identity/signin-2fa-not-role-14nov-acceptance-criteria.md
  */
-import React, { Suspense } from 'react';
+import React, { StrictMode, Suspense } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, render, screen, waitFor } from '@testing-library/react';
 
@@ -59,14 +63,15 @@ const SLUG_KEY = 'sorento.portalSlug';
 const BRIDGED = { token: 'BRIDGE-TOKEN', expires_at: '2026-12-14T00:00:00' };
 const CRM_SESSION = { user: { id: 'u1', name: 'Test Salesperson A' }, apiToken: 'crm-session' };
 
-async function renderPage(slug = SLUG) {
+async function renderPage(slug = SLUG, opts: { strict?: boolean } = {}) {
+  const tree = (
+    <Suspense fallback={null}>
+      <PortalSlugPage params={Promise.resolve({ slug })} />
+    </Suspense>
+  );
   // React 19 `use(params)`: render inside act so the resolved params promise un-suspends.
   await act(async () => {
-    render(
-      <Suspense fallback={null}>
-        <PortalSlugPage params={Promise.resolve({ slug })} />
-      </Suspense>,
-    );
+    render(opts.strict ? <StrictMode>{tree}</StrictMode> : tree);
   });
 }
 
@@ -106,20 +111,61 @@ describe('AC-7: no device token + a CRM session opens the portal through the bri
     expect(verifyRedirects()).toEqual([]);
     expect(requestOtpMock).not.toHaveBeenCalled();
     expect(bridgeMock).toHaveBeenCalledTimes(1);
+    // R1: next-auth getSession is never awaited on this path (it can hang).
+    expect(getSessionMock).not.toHaveBeenCalled();
+  });
+
+  it('R1: a getSession that never resolves does not hold the page: the bridge still opens it', async () => {
+    getSessionMock.mockImplementation(() => new Promise(() => {}));
+    bridgeMock.mockResolvedValue(BRIDGED);
+
+    await renderPage();
+
+    expect(await screen.findByTestId('portal-landing')).toBeInTheDocument();
+    expect(bridgeMock).toHaveBeenCalledTimes(1);
+    expect(readPortalToken()).toBe(BRIDGED.token);
+  });
+
+  it('R4: under React StrictMode the bridge is called exactly once', async () => {
+    bridgeMock.mockResolvedValue(BRIDGED);
+    // A live CRM session either way, so this isolates the StrictMode double effect from R1.
+    getSessionMock.mockResolvedValue(CRM_SESSION);
+
+    await renderPage(SLUG, { strict: true });
+
+    expect(await screen.findByTestId('portal-landing')).toBeInTheDocument();
+    await settle();
+    expect(bridgeMock).toHaveBeenCalledTimes(1);
+    expect(bridgeMock).toHaveBeenCalledWith(SLUG);
+    expect(verifyRedirects()).toEqual([]);
+  });
+
+  it('R4: under React StrictMode with a refusal, one bridge call and one verify redirect', async () => {
+    bridgeMock.mockResolvedValue(null);
+    // A live CRM session either way, so this isolates the StrictMode double effect from R1.
+    getSessionMock.mockResolvedValue(CRM_SESSION);
+
+    await renderPage(SLUG, { strict: true });
+
+    await waitFor(() => expect(verifyRedirects().length).toBeGreaterThanOrEqual(1));
+    await settle();
+    expect(bridgeMock).toHaveBeenCalledTimes(1);
   });
 });
 
 describe('AC-8: no session, or the bridge refuses, keeps today\'s verify redirect', () => {
-  it('no NextAuth session: no bridge call, redirect to verify', async () => {
+  it('no CRM session (the bridge answers null): one bridge call, redirect to verify', async () => {
     getSessionMock.mockResolvedValue(null);
+    bridgeMock.mockResolvedValue(null);
 
     await renderPage();
 
     await waitFor(() => expect(verifyRedirects()).toHaveLength(1));
     expect(verifyRedirects()[0]).toContain(`/portal/c/${SLUG}/verify`);
-    // The page asked NextAuth before deciding there is no CRM session.
-    expect(getSessionMock).toHaveBeenCalled();
-    expect(bridgeMock).not.toHaveBeenCalled();
+    // R1: the bridge itself decides there is no CRM session; getSession is never asked.
+    expect(getSessionMock).not.toHaveBeenCalled();
+    expect(bridgeMock).toHaveBeenCalledTimes(1);
+    expect(bridgeMock).toHaveBeenCalledWith(SLUG);
     expect(readPortalToken()).toBeNull();
     expect(screen.queryByTestId('portal-landing')).toBeNull();
   });
@@ -172,14 +218,15 @@ describe('AC-9: a device token for a DIFFERENT slug is cleared, then the bridge 
     expect(verifyRedirects()).toEqual([]);
   });
 
-  it('with no session: old token and slug cleared, redirect to verify, no bridge call', async () => {
+  it('with no CRM session (bridge null): old token and slug cleared, one bridge call, redirect to verify', async () => {
     getSessionMock.mockResolvedValue(null);
+    bridgeMock.mockResolvedValue(null);
 
     await renderPage();
 
     await waitFor(() => expect(verifyRedirects()).toHaveLength(1));
-    expect(getSessionMock).toHaveBeenCalled();
-    expect(bridgeMock).not.toHaveBeenCalled();
+    expect(getSessionMock).not.toHaveBeenCalled();
+    expect(bridgeMock).toHaveBeenCalledTimes(1);
     expect(readPortalToken()).toBeNull();
     expect(window.localStorage.getItem(SLUG_KEY)).not.toBe(OTHER_SLUG);
   });

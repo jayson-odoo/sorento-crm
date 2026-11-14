@@ -175,3 +175,40 @@ describe('PortalVerifyCard - no auto-send (AC-10, token mode)', () => {
     expect(mockRequestOtp).not.toHaveBeenCalled();
   });
 });
+
+// Fix round 1 R2: one filled main button. `components/ui/button` marks its variant only through
+// classes (no data-variant): the filled primary carries `bg-primary text-primary-foreground`,
+// the outline carries `bg-background border border-input`.
+function classTokens(el: HTMLElement): string[] {
+  return el.className.split(/\s+/).filter(Boolean);
+}
+
+describe('PortalVerifyCard - Send code is the one filled main button (R2)', () => {
+  it('before any code is sent, Send code is the filled primary variant', async () => {
+    render(<PortalVerifyCard slug="SLUG123456" />);
+    await settled();
+
+    const tokens = classTokens(sendButton());
+    expect(tokens).toContain('bg-primary');
+    expect(tokens).toContain('text-primary-foreground');
+    expect(tokens).not.toContain('border-input');
+  });
+
+  it('after sending, Resend is not the filled primary', async () => {
+    render(<PortalVerifyCard slug="SLUG123456" />);
+    await settled();
+    fireEvent.click(sendButton());
+    await waitFor(() => expect(mockRequestOtp).toHaveBeenCalledTimes(1));
+
+    const resend = await screen.findByRole('button', { name: /resend/i });
+    expect(classTokens(resend)).not.toContain('bg-primary');
+  });
+
+  it('token mode: Send code is the filled primary variant too', async () => {
+    window.history.pushState({}, '', '/portal/verify?token=LEGACY-TOK');
+    render(<PortalVerifyCard />);
+    await settled();
+
+    expect(classTokens(sendButton())).toContain('bg-primary');
+  });
+});
