@@ -363,3 +363,18 @@ def test_general_post_allows_with_the_edit_slug(api, db):
 
     db.expire_all()
     assert db.query(SystemSetting).first().chatbot_unsupported_domains == ["forms"]
+
+
+def test_app_config_falls_back_to_the_default_theme_for_a_stored_unknown_preset(api, db):
+    """A stored preset outside the five (an old build, a hand edit) must not 500 every signed-in user."""
+    from app.models.user import SystemSetting
+
+    client, _allow = api
+    _seed_settings(db)
+    db.query(SystemSetting).first().theme = {"preset": "neon", "custom_hex": "#12345"}
+    db.commit()
+
+    resp = client.get(APP_CONFIG_ENDPOINT)
+
+    assert resp.status_code == 200
+    assert resp.json()["theme"] == {"preset": "sorento-blue", "custom_hex": None}

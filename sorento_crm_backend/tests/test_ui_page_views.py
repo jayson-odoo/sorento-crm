@@ -140,6 +140,33 @@ def test_page_views_route_normalised(db):
         assert "?" not in route and SOME_UUID not in route and "12345" not in route
 
 
+def test_page_views_route_any_segment_with_a_digit_is_an_id(db):
+    """Order numbers and codes are ids too, not only UUIDs and bare digits."""
+    items = [
+        _item(route="/project-sales/order-inquiries/SPO-2026-0012"),
+        _item(route="/inventory/products/AB12"),
+        _item(route="/user-management/settings/appearance"),
+    ]
+    with api_client(db, []) as client:
+        _seed_user(db, client.actor["id"], client.actor["email"])
+        r = client.post(URL, json=_body(items))
+    assert r.status_code == 204
+    assert sorted(row.route for row in _rows(db)) == [
+        "/inventory/products/[id]",
+        "/project-sales/order-inquiries/[id]",
+        "/user-management/settings/appearance",
+    ]
+
+
+@pytest.mark.parametrize("bad", ["/a b", "/a<script>", "/caf\u00e9", "/a%20b", "/x;y"])
+def test_page_views_route_with_odd_characters_is_422(db, bad):
+    with api_client(db, []) as client:
+        _seed_user(db, client.actor["id"], client.actor["email"])
+        r = client.post(URL, json=_body([_item(route=bad)]))
+    assert r.status_code == 422
+    assert _count(db) == 0
+
+
 # --------------------------------------------------------------------------- #
 # D-3 - validation, auth, body cap, rate limit                                  #
 # --------------------------------------------------------------------------- #
@@ -188,6 +215,47 @@ def test_page_views_rate_limited_429(db):
         r = client.post(URL, json=_body([_item()]))
     assert r.status_code == 429
     assert _count(db) == RATE_LIMIT_PER_HOUR
+
+
+def _seed_posts(db, user_id: str, posts: int, rows_per_post: int) -> None:
+    """`posts` posts in the last hour; the rows of one post share one created_at."""
+    base = datetime.utcnow() - timedelta(minutes=5)
+    for i in range(posts):
+        stamp = base - timedelta(seconds=i)
+        for _ in range(rows_per_post):
+            _insert_view(db, user_id, "/seeded", stamp)
+    db.commit()
+
+
+def test_rate_limit_counts_posts_not_rows(db):
+    """119 posts of 3 rows (357 rows): the 120th post passes, the 121st is refused.
+
+    Kills a limiter that counts rows (357 >= 120 would already refuse the first)."""
+    with api_client(db, []) as client:
+        me = _seed_user(db, client.actor["id"], client.actor["email"])
+        _seed_posts(db, me, posts=119, rows_per_post=3)
+        allowed = client.post(URL, json=_body([_item(), _item(), _item()]))
+        refused = client.post(URL, json=_body([_item()]))
+    assert allowed.status_code == 204
+    assert refused.status_code == 429
+
+
+def test_rate_limit_row_ceiling_1200_per_hour(db):
+    """100 posts of 12 rows is 1200 rows: under the post limit, at the row ceiling."""
+    with api_client(db, []) as client:
+        me = _seed_user(db, client.actor["id"], client.actor["email"])
+        _seed_posts(db, me, posts=100, rows_per_post=12)
+        r = client.post(URL, json=_body([_item()]))
+    assert r.status_code == 429
+    assert _count(db) == 1200
+
+
+def test_rate_limit_just_under_the_row_ceiling_passes(db):
+    with api_client(db, []) as client:
+        me = _seed_user(db, client.actor["id"], client.actor["email"])
+        _seed_posts(db, me, posts=100, rows_per_post=11)  # 1100 rows
+        r = client.post(URL, json=_body([_item()]))
+    assert r.status_code == 204
 
 
 # --------------------------------------------------------------------------- #
