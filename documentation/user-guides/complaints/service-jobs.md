@@ -6,6 +6,7 @@ Use a service job when a complaint needs someone on site. You raise the job from
 
 ### 1. Fill in the complaint's Site
 
+
 1. Open the complaint and press **Edit**.
 2. In the **Site** section fill **Address line 1**, **Address line 2**, **Postcode**, **City**, **State**, **Country**, **Contact on site** and **Contact phone**, then save.
 3. If the Site is still empty, **Address line 1** starts with the customer's delivery address. Nothing is saved until you save the complaint.
@@ -13,6 +14,7 @@ Use a service job when a complaint needs someone on site. You raise the job from
 The complaint page shows the same fields in a **Site** card, in the same order. A field with no value shows "-". The job page shows this same Site, so fix an address on the complaint, not on the job.
 
 ### 2. Raise a service job
+
 
 1. Open the complaint, open the gear menu at the top right and choose **Raise service job**.
 2. The job appears in the complaint's **Service Jobs** section as a number such as SV26/11-0001 (SV, year, month, then a running number), with status **Proposed**.
@@ -29,14 +31,14 @@ Good to know:
 A job page has a header with the job number and status, two tabs (**Details** and **History**), a gear menu and one filled button, which is always the next step. Press it and the job moves on.
 
 | Status | What it means | Main button | What moves it |
-|---|---|---|---|
+|--------|---------------|-------------|---------------|
 | **Proposed** | Raised, no date agreed yet | **Confirm date** | Confirming the date |
 | **Confirmed** | Customer agreed a date | **Assign technician** (if none yet), then **On the way** | Assigning, then pressing On the way |
 | **On the way** | Technician has left | **Arrived** | Pressing Arrived |
 | **Arrived** | Technician is on site | **Complete** | Pressing Complete |
-| **Completed** | Work done, not yet checked | **Verify** | Pressing Verify |
-| **Verified** | Checked and accepted | none | Finished |
-| **Cancelled** | Visit called off | none | Finished |
+| **Completed** | Work done, not yet checked | **Verify**  | Pressing Verify |
+| **Verified** | Checked and accepted | none        | Finished      |
+| **Cancelled** | Visit called off | none        | Finished      |
 
 **Confirm date.** The **Confirm date** dialog asks for **Date**, **Time** (for example 10:00 am) and **Agreed by** (the name of the customer person who agreed). All three are needed. Pick the date from the calendar, written dd/mm/yyyy, for example 15/11/2026.
 
@@ -59,6 +61,7 @@ A job page has a header with the job number and status, two tabs (**Details** an
 * You do not have the dispatch permission (see "Who can do what").
 
 ## How do I send a technician?
+
 
 1. Make sure the technician exists under **Technicians** and is active.
 2. Raise the job from the complaint (or let a "Requires service job" resolution do it).
@@ -89,6 +92,7 @@ Open **Dispatch Board**. The **Waiting for a date** card on top lists every job 
 ## Technicians
 
 Open **Technicians**.
+
 
 1. Press **Create**, fill **Name** (required), **Phone** and **Type** (**Employee** or **Contractor**), and save.
 2. Right-click a technician and choose **Edit** to change them. It opens the same dialog.

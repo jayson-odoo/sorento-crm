@@ -8,6 +8,7 @@ A quotation is not needed. A PO can be uploaded on any project, with or without 
 
 Each line the customer printed is matched to one of our catalogue products, in this order:
 
+
 1. **Exact code.** The customer printed our product code as it is. The line is matched, nothing to do.
 2. **A code this customer used before.** Every match a person confirms is remembered for that customer. The next PO from the same customer that prints the same code (or, when the line has no code, the same description) is matched straight away. Capital letters, spaces, dashes and `*` marks do not matter here: `SRTWT9121 -GM **` and `SRTWT9121-GM` are the same code. Any other difference does: `2.5MM` and `25MM` are different codes.
 3. **Suggested.** Anything else is judged by the AI reader, which looks at the line's code and description the way a person would: it ignores brand words, the customer's own code prefix, stray spaces and marks such as `*`. It only picks from products that could fit: this project's quotation lines first, then the codes this customer used before, then the closest catalogue products. The line shows a **Suggested** pill until you accept it.
@@ -22,17 +23,17 @@ When no product fits, the line stays without a product. You can still confirm it
 
 Hover the **Suggested** pill to see why the line was suggested.
 
-- **One line:** right-click the line and choose **Accept suggestion**.
-- **All lines:** click **Accept all suggestions (N)** above the lines.
-- **Check them first:** choose the **Suggested (N)** view to see only the lines with a suggestion.
-- **Wrong suggestion:** pick the right product on that line instead. That choice is remembered for this customer.
+* **One line:** right-click the line and choose **Accept suggestion**.
+* **All lines:** click **Accept all suggestions (N)** above the lines.
+* **Check them first:** choose the **Suggested (N)** view to see only the lines with a suggestion.
+* **Wrong suggestion:** pick the right product on that line instead. That choice is remembered for this customer.
 
 ## Which customer the codes belong to
 
 Codes are remembered for the customer who issued the PO, when you click **Confirm this PO**: every product you accepted or picked on this PO is remembered then. Pick the issuer in **Issued by** at the top of the PO while it is waiting to be confirmed; type part of the party's name or code to find it. When nothing is picked there, the project's customer is used.
 
-- If no issuer is picked and the project has no customer, **Confirm this PO** asks you to choose one under **Issued by** first.
-- If the issuer you picked is not linked to a customer record, the PO is still confirmed, but you are told the codes were not remembered. Link that party to its customer under **Parties** so the next PO learns.
+* If no issuer is picked and the project has no customer, **Confirm this PO** asks you to choose one under **Issued by** first.
+* If the issuer you picked is not linked to a customer record, the PO is still confirmed, but you are told the codes were not remembered. Link that party to its customer under **Parties** so the next PO learns.
 
 ## Quantity
 

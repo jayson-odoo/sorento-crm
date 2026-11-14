@@ -6,6 +6,7 @@ Reference for answering natural-language questions about inventory. It maps each
 
 The five entities and their backing tables: **Warehouse** (`warehouses`), **Storage Zone** (`storage_zones`), **Stock** balance (`stock`), **Stock Batch** (`stock_batches`), **Stock Ledger** entry (`stock_ledger`).
 
+
 ---
 
 ## Warehouse - `warehouses`
@@ -16,8 +17,7 @@ A storage location. Everything else hangs off a warehouse.
 
 **Date columns:** `created_at`, `updated_at`.
 
-**Filters (list endpoint):** `query` (matches code/name), `is_active`, `warehouse_ids`.
-**Sortable:** `warehouse_code`, `warehouse_name`, `location`, `is_active`, `created_at`, `updated_at`, `zones_count`, `stock_count`. Default sort `created_at` ascending.
+**Filters (list endpoint):** `query` (matches code/name), `is_active`, `warehouse_ids`. **Sortable:** `warehouse_code`, `warehouse_name`, `location`, `is_active`, `created_at`, `updated_at`, `zones_count`, `stock_count`. Default sort `created_at` ascending.
 
 **Example questions**
 
@@ -27,6 +27,7 @@ A storage location. Everything else hangs off a warehouse.
 * "Show inactive warehouses."
 * "What's the code for the Selangor Main DC?"
 * "Which warehouses were created this year?"
+
 
 ---
 
@@ -49,11 +50,12 @@ A named area inside a warehouse (shelf / rack / bin / pallet) with a capacity.
 * "Show zones with capacity over 1000."
 * "Does warehouse X have a zone called ZONE-12?"
 
+
 ---
 
 ## Stock balance - `stock`
 
-The live on-hand position. **One row per `(product, warehouse)`** (enforced unique). This is the table for "how much of product X do we have".
+The live on-hand position. **One row per** `**(product, warehouse)**` (enforced unique). This is the table for "how much of product X do we have".
 
 **Quantity fields:**
 
@@ -63,15 +65,13 @@ The live on-hand position. **One row per `(product, warehouse)`** (enforced uniq
 * `quantity_damaged` - damaged units (UI **Damaged**; shown on the detail page only).
 * `reorder_point` - threshold driving the status.
 
-**Computed `status`** (not stored - derived from `quantity_available` vs. the product's reorder level):
-`critical` (available ≤ 0) · `low` (0 < available < reorder level) · `normal` · `overstock` (available > reorder level × 2).
+**Computed** `**status**` (not stored - derived from `quantity_available` vs. the product's reorder level): `critical` (available ≤ 0) · `low` (0 < available < reorder level) · `normal` · `overstock` (available > reorder level × 2).
 
 **Other fields:** `id`, `product_id` (FK → products), `warehouse_id` (FK → warehouses), `zone_id`, `last_count_date`, `created_at`, `updated_at`.
 
 **Date columns:** `last_count_date`, `created_at`, `updated_at`.
 
-**Filters (`/inventory/stock/balance`):** `query` (product code/name), `product_id` / `product_ids`, `warehouse_id` / `warehouse_ids`, `status` (`critical|low|normal|overstock`), and a numeric pair `quantity_operator` (`gt|gte|lt|lte|eq`) + `quantity_value` filtering **`quantity_available`**.
-**Sortable:** `product_code`, `product_name`, `category_name`, `reorder_level`, `warehouse_name`, `available`, `reserved_quantity`, `quantity`, `status`.
+**Filters (**`**/inventory/stock/balance**`**):** `query` (product code/name), `product_id` / `product_ids`, `warehouse_id` / `warehouse_ids`, `status` (`critical|low|normal|overstock`), and a numeric pair `quantity_operator` (`gt|gte|lt|lte|eq`) + `quantity_value` filtering `**quantity_available**`. **Sortable:** `product_code`, `product_name`, `category_name`, `reorder_level`, `warehouse_name`, `available`, `reserved_quantity`, `quantity`, `status`.
 
 **Example questions**
 
@@ -86,6 +86,7 @@ The live on-hand position. **One row per `(product, warehouse)`** (enforced uniq
 
 > "Current on-hand by zone" is **not** directly answerable from the balance table - `stock.zone_id` is optional and rarely populated; zone-level quantity is not tracked on the balance. Answer at warehouse granularity and say so, or fall back to batches if the question is batch-specific.
 
+
 ---
 
 ## Stock Batch - `stock_batches`
@@ -96,7 +97,7 @@ A lot of one product in one warehouse, with dates and a lifecycle status. The ta
 
 **Status enum:** `AVAILABLE`, `RESERVED`, `DAMAGED`, `EXPIRED`, `RETURNED`.
 
-**Date columns:** `manufactured_date`, `expiry_date`, `received_date`, `created_at`. **`expiry_date` is the one for expiry math** (the UI flags anything due within 30 days).
+**Date columns:** `manufactured_date`, `expiry_date`, `received_date`, `created_at`. `**expiry_date**` **is the one for expiry math** (the UI flags anything due within 30 days).
 
 **Filters (list endpoint):** `product_id`, `warehouse_id`. (Status is filtered in the UI; no other registered sort columns.)
 
@@ -111,6 +112,7 @@ A lot of one product in one warehouse, with dates and a lifecycle status. The ta
 * "Total quantity in reserved batches for product Y."
 * "Any batches manufactured before 2024 still in stock?"
 
+
 ---
 
 ## Stock Ledger entry - `stock_ledger`
@@ -119,7 +121,7 @@ Append-only audit trail of quantity changes. The table for "what moved / history
 
 **Fields:** `id`, `product_id` (FK → products), `warehouse_id` (FK → warehouses), `transaction_type`, `quantity_change` (signed: + inbound, − outbound), `previous_quantity`, `new_quantity`, `reference_type`, `reference_id`, `notes`, `created_by`, `created_at`.
 
-**`transaction_type` values currently written:** `BULK_IMPORT` (balance created/updated by a stock import) and `SYSTEM_ADJUSTMENT` (balance zeroed because the product was missing from a full-snapshot import). `reference_type` seen: `bulk_import`, `stock_snapshot_import`.
+`**transaction_type**` **values currently written:** `BULK_IMPORT` (balance created/updated by a stock import) and `SYSTEM_ADJUSTMENT` (balance zeroed because the product was missing from a full-snapshot import). `reference_type` seen: `bulk_import`, `stock_snapshot_import`.
 
 **Date columns:** `created_at` (default sort, newest first).
 
@@ -134,6 +136,7 @@ Append-only audit trail of quantity changes. The table for "what moved / history
 * "What was the on-hand of product X before and after its most recent movement?" (`previous_quantity` / `new_quantity`)
 * "Show every movement against warehouse WH-002 today."
 * "Which products had stock zeroed by a snapshot import?" (`reference_type=stock_snapshot_import`)
+
 
 ---
 

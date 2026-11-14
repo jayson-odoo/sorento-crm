@@ -21,6 +21,7 @@ Each zone row shows:
 
 ## Create or edit a zone
 
+
 1. Click **Create Zone**.
 2. Fill in the dialog:
    * **Warehouse \*** - a dropdown (placeholder *"Select warehouse"*); options are listed as *{warehouse name} ({warehouse code})*. Required.

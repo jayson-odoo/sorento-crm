@@ -11,7 +11,7 @@ Requires the `inventory.stock.view` permission to open.
 ## The list
 
 | Column | What it shows |
-|--------|----------------|
+|--------|---------------|
 | **Product Code** | The product's code. |
 | **Product Name** | The product's name. |
 | **Category** | The product's category. |
@@ -29,7 +29,7 @@ Requires the `inventory.stock.view` permission to open.
 The status is computed from **Available** versus the product's reorder level:
 
 | Status | Meaning |
-|--------|----------|
+|--------|---------|
 | **Critical** | Available is `0` or below. |
 | **Low** | Available is above 0 but below the reorder level. |
 | **Normal** | Available is at or above the reorder level (and not overstocked). |

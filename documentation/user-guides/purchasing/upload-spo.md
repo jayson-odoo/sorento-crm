@@ -5,11 +5,11 @@ Use this flow to bulk-import **SPO allocations** from an Excel file. SPO allocat
 ## Steps
 
 
-1. Open **[Procurement → SPO Allocations](/procurement-management/spo-allocations)** (URL: `/procurement-management/spo-allocations`). The page is titled **SPO Allocations**.
-2. Click the **[Upload SPO](/procurement-management/spo-allocations#guide_target=procurement.spo-allocations.import-options-button)** button - it is the primary button on the toolbar.
+1. Open [**Procurement → SPO Allocations**](/procurement-management/spo-allocations) (URL: `/procurement-management/spo-allocations`). The page is titled **SPO Allocations**.
+2. Click the [**Upload SPO**](/procurement-management/spo-allocations#guide_target=procurement.spo-allocations.import-options-button) button - it is the primary button on the toolbar.
 3. The **SPO Import** dialog opens. Drag in or browse to your SPO Excel file.
-4. (Recommended) Click **[Test](/procurement-management/spo-allocations#guide_target=template-upload.test-button)** to validate the file before importing. Fix any reported errors first.
-5. Click **[Import](/procurement-management/spo-allocations#guide_target=procurement.spo-allocations.import-confirm-button)** to queue the import job.
+4. (Recommended) Click [**Test**](/procurement-management/spo-allocations#guide_target=template-upload.test-button) to validate the file before importing. Fix any reported errors first.
+5. Click [**Import**](/procurement-management/spo-allocations#guide_target=procurement.spo-allocations.import-confirm-button) to queue the import job.
 
 To create a single SPO allocation by hand instead, use **Create SPO Allocation** in the toolbar's **Actions** menu.
 
@@ -18,46 +18,26 @@ To create a single SPO allocation by hand instead, use **Create SPO Allocation**
 The filename (without extension) is used as the **SPO number**. Each row in the Excel becomes one SPO allocation:
 
 | Column (any of these header names is accepted) | Required | Notes |
-|----|----|----|
-| **Item Code** / **Product Code** | Yes | Looked up case-insensitively against the product master. |
-| **Location** / **Warehouse** / **Warehouse Code** | Yes | Looked up against the warehouse master. |
-| **Qty** / **Quantity** / **Allocated** / **Allocated Quantity** | Yes | Integer. |
-| **Loading Date** | Yes | Date of loading. Text after the first space in this cell is interpreted as the **shipping container number**. |
+|------------------------------------------------|----------|-------|
+| **Item Code** / **Product Code**               | Yes      | Looked up case-insensitively against the product master. |
+| **Location** / **Warehouse** / **Warehouse Code** | Yes      | Looked up against the warehouse master. |
+| **Qty** / **Quantity** / **Allocated** / **Allocated Quantity** | Yes      | Integer. |
+| **Loading Date**                               | Yes      | Date of loading. Text after the first space in this cell is interpreted as the **shipping container number**. |
 | **Transfer From** / **SPO Number** / **From Doc No.** / **From Document No.** | Optional | Used to override the SPO number per row, or to link a row to a specific source document. |
 
 Rows are grouped by `(SPO number, product, warehouse)` - duplicate rows for the same combination are summed into a single allocation.
 
 Importing also links any previously uploaded GRN lines that stated this SPO number but had no allocation to match at the time - GRN and SPO files can arrive in either order.
 
-The **container number** read from the Loading Date cell is also matched against inbound
-shipments: when a shipment already carries that container number, every allocation on the
-document links to it straight away; when no shipment exists yet, the allocation still carries
-the container number and links up automatically once a shipment with that number is created. The
-AutoCount integration writes the same container number and gets the same linking - an allocation
-created by this upload is adopted rather than duplicated if the integration later restates the
-same SPO number, product and warehouse, and the reverse holds too.
+The **container number** read from the Loading Date cell is also matched against inbound shipments: when a shipment already carries that container number, every allocation on the document links to it straight away; when no shipment exists yet, the allocation still carries the container number and links up automatically once a shipment with that number is created. The AutoCount integration writes the same container number and gets the same linking - an allocation created by this upload is adopted rather than duplicated if the integration later restates the same SPO number, product and warehouse, and the reverse holds too.
 
-The first time the AutoCount integration pushes a shipping order that was uploaded from Excel,
-its own lines REPLACE the uploaded rows for that product and warehouse: AutoCount states one line
-per order line, where the upload held one summed row, so the uploaded row is retired and the
-received quantity it carried is spread across the AutoCount lines in line order, keeping the
-container link. Anything already attached to an uploaded row - a GRN receipt, a sales-order link,
-an order-inquiry placement - moves to the first AutoCount line for that product and warehouse, so
-nothing is lost. A product and warehouse AutoCount states no line for keeps its uploaded row,
-closed, and so does one whose AutoCount quantities come to less than what the row already
-received. Retired rows are deleted when the integration is permitted to delete shipping orders,
-and otherwise stay in the list, closed, with a note saying which AutoCount document replaced
-them.
+The first time the AutoCount integration pushes a shipping order that was uploaded from Excel, its own lines REPLACE the uploaded rows for that product and warehouse: AutoCount states one line per order line, where the upload held one summed row, so the uploaded row is retired and the received quantity it carried is spread across the AutoCount lines in line order, keeping the container link. Anything already attached to an uploaded row - a GRN receipt, a sales-order link, an order-inquiry placement - moves to the first AutoCount line for that product and warehouse, so nothing is lost. A product and warehouse AutoCount states no line for keeps its uploaded row, closed, and so does one whose AutoCount quantities come to less than what the row already received. Retired rows are deleted when the integration is permitted to delete shipping orders, and otherwise stay in the list, closed, with a note saying which AutoCount document replaced them.
 
 ## Reading the list and a document
 
-On the **SPO Allocations** list, a **Date** column (the document date) sits right of **SPO No**
-and sorts like any other column; the SPO No cell itself is one line, no date stacked under it.
+On the **SPO Allocations** list, a **Date** column (the document date) sits right of **SPO No** and sorts like any other column; the SPO No cell itself is one line, no date stacked under it.
 
-Open a document to see its **Lines** tab. Every column - Product, Warehouse, Plan, Packing
-List, Status, PO, SO - sorts when you click its header, and a search box ("Search product or
-warehouse") narrows the lines to those matching a product code/name or warehouse code/name.
-Clear the search to see every line again.
+Open a document to see its **Lines** tab. Every column - Product, Warehouse, Plan, Packing List, Status, PO, SO - sorts when you click its header, and a search box ("Search product or warehouse") narrows the lines to those matching a product code/name or warehouse code/name. Clear the search to see every line again.
 
 ## How you'll see progress
 

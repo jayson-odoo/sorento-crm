@@ -16,6 +16,7 @@ Draft ──Change to pending approval──▶ Pending approval ┌─Approve�
 
 Plain English:
 
+
 1. A request/form starts as **Draft**.
 2. It moves to **Pending approval**.
 3. The approver decides **in the system** - clicking **Approve** or **Reject** (with a reason) in the top action bar.
@@ -24,7 +25,7 @@ Plain English:
 ## Status labels
 
 | Status | What it means |
-|--------|----------------|
+|--------|---------------|
 | **Draft** | Created, not yet sent for approval. |
 | **Pending approval** | Awaiting the approver's decision - they **Approve** or **Reject** it in the system. |
 | **Approved** | Approver accepted it; awaiting CS to finish. |
@@ -34,30 +35,22 @@ Plain English:
 
 ## What should I do now - by status
 
-**Draft**
-Move it forward with **[Change to pending approval](#guide_target=procurement.approvals.change-to-pending-approval-button)** - this sets the status to **Pending approval** so the approver can act on it. You can also **Reject** it here with a reason if it shouldn't proceed. Full steps: [Review a purchase request](review-purchase-request.md) / [Review a sponsorship form](review-sponsorship-form.md).
+**Draft** Move it forward with [**Change to pending approval**](#guide_target=procurement.approvals.change-to-pending-approval-button) - this sets the status to **Pending approval** so the approver can act on it. You can also **Reject** it here with a reason if it shouldn't proceed. Full steps: [Review a purchase request](review-purchase-request.md) / [Review a sponsorship form](review-sponsorship-form.md).
 
-**Pending approval**
-The approver decides **in the system**: click **[Approve](#guide_target=procurement.purchase-requests.approve-button)** to accept it, or **[Reject](#guide_target=procurement.purchase-requests.reject-button)** (a reason is required) to turn it down - the buttons are in the top action bar of the record. The status then becomes **Approved** or **Rejected**.
+**Pending approval** The approver decides **in the system**: click [**Approve**](#guide_target=procurement.purchase-requests.approve-button) to accept it, or [**Reject**](#guide_target=procurement.purchase-requests.reject-button) (a reason is required) to turn it down - the buttons are in the top action bar of the record. The status then becomes **Approved** or **Rejected**.
 
 > The older emailed approval-link flow ("Copy approval link") is being phased out - approve and reject directly in the system.
 
-**Approved**
-Customer service finishes it: **Processed by CS** when handled, or **Close** if it's being closed out. Both notify the contact.
+**Approved** Customer service finishes it: **Processed by CS** when handled, or **Close** if it's being closed out. Both notify the contact.
 
-**Rejected**
-Review the rejection reason (shown on the record) and the approver's comments. The request is turned down; raise a new one if the need stands.
+**Rejected** Review the rejection reason (shown on the record) and the approver's comments. The request is turned down; raise a new one if the need stands.
 
-**Processed by CS / Closed**
-End states - no further action.
+**Processed by CS / Closed** End states - no further action.
 
 ## Notes
 
 * Approve and reject happen **in the system** (the buttons on the record). The emailed approval-link flow is being retired.
 * The same component drives both purchase requests and sponsorship forms; the flow and buttons are identical - only the menu entry differs.
-* **Void is final.** A purchase request or sponsorship form voided while its approval was pending
-  can no longer be approved or rejected, in the system or through an emailed link: the attempt is
-  refused with *This request has been voided and can no longer be ...*. Its pending approval
-  closes when it is voided, and it drops out of the pending-approval queue.
+* **Void is final.** A purchase request or sponsorship form voided while its approval was pending can no longer be approved or rejected, in the system or through an emailed link: the attempt is refused with *This request has been voided and can no longer be ...*. Its pending approval closes when it is voided, and it drops out of the pending-approval queue.
 * Buttons are gated by status and permission - if one is missing, check the status pill and your role.
 * The approver's decision and any rejection reason are recorded in the audit history.

@@ -1,50 +1,21 @@
 # Chatbot - sales report (confirmed vs outstanding, by month and product)
 
-Use this when a WhatsApp contact wants to know how much a customer bought, or how much of a
-product sold, month by month - "sales report for hanlim", "dealer sales report for hanlim",
-"sales report for SRTWT7445", "project sales report for hanlim". The bot answers with one
-report: how much was ordered, how much of that is a recognised sale, and how much is still
-outstanding, broken down month by month with the orders behind the numbers on request.
+Use this when a WhatsApp contact wants to know how much a customer bought, or how much of a product sold, month by month - "sales report for hanlim", "dealer sales report for hanlim", "sales report for SRTWT7445", "project sales report for hanlim". The bot answers with one report: how much was ordered, how much of that is a recognised sale, and how much is still outstanding, broken down month by month with the orders behind the numbers on request.
 
 ## What to type
 
-* **A customer name and/or a product code, plus a sales report ask** ("sales report", "sales
-  performance", "how much did X buy"). You need at least one of a customer or a product; asking
-  for neither is refused.
-* **"dealer"** or **"project"** narrows the report to that sales channel. Neither word means all
-  channels, including orders with no channel recorded.
-* **A month, a year, or a date range** narrows the report to that window. See "Defaults" below
-  for what happens with no date.
-* **A location word.** A word ending in a warehouse suffix (e.g. "IB") matches every warehouse
-  code ending in that suffix (e.g. `-IB`: `BRW-IB`, `MWH-IB`). An exact warehouse code (e.g.
-  "BRW") matches only that code.
-* **Narrow after the report is already on screen.** While the report (or its detail offer) is
-  still on screen, reply with just the extra filter - "june 2026 only", "only SRTWT7445" - and
-  the same report re-runs narrowed, with the header showing the new filter.
-* **Follow up on a report for a customer.** Reply with just what changes - "how about ordered",
-  "and delivered?", "what about last month", "by product". The report re-runs on the same customer,
-  on every account you picked from the list, in the same period, on the same sales basis, unless
-  your reply changes one of them. The header names what it ran on. Name another customer to switch
-  to that customer, say "all customers" to drop the customer, or say "start over" for a new report.
-* **A total, a list or a ranking.** "Total sale September 2026" gives one figure. "Break down by
-  dealer and project", "show dealer and project", "by month" or "for all sales agents" lists every
-  row, with no "How many?" question. "Top 10 products" ranks; the bot asks how many, or by quantity
-  or by amount, only when you did not say. Asking for a total after a list or a ranking gives one
-  figure again, on the same filters. Changing only a filter on a list ("sorento company only" after
-  the sales agents list) runs the same list again with that filter, every row.
-* **Remove one filter.** "all brands", "any brand" or "clear the brand filter" drops only the
-  brand; the company, period, sales basis and breakdown stay as they were. The same works for a
-  customer, product, category, sales agent, account type, channel or company. "start over" clears
-  everything.
-* **Several changes in one message.** "sorento company only, show dealer and project" applies the
-  company and the breakdown together.
-* **"1" for the sales order list.** After a report with at least one month, reply "1" and the
-  bot lists every matching sales order, one item per order, latest date first.
+* **A customer name and/or a product code, plus a sales report ask** ("sales report", "sales performance", "how much did X buy"). You need at least one of a customer or a product; asking for neither is refused.
+* **"dealer"** or **"project"** narrows the report to that sales channel. Neither word means all channels, including orders with no channel recorded.
+* **A month, a year, or a date range** narrows the report to that window. See "Defaults" below for what happens with no date.
+* **A location word.** A word ending in a warehouse suffix (e.g. "IB") matches every warehouse code ending in that suffix (e.g. `-IB`: `BRW-IB`, `MWH-IB`). An exact warehouse code (e.g. "BRW") matches only that code.
+* **Narrow after the report is already on screen.** While the report (or its detail offer) is still on screen, reply with just the extra filter - "june 2026 only", "only SRTWT7445" - and the same report re-runs narrowed, with the header showing the new filter.
+* **Follow up on a report for a customer.** Reply with just what changes - "how about ordered", "and delivered?", "what about last month", "by product". The report re-runs on the same customer, on every account you picked from the list, in the same period, on the same sales basis, unless your reply changes one of them. The header names what it ran on. Name another customer to switch to that customer, say "all customers" to drop the customer, or say "start over" for a new report.
+* **A total, a list or a ranking.** "Total sale September 2026" gives one figure. "Break down by dealer and project", "show dealer and project", "by month" or "for all sales agents" lists every row, with no "How many?" question. "Top 10 products" ranks; the bot asks how many, or by quantity or by amount, only when you did not say. Asking for a total after a list or a ranking gives one figure again, on the same filters. Changing only a filter on a list ("sorento company only" after the sales agents list) runs the same list again with that filter, every row.
+* **Remove one filter.** "all brands", "any brand" or "clear the brand filter" drops only the brand; the company, period, sales basis and breakdown stay as they were. The same works for a customer, product, category, sales agent, account type, channel or company. "start over" clears everything.
+* **Several changes in one message.** "sorento company only, show dealer and project" applies the company and the breakdown together.
+* **"1" for the sales order list.** After a report with at least one month, reply "1" and the bot lists every matching sales order, one item per order, latest date first.
 
-**Ambiguous customer name.** When a customer name matches more than one company, the bot shows
-you the matches and asks "Which customer do you mean?" with a numbered list. Reply with a
-number for one company, or "all" to include every matching company in the report. This picker
-carries no delivery-order hint on a sales report ask.
+**Ambiguous customer name.** When a customer name matches more than one company, the bot shows you the matches and asks "Which customer do you mean?" with a numbered list. Reply with a number for one company, or "all" to include every matching company in the report. This picker carries no delivery-order hint on a sales report ask.
 
 ## Reading the report
 
@@ -58,17 +29,9 @@ Location: all
 Delivery date: all
 ```
 
-`Customer` and `Product` read `all` when that axis was not named. `Channel` reads `Dealer`,
-`Project` or `all`. `Location` reads `all` when no location word was given, the exact code alone
-when one was, or the word plus every code it resolved to in brackets when it was a suffix.
-`Delivery date` reads `all`, or an exact range `dd/mm/yyyy to dd/mm/yyyy`.
+`Customer` and `Product` read `all` when that axis was not named. `Channel` reads `Dealer`, `Project` or `all`. `Location` reads `all` when no location word was given, the exact code alone when one was, or the word plus every code it resolved to in brackets when it was a suffix. `Delivery date` reads `all`, or an exact range `dd/mm/yyyy to dd/mm/yyyy`.
 
-**A product code also covers every code that starts with it.** Typing "SRT5674" matches the
-product `SRT5674` itself and every sibling code that starts with it, such as `SRT5674-N` - so
-the report never comes back empty just because the sales actually sat on a variant of the code
-typed. When more than one code matched, the header lists them comma separated: `Product: SRT5674,
-SRT5674-N`. A code that only ever matches itself prints bare, and a very wide prefix (more than
-10 matching codes) collapses to a count, e.g. `Product: SRT56 (37 products)`.
+**A product code also covers every code that starts with it.** Typing "SRT5674" matches the product `SRT5674` itself and every sibling code that starts with it, such as `SRT5674-N` - so the report never comes back empty just because the sales actually sat on a variant of the code typed. When more than one code matched, the header lists them comma separated: `Product: SRT5674, SRT5674-N`. A code that only ever matches itself prints bare, and a very wide prefix (more than 10 matching codes) collapses to a count, e.g. `Product: SRT56 (37 products)`.
 
 Then one block per month, latest month first:
 
@@ -83,66 +46,34 @@ SRTWT7445: RM 50,000.00 (Qty: 900) (Confirmed: RM 40,000.00, Qty: 720)
 SRTKT39SS: RM 31,200.00 (Qty: 400) (Confirmed: RM 0.00, Qty: 0)
 ```
 
-`Sales orders` is the count of sales orders with a line in that month. `Ordered` is everything
-on those lines. `Confirmed (DO)` and `Outstanding` split that same total two ways, so
-**Ordered always equals Confirmed (DO) plus Outstanding**, for both the money and the quantity.
+`Sales orders` is the count of sales orders with a line in that month. `Ordered` is everything on those lines. `Confirmed (DO)` and `Outstanding` split that same total two ways, so **Ordered always equals Confirmed (DO) plus Outstanding**, for both the money and the quantity.
 
-Say this plainly, because it is easy to read "outstanding" as a problem: Sorento only counts a
-sale as made once the sales order line has been transferred to a Delivery Order. **Confirmed
-(DO)** is that recognised sale. **Outstanding** is what has been ordered but has not yet been
-transferred to a delivery order - not cancelled, not a mistake, just not yet moved across.
-Cancelled sales orders and cancelled lines are never counted anywhere in this report.
+Say this plainly, because it is easy to read "outstanding" as a problem: Sorento only counts a sale as made once the sales order line has been transferred to a Delivery Order. **Confirmed (DO)** is that recognised sale. **Outstanding** is what has been ordered but has not yet been transferred to a delivery order - not cancelled, not a mistake, just not yet moved across. Cancelled sales orders and cancelled lines are never counted anywhere in this report.
 
 Under the customer's own numbers sits a breakdown list, ranked by ordered value, highest first:
 
 * Ask about a **customer** and the breakdown is **By product**.
 * Ask about a **product** and the breakdown is **By customer**.
-* Name both a customer and a product and there is no breakdown at all - the month's own four
-  lines are the whole answer, because there is nothing left to break down.
+* Name both a customer and a product and there is no breakdown at all - the month's own four lines are the whole answer, because there is nothing left to break down.
 
-**Asking about a product that covers more than one code prints By product too**, so you can
-still see which of those codes actually sold. Since a product code also covers every sibling
-code that starts with it (see above), a product-only ask over such a family prints **both**
-breakdowns - By product first, then By customer. Naming a customer alongside that same family
-prints By product only; naming a customer alongside a single, non-family code still prints no
-breakdown at all.
+**Asking about a product that covers more than one code prints By product too**, so you can still see which of those codes actually sold. Since a product code also covers every sibling code that starts with it (see above), a product-only ask over such a family prints **both** breakdowns - By product first, then By customer. Naming a customer alongside that same family prints By product only; naming a customer alongside a single, non-family code still prints no breakdown at all.
 
 Every matching row is listed; nothing is ever shortened with "+N more".
 
-If nothing matches at all, the report still prints its header, then one line: `No sales
-found.` and no offer to pick anything further.
+If nothing matches at all, the report still prints its header, then one line: `No sales found.` and no offer to pick anything further.
 
 ## Which month a line falls in
 
-A sales order line is counted in the month of its own delivery (required) date. A line with no
-delivery date falls back to the sales order's own order date. This means a single sales order
-with lines due in two different months is counted once in each of those months' `Sales orders`
-totals - it is not double-counted as one order, it is one order contributing a line to each
-month it actually touches. A line dated for a future month shows up under that future month,
-same as any other.
+A sales order line is counted in the month of its own delivery (required) date. A line with no delivery date falls back to the sales order's own order date. This means a single sales order with lines due in two different months is counted once in each of those months' `Sales orders` totals - it is not double-counted as one order, it is one order contributing a line to each month it actually touches. A line dated for a future month shows up under that future month, same as any other.
 
 ## Defaults
 
-* **No company named means every company you hold.** The bot never asks "Sorento or Mocha?".
-  When two or more of your companies have figures for what you asked, one line per company sits
-  right above the Total line, and the lines add up to the Total. A company with nothing to show
-  is left out, so a customer or brand that exists in one company prints no company lines. Name a
-  company ("for Mocha") to see that company alone.
-* **Company or brand.** Sorento and Mocha are each both a company and a brand. "Sorento company"
-  filters the company, so every brand that company sells is counted; "Sorento brand" filters the
-  brand only. Type only "Sorento" and the bot asks once whether you mean the company, the brand or
-  both. Reply "both", or type "Sorento company and brand", to apply both filters together.
-* **Filters you set stay.** A customer, brand, account type, company or other filter stays on every
-  follow-up, even a complete new question, until you change or remove it. The report header lists
-  every filter in use. A sales basis you already gave ("delivered") is not asked again.
-* **A customer you named stays until you name another.** A follow-up such as "invoiced",
-  "breakdown product" or "top 5" keeps the customer of the report on screen, and the header still
-  names it.
-* **A customer-only report, or a customer-and-product report, with no date named shows all
-  dates.** The header prints `Delivery date: all`.
-* **A product-only report with no date named shows the current year** instead of everything -
-  otherwise a bare product code alone would pull years of history. Say the words "all dates" and
-  the bot drops that default and shows everything.
+* **No company named means every company you hold.** The bot never asks "Sorento or Mocha?". When two or more of your companies have figures for what you asked, one line per company sits right above the Total line, and the lines add up to the Total. A company with nothing to show is left out, so a customer or brand that exists in one company prints no company lines. Name a company ("for Mocha") to see that company alone.
+* **Company or brand.** Sorento and Mocha are each both a company and a brand. "Sorento company" filters the company, so every brand that company sells is counted; "Sorento brand" filters the brand only. Type only "Sorento" and the bot asks once whether you mean the company, the brand or both. Reply "both", or type "Sorento company and brand", to apply both filters together.
+* **Filters you set stay.** A customer, brand, account type, company or other filter stays on every follow-up, even a complete new question, until you change or remove it. The report header lists every filter in use. A sales basis you already gave ("delivered") is not asked again.
+* **A customer you named stays until you name another.** A follow-up such as "invoiced", "breakdown product" or "top 5" keeps the customer of the report on screen, and the header still names it.
+* **A customer-only report, or a customer-and-product report, with no date named shows all dates.** The header prints `Delivery date: all`.
+* **A product-only report with no date named shows the current year** instead of everything - otherwise a bare product code alone would pull years of history. Say the words "all dates" and the bot drops that default and shows everything.
 
 ## Getting the orders behind the numbers
 
@@ -152,8 +83,7 @@ After a report with at least one month, the bot ends with:
 Reply 1 for the sales order list.
 ```
 
-Reply "1" and the bot lists every matching sales order over the whole filtered window, one item
-per order, latest order date first:
+Reply "1" and the bot lists every matching sales order over the whole filtered window, one item per order, latest order date first:
 
 ```
 1. *SO Number:* SO421287
@@ -165,39 +95,26 @@ per order, latest order date first:
 *Outstanding:* RM 6,200.00 (Qty: 105)
 ```
 
-Every matching sales order is sent; long lists are chunked into several WhatsApp messages the
-way any long chatbot reply is, not shortened. This offer stays open across a narrowing reply
-("only SRTWT7445") - the bot re-runs the report and re-arms the same offer over the narrower
-set. Reply "no" or "stop" to close it, or ask about something else entirely to move on.
+Every matching sales order is sent; long lists are chunked into several WhatsApp messages the way any long chatbot reply is, not shortened. This offer stays open across a narrowing reply ("only SRTWT7445") - the bot re-runs the report and re-arms the same offer over the narrower set. Reply "no" or "stop" to close it, or ask about something else entirely to move on.
 
 ## Amounts
 
-Every amount prints in RM, with two decimal places and thousands separators, e.g. `RM
-1,234.50`. A line priced at zero (this happens on some lines in the data) still counts its
-quantity - it prints `RM 0.00` next to the real quantity, not as a missing row.
+Every amount prints in RM, with two decimal places and thousands separators, e.g. `RM 1,234.50`. A line priced at zero (this happens on some lines in the data) still counts its quantity - it prints `RM 0.00` next to the real quantity, not as a missing row.
 
 ## Access: who can see this report
 
-The admin grants this per contact. Open the contact, go to **Access**, and on the **Field
-reveals** card tick **Sales report**. It is off by default.
+The admin grants this per contact. Open the contact, go to **Access**, and on the **Field reveals** card tick **Sales report**. It is off by default.
 
-Without that grant, any sales report ask gets one line back: `Sales report is not enabled for
-your account.` and nothing is fetched.
+Without that grant, any sales report ask gets one line back: `Sales report is not enabled for your account.` and nothing is fetched.
 
-The sales report is **not available through the in-app AI assistant** - it only answers over
-WhatsApp, to a contact who holds the grant.
+The sales report is **not available through the in-app AI assistant** - it only answers over WhatsApp, to a contact who holds the grant.
 
 ## Why does my number look different
 
-* **Confirmed (DO) is a recognised sale; Outstanding is not yet one.** If a figure looks lower
-  than expected, check whether a chunk of it is sitting in Outstanding because the order has not
-  been transferred to a delivery order yet.
-* **A line is bucketed by its delivery (required) date, not its order date**, when it has one.
-  An order placed in one month with lines due in a later month shows those lines under the later
-  month, not the month it was placed.
+* **Confirmed (DO) is a recognised sale; Outstanding is not yet one.** If a figure looks lower than expected, check whether a chunk of it is sitting in Outstanding because the order has not been transferred to a delivery order yet.
+* **A line is bucketed by its delivery (required) date, not its order date**, when it has one. An order placed in one month with lines due in a later month shows those lines under the later month, not the month it was placed.
 * **Cancelled orders and cancelled lines are never counted**, in any total, on any month.
-* **The report only covers the contact's own company scope** - a contact tied to one company
-  ledger never sees another company's sales orders, the same as every other chatbot report.
+* **The report only covers the contact's own company scope** - a contact tied to one company ledger never sees another company's sales orders, the same as every other chatbot report.
 
 ## See also
 

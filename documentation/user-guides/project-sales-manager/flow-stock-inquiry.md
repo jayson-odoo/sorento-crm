@@ -4,7 +4,7 @@ Project sales reps submit stock inquiries through the [portal](../project-sales-
 
 ## Where to find inquiries waiting on you
 
-Open **[Procurement → Stock Inquiries](/procurement-management/stock-inquiries)** (URL: `/procurement-management/stock-inquiries`). The page is titled **Stock Inquiries**.
+Open [**Procurement → Stock Inquiries**](/procurement-management/stock-inquiries) (URL: `/procurement-management/stock-inquiries`). The page is titled **Stock Inquiries**.
 
 Filter by **Status = Pending project sales** to see only the inquiries waiting on you. The full set of statuses is: **New**, **Pending project sales**, **Pending purchasing**, **Responded**, **Rejected**.
 
@@ -17,20 +17,20 @@ Filter by **Status = Pending project sales** to see only the inquiries waiting o
 
 ## Approve (send to purchasing)
 
-Click **[Approve (send to purchasing)](#guide_target=procurement.stock-inquiries.approve-button)** in the toolbar. The inquiry moves to **Pending purchasing** and lands in the purchasing team's queue. They will respond with availability / lead-time / price (see [Purchasing - Review and respond to a stock inquiry](../purchasing/review-stock-inquiry.md)).
+Click [**Approve (send to purchasing)**](#guide_target=procurement.stock-inquiries.approve-button) in the toolbar. The inquiry moves to **Pending purchasing** and lands in the purchasing team's queue. They will respond with availability / lead-time / price (see [Purchasing - Review and respond to a stock inquiry](../purchasing/review-stock-inquiry.md)).
 
 ## Reject
 
-If the request shouldn't go to purchasing (e.g. duplicate, out of scope, wrong customer), click **[Reject](#guide_target=procurement.stock-inquiries.reject-button)** instead.
+If the request shouldn't go to purchasing (e.g. duplicate, out of scope, wrong customer), click [**Reject**](#guide_target=procurement.stock-inquiries.reject-button) instead.
 
 
 1. The **Reject stock inquiry** dialog opens.
 2. Enter a **Rejection reason** - required (the dialog says: *"Enter a reason for the rejection. This is required."*). Placeholder: *"Reason for rejection..."*.
-3. Click **[Reject](#guide_target=procurement.stock-inquiries.reject-confirm-button)** to confirm. The inquiry moves to **Rejected** and the rep is notified.
+3. Click [**Reject**](#guide_target=procurement.stock-inquiries.reject-confirm-button) to confirm. The inquiry moves to **Rejected** and the rep is notified.
 
 ## Reopen a rejected inquiry
 
-If an inquiry was rejected by mistake, click **[Reopen to pending project sales](#guide_target=procurement.stock-inquiries.reopen-button)** on the rejected record. The **Reopen stock inquiry** dialog asks for an optional reason; click **[Reopen](#guide_target=procurement.stock-inquiries.reopen-confirm-button)** to confirm.
+If an inquiry was rejected by mistake, click [**Reopen to pending project sales**](#guide_target=procurement.stock-inquiries.reopen-button) on the rejected record. The **Reopen stock inquiry** dialog asks for an optional reason; click [**Reopen**](#guide_target=procurement.stock-inquiries.reopen-confirm-button) to confirm.
 
 ## How the rep is notified
 

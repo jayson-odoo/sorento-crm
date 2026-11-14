@@ -4,7 +4,8 @@ Use this when you need to add someone to the CRM, control what they can do (via 
 
 ## Add a user
 
-1. Go to **[User Management → Administrative Users](/user-management/users)**.
+
+1. Go to [**User Management → Administrative Users**](/user-management/users).
 2. Click **Add user** (top-right).
 3. In the **Add User** dialog, fill:
    * **Name**
@@ -21,6 +22,7 @@ Use this when you need to add someone to the CRM, control what they can do (via 
 On the **Administrative Users** list, select one or more rows and use the bulk actions: **Bulk activate**, **Bulk deactivate**, **Bulk send invitation**. A user must be **Active** to sign in. (Single-row equivalents are on each row's menu.)
 
 ## Change a user's roles
+
 
 1. Open the user (or use the edit dialog from the list).
 2. Edit the **Roles** field - adding/removing roles immediately changes which permissions the user has.
@@ -59,7 +61,8 @@ Example: rows *Sorento / Mocha* plus *Mocha / All brands* means Mocha-brand prod
 
 ## Create or edit a role (and choose its permissions)
 
-1. Go to **[User Management → Roles](/user-management/roles)**.
+
+1. Go to [**User Management → Roles**](/user-management/roles).
 2. Click **Add Role** (or edit an existing one - the dialog title reads **Edit Role**).
 3. Fill:
    * **Role Name** - unique display name.
@@ -73,7 +76,7 @@ Example: rows *Sorento / Mocha* plus *Mocha / All brands* means Mocha-brand prod
 
 ## What permissions a role grants
 
-A **permission** (slug like `order_management.orders.view`) is the atomic capability the backend checks on each route. Browse them at **[User Management → Permissions](/user-management/permissions)**; use **Filter by role** to see exactly which permissions a given role includes. A user can do something iff one of their assigned roles grants the matching permission slug - there is no per-user permission override.
+A **permission** (slug like `order_management.orders.view`) is the atomic capability the backend checks on each route. Browse them at [**User Management → Permissions**](/user-management/permissions); use **Filter by role** to see exactly which permissions a given role includes. A user can do something iff one of their assigned roles grants the matching permission slug - there is no per-user permission override.
 
 ## Delete a user
 
@@ -84,5 +87,4 @@ Administrative Users use **trash → restore → permanently delete** (not the s
 * [User Management - Data reference for admins](data-analysis.md)
 * [Manage teams and round-robin assignment](manage-teams.md)
 * [Sign in with a passkey (turning it on per user, removing a user's passkeys)](sign-in-with-a-passkey.md)
-* [SLA - policies & notification matrix](../sla/sla-policies.md)
-</content>
+* [SLA - policies & notification matrix](../sla/sla-policies.md) </content>

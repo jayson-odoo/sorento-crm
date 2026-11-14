@@ -10,6 +10,7 @@ Open **Sales > Sales & outstanding**. Every tab (Invoiced, Delivered, Ordered, U
 
 ## Sales for one account type
 
+
 1. Pick the tab, usually **Invoiced** to compare with AutoCount.
 2. Set the **Period** and, if you need it, the **Sales agent**.
 3. Choose one or more types in **Account type**.
@@ -24,9 +25,9 @@ Open **Configure summary** and choose **Account type** for the rows. You get one
 
 You can ask the same thing in chat, on any sales or outstanding question.
 
-- **By number:** "AGENT A sales for account type 4 in January", "account 4" or "A/C IV". The reply shows the account the way you asked: "Account type: 4".
-- **By name:** "ceramic sales in January", when that word is an account type and not a brand.
-- **Split:** "sales by account type in January" gives one row per type.
+* **By number:** "AGENT A sales for account type 4 in January", "account 4" or "A/C IV". The reply shows the account the way you asked: "Account type: 4".
+* **By name:** "ceramic sales in January", when that word is an account type and not a brand.
+* **Split:** "sales by account type in January" gives one row per type.
 
 ### When the bot asks "brand or account type?"
 
@@ -36,8 +37,8 @@ To skip the question, say which you mean: "cabana account" or "cabana debtor typ
 
 If you give a word and a number together, there is no question:
 
-- "cabana sales for account 4", when 4 is the CABANA account, is that account.
-- "cabana on account type 3" is the CABANA brand on account 3.
+* "cabana sales for account 4", when 4 is the CABANA account, is that account.
+* "cabana on account type 3" is the CABANA brand on account 3.
 
 ### What the numbers mean
 
@@ -47,6 +48,6 @@ Customers asking on WhatsApp cannot ask by account type.
 
 ## Why does my number look different
 
-- **You filtered by brand, not account type.** Check which filter you set. A brand figure will not tally with AutoCount's report by account.
-- **The customer's type changed.** A sale counts under the customer's account type today, not the one it had on the invoice date.
-- **The Account type filter has no choices.** The types have not reached the CRM from AutoCount yet. Nothing is wrong with the sales themselves.
+* **You filtered by brand, not account type.** Check which filter you set. A brand figure will not tally with AutoCount's report by account.
+* **The customer's type changed.** A sale counts under the customer's account type today, not the one it had on the invoice date.
+* **The Account type filter has no choices.** The types have not reached the CRM from AutoCount yet. Nothing is wrong with the sales themselves.

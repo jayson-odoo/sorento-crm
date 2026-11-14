@@ -4,6 +4,7 @@ A zero-knowledge orientation to the Sorento CRM: how to sign in, what each part 
 
 ## 1. Sign in
 
+
 1. Open the CRM in your browser.
 2. On the **Sign In** page, enter your work email and password, then click **Sign In**. (If your organisation uses Google sign-in, click **Sign in with Google** instead.)
 3. After signing in you land on **Dashboards** - the home page. The left-hand **sidebar** is your main way to move around; the top bar holds search, notifications, your profile, and the AI assistant.
@@ -38,7 +39,7 @@ Each entry below is a top-level group in the left sidebar. Click a group to expa
 ## 3. Where each kind of information lives
 
 | You're looking for… | Go to |
-|----|----|
+|---------------------|-------|
 | A product, its price, brand, or dimensions | **Product Management → All Products** |
 | A brochure, datasheet, or product photo | **Product Management → Product Attachments** |
 | The product catalogue PDF, price list, or any uploaded file | **Resource Management → Files** |
@@ -75,9 +76,9 @@ If you're not sure how to phrase something, just describe what you want in your 
 
 Every date in the CRM reads day/month/year, for example **05/11/2026** for 5 November 2026, whatever language your browser uses. Times are Malaysia time.
 
-- **A date field** is a text box with a calendar button beside it. Type the date (`05/11/2026` or `5/11/2026`) and press Enter or move to the next field, or click the calendar button and pick a day. A date that does not exist, such as 31/02/2026, is not accepted and the field keeps its last value.
-- **A date range** ("from" and "to") is one field. Type `01/11/2026 - 30/11/2026`, or one date for a single day. Type `01/11/2026 -` for "from 1 November onwards" or `- 30/11/2026` for "up to 30 November". Empty the field to clear both ends. The calendar button opens a picker with a **Clear** button.
-- A range on a log or history screen covers whole days: the first day from midnight, the last day until 11:59 pm.
+* **A date field** is a text box with a calendar button beside it. Type the date (`05/11/2026` or `5/11/2026`) and press Enter or move to the next field, or click the calendar button and pick a day. A date that does not exist, such as 31/02/2026, is not accepted and the field keeps its last value.
+* **A date range** ("from" and "to") is one field. Type `01/11/2026 - 30/11/2026`, or one date for a single day. Type `01/11/2026 -` for "from 1 November onwards" or `- 30/11/2026` for "up to 30 November". Empty the field to clear both ends. The calendar button opens a picker with a **Clear** button.
+* A range on a log or history screen covers whole days: the first day from midnight, the last day until 11:59 pm.
 
 ## See also
 

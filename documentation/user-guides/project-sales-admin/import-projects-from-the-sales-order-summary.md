@@ -8,6 +8,7 @@ You need the **Run Project Imports** permission. Admins have it by default. With
 
 ## Steps
 
+
 1. Open **Project Sales**, then **Configuration**, then **Project import**. The list shows every earlier import with its run number, file, status and who uploaded it.
 2. Select **Create**. In **New project import**, drop the workbook (an .xlsx file, up to 10 MB) on **Drop the workbook here**.
 3. Tick the sheets to read. Each sheet shows its row count. A sheet with no PS numbers is marked **No PS numbers** and starts unticked.

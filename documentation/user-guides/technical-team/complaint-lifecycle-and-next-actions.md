@@ -16,6 +16,7 @@ New / Submitted / Updated   →  Responded  ┌─→ Approved ─→ Processed 
 
 Plain English:
 
+
 1. A complaint arrives and sits as **New** (or **Submitted** / **Updated** if it came through the portal or was edited).
 2. The technical team sends a reply → status becomes **Responded**.
 3. From **Responded**, the complaint is decided: **Approved** (we accept the outcome) or **Rejected** (sent back for more work).
@@ -25,7 +26,7 @@ Plain English:
 ## Status labels
 
 | Status | What it means |
-|--------|----------------|
+|--------|---------------|
 | **New** | Just raised, no response yet. |
 | **Submitted** | Came in via the customer portal. |
 | **Updated** | Details were edited after submission. |
@@ -37,28 +38,25 @@ Plain English:
 
 ## What should I do now - by status
 
-**New / Submitted / Updated**
-The complaint needs a technical response. Write it with **Edit technical team response**, then send it with **[Update & Reply](#guide_target=complaint-management.complaints.tech-team.update-reply)** - this notifies the customer and moves the status to **Responded**. Full steps: [Respond to a complaint](respond-to-complaint.md). (Needs a linked Respond.io thread.)
+**New / Submitted / Updated** The complaint needs a technical response. Write it with **Edit technical team response**, then send it with [**Update & Reply**](#guide_target=complaint-management.complaints.tech-team.update-reply) - this notifies the customer and moves the status to **Responded**. Full steps: [Respond to a complaint](respond-to-complaint.md). (Needs a linked Respond.io thread.)
 
-**Responded**
-Decide the outcome. Either:
-- **[Approve](#guide_target=complaint-management.complaints.tech-team.approve)** - the response is accepted; the customer is notified and the complaint moves to **Approved**.
-- **[Reject](#guide_target=complaint-management.complaints.tech-team.reject)** - a **Rejection reason** is required; the customer is notified with the reason and the complaint goes back to open for re-work.
+**Responded** Decide the outcome. Either:
+
+* [**Approve**](#guide_target=complaint-management.complaints.tech-team.approve) - the response is accepted; the customer is notified and the complaint moves to **Approved**.
+* [**Reject**](#guide_target=complaint-management.complaints.tech-team.reject) - a **Rejection reason** is required; the customer is notified with the reason and the complaint goes back to open for re-work.
 
 Full steps: [Approve or reject a complaint](approve-or-reject-complaint.md). You'll only see these two buttons when the status is **Responded** and you hold `complaint_management.complaints.approve` / `.reject`.
 
-**Approved**
-Customer service finishes it. Either:
-- **Processed by CS** - the complaint was handled. Sets status to **Processed by CS** and closes the customer-service SLA stage. Optional message to the contact. (Needs `complaint_management.complaints.resolve`.)
-- **Mark as closed** - use when it can't be resolved. Sets status to **Closed** and closes the SLA stage. Optional message to the contact. (Needs `complaint_management.complaints.close`.)
+**Approved** Customer service finishes it. Either:
+
+* **Processed by CS** - the complaint was handled. Sets status to **Processed by CS** and closes the customer-service SLA stage. Optional message to the contact. (Needs `complaint_management.complaints.resolve`.)
+* **Mark as closed** - use when it can't be resolved. Sets status to **Closed** and closes the SLA stage. Optional message to the contact. (Needs `complaint_management.complaints.close`.)
 
 Both actions cannot be undone and notify the customer. This is also the stage to record the outcome - see [Set root cause and resolution](set-root-cause-and-resolution.md).
 
-**Rejected**
-The complaint is back open. Review the rejection reason, do the extra work needed, then re-respond (**Edit technical team response** → **[Update & Reply](#guide_target=complaint-management.complaints.tech-team.update-reply)**) to put it back to **Responded** for another decision. A portal customer may also send it back; the complaint then reads **Appealed**.
+**Rejected** The complaint is back open. Review the rejection reason, do the extra work needed, then re-respond (**Edit technical team response** → [**Update & Reply**](#guide_target=complaint-management.complaints.tech-team.update-reply)) to put it back to **Responded** for another decision. A portal customer may also send it back; the complaint then reads **Appealed**.
 
-**Processed by CS / Closed**
-End states - no further action. Editing a response here still messages the customer but does **not** change the status. You can still **Download PDF** for records.
+**Processed by CS / Closed** End states - no further action. Editing a response here still messages the customer but does **not** change the status. You can still **Download PDF** for records.
 
 ## Notes
 

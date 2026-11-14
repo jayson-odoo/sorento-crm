@@ -12,12 +12,7 @@ This guide walks you through filing a new submission from the portal. Stock Inqu
 
 ### From the CRM: MY REQUESTS (salespeople)
 
-If you sign in to the CRM as a salesperson, the sidebar's **MY REQUESTS** section has one item per
-request kind: **Stock Inquiry**, **Complaint**, **Purchase Request**, **Sponsorship Form**,
-**Sample Request**, **New Product Application**, **Price Tag Request** and **Sales Opportunity**
-(only the ones your account is granted). Each opens the CRM's own page for that kind, but the form
-is the same portal form described here, and the list shows only your own requests. Registering a
-project is not under MY REQUESTS; it is on the **Projects** page.
+If you sign in to the CRM as a salesperson, the sidebar's **MY REQUESTS** section has one item per request kind: **Stock Inquiry**, **Complaint**, **Purchase Request**, **Sponsorship Form**, **Sample Request**, **New Product Application**, **Price Tag Request** and **Sales Opportunity** (only the ones your account is granted). Each opens the CRM's own page for that kind, but the form is the same portal form described here, and the list shows only your own requests. Registering a project is not under MY REQUESTS; it is on the **Projects** page.
 
 ## Fill in the form
 
@@ -71,10 +66,7 @@ Once submitted, the submission **becomes read-only**. You can no longer edit fie
 * **Sponsorship Form** → **Pending approval** (same flow as purchase request).
 * **Complaint** → **New** (waiting on the technical / complaint-handling team).
 
-If a required field is empty, the submit is refused with *Fill in the required fields before
-submitting.* and the names of the missing fields; nothing is saved or numbered. Fill them in and
-submit again. (For a Complaint that includes at least one product; for a Stock Inquiry the
-salesperson; for a Purchase Request or Sponsorship Form the requestor.)
+If a required field is empty, the submit is refused with *Fill in the required fields before submitting.* and the names of the missing fields; nothing is saved or numbered. Fill them in and submit again. (For a Complaint that includes at least one product; for a Stock Inquiry the salesperson; for a Purchase Request or Sponsorship Form the requestor.)
 
 If you spot a mistake after submitting, you'll need to wait for the relevant team to **reject** the submission. Once it's rejected the form unlocks; edit it and submit it again. Its status then reads **Appealed** (this used to read Resubmitted).
 
@@ -93,6 +85,7 @@ You don't have to start from scratch. From the dashboard, long-press (or right-c
 ## Price Tag Request
 
 Price Tag Request is only shown on the **Submission type** combobox if your account has been granted it. Its form opens as four sections, top to bottom, instead of the Header / Items / Attachments shape above:
+
 
 1. **Customer** - open by default. Pick a customer; this opens **Sales Order & Lines** automatically.
 2. **Sales Order & Lines** - drop the sales order file (or **Choose file** / **Paste from clipboard**). Each attached file shows as its own thumbnail with an **Extract with AI from <filename>** action. Tap it to open the AI Extract dialog straight on that file's results table; each row shows its match - **Matched product** or **Matched set**, with the row renamed to that catalogue product's own name, once the code is found - or **Not found** when nothing answers it. Matching no longer cares about dashes, spaces or upper/lower case, so `Srt6536 DIY` still matches catalogue code `SRT6536-DIY`. Remove any row you don't want with its own remove control before clicking **Confirm and prefill**, which appends the remaining rows as lines. Every product row becomes its own line, also when the file lists the same product more than once (a set listed twice is still merged into one line). A row with just a product code starts **Ala carte** (the product on its own); a row with codes joined by **+** starts on its matching combo. AI Extract never reads a quantity off the file - the sales order doesn't say how many tags you want, only what's in the order - so every line it adds lands with **Qty (tags)** set to 1, whether or not the same product appears several times on the sheet; change the number yourself for however many tags you actually need.
@@ -134,27 +127,12 @@ Some products are sold as a catalogue package: a cabinet that goes out with a ta
 
 ### Tag template and Preview
 
-* **The tag's layout comes from the product.** A product marketing linked to one tag template uses
-  it on its own: the line shows *"Template: <name>"* under the item and there's nothing to choose.
-* **A product with more than one template** shows a **Tag template** select under the line, each
-  option with its print size (for example *80 x 50 mm*). If marketing set a default template on the
-  product, it is already selected; change it if you want another. A line on a combo uses the
-  combo's own templates when it has some, and the host product's otherwise. Pick the one you want before you submit:
-  Submit with it empty shows *"Pick a tag template for this line."* on that row. Save Draft does not
-  ask.
-* **A product with no template linked** shows no field and is not drawn in the Preview: under it
-  the Preview reads *"No tag template yet for <code>."* Ask marketing to link one, or escalate the
-  request to them. A set shows no field and uses marketing's furniture set template.
-* **Preview** appears under the lines as soon as the first item is on the form. It draws each line's
-  tag with its template, the product's details and the price that line is on (list price, the line's
-  promotion, or the price you typed), one tag per line, and redraws a moment after you change an
-  item, the price mode, a promotion, a typed price or the template. **Open** shows it full screen.
-  Nothing is sent to marketing until you submit.
-* **Preview one line.** Each line has an eye icon (**Preview tag for line N**) that opens just that
-  line's tag, drawn the same way as the PDF. It is greyed out when the item has no tag template yet.
-  The whole-sheet Preview and the PDF are unchanged.
-* A brand whose promotions carry no selling price shows its list price on the tag when a line is on
-  SP and has no typed price.
+* **The tag's layout comes from the product.** A product marketing linked to one tag template uses it on its own: the line shows *"Template: <name>"* under the item and there's nothing to choose.
+* **A product with more than one template** shows a **Tag template** select under the line, each option with its print size (for example *80 x 50 mm*). If marketing set a default template on the product, it is already selected; change it if you want another. A line on a combo uses the combo's own templates when it has some, and the host product's otherwise. Pick the one you want before you submit: Submit with it empty shows *"Pick a tag template for this line."* on that row. Save Draft does not ask.
+* **A product with no template linked** shows no field and is not drawn in the Preview: under it the Preview reads *"No tag template yet for <code>."* Ask marketing to link one, or escalate the request to them. A set shows no field and uses marketing's furniture set template.
+* **Preview** appears under the lines as soon as the first item is on the form. It draws each line's tag with its template, the product's details and the price that line is on (list price, the line's promotion, or the price you typed), one tag per line, and redraws a moment after you change an item, the price mode, a promotion, a typed price or the template. **Open** shows it full screen. Nothing is sent to marketing until you submit.
+* **Preview one line.** Each line has an eye icon (**Preview tag for line N**) that opens just that line's tag, drawn the same way as the PDF. It is greyed out when the item has no tag template yet. The whole-sheet Preview and the PDF are unchanged.
+* A brand whose promotions carry no selling price shows its list price on the tag when a line is on SP and has no typed price.
 
 ### Viewing a submitted price tag request
 
@@ -163,6 +141,7 @@ Once submitted, the request shows the same four sections read-only, all open, wi
 The header (same line as the form number, muted, e.g. *"PT-202609-0007 · 3 of 3 revisions left · 1/3"*) carries a single gear holding every action for the request: **Duplicate**, **Download PDF**, and **Revise** when your company allows it.
 
 If you need to change something after submitting, use **Revise** instead:
+
 
 1. Open the request and tap the gear, then **Revise**.
 2. Fill in the **Reason** field - what changed, and why.
@@ -180,7 +159,7 @@ Attachments can only be added or removed on a draft, or while you're revising - 
 All notifications come on **WhatsApp** through Respond.io to your registered number - there is no in-portal inbox.
 
 | Submission | You receive a WhatsApp when… |
-|----|----|
+|------------|------------------------------|
 | **Complaint** | The technical team posts a response on the complaint. |
 | **Stock Inquiry** | The project sales manager flows it to purchasing **or** rejects it; **and** when purchasing posts a response. |
 | **Purchase Request** | The project sales manager **approves** it (or rejects it). |

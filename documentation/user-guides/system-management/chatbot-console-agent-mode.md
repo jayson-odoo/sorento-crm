@@ -1,38 +1,27 @@
 # Chatbot Console - test the bot and use Agent mode
 
-Use the Chatbot Console to try the WhatsApp bot on a real contact without sending anything to
-WhatsApp, and to use **Agent mode**: an assistant that looks things up for a contact (stock,
-incoming shipments, orders, sales) and, when you confirm, makes a small set of changes for them
-(customer asks, opportunities, a contact's access, approving or rejecting a purchase request).
+Use the Chatbot Console to try the WhatsApp bot on a real contact without sending anything to WhatsApp, and to use **Agent mode**: an assistant that looks things up for a contact (stock, incoming shipments, orders, sales) and, when you confirm, makes a small set of changes for them (customer asks, opportunities, a contact's access, approving or rejecting a purchase request).
 
 ## Where to find it
 
-Open **System > Messaging > Chatbot Console** (`/system-management/chatbot-console`). Page header:
-**Chatbot Console**. You need the **Chat History** view permission
-(`system.chat_history.view`); without it the menu item is hidden and the page refuses to open.
+Open **System > Messaging > Chatbot Console** (`/system-management/chatbot-console`). Page header: **Chatbot Console**. You need the **Chat History** view permission (`system.chat_history.view`); without it the menu item is hidden and the page refuses to open.
 
 The page has two tabs at the top: **Bot** and **Agent**. It opens on **Bot**.
 
 ## Before you start: turn Agent mode on for the contact
 
-The agent only works for a contact that is allowed to use it. On the contact's page
-(**Contact Details**, **Chatbot** card), switch on **Agent mode (auto)**. It is off by default.
-Next to it, **Agent turns per day** caps how many agent answers that contact can get per day;
-leave it empty to use the global value (shown as the placeholder).
+The agent only works for a contact that is allowed to use it. On the contact's page (**Contact Details**, **Chatbot** card), switch on **Agent mode (auto)**. It is off by default. Next to it, **Agent turns per day** caps how many agent answers that contact can get per day; leave it empty to use the global value (shown as the placeholder).
 
 The agent also needs:
 
 * **AI replies** switched on for the contact.
 
-A contact linked to an **active user** is answered as that user (see "Whose permissions apply"
-below). A contact with no linked user is answered as the contact itself, with the read-only rules
-of [The agent on WhatsApp](./chatbot-agent-on-whatsapp.md): no changes, and only what the bot
-would give that contact.
+A contact linked to an **active user** is answered as that user (see "Whose permissions apply" below). A contact with no linked user is answered as the contact itself, with the read-only rules of [The agent on WhatsApp](./chatbot-agent-on-whatsapp.md): no changes, and only what the bot would give that contact.
 
 If any of these is missing, the console tells you which one:
 
 | Message | What to do |
-|---|---|
+|---------|------------|
 | *This contact was not found.* | Pick the contact again. |
 | *AI replies are off for this contact.* | Turn AI replies on for the contact. |
 | *Agent mode is off for this contact (Contact Details > Chatbot).* | Switch on **Agent mode (auto)**. |
@@ -40,16 +29,12 @@ If any of these is missing, the console tells you which one:
 
 ## The Bot tab: the bot or the agent answers, automatically
 
-On the **Bot** tab you type as if you were the contact on WhatsApp. For every message, the
-system decides whether the normal bot or the agent should answer. You do not pick per message:
-switching on **Agent mode (auto)** means the contact *may* be routed to the agent.
+On the **Bot** tab you type as if you were the contact on WhatsApp. For every message, the system decides whether the normal bot or the agent should answer. You do not pick per message: switching on **Agent mode (auto)** means the contact *may* be routed to the agent.
 
-The decision is made by a classifier called **Jev**. Under each answer a small pill reads
-**Agent** or **Chat** (who answered). Click it to see **Reason**, **Score**, **Model** and
-**Time**. The reason is one of:
+The decision is made by a classifier called **Jev**. Under each answer a small pill reads **Agent** or **Chat** (who answered). Click it to see **Reason**, **Score**, **Model** and **Time**. The reason is one of:
 
 | Reason | Meaning |
-|---|---|
+|--------|---------|
 | **Classified** | Jev was confident and picked this side. |
 | **Low confidence** | Jev was not sure enough, so the bot answered. |
 | **Open question** | The bot had just asked the contact something, so the bot handles the reply. |
@@ -59,141 +44,96 @@ The decision is made by a classifier called **Jev**. Under each answer a small p
 | **Router failed** | Jev did not answer in time (or is not set up), so the bot answered. |
 | **Not eligible** | The contact is not allowed to use the agent. |
 
-Once the agent is chosen it does not hand back to the bot. If it cannot answer you see *The agent
-could not answer this message. Try again.*, or, while an earlier message is still running, *The
-agent is busy with an earlier message for this contact. Try again in a moment.*
+Once the agent is chosen it does not hand back to the bot. If it cannot answer you see *The agent could not answer this message. Try again.*, or, while an earlier message is still running, *The agent is busy with an earlier message for this contact. Try again in a moment.*
 
 Only Chatbot Console turns are routed this way today. Real WhatsApp messages still go to the bot.
 
 ## The Agent tab: talk to the agent directly
 
+
 1. Click the **Agent** tab.
 2. In **Contact**, pick the contact (*Pick a contact...*).
-3. Type in the box (*Ask about stock, orders or sales*) and press **Enter** (Shift+Enter adds a
-   new line). While it works you see **Working...**.
-4. Click **New conversation** to start fresh. This also clears what the agent remembers from the
-   earlier messages.
+3. Type in the box (*Ask about stock, orders or sales*) and press **Enter** (Shift+Enter adds a new line). While it works you see **Working...**.
+4. Click **New conversation** to start fresh. This also clears what the agent remembers from the earlier messages.
 
-Change proposals show **Confirm** and **Cancel** buttons only on the Agent tab. On the Bot tab a
-proposal arrives as plain text; reply "yes" or "no" and the agent picks it up.
+Change proposals show **Confirm** and **Cancel** buttons only on the Agent tab. On the Bot tab a proposal arrives as plain text; reply "yes" or "no" and the agent picks it up.
 
 ### What the agent can look up
 
-**Sales report**, **Stock balance**, **Incoming stock by product**, **Incoming shipments**,
-**Goods received**, **Last cost**, **Purchase orders placed**, **Last receipt**, **Orders by
-product**, **Find names and codes**, **Find products**, **Customer asks**, **Opportunities**,
-**Opportunity stages**, **Find contacts**, **Purchase requests** and **Recent changes**. Each one
-is only offered when the linked user has the matching view permission (for example **Stock
-balance** needs the stock view permission).
+**Sales report**, **Stock balance**, **Incoming stock by product**, **Incoming shipments**, **Goods received**, **Last cost**, **Purchase orders placed**, **Last receipt**, **Orders by product**, **Find names and codes**, **Find products**, **Customer asks**, **Opportunities**, **Opportunity stages**, **Find contacts**, **Purchase requests** and **Recent changes**. Each one is only offered when the linked user has the matching view permission (for example **Stock balance** needs the stock view permission).
 
-Figures in an answer that the agent cannot trace back to something it looked up are replaced with
-*(not verified)*.
+Figures in an answer that the agent cannot trace back to something it looked up are replaced with *(not verified)*.
 
 ### What the agent can change (always after you confirm)
 
 | Action | What it does | Permission the linked user needs |
-|---|---|---|
-| **Update customer ask** | Marks a customer ask done or open, and/or sets its note. | Customer asks: edit |
-| **Create opportunity** / **Update opportunity** | Adds an opportunity or changes one. | Opportunities: add / edit |
-| **Update contact access** | Switches a dealer contact between Business owner and Employee, turns their AI replies on or off, links or unlinks their customer accounts. Resigning a contact (AI replies off and accounts unlinked) can be undone. | Contacts: edit (or edit own) |
-| **Give chatbot access** | Gives one or more dealer contacts AI access for Sorento or Mocha, from a typed list, a pasted table or a screenshot (for example of the Contacts list). | Contacts: edit (or edit own) |
-| **Decide purchase request** | Approves or rejects a purchase request or sponsorship form. A rejection needs a reason. The requester and the dealer contact are told. | Purchase requests: approve |
-| **Undo purchase request action** | Withdraws a decision that is still waiting to apply, or undoes one that already applied (needs a reason; everyone involved is told). | Purchase requests: approve |
+|--------|--------------|----------------------------------|
+| **Update customer ask** | Marks a customer ask done or open, and/or sets its note. | Customer asks: edit              |
+| **Create opportunity** / **Update opportunity** | Adds an opportunity or changes one. | Opportunities: add / edit        |
+| **Update contact access** | Switches a dealer contact between Business owner and Employee, turns their AI replies on or off, links or unlinks their customer accounts. Resigning a contact (AI replies off and accounts unlinked) can be undone. | Contacts: edit (or edit own)     |
+| **Give chatbot access** | Gives one or more dealer contacts AI access for Sorento or Mocha, from a typed list, a pasted table or a screenshot (for example of the Contacts list). | Contacts: edit (or edit own)     |
+| **Decide purchase request** | Approves or rejects a purchase request or sponsorship form. A rejection needs a reason. The requester and the dealer contact are told. | Purchase requests: approve       |
+| **Undo purchase request action** | Withdraws a decision that is still waiting to apply, or undoes one that already applied (needs a reason; everyone involved is told). | Purchase requests: approve       |
 
 ### Giving chatbot access from a list or a screenshot
 
-Attach a screenshot or paste a table of phones and names, then say what to give, for example
-"Please grant them Mocha access to the chatbot". The agent finds each person and shows one card for
-all of them.
+Attach a screenshot or paste a table of phones and names, then say what to give, for example "Please grant them Mocha access to the chatbot". The agent finds each person and shows one card for all of them.
 
 * **Company:** say Sorento or Mocha. If you do not, the agent asks "Sorento or Mocha for ...?".
-* **Business owner or Employee:** if you do not say, a person who already has that company's
-  access keeps their role, and the card says "..., their current role". An Employee of the other
-  company stays an Employee, and the card says "..., as at Sorento" (or Mocha). Business owner is
-  never carried over from the other company. If anyone's role is still unknown, the agent asks one
-  question, "Owner or employee for ...?", and shows the card after you answer.
-* A row that cannot change (for example a number that is not a mobile number) is listed under
-  **Not changed** with the reason.
-* A screenshot adds only the people in it, plus the people of the reply just before (when you are
-  answering its question or adding to its card). Someone from an older request in the same chat is
-  added again only when you type their phone.
+* **Business owner or Employee:** if you do not say, a person who already has that company's access keeps their role, and the card says "..., their current role". An Employee of the other company stays an Employee, and the card says "..., as at Sorento" (or Mocha). Business owner is never carried over from the other company. If anyone's role is still unknown, the agent asks one question, "Owner or employee for ...?", and shows the card after you answer.
+* A row that cannot change (for example a number that is not a mobile number) is listed under **Not changed** with the reason.
+* A screenshot adds only the people in it, plus the people of the reply just before (when you are answering its question or adding to its card). Someone from an older request in the same chat is added again only when you type their phone.
 
 ## Confirming a change
 
-The agent never changes anything on its own. It first **proposes**: the reply lists the changes,
-and under it are **Confirm change** (or **Confirm N changes**) and **Cancel**.
+The agent never changes anything on its own. It first **proposes**: the reply lists the changes, and under it are **Confirm change** (or **Confirm N changes**) and **Cancel**.
+
 
 1. Read the list of changes.
-2. Click **Confirm change** to apply, or **Cancel** to drop it. You can also answer "yes" or "no"
-   in your next message.
+2. Click **Confirm change** to apply, or **Cancel** to drop it. You can also answer "yes" or "no" in your next message.
 
 Rules:
 
 * A proposal expires after **10 minutes**. One confirmation covers at most 20 changes.
-* You cannot confirm in the same message that asked for the change; the agent always waits for
-  your next step.
-* On confirm, every change is checked again (permission, the record has not changed since,
-  company scope) and applied in order. It stops at the first failure.
+* You cannot confirm in the same message that asked for the change; the agent always waits for your next step.
+* On confirm, every change is checked again (permission, the record has not changed since, company scope) and applied in order. It stops at the first failure.
 
-The result shows a badge: **Done**, **Partly done**, **Not changed**, **Cancelled**, **Waiting**
-or **Expired**, then who decided, each step, and every changed field as `Field: before -> after`.
-This stays after a page reload.
+The result shows a badge: **Done**, **Partly done**, **Not changed**, **Cancelled**, **Waiting** or **Expired**, then who decided, each step, and every changed field as `Field: before -> after`. This stays after a page reload.
 
-If a proposal cannot be confirmed you see one of: *This proposal expired. Ask again to get a fresh
-one.*, *A newer proposal replaced this one.*, *This proposal was already decided.*, *The record
-changed since this was proposed.*, *The agent can no longer act for this contact.*, or *You do not
-have permission for this change.*
+If a proposal cannot be confirmed you see one of: *This proposal expired. Ask again to get a fresh one.*, *A newer proposal replaced this one.*, *This proposal was already decided.*, *The record changed since this was proposed.*, *The agent can no longer act for this contact.*, or *You do not have permission for this change.*
 
 ### Approve or reject a purchase request: the countdown and Undo
 
-A purchase request decision waits out the same grace window as the **Approve** / **Reject**
-buttons on the request itself (set per form SLA stage; it is 0 seconds unless an admin set one).
+A purchase request decision waits out the same grace window as the **Approve** / **Reject** buttons on the request itself (set per form SLA stage; it is 0 seconds unless an admin set one).
 
-* With a grace window, the result shows a draining countdown (`m:ss`, then **Finalizing…**) and
-  an **Undo** button. Click **Undo** before it ends: *Withdrawn. Nothing was changed and nobody
-  was told.*
-* With no grace window, the decision applies at once. You can still ask the agent to undo it; it
-  then needs a reason and tells everyone involved.
-* Clicking **Undo** too late shows *That change already applied, so it can no longer be
-  withdrawn.*
+* With a grace window, the result shows a draining countdown (`m:ss`, then **Finalizing…**) and an **Undo** button. Click **Undo** before it ends: *Withdrawn. Nothing was changed and nobody was told.*
+* With no grace window, the decision applies at once. You can still ask the agent to undo it; it then needs a reason and tells everyone involved.
+* Clicking **Undo** too late shows *That change already applied, so it can no longer be withdrawn.*
 
 ## Seeing how the agent worked it out
 
 Under each agent reply:
 
-* Chips: **N rounds**, one chip per tool it used (tool name and result), and, if it ran out of
-  budget, **Stopped:** with the reason (rounds limit, time limit, token limit, or an error).
-* **Steps** (click to open): the rounds, tokens used, and one plain line per lookup (what it
-  read, how many rows, nothing found, refused, proposed).
-* **Thinking (round N)** and **Thinking (final answer)**: the agent's own reasoning for that
-  round, collapsed by default. It only appears when reasoning is switched on for the agent prompt.
+* Chips: **N rounds**, one chip per tool it used (tool name and result), and, if it ran out of budget, **Stopped:** with the reason (rounds limit, time limit, token limit, or an error).
+* **Steps** (click to open): the rounds, tokens used, and one plain line per lookup (what it read, how many rows, nothing found, refused, proposed).
+* **Thinking (round N)** and **Thinking (final answer)**: the agent's own reasoning for that round, collapsed by default. It only appears when reasoning is switched on for the agent prompt.
 
-If the agent hits a budget limit it still gives one final answer, saying what it did not get to
-check ("I stopped at the ... limit before finishing, so I did not check: ...").
+If the agent hits a budget limit it still gives one final answer, saying what it did not get to check ("I stopped at the ... limit before finishing, so I did not check: ...").
 
 ## Whose permissions apply
 
-For a contact with a linked user, the agent acts **as the contact's linked user**, inside that
-user's company. It can only look up or change what that user could. For a contact with no linked
-user it acts as the contact (read only, see [The agent on WhatsApp](./chatbot-agent-on-whatsapp.md)).
+For a contact with a linked user, the agent acts **as the contact's linked user**, inside that user's company. It can only look up or change what that user could. For a contact with no linked user it acts as the contact (read only, see [The agent on WhatsApp](./chatbot-agent-on-whatsapp.md)).
 
-To confirm a change, **you** (the person at the console) must also hold every permission that
-change needs. Otherwise you see *You do not have permission for this change.*
+To confirm a change, **you** (the person at the console) must also hold every permission that change needs. Otherwise you see *You do not have permission for this change.*
 
-Every confirmed change is real (it is not a rehearsal like a bot test turn) and is recorded in
-the audit trail under the linked user, with you named as the person who confirmed it.
+Every confirmed change is real (it is not a rehearsal like a bot test turn) and is recorded in the audit trail under the linked user, with you named as the person who confirmed it.
 
-You can send up to 30 agent messages per 10 minutes; past that you see *Too many agent messages,
-wait a few minutes.*
+You can send up to 30 agent messages per 10 minutes; past that you see *Too many agent messages, wait a few minutes.*
 
 ## Settings (admins)
 
-* **Users & Access > Settings**, **Chatbot Media** tab (`/user-management/settings/chatbot-media`), card **Agent budgets**: **Tool rounds**, **Seconds per turn**,
-  **Input tokens per turn**, **Compact history above (tokens)**, **Router minimum score**
-  (0.5 to 0.95; below this Jev's choice is ignored and the bot answers) and **Agent turns per
-  contact per day** (0 means no cap).
-* **System > AI Assistant > Settings** (`/system-management/ai-assistant`): **TypeSafe (Jev) API key**. Without it every
-  Bot-tab message goes to the bot (reason **Router failed**).
+* **Users & Access > Settings**, **Chatbot Media** tab (`/user-management/settings/chatbot-media`), card **Agent budgets**: **Tool rounds**, **Seconds per turn**, **Input tokens per turn**, **Compact history above (tokens)**, **Router minimum score** (0.5 to 0.95; below this Jev's choice is ignored and the bot answers) and **Agent turns per contact per day** (0 means no cap).
+* **System > AI Assistant > Settings** (`/system-management/ai-assistant`): **TypeSafe (Jev) API key**. Without it every Bot-tab message goes to the bot (reason **Router failed**).
 
 ## See also
 

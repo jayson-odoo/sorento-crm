@@ -5,14 +5,15 @@ Use the AI assistant panel to ask how something works, look up stock or sales, a
 ## Who gets what
 
 | Permission | What it gives you |
-| --- | --- |
-| **Use AI Assistant Chat** | The panel itself |
+|------------|-------------------|
+| **Use AI Assistant Chat** | The panel itself  |
 | **Use the AI Assistant on the chatbot's brain** | Your messages are answered by the same thinking as the WhatsApp chatbot, as described on this page. No role has it by default. Without it, the panel answers the way it did before |
 | **View AI Assistant Settings** | You also see how each reply was reached: the **Agent** or **Chat** pill, **Steps** and **View trace** |
 
 Records and figures follow your own permissions and your active company: if you cannot open a record on its screen, the assistant will not show it to you either. Reference names, such as products, brands and warehouses, help it read your question and may appear in a reply, whatever your permissions. Complaints and SLA tracking are not split by company, so you see them across companies, as on their own screens.
 
 ## Steps
+
 
 1. Open the **AI assistant** tab on the right edge of any page.
 2. Type your question and send it. The assistant knows which page you are on and which record you have open, so "what happened to this request" works on a record's page.
@@ -29,28 +30,20 @@ Records and figures follow your own permissions and your active company: if you 
 * **Complaints**, such as open complaints, how many a product has, or one complaint by its number.
 * **SLA tracking**, such as the dashboard's counts or recent tracking rows.
 * **Projects**, such as which projects are at a stage, one project by its code, its quotations, or the forecast.
-* **Comparing quotations**: on a project's page, ask "compare the two quotations for this project" or name them,
-  such as "compare PRJQ-2026-0006 and QT-2026-0004". A sent revision can be named too, such as "compare
-  PRJQ-2026-0007-A and PRJQ-2026-0007-B". The answer starts with what stands out: each quotation's total and
-  the gap between them, which is cheapest for each item, items or scopes only some quotations have, lines at no
-  charge and items listed twice. Then it shows the full table (one row per line, with quantity, unit price and
-  line total). For big comparisons it gives the findings only and you reply "table" to see the full table. Ask
-  about list price if you want each price against the list price. It shows only the quotations you can open
-  on the project page.
-* **Who prepared a quotation**: ask "who quoted these proposals". The assistant answers with each quotation's
-  Prepared By, the person who created it, and says so when it cannot see who that was.
+* **Comparing quotations**: on a project's page, ask "compare the two quotations for this project" or name them, such as "compare PRJQ-2026-0006 and QT-2026-0004". A sent revision can be named too, such as "compare PRJQ-2026-0007-A and PRJQ-2026-0007-B". The answer starts with what stands out: each quotation's total and the gap between them, which is cheapest for each item, items or scopes only some quotations have, lines at no charge and items listed twice. Then it shows the full table (one row per line, with quantity, unit price and line total). For big comparisons it gives the findings only and you reply "table" to see the full table. Ask about list price if you want each price against the list price. It shows only the quotations you can open on the project page.
+* **Who prepared a quotation**: ask "who quoted these proposals". The assistant answers with each quotation's Prepared By, the person who created it, and says so when it cannot see who that was.
 * **Order totals**, such as delivered value by customer or average delivery time.
 
 If the question is vague, it may ask you back.
 
-If the assistant runs out of time before it finishes, it says what it had already looked up. Ask again, or ask a
-narrower question.
+If the assistant runs out of time before it finishes, it says what it had already looked up. Ask again, or ask a narrower question.
 
 To capture a product idea, use **Ideas > All ideas**: the assistant points you there and does not record the idea itself.
 
 ## Making a change
 
 The assistant does not change a record until you confirm it. The one thing that happens without a card is a request for help: see the next section.
+
 
 1. Ask for the change, such as logging an opportunity, approving a purchase request, closing a complaint, cancelling an order or raising an IT support ticket.
 2. A card shows what will change, with the value before and after where there is one.
