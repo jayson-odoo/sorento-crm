@@ -83,6 +83,9 @@ const onShowPage = vi.fn();
 const onAcceptAnnotation = vi.fn(async () => {});
 const onEditAnnotation = vi.fn(async () => {});
 const onRejectAnnotation = vi.fn(async () => {});
+// PO-UPLOAD-MATCHING (AC-U2): named per the plan's contract.
+const onAcceptSuggestion = vi.fn(async (_line: POVersionLine) => {});
+const onAcceptAllSuggestions = vi.fn(async () => {});
 
 function annotation(overrides: Partial<POAnnotation> = {}): POAnnotation {
   return {
@@ -107,6 +110,7 @@ interface RenderOptions {
   annotations?: POAnnotation[];
   focusedLineId?: string | null;
   defaultFlaggedOnly?: boolean;
+  suggestionCount?: number;
 }
 
 function renderGrid(lines: POVersionLine[], options: RenderOptions | boolean = {}) {
@@ -133,6 +137,9 @@ function renderGrid(lines: POVersionLine[], options: RenderOptions | boolean = {
         onEditAnnotation={onEditAnnotation}
         onRejectAnnotation={onRejectAnnotation}
         defaultFlaggedOnly={next.defaultFlaggedOnly}
+        suggestionCount={next.suggestionCount ?? 0}
+        onAcceptSuggestion={onAcceptSuggestion}
+        onAcceptAllSuggestions={onAcceptAllSuggestions}
       />
     </QueryClientProvider>
   );
@@ -160,9 +167,10 @@ describe('POIntakeLinesGrid', () => {
     renderGrid([line()]);
 
     expect(await screen.findByLabelText('Code on line 1')).toHaveValue('SRTWC8613-RL');
-    expect(screen.getByLabelText('Quantity on line 1')).toHaveValue('927');
-    expect(screen.getByLabelText('Unit price on line 1')).toHaveValue('392.85');
-    expect(screen.getByLabelText('Amount on line 1')).toHaveValue('364171.95');
+    // Number boxes (the shared NumberInput) report a number to `toHaveValue`.
+    expect(screen.getByLabelText('Quantity on line 1')).toHaveValue(927);
+    expect(screen.getByLabelText('Unit price on line 1')).toHaveValue(392.85);
+    expect(screen.getByLabelText('Amount on line 1')).toHaveValue(364171.95);
   });
 
   it('sends the typed string for the one field that changed', async () => {
@@ -195,7 +203,8 @@ describe('POIntakeLinesGrid', () => {
 
     expect(onUpdateLine).not.toHaveBeenCalled();
     expect(toastError).toHaveBeenCalledWith('Quantity on line 1 must be a number');
-    expect(qty).toHaveValue('927');
+    // A number box reports a number to `toHaveValue`.
+    expect(qty).toHaveValue(927);
   });
 
   it('marks the line where our arithmetic disagrees with the paper, with the amount', async () => {
@@ -632,3 +641,581 @@ describe('POIntakeLinesGrid, handwriting reviewed from a compact indicator (owne
     expect(screen.queryByRole('button', { name: /^Edit/ })).toBeNull();
   });
 });
+
+/**
+ * PO-UPLOAD-MATCHING (AC-U1, AC-U2): a model-suggested product or qty is a proposal a person
+ * accepts. It shows as a "Suggested" pill in the Flag column; one row is accepted from its
+ * right-click menu, every one at once from a secondary "Accept all suggestions (N)" button.
+ * New props per the contract: `suggestionCount`, `onAcceptSuggestion(line)`,
+ * `onAcceptAllSuggestions()`; new line fields `match_confidence`, `match_options`,
+ * `qty_suggested`.
+ */
+describe('POIntakeLinesGrid suggestions', () => {
+  function suggested(overrides: Partial<POVersionLine> = {}): POVersionLine {
+    return line({
+      resolution_source: 'suggested',
+      match_confidence: 'high',
+      match_options: [],
+      qty_suggested: false,
+      ...overrides,
+    } as Partial<POVersionLine>);
+  }
+
+  it('marks a suggested product with a Suggested pill', async () => {
+    renderGrid([suggested({ id: 'l2', line_no: 2 })]);
+
+    expect(await screen.findByText('Suggested')).toBeInTheDocument();
+  });
+
+  it('marks a suggested qty with the same pill', async () => {
+    renderGrid([
+      line({ id: 'l2', line_no: 2, resolution_source: 'code', qty_suggested: true } as Partial<POVersionLine>),
+    ]);
+
+    expect(await screen.findByText('Suggested')).toBeInTheDocument();
+  });
+
+  it('shows no pill on an exact-code line', async () => {
+    renderGrid([line({ qty_suggested: false } as Partial<POVersionLine>)]);
+
+    await screen.findByLabelText('Code on line 1');
+    expect(screen.queryByText('Suggested')).toBeNull();
+  });
+
+  it('offers "Accept all suggestions (2)" and calls the handler', async () => {
+    renderGrid(
+      [suggested({ id: 'l1', line_no: 1 }), suggested({ id: 'l2', line_no: 2 })],
+      { suggestionCount: 2 },
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Accept all suggestions (2)' }));
+
+    expect(onAcceptAllSuggestions).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows no accept-all button when nothing is suggested', async () => {
+    renderGrid([line()], { suggestionCount: 0 });
+
+    await screen.findByLabelText('Code on line 1');
+    expect(screen.queryByRole('button', { name: /Accept all suggestions/ })).toBeNull();
+  });
+
+  it('shows no accept-all button to a reader', async () => {
+    renderGrid([suggested()], { readOnly: true, suggestionCount: 1 });
+
+    await screen.findByText('927');
+    expect(screen.queryByRole('button', { name: /Accept all suggestions/ })).toBeNull();
+  });
+
+  it('accepts one suggested line from its right-click menu', async () => {
+    renderGrid([line({ id: 'l1', line_no: 1 }), suggested({ id: 'l2', line_no: 2 })], {
+      suggestionCount: 1,
+    });
+
+    fireEvent.contextMenu(await screen.findByLabelText('Code on line 2'));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Accept suggestion' }));
+
+    expect(onAcceptSuggestion).toHaveBeenCalledTimes(1);
+    expect(onAcceptSuggestion).toHaveBeenCalledWith(expect.objectContaining({ id: 'l2' }));
+  });
+
+  it('does not offer Accept suggestion on a line with nothing suggested', async () => {
+    renderGrid([line({ id: 'l1', line_no: 1 }), suggested({ id: 'l2', line_no: 2 })], {
+      suggestionCount: 1,
+    });
+
+    fireEvent.contextMenu(await screen.findByLabelText('Code on line 1'));
+
+    expect(screen.queryByRole('menuitem', { name: 'Accept suggestion' })).toBeNull();
+  });
+});
+
+/**
+ * PO-UPLOAD-MATCHING review (non-blocking): the "Suggested" view empties itself once every
+ * suggestion is accepted, but a line with no qty can still hold Confirm. The grid then falls
+ * back to "Need attention" and shows that line, never "Nothing left to fix".
+ */
+describe('POIntakeLinesGrid suggested view after accept all', () => {
+  it('falls back to Need attention and shows the empty-qty line', async () => {
+    const suggestedLine = line({
+      id: 'l1',
+      line_no: 1,
+      resolution_source: 'suggested',
+      match_confidence: 'high',
+      match_options: [],
+      qty_suggested: false,
+    } as Partial<POVersionLine>);
+    const emptyQty = line({
+      id: 'l2',
+      line_no: 2,
+      qty: '',
+      arithmetic_ok: false,
+      resolution_source: 'code',
+    } as Partial<POVersionLine>);
+    const { rerenderWith } = renderGrid([suggestedLine, emptyQty], {
+      defaultFlaggedOnly: true,
+      suggestionCount: 1,
+    });
+
+    fireEvent.click(await screen.findByText('Suggested (1)'));
+    expect(screen.queryByLabelText('Code on line 2')).toBeNull();
+
+    rerenderWith([{ ...suggestedLine, resolution_source: 'accepted' }, emptyQty], {
+      defaultFlaggedOnly: true,
+      suggestionCount: 0,
+    });
+
+    expect(await screen.findByLabelText('Code on line 2')).toBeInTheDocument();
+    expect(screen.queryByText('Nothing left to fix')).toBeNull();
+  });
+});
+
+/**
+ * PO-UPLOAD-MATCHING owner report: "entering the quantity quite funky like i enter then i
+ * unfocus, the screen kind of jitter abit and the quantity come out". Typing "1" showed "1",
+ * then the box remounted on the server's Numeric(15,4) echo and read "1.0000", and the row
+ * jumped. Amount stayed empty while qty was typed on a line whose paper printed no amount.
+ *
+ * Pinned here: a numeric cell is one stable box (no remount on the server echo), it shows a
+ * figure without trailing zeros (money keeps two decimals), it keeps exactly what is typed,
+ * Amount and the Flag follow qty x unit price live, and the Flag cell never wraps.
+ *
+ * Values are read off `.value` rather than `toHaveValue`: a number box reports a number to
+ * `toHaveValue`, and these assertions are about the characters on screen.
+ */
+describe('POIntakeLinesGrid numeric cells: no remount, stable format, live amount (owner report)', () => {
+  const box = (label: string) => screen.getByLabelText(label) as HTMLInputElement;
+
+  it('keeps the typed "1" in the SAME box after the server echoes "1.0000"', async () => {
+    const { rerenderWith } = renderGrid([line({ id: 'l1', line_no: 1 })]);
+
+    const before = (await screen.findByLabelText('Quantity on line 1')) as HTMLInputElement;
+    fireEvent.change(before, { target: { value: '1' } });
+    fireEvent.blur(before);
+
+    expect(onUpdateLine).toHaveBeenCalledTimes(1);
+    expect(onUpdateLine).toHaveBeenCalledWith('l1', { qty: '1' });
+
+    // The parent applies the save and hands back the server's Numeric(15,4) reading.
+    rerenderWith([line({ id: 'l1', line_no: 1, qty: '1.0000', arithmetic_ok: false })]);
+
+    const after = box('Quantity on line 1');
+    expect(after).toBe(before);
+    expect(before.isConnected).toBe(true);
+    expect(after.value).toBe('1');
+  });
+
+  it('shows a server figure without trailing zeros, money keeping two decimals', async () => {
+    renderGrid([
+      line({ id: 'l1', line_no: 1, qty: '24.0000', unit_price: '86.90000', amount: '2085.60' }),
+      line({ id: 'l2', line_no: 2, qty: '0.5000', unit_price: '125.00000', amount: '62.50' }),
+    ]);
+
+    await screen.findByLabelText('Quantity on line 1');
+    expect(box('Quantity on line 1').value).toBe('24');
+    expect(box('Unit price on line 1').value).toBe('86.90');
+    expect(box('Amount on line 1').value).toBe('2085.60');
+    expect(box('Quantity on line 2').value).toBe('0.5');
+    expect(box('Unit price on line 2').value).toBe('125.00');
+    expect(box('Amount on line 2').value).toBe('62.50');
+  });
+
+  it('keeps exactly what is typed while typing, empty and partial drafts included', async () => {
+    const user = userEvent.setup();
+    const { rerenderWith } = renderGrid([line({ id: 'l1', line_no: 1 })]);
+
+    const qty = (await screen.findByLabelText('Quantity on line 1')) as HTMLInputElement;
+    await user.clear(qty);
+    expect(qty.value).toBe('');
+
+    // Another line's save re-renders the grid mid-edit: the emptied box stays empty.
+    rerenderWith([line({ id: 'l1', line_no: 1 })]);
+    expect(box('Quantity on line 1').value).toBe('');
+
+    await user.type(qty, '1.');
+    // A browser's number box reports '' for the partial "1." (it still shows the typed
+    // characters); jsdom reports '1'. Either way nothing rewrote the entry.
+    expect(['1.', '', '1']).toContain(box('Quantity on line 1').value);
+    await user.type(qty, '5');
+    expect(box('Quantity on line 1').value).toBe('1.5');
+    expect(onUpdateLine).not.toHaveBeenCalled();
+  });
+
+  // Contract change (qty-edit review item B, lead sign-off): the server owns the computed
+  // amount, so the blur commits the typed figure only.
+  it('fills Amount live from qty x unit price when the paper printed none, and commits only the qty on blur', async () => {
+    renderGrid([
+      line({
+        id: 'l1',
+        line_no: 1,
+        qty: '',
+        unit_price: '125.00000',
+        amount: null as unknown as string,
+        arithmetic_ok: false,
+      }),
+    ]);
+
+    const qty = (await screen.findByLabelText('Quantity on line 1')) as HTMLInputElement;
+    expect(screen.getByText('Does not multiply out')).toBeInTheDocument();
+
+    fireEvent.change(qty, { target: { value: '3' } });
+
+    expect(box('Amount on line 1').value).toBe('375.00');
+    expect(screen.queryByText('Does not multiply out')).toBeNull();
+    expect(screen.queryByText(/^Should be RM/)).toBeNull();
+    expect(onUpdateLine).not.toHaveBeenCalled();
+
+    fireEvent.blur(qty);
+    expect(onUpdateLine).toHaveBeenCalledTimes(1);
+    expect(onUpdateLine).toHaveBeenCalledWith('l1', { qty: '3' });
+  });
+
+  it('never touches a printed Amount, but clears the Flag live once the line multiplies out', async () => {
+    renderGrid([
+      line({
+        id: 'l1',
+        line_no: 1,
+        qty: '10.0000',
+        unit_price: '392.85000',
+        amount: '3535.65',
+        arithmetic_ok: false,
+      }),
+    ]);
+
+    const qty = (await screen.findByLabelText('Quantity on line 1')) as HTMLInputElement;
+    expect(screen.getByText('Should be RM 3,928.50')).toBeInTheDocument();
+
+    fireEvent.change(qty, { target: { value: '9' } });
+
+    expect(box('Amount on line 1').value).toBe('3535.65');
+    expect(screen.queryByText(/^Should be RM/)).toBeNull();
+    expect(screen.queryByText('Does not multiply out')).toBeNull();
+
+    fireEvent.blur(qty);
+    expect(onUpdateLine).toHaveBeenCalledTimes(1);
+    expect(onUpdateLine).toHaveBeenCalledWith('l1', { qty: '9' });
+  });
+
+  it('raises "Should be RM ..." live when a typed qty breaks a printed Amount, leaving the Amount alone', async () => {
+    renderGrid([
+      line({
+        id: 'l1',
+        line_no: 1,
+        qty: '927.0000',
+        unit_price: '392.85000',
+        amount: '364171.95',
+        arithmetic_ok: true,
+      }),
+    ]);
+
+    const qty = (await screen.findByLabelText('Quantity on line 1')) as HTMLInputElement;
+    expect(screen.queryByText(/^Should be RM/)).toBeNull();
+
+    fireEvent.change(qty, { target: { value: '920' } });
+
+    expect(screen.getByText('Should be RM 361,422.00')).toBeInTheDocument();
+    expect(box('Amount on line 1').value).toBe('364171.95');
+    expect(onUpdateLine).not.toHaveBeenCalled();
+
+    fireEvent.blur(qty);
+    expect(onUpdateLine).toHaveBeenCalledWith('l1', { qty: '920' });
+  });
+
+  it('fills Amount live from a typed Unit price when the paper printed none, committing only the price', async () => {
+    renderGrid([
+      line({
+        id: 'l1',
+        line_no: 1,
+        qty: '3.0000',
+        unit_price: '',
+        amount: null as unknown as string,
+        arithmetic_ok: false,
+      }),
+    ]);
+
+    const price = (await screen.findByLabelText('Unit price on line 1')) as HTMLInputElement;
+    fireEvent.change(price, { target: { value: '125' } });
+
+    expect(box('Amount on line 1').value).toBe('375.00');
+    expect(screen.queryByText('Does not multiply out')).toBeNull();
+
+    fireEvent.blur(price);
+    expect(onUpdateLine).toHaveBeenCalledTimes(1);
+    expect(onUpdateLine).toHaveBeenCalledWith('l1', { unit_price: '125' });
+  });
+
+  it('keeps the Flag cell on one line, so a badge change cannot change the row height', async () => {
+    renderGrid([
+      line({
+        id: 'l1',
+        line_no: 1,
+        amount: '3410.00',
+        arithmetic_ok: false,
+        resolved_product_id: null,
+        resolved_product_code: null,
+      }),
+    ]);
+
+    const badge = await screen.findByText('Should be RM 364,171.95');
+    const container = badge.parentElement as HTMLElement;
+    expect(container).toContainElement(screen.getByText('No product'));
+    expect(container.className.split(/\s+/)).not.toContain('flex-wrap');
+  });
+
+  it('renders qty, unit price and amount through the shared NumberInput', async () => {
+    // The NUMBER-FIELDS census (components/ui/number-input.census.test.ts) forbids a raw
+    // type="number" anywhere but components/ui/number-input.tsx, so a number box here that
+    // the census also passes IS the shared NumberInput.
+    renderGrid([line({ id: 'l1', line_no: 1 })]);
+
+    await screen.findByLabelText('Quantity on line 1');
+    expect(box('Quantity on line 1')).toHaveAttribute('type', 'number');
+    expect(box('Unit price on line 1')).toHaveAttribute('type', 'number');
+    expect(box('Amount on line 1')).toHaveAttribute('type', 'number');
+    expect(box('Code on line 1')).not.toHaveAttribute('type', 'number');
+  });
+});
+
+/**
+ * PO-UPLOAD-MATCHING crew pass item 4: the Suggested pill says WHY on hover, in plain words.
+ */
+describe('POIntakeLinesGrid suggestion tooltip', () => {
+  const INTERNAL = /\b(resolution|source|model)\b/i;
+
+  function pillTitles(): string[] {
+    return screen
+      .getAllByText('Suggested')
+      .map((el) => el.closest('[title]')?.getAttribute('title') ?? '')
+      .filter(Boolean);
+  }
+
+  it('explains a suggested product: the code did not exactly match ours, accept it', async () => {
+    renderGrid([
+      line({
+        id: 'l2',
+        line_no: 2,
+        resolution_source: 'suggested',
+        match_confidence: 'high',
+        match_options: [],
+        qty_suggested: false,
+      } as Partial<POVersionLine>),
+    ]);
+    await screen.findAllByText('Suggested');
+
+    const titles = pillTitles();
+    expect(titles.length).toBeGreaterThan(0);
+    const title = titles.join(' ');
+    expect(title).toMatch(/did not (exactly )?match/i);
+    expect(title).toMatch(/accept/i);
+    expect(title).not.toMatch(INTERNAL);
+  });
+
+  it('explains a suggested qty: worked out from amount divided by unit price', async () => {
+    renderGrid([
+      line({
+        id: 'l2',
+        line_no: 2,
+        resolution_source: 'code',
+        qty_suggested: true,
+      } as Partial<POVersionLine>),
+    ]);
+    await screen.findAllByText('Suggested');
+
+    const title = pillTitles().join(' ');
+    expect(title).toMatch(/amount/i);
+    expect(title).toMatch(/unit price/i);
+    expect(title).toMatch(/divided|worked out/i);
+    expect(title).not.toMatch(INTERNAL);
+  });
+});
+
+/**
+ * PO-UPLOAD-MATCHING qty-edit review items A-D (reviewer on 2d0dc953).
+ *
+ * A: a unit price is read at 5 decimals and the amount rounds half-even to the cent, like the
+ *    server's Decimal quantize, so a 3+ decimal price never raises a false "Should be".
+ * B: the server owns a computed amount (`amount_computed` per line); the grid previews
+ *    qty x price live on such a line and sends only the typed figure.
+ * C: a second edit typed while the first save is in flight is kept and committed.
+ * D: what was typed survives the server's 4-decimal echo.
+ */
+describe('POIntakeLinesGrid qty-edit review items', () => {
+  const box = (label: string) => screen.getByLabelText(label) as HTMLInputElement;
+
+  function computedLine(overrides: Partial<POVersionLine> = {}): POVersionLine {
+    return line({
+      id: 'l1',
+      line_no: 1,
+      qty: '1.0000',
+      unit_price: '10.00000',
+      amount: '10.00',
+      arithmetic_ok: true,
+      amount_computed: true,
+      ...overrides,
+    } as Partial<POVersionLine>);
+  }
+
+  it('A: 100 x 1.25500 previews 125.50 on a line with no printed amount', async () => {
+    renderGrid([
+      line({
+        id: 'l1',
+        line_no: 1,
+        qty: '',
+        unit_price: '1.25500',
+        amount: null as unknown as string,
+        arithmetic_ok: false,
+        amount_computed: true,
+      } as Partial<POVersionLine>),
+    ]);
+
+    const qty = (await screen.findByLabelText('Quantity on line 1')) as HTMLInputElement;
+    fireEvent.change(qty, { target: { value: '100' } });
+
+    expect(box('Amount on line 1').value).toBe('125.50');
+    expect(screen.queryByText(/^Should be RM/)).toBeNull();
+    expect(screen.queryByText('Does not multiply out')).toBeNull();
+  });
+
+  it('A: rounds half-even to the cent like the server (1 x 1.24500 is 1.24)', async () => {
+    renderGrid([
+      computedLine({ qty: '', unit_price: '1.24500', amount: null as unknown as string }),
+    ]);
+
+    const qty = (await screen.findByLabelText('Quantity on line 1')) as HTMLInputElement;
+    fireEvent.change(qty, { target: { value: '1' } });
+
+    expect(box('Amount on line 1').value).toBe('1.24');
+  });
+
+  it('A: a printed amount that matches a 3+ decimal price raises no false "Should be"', async () => {
+    renderGrid([
+      line({
+        id: 'l1',
+        line_no: 1,
+        qty: '100.0000',
+        unit_price: '1.25500',
+        amount: '125.50',
+        arithmetic_ok: true,
+      }),
+    ]);
+
+    const qty = (await screen.findByLabelText('Quantity on line 1')) as HTMLInputElement;
+    expect(screen.queryByText(/^Should be RM/)).toBeNull();
+
+    fireEvent.change(qty, { target: { value: '100' } });
+    expect(screen.queryByText(/^Should be RM/)).toBeNull();
+
+    fireEvent.change(qty, { target: { value: '200' } });
+    expect(screen.getByText('Should be RM 251.00')).toBeInTheDocument();
+    expect(box('Amount on line 1').value).toBe('125.50');
+  });
+
+  it('B: on an amount_computed line the Amount follows the qty and only the qty is sent', async () => {
+    renderGrid([computedLine()]);
+
+    const qty = (await screen.findByLabelText('Quantity on line 1')) as HTMLInputElement;
+    fireEvent.change(qty, { target: { value: '2' } });
+
+    expect(box('Amount on line 1').value).toBe('20.00');
+    expect(screen.queryByText(/^Should be RM/)).toBeNull();
+
+    fireEvent.blur(qty);
+    expect(onUpdateLine).toHaveBeenCalledTimes(1);
+    expect(onUpdateLine).toHaveBeenCalledWith('l1', { qty: '2' });
+  });
+
+  it('B: on an amount_computed line a price edit sends only the price', async () => {
+    renderGrid([computedLine({ qty: '3.0000', amount: '30.00' })]);
+
+    const price = (await screen.findByLabelText('Unit price on line 1')) as HTMLInputElement;
+    fireEvent.change(price, { target: { value: '12.5' } });
+
+    expect(box('Amount on line 1').value).toBe('37.50');
+    fireEvent.blur(price);
+    expect(onUpdateLine).toHaveBeenCalledTimes(1);
+    expect(onUpdateLine).toHaveBeenCalledWith('l1', { unit_price: '12.5' });
+  });
+
+  it('C: a second edit typed while the first save is in flight is kept, then committed', async () => {
+    let resolveFirst: () => void = () => {};
+    onUpdateLine.mockImplementationOnce(
+      () => new Promise<void>((resolve) => (resolveFirst = resolve)),
+    );
+    const { rerenderWith } = renderGrid([line({ id: 'l1', line_no: 1 })]);
+
+    const qty = (await screen.findByLabelText('Quantity on line 1')) as HTMLInputElement;
+    fireEvent.change(qty, { target: { value: '2' } });
+    fireEvent.blur(qty);
+    expect(onUpdateLine).toHaveBeenCalledTimes(1);
+    expect(onUpdateLine).toHaveBeenLastCalledWith('l1', { qty: '2' });
+
+    fireEvent.focus(qty);
+    fireEvent.change(qty, { target: { value: '3' } });
+
+    await act(async () => {
+      resolveFirst();
+    });
+    // The parent applies the first save and hands back the server's echo of "2".
+    rerenderWith([line({ id: 'l1', line_no: 1, qty: '2.0000', arithmetic_ok: false })]);
+
+    expect(box('Quantity on line 1')).toBe(qty);
+    expect(qty.value).toBe('3');
+
+    fireEvent.blur(qty);
+    expect(onUpdateLine).toHaveBeenCalledTimes(2);
+    expect(onUpdateLine).toHaveBeenLastCalledWith('l1', { qty: '3' });
+  });
+
+  it('D: a typed "1.50" survives the server echo "1.5000" in the same box', async () => {
+    const { rerenderWith } = renderGrid([line({ id: 'l1', line_no: 1 })]);
+
+    const qty = (await screen.findByLabelText('Quantity on line 1')) as HTMLInputElement;
+    fireEvent.change(qty, { target: { value: '1.50' } });
+    fireEvent.blur(qty);
+    expect(onUpdateLine).toHaveBeenCalledTimes(1);
+
+    rerenderWith([line({ id: 'l1', line_no: 1, qty: '1.5000', arithmetic_ok: false })]);
+
+    expect(box('Quantity on line 1')).toBe(qty);
+    expect(qty.value).toBe('1.50');
+  });
+});
+
+
+
+/**
+ * PO-UPLOAD-MATCHING crew pass 2, item 3: at 375px the view switch (Need attention /
+ * Suggested / All lines) and "Accept all suggestions (N)" never widen the page. jsdom does no
+ * layout, so this pins the structure: the switch itself wraps or scrolls inside its own box.
+ */
+describe('POIntakeLinesGrid view switch at 375px', () => {
+  it('lets the view switch wrap or scroll on its own instead of widening the page', async () => {
+    renderGrid(
+      [
+        line({ id: 'l1', line_no: 1, arithmetic_ok: false }),
+        line({
+          id: 'l2',
+          line_no: 2,
+          resolution_source: 'suggested',
+          match_confidence: 'high',
+          match_options: [],
+          qty_suggested: false,
+        } as Partial<POVersionLine>),
+        line({ id: 'l3', line_no: 3 }),
+      ],
+      { suggestionCount: 1 },
+    );
+
+    const all = await screen.findByRole('radio', { name: /All lines/ });
+    const group = all.parentElement as HTMLElement;
+    expect(screen.getByRole('radio', { name: /Suggested/ })).toBeInTheDocument();
+    const own = group.className.split(/\s+/);
+    const scroller = group.parentElement?.closest('.overflow-x-auto');
+    const wrapsOrScrolls = own.includes('flex-wrap') || own.includes('overflow-x-auto') || Boolean(scroller);
+    expect(wrapsOrScrolls).toBe(true);
+    // And it may shrink below its content width rather than push its row wider.
+    const shrinkable = ['min-w-0', 'max-w-full', 'w-full'].some((c) => own.includes(c)) || Boolean(scroller);
+    expect(shrinkable).toBe(true);
+  });
+});
+

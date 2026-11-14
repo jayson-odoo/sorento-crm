@@ -512,37 +512,62 @@ def extract_document(
             result.model, unavailable[:200],
         )
     result.elapsed_ms = int((time.perf_counter() - started) * 1000)
-    _log_usage(db, result, prompt_key=prompt_key, provider=provider.name)
+    # Extraction is by far the most expensive thing the system asks a model to do.
+    log_model_usage(
+        db,
+        model=result.model,
+        provider=provider.name,
+        prompt_tokens=result.prompt_tokens,
+        completion_tokens=result.completion_tokens,
+        cached_tokens=result.cached_tokens,
+        # One call per page, so the page count IS the number of model calls.
+        calls=result.page_count,
+        elapsed_ms=result.elapsed_ms,
+        answered=bool(result.ok_pages),
+        feature="ai_document_extract",
+        form_key=prompt_key,
+    )
     return result
 
 
-def _log_usage(db: Session, result: "ExtractionResult", *, prompt_key: str, provider: str) -> None:
-    """Record what this document cost, next to every other model call in the product.
+def log_model_usage(
+    db: Session,
+    *,
+    model: Optional[str],
+    provider: Optional[str],
+    prompt_tokens: int,
+    completion_tokens: int,
+    cached_tokens: int = 0,
+    calls: int = 1,
+    elapsed_ms: Optional[int] = None,
+    answered: bool = True,
+    feature: str,
+    form_key: Optional[str] = None,
+) -> None:
+    """Record what one model job cost, next to every other model call in the product.
 
-    Extraction is by far the most expensive thing the system asks a model to do, and it
-    was the only thing not showing up in the usage figures. Best effort on purpose: a
-    telemetry write must never be the reason a document that WAS read is reported as
-    failed.
+    Shared by the document reader (one row per document) and the PO line matcher (one row
+    per batch). Best effort on purpose, inside a savepoint: a telemetry write must never be
+    the reason work that WAS done is reported as failed.
     """
     try:
         from app.models.ai_assistant import AIAssistantUsageLog
 
-        db.add(
-            AIAssistantUsageLog(
-                model=result.model,
-                provider=provider,
-                prompt_tokens=result.prompt_tokens,
-                completion_tokens=result.completion_tokens,
-                total_tokens=result.prompt_tokens + result.completion_tokens,
-                cached_tokens=result.cached_tokens,
-                # One call per page, so the page count IS the number of model calls.
-                tool_calls_count=result.page_count,
-                response_time_ms=result.elapsed_ms,
-                was_answered=bool(result.ok_pages),
-                feature="ai_document_extract",
-                form_key=prompt_key,
+        with db.begin_nested():
+            db.add(
+                AIAssistantUsageLog(
+                    model=model,
+                    provider=provider,
+                    prompt_tokens=int(prompt_tokens or 0),
+                    completion_tokens=int(completion_tokens or 0),
+                    total_tokens=int(prompt_tokens or 0) + int(completion_tokens or 0),
+                    cached_tokens=int(cached_tokens or 0),
+                    tool_calls_count=calls,
+                    response_time_ms=elapsed_ms,
+                    was_answered=answered,
+                    feature=feature,
+                    form_key=form_key,
+                )
             )
-        )
-        db.flush()
     except Exception:  # noqa: BLE001
-        logger.warning("could not record extraction usage", exc_info=True)
+        logger.warning("could not record %s usage", feature, exc_info=True)
