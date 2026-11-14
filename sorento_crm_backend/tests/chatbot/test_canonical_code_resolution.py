@@ -179,7 +179,7 @@ def test_a_non_product_entity_keeps_its_raw_key_so_a_canonical_miss_stays_silent
         _entity(TYPED, TAP),
         {"raw": "cert", "hint": "attachment_type", "canonical_code": "certificate"},
     ]
-    assert turn_runtime._typed_by_token(entities) == {"zztwt5608": TYPED, "cert": "cert"}
+    assert turn_runtime.typed_by_token(entities) == {"zztwt5608": TYPED, "cert": "cert"}
     assert turn_runtime.unplaced_tokens(entities, {"unresolved_tokens": ["certificate"]}) == {}
     assert turn_runtime.unplaced_tokens(entities, {"unresolved_tokens": ["cert"]}) == {"cert": "cert"}
     assert turn_runtime.unplaced_tokens(entities, {"unresolved_tokens": [TAP]}) == {"zztwt5608": TYPED}
