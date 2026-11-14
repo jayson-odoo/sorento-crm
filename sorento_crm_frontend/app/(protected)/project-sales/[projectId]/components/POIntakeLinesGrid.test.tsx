@@ -167,9 +167,10 @@ describe('POIntakeLinesGrid', () => {
     renderGrid([line()]);
 
     expect(await screen.findByLabelText('Code on line 1')).toHaveValue('SRTWC8613-RL');
-    expect(screen.getByLabelText('Quantity on line 1')).toHaveValue('927');
-    expect(screen.getByLabelText('Unit price on line 1')).toHaveValue('392.85');
-    expect(screen.getByLabelText('Amount on line 1')).toHaveValue('364171.95');
+    // Number boxes (the shared NumberInput) report a number to `toHaveValue`.
+    expect(screen.getByLabelText('Quantity on line 1')).toHaveValue(927);
+    expect(screen.getByLabelText('Unit price on line 1')).toHaveValue(392.85);
+    expect(screen.getByLabelText('Amount on line 1')).toHaveValue(364171.95);
   });
 
   it('sends the typed string for the one field that changed', async () => {
@@ -202,7 +203,8 @@ describe('POIntakeLinesGrid', () => {
 
     expect(onUpdateLine).not.toHaveBeenCalled();
     expect(toastError).toHaveBeenCalledWith('Quantity on line 1 must be a number');
-    expect(qty).toHaveValue('927');
+    // A number box reports a number to `toHaveValue`.
+    expect(qty).toHaveValue(927);
   });
 
   it('marks the line where our arithmetic disagrees with the paper, with the amount', async () => {

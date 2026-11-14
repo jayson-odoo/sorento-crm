@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import {
+  CellContext,
   ColumnDef,
   getCoreRowModel,
   useReactTable,
@@ -63,8 +64,13 @@ import {
   formatMyrExact,
   formatQty,
   isDecimalString,
+  isMoneyZero,
   multiplyMoney,
+  subtractMoney,
 } from '../../_shared/lib/money';
+import { NumberInput } from '@/components/ui/number-input';
+import { parseNumberDraft } from '@/lib/number-field';
+import { formatUnitPrice } from './SalesOrderMoney';
 import { describeAnnotationEffect } from './POIntakeAnnotationsGrid';
 import { POIntakeAnnotationEditDialog } from './POIntakeAnnotationEditDialog';
 
@@ -118,6 +124,57 @@ interface Props {
 type ProductOption = { value: string; label: string; description?: string };
 
 type LinesView = 'flagged' | 'suggested' | 'all';
+
+type NumericField = 'qty' | 'unit_price' | 'amount';
+/** What a person has typed into a row's number boxes and not yet saved. */
+type RowDraft = Partial<Record<NumericField, string>>;
+
+/**
+ * A server figure as the box shows it: a quantity without trailing zeros ("24.0000" -> "24"),
+ * money with at least two decimals ("86.90000" -> "86.90"). No thousands separators: the box
+ * is a number field.
+ */
+function boxFigure(
+  field: NumericField,
+  value: string | null | undefined,
+): string {
+  if (value === null || value === undefined || String(value).trim() === '')
+    return '';
+  if (!isDecimalString(value)) return String(value);
+  return field === 'qty'
+    ? formatQty(value)
+    : formatUnitPrice(value).replace(/,/g, '');
+}
+
+/**
+ * The row's figures as they stand WHILE a person types: the typed qty and unit price, and the
+ * amount they give when the paper printed none. A printed amount is never replaced; the Flag
+ * checks it against the typed figures instead.
+ */
+function liveFigures(line: POVersionLine, draft: RowDraft | undefined) {
+  const qty = draft?.qty ?? line.qty;
+  const unitPrice = draft?.unit_price ?? line.unit_price;
+  const printed = isDecimalString(line.amount);
+  const expected = multiplyMoney(qty, unitPrice);
+  const typedFactor =
+    draft?.qty !== undefined || draft?.unit_price !== undefined;
+  const amount =
+    draft?.amount ?? (!printed && typedFactor ? (expected ?? '') : line.amount);
+  const ok =
+    draft === undefined
+      ? line.arithmetic_ok
+      : expected !== null && isMoneyZero(subtractMoney(amount, expected));
+  return { qty, unitPrice, amount, expected, ok, printed, typedFactor };
+}
+
+/** The Amount box: what was typed into it, else the live qty x unit price on a line whose
+ *  paper printed no amount, else the server figure. */
+function amountBox(line: POVersionLine, draft: RowDraft | undefined): string {
+  if (draft?.amount !== undefined) return draft.amount;
+  const live = liveFigures(line, draft);
+  if (!live.printed && live.typedFactor) return live.amount ?? '';
+  return boxFigure('amount', line.amount);
+}
 
 /** The short marker on the row: what the pencil is asking for, not why. */
 function annotationBadgeLabel(note: POAnnotation): string {
@@ -457,7 +514,53 @@ export const POIntakeLinesGrid = React.forwardRef<
     [onUpdateLine],
   );
 
-  const columns = React.useMemo<ColumnDef<POVersionLine>[]>(() => {
+  // Typed, unsaved figures per row. The boxes show these while they exist, so a re-render
+  // (another line's save, the server's echo) never rewrites what is being typed, and the
+  // Amount and the Flag can follow qty x unit price live.
+  const [drafts, setDrafts] = React.useState<Record<string, RowDraft>>({});
+  const setDraft = React.useCallback(
+    (lineId: string, field: NumericField, value: string | undefined) =>
+      setDrafts((current) => {
+        const row: RowDraft = { ...(current[lineId] ?? {}) };
+        if (value === undefined) delete row[field];
+        else row[field] = value;
+        const next = { ...current };
+        if (Object.keys(row).length > 0) next[lineId] = row;
+        else delete next[lineId];
+        return next;
+      }),
+    [],
+  );
+
+  /** Blur / Enter on a number box: one save through `commit`, then the box shows the server. */
+  const commitNumber = React.useCallback(
+    (line: POVersionLine, field: NumericField, label: string) => {
+      const draft = drafts[line.id];
+      const typed = draft?.[field];
+      if (typed === undefined) return;
+      const next = typed.trim();
+      const clear = () => setDraft(line.id, field, undefined);
+      if (!isDecimalString(next)) {
+        toast.error(`${label} must be a number`);
+        clear();
+        return;
+      }
+      if (parseNumberDraft(next) === parseNumberDraft(line[field])) {
+        clear();
+        return;
+      }
+      const body: POLineUpdateBody = { [field]: next };
+      const live = liveFigures(line, draft);
+      // The paper printed no amount: qty x unit price IS the amount, saved with it.
+      if (field !== 'amount' && !live.printed && live.expected !== null) {
+        body.amount = live.expected;
+      }
+      void onUpdateLine(line.id, body).finally(clear);
+    },
+    [drafts, onUpdateLine, setDraft],
+  );
+
+  const liveColumns = React.useMemo<ColumnDef<POVersionLine>[]>(() => {
     const cellWrap = (
       line: POVersionLine,
       children: React.ReactNode,
@@ -490,12 +593,7 @@ export const POIntakeLinesGrid = React.forwardRef<
             row.original,
             <span className="flex items-center gap-1 text-sm tabular-nums">
               {row.original.line_no}
-              {savingLineIds.includes(row.original.id) && (
-                <Loader2
-                  className="size-3 animate-spin text-muted-foreground"
-                  aria-hidden
-                />
-              )}
+              <SavingSpinner lineId={row.original.id} />
             </span>,
             true,
           ),
@@ -563,14 +661,11 @@ export const POIntakeLinesGrid = React.forwardRef<
         cell: ({ row }) =>
           cellWrap(
             row.original,
-            <CellInput
+            <NumberCell
               line={row.original}
               field="qty"
-              value={row.original.qty}
-              numeric
               readOnly={readOnly}
               label={`Quantity on line ${row.original.line_no}`}
-              onCommit={(value) => commit(row.original, { qty: value })}
             />,
           ),
         size: 92,
@@ -614,14 +709,11 @@ export const POIntakeLinesGrid = React.forwardRef<
         cell: ({ row }) =>
           cellWrap(
             row.original,
-            <CellInput
+            <NumberCell
               line={row.original}
               field="unit_price"
-              value={row.original.unit_price}
-              numeric
               readOnly={readOnly}
               label={`Unit price on line ${row.original.line_no}`}
-              onCommit={(value) => commit(row.original, { unit_price: value })}
             />,
           ),
         size: 116,
@@ -639,15 +731,11 @@ export const POIntakeLinesGrid = React.forwardRef<
         cell: ({ row }) =>
           cellWrap(
             row.original,
-            <CellInput
+            <NumberCell
               line={row.original}
               field="amount"
-              value={row.original.amount}
-              numeric
-              invalid={!row.original.arithmetic_ok}
               readOnly={readOnly}
               label={`Amount on line ${row.original.line_no}`}
-              onCommit={(value) => commit(row.original, { amount: value })}
             />,
           ),
         size: 124,
@@ -664,26 +752,10 @@ export const POIntakeLinesGrid = React.forwardRef<
         ),
         cell: ({ row }) => {
           const line = row.original;
-          const expected = multiplyMoney(line.qty, line.unit_price);
           const lineNotes = annotationsByLineNo.get(line.line_no) ?? [];
           return cellWrap(
             line,
-            <div className="flex flex-wrap items-center gap-1">
-              {!line.arithmetic_ok && (
-                <Badge
-                  variant="destructive"
-                  className="text-[11px]"
-                  title={
-                    expected
-                      ? `Quantity times unit price is ${formatMyrExact(expected)}`
-                      : undefined
-                  }
-                >
-                  {expected
-                    ? `Should be ${formatMyrExact(expected)}`
-                    : 'Does not multiply out'}
-                </Badge>
-              )}
+            <FlagRow line={line}>
               {line.is_cancelled && (
                 <Badge variant="secondary" className="text-[11px]">
                   Cancelled
@@ -730,7 +802,7 @@ export const POIntakeLinesGrid = React.forwardRef<
                 onEdit={(note) => setEditingAnnotation(note)}
                 onReject={(note) => openRejectAnnotation(note, line.id)}
               />
-            </div>,
+            </FlagRow>,
           );
         },
         size: 190,
@@ -851,8 +923,23 @@ export const POIntakeLinesGrid = React.forwardRef<
     openRejectAnnotation,
     readOnly,
     savingAnnotationIds,
-    savingLineIds,
   ]);
+
+  // tanstack renders each column's `cell` function AS A COMPONENT, so a new column set
+  // remounts every cell, and the column set changed on every save (the owner's "jitter").
+  // The table gets one stable set whose cells render the CURRENT definitions from context.
+  const columns = React.useMemo<ColumnDef<POVersionLine>[]>(
+    () => liveColumns.map((column) => ({ ...column, cell: LiveCell })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+
+  // Typing and saving reach the cells through context too, so a keystroke never rebuilds
+  // the column definitions at all.
+  const liveRows = React.useMemo(
+    () => ({ drafts, setDraft, commitNumber, savingLineIds }),
+    [drafts, setDraft, commitNumber, savingLineIds],
+  );
 
   const table = useReactTable({
     columns,
@@ -866,284 +953,290 @@ export const POIntakeLinesGrid = React.forwardRef<
     !readOnly && suggestionCount > 0 && Boolean(onAcceptAllSuggestions);
 
   return (
-    <div className="min-w-0 space-y-2">
-      {(showFilterToggle || showAcceptAll) && (
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          {showFilterToggle ? (
-            <ToggleGroup
-              type="single"
-              variant="outline"
-              size="sm"
-              value={view}
-              onValueChange={(next) => next && setView(next as LinesView)}
-            >
-              <ToggleGroupItem value="flagged" className="px-3">
-                {`Need attention (${flagged.length})`}
-              </ToggleGroupItem>
-              {(suggested.length > 0 || view === 'suggested') && (
-                <ToggleGroupItem value="suggested" className="px-3">
-                  {`Suggested (${suggested.length})`}
-                </ToggleGroupItem>
+    <LiveColumnsContext.Provider value={liveColumns}>
+      <LiveRowsContext.Provider value={liveRows}>
+        <div className="min-w-0 space-y-2">
+          {(showFilterToggle || showAcceptAll) && (
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              {showFilterToggle ? (
+                <ToggleGroup
+                  type="single"
+                  variant="outline"
+                  size="sm"
+                  value={view}
+                  onValueChange={(next) => next && setView(next as LinesView)}
+                >
+                  <ToggleGroupItem value="flagged" className="px-3">
+                    {`Need attention (${flagged.length})`}
+                  </ToggleGroupItem>
+                  {(suggested.length > 0 || view === 'suggested') && (
+                    <ToggleGroupItem value="suggested" className="px-3">
+                      {`Suggested (${suggested.length})`}
+                    </ToggleGroupItem>
+                  )}
+                  <ToggleGroupItem value="all" className="px-3">
+                    {`All lines (${lines.length})`}
+                  </ToggleGroupItem>
+                </ToggleGroup>
+              ) : (
+                <span />
               )}
-              <ToggleGroupItem value="all" className="px-3">
-                {`All lines (${lines.length})`}
-              </ToggleGroupItem>
-            </ToggleGroup>
-          ) : (
-            <span />
-          )}
-          {showAcceptAll && (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={isAcceptingSuggestions}
-              onClick={() => void onAcceptAllSuggestions?.()}
-            >
-              {isAcceptingSuggestions && (
-                <Loader2 className="size-3.5 animate-spin" aria-hidden />
+              {showAcceptAll && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={isAcceptingSuggestions}
+                  onClick={() => void onAcceptAllSuggestions?.()}
+                >
+                  {isAcceptingSuggestions && (
+                    <Loader2 className="size-3.5 animate-spin" aria-hidden />
+                  )}
+                  {`Accept all suggestions (${suggestionCount})`}
+                </Button>
               )}
-              {`Accept all suggestions (${suggestionCount})`}
-            </Button>
+            </div>
           )}
-        </div>
-      )}
 
-      {nothingLeftToShow ? (
-        <div className="rounded-lg border border-emerald-500/40 bg-emerald-50 px-6 py-10 text-center dark:bg-emerald-950/30">
-          <h3 className="text-sm font-semibold text-emerald-900 dark:text-emerald-300">
-            Nothing left to fix
-          </h3>
-          <Button
-            type="button"
-            variant="outline"
-            className="mt-4"
-            onClick={() => setView('all')}
-          >
-            {`All lines (${lines.length})`}
-          </Button>
-        </div>
-      ) : (
-        <ContextMenu>
-          <ContextMenuTrigger
-            asChild
-            onContextMenu={(event) => {
-              // Right-click is the row action (owner standing rule: no row icon buttons for
-              // it). Only a row with something to accept opens the menu.
-              const id = (event.target as HTMLElement)
-                .closest('[data-po-line-id]')
-                ?.getAttribute('data-po-line-id');
-              const hit = lines.find((item) => item.id === id) ?? null;
-              const actionable =
-                !readOnly &&
-                Boolean(onAcceptSuggestion) &&
-                hit !== null &&
-                hasSuggestion(hit);
-              setMenuLine(actionable ? hit : null);
-              if (!actionable) event.preventDefault();
-            }}
-          >
-            <div className="min-w-0">
-              <DataGrid
-                rowAttributes={(row: POVersionLine) => ({
-                  'data-po-line-id': row.id,
-                })}
-                table={table}
-                recordCount={visibleLines.length}
-                isLoading={false}
-                listingKey={PO_INTAKE_LINES_LISTING_KEY}
-                tableLayout={{
-                  width: 'fixed',
-                  columnsResizable: true,
-                  // The grid's OWN scroller (`data-grid-scroller`) carries both axes - a
-                  // Radix `ScrollArea` wrapped around `DataGridTable` used to sit here
-                  // instead, but that gives the table a `display: table` ancestor which
-                  // shrink-fits, so the scroller never measured an overflow and the Amount
-                  // column clipped with no way to reach it (owner hand test, 25 Sep 2026,
-                  // item 1). A plain height string keeps the same vertical budget the
-                  // ScrollArea's viewport used to cap at, with the horizontal scroll the
-                  // scroller already brings for free.
-                  scrollerMaxHeight:
-                    'max-h-[calc(100vh-14rem)] overflow-y-auto',
+          {nothingLeftToShow ? (
+            <div className="rounded-lg border border-emerald-500/40 bg-emerald-50 px-6 py-10 text-center dark:bg-emerald-950/30">
+              <h3 className="text-sm font-semibold text-emerald-900 dark:text-emerald-300">
+                Nothing left to fix
+              </h3>
+              <Button
+                type="button"
+                variant="outline"
+                className="mt-4"
+                onClick={() => setView('all')}
+              >
+                {`All lines (${lines.length})`}
+              </Button>
+            </div>
+          ) : (
+            <ContextMenu>
+              <ContextMenuTrigger
+                asChild
+                onContextMenu={(event) => {
+                  // Right-click is the row action (owner standing rule: no row icon buttons for
+                  // it). Only a row with something to accept opens the menu.
+                  const id = (event.target as HTMLElement)
+                    .closest('[data-po-line-id]')
+                    ?.getAttribute('data-po-line-id');
+                  const hit = lines.find((item) => item.id === id) ?? null;
+                  const actionable =
+                    !readOnly &&
+                    Boolean(onAcceptSuggestion) &&
+                    hit !== null &&
+                    hasSuggestion(hit);
+                  setMenuLine(actionable ? hit : null);
+                  if (!actionable) event.preventDefault();
                 }}
               >
-                <div className="min-w-0 rounded-lg border border-border">
-                  <DataGridTable />
+                <div className="min-w-0">
+                  <DataGrid
+                    rowAttributes={(row: POVersionLine) => ({
+                      'data-po-line-id': row.id,
+                    })}
+                    table={table}
+                    recordCount={visibleLines.length}
+                    isLoading={false}
+                    listingKey={PO_INTAKE_LINES_LISTING_KEY}
+                    tableLayout={{
+                      width: 'fixed',
+                      columnsResizable: true,
+                      // The grid's OWN scroller (`data-grid-scroller`) carries both axes - a
+                      // Radix `ScrollArea` wrapped around `DataGridTable` used to sit here
+                      // instead, but that gives the table a `display: table` ancestor which
+                      // shrink-fits, so the scroller never measured an overflow and the Amount
+                      // column clipped with no way to reach it (owner hand test, 25 Sep 2026,
+                      // item 1). A plain height string keeps the same vertical budget the
+                      // ScrollArea's viewport used to cap at, with the horizontal scroll the
+                      // scroller already brings for free.
+                      scrollerMaxHeight:
+                        'max-h-[calc(100vh-14rem)] overflow-y-auto',
+                    }}
+                  >
+                    <div className="min-w-0 rounded-lg border border-border">
+                      <DataGridTable />
+                    </div>
+                  </DataGrid>
                 </div>
-              </DataGrid>
-            </div>
-          </ContextMenuTrigger>
-          {menuLine && (
-            <ContextMenuContent>
-              <ContextMenuItem
-                disabled={savingLineIds.includes(menuLine.id)}
-                onSelect={() => void onAcceptSuggestion?.(menuLine)}
-              >
-                <Check className="size-3.5" aria-hidden />
-                Accept suggestion
-              </ContextMenuItem>
-            </ContextMenuContent>
+              </ContextMenuTrigger>
+              {menuLine && (
+                <ContextMenuContent>
+                  <ContextMenuItem
+                    disabled={savingLineIds.includes(menuLine.id)}
+                    onSelect={() => void onAcceptSuggestion?.(menuLine)}
+                  >
+                    <Check className="size-3.5" aria-hidden />
+                    Accept suggestion
+                  </ContextMenuItem>
+                </ContextMenuContent>
+              )}
+            </ContextMenu>
           )}
-        </ContextMenu>
-      )}
 
-      <AlertDialog
-        open={Boolean(confirming)}
-        onOpenChange={(next) => !next && setConfirming(null)}
-      >
-        <AlertDialogContent className="max-h-[85vh] overflow-y-auto">
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {confirming?.kind === 'cancel'
-                ? `Cancel line ${confirming.line.line_no}?`
-                : 'Remove the matched product?'}
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              {confirming?.kind === 'cancel'
-                ? `${describeLine(confirming.line)} stays on the record, marked cancelled, and is left out of our total. This action cannot be undone from the document.`
-                : confirming
-                  ? `Line ${confirming.line.line_no} goes back to unmatched, and nothing on it will resolve to ${confirming.line.resolved_product_code ?? 'our catalogue'}.`
-                  : ''}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Keep it</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              onClick={() => {
-                if (!confirming) return;
-                if (confirming.kind === 'cancel') {
-                  commit(confirming.line, { is_cancelled: true });
-                } else {
-                  commit(confirming.line, { resolved_product_id: null });
-                }
-                setConfirming(null);
+          <AlertDialog
+            open={Boolean(confirming)}
+            onOpenChange={(next) => !next && setConfirming(null)}
+          >
+            <AlertDialogContent className="max-h-[85vh] overflow-y-auto">
+              <AlertDialogHeader>
+                <AlertDialogTitle>
+                  {confirming?.kind === 'cancel'
+                    ? `Cancel line ${confirming.line.line_no}?`
+                    : 'Remove the matched product?'}
+                </AlertDialogTitle>
+                <AlertDialogDescription>
+                  {confirming?.kind === 'cancel'
+                    ? `${describeLine(confirming.line)} stays on the record, marked cancelled, and is left out of our total. This action cannot be undone from the document.`
+                    : confirming
+                      ? `Line ${confirming.line.line_no} goes back to unmatched, and nothing on it will resolve to ${confirming.line.resolved_product_code ?? 'our catalogue'}.`
+                      : ''}
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Keep it</AlertDialogCancel>
+                <AlertDialogAction
+                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                  onClick={() => {
+                    if (!confirming) return;
+                    if (confirming.kind === 'cancel') {
+                      commit(confirming.line, { is_cancelled: true });
+                    } else {
+                      commit(confirming.line, { resolved_product_id: null });
+                    }
+                    setConfirming(null);
+                  }}
+                >
+                  {confirming?.kind === 'cancel'
+                    ? 'Cancel the line'
+                    : 'Remove it'}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+
+          <AlertDialog
+            open={Boolean(acceptingAnnotation)}
+            onOpenChange={(next) => !next && setAcceptingAnnotation(null)}
+          >
+            <AlertDialogContent className="max-h-[85vh] overflow-y-auto">
+              <AlertDialogHeader>
+                <AlertDialogTitle>Accept this note?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  {acceptingAnnotation
+                    ? describeAnnotationEffect(acceptingAnnotation.note, lines)
+                    : ''}
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Not yet</AlertDialogCancel>
+                <AlertDialogAction
+                  className={
+                    acceptingAnnotation?.note.interpretation === 'cancel_line'
+                      ? 'bg-destructive text-destructive-foreground hover:bg-destructive/90'
+                      : undefined
+                  }
+                  onClick={() => {
+                    if (acceptingAnnotation) {
+                      lastActionedAnnotationId.current =
+                        acceptingAnnotation.note.id;
+                      lastActionedLineId.current = acceptingAnnotation.lineId;
+                      void onAcceptAnnotation(acceptingAnnotation.note.id);
+                    }
+                    setAcceptingAnnotation(null);
+                  }}
+                >
+                  {acceptingAnnotation?.note.interpretation === 'cancel_line'
+                    ? 'Accept and cancel'
+                    : 'Accept'}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+
+          <AlertDialog
+            open={Boolean(rejectingAnnotation)}
+            onOpenChange={(next) => !next && setRejectingAnnotation(null)}
+          >
+            <AlertDialogContent className="max-h-[85vh] overflow-y-auto">
+              <AlertDialogHeader>
+                <AlertDialogTitle>Reject this note?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Nothing is applied. The note stays on the record as rejected,
+                  with your reason.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <div className="space-y-1.5">
+                <label
+                  className="text-xs font-medium"
+                  htmlFor="po-line-annot-reject-note"
+                >
+                  Reason
+                </label>
+                <Textarea
+                  id="po-line-annot-reject-note"
+                  rows={3}
+                  value={rejectNote}
+                  onChange={(event) => setRejectNote(event.target.value)}
+                  placeholder="Why this does not change the PO"
+                />
+              </div>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Keep it open</AlertDialogCancel>
+                <AlertDialogAction
+                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                  disabled={!rejectNote.trim()}
+                  onClick={() => {
+                    if (rejectingAnnotation) {
+                      lastActionedAnnotationId.current =
+                        rejectingAnnotation.note.id;
+                      lastActionedLineId.current = rejectingAnnotation.lineId;
+                      void onRejectAnnotation(
+                        rejectingAnnotation.note.id,
+                        rejectNote.trim(),
+                      );
+                    }
+                    setRejectingAnnotation(null);
+                  }}
+                >
+                  Reject the note
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+
+          {editingAnnotation && (
+            <POIntakeAnnotationEditDialog
+              annotation={editingAnnotation}
+              saving={savingAnnotationIds.includes(editingAnnotation.id)}
+              onClose={() => setEditingAnnotation(null)}
+              onSubmit={async (body) => {
+                const note = editingAnnotation;
+                await onEditAnnotation(note.id, body);
+                setEditingAnnotation(null);
+                // An edit resolves the note the same way an accept does: whichever line's
+                // panel opened this dialog, that is where focus moves on from.
+                const fromLine = lines.find((line) =>
+                  (annotationsByLineNo.get(line.line_no) ?? []).some(
+                    (candidate) => candidate.id === note.id,
+                  ),
+                );
+                lastActionedAnnotationId.current = note.id;
+                lastActionedLineId.current = fromLine?.id ?? null;
               }}
-            >
-              {confirming?.kind === 'cancel' ? 'Cancel the line' : 'Remove it'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      <AlertDialog
-        open={Boolean(acceptingAnnotation)}
-        onOpenChange={(next) => !next && setAcceptingAnnotation(null)}
-      >
-        <AlertDialogContent className="max-h-[85vh] overflow-y-auto">
-          <AlertDialogHeader>
-            <AlertDialogTitle>Accept this note?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {acceptingAnnotation
-                ? describeAnnotationEffect(acceptingAnnotation.note, lines)
-                : ''}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Not yet</AlertDialogCancel>
-            <AlertDialogAction
-              className={
-                acceptingAnnotation?.note.interpretation === 'cancel_line'
-                  ? 'bg-destructive text-destructive-foreground hover:bg-destructive/90'
-                  : undefined
-              }
-              onClick={() => {
-                if (acceptingAnnotation) {
-                  lastActionedAnnotationId.current =
-                    acceptingAnnotation.note.id;
-                  lastActionedLineId.current = acceptingAnnotation.lineId;
-                  void onAcceptAnnotation(acceptingAnnotation.note.id);
-                }
-                setAcceptingAnnotation(null);
-              }}
-            >
-              {acceptingAnnotation?.note.interpretation === 'cancel_line'
-                ? 'Accept and cancel'
-                : 'Accept'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      <AlertDialog
-        open={Boolean(rejectingAnnotation)}
-        onOpenChange={(next) => !next && setRejectingAnnotation(null)}
-      >
-        <AlertDialogContent className="max-h-[85vh] overflow-y-auto">
-          <AlertDialogHeader>
-            <AlertDialogTitle>Reject this note?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Nothing is applied. The note stays on the record as rejected, with
-              your reason.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <div className="space-y-1.5">
-            <label
-              className="text-xs font-medium"
-              htmlFor="po-line-annot-reject-note"
-            >
-              Reason
-            </label>
-            <Textarea
-              id="po-line-annot-reject-note"
-              rows={3}
-              value={rejectNote}
-              onChange={(event) => setRejectNote(event.target.value)}
-              placeholder="Why this does not change the PO"
             />
-          </div>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Keep it open</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              disabled={!rejectNote.trim()}
-              onClick={() => {
-                if (rejectingAnnotation) {
-                  lastActionedAnnotationId.current =
-                    rejectingAnnotation.note.id;
-                  lastActionedLineId.current = rejectingAnnotation.lineId;
-                  void onRejectAnnotation(
-                    rejectingAnnotation.note.id,
-                    rejectNote.trim(),
-                  );
-                }
-                setRejectingAnnotation(null);
-              }}
-            >
-              Reject the note
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+          )}
 
-      {editingAnnotation && (
-        <POIntakeAnnotationEditDialog
-          annotation={editingAnnotation}
-          saving={savingAnnotationIds.includes(editingAnnotation.id)}
-          onClose={() => setEditingAnnotation(null)}
-          onSubmit={async (body) => {
-            const note = editingAnnotation;
-            await onEditAnnotation(note.id, body);
-            setEditingAnnotation(null);
-            // An edit resolves the note the same way an accept does: whichever line's
-            // panel opened this dialog, that is where focus moves on from.
-            const fromLine = lines.find((line) =>
-              (annotationsByLineNo.get(line.line_no) ?? []).some(
-                (candidate) => candidate.id === note.id,
-              ),
-            );
-            lastActionedAnnotationId.current = note.id;
-            lastActionedLineId.current = fromLine?.id ?? null;
-          }}
-        />
-      )}
-
-      {focusedLineId && (
-        <p className="sr-only" aria-live="polite">
-          {`Line ${lines.find((line) => line.id === focusedLineId)?.line_no ?? ''} in focus`}
-        </p>
-      )}
-    </div>
+          {focusedLineId && (
+            <p className="sr-only" aria-live="polite">
+              {`Line ${lines.find((line) => line.id === focusedLineId)?.line_no ?? ''} in focus`}
+            </p>
+          )}
+        </div>
+      </LiveRowsContext.Provider>
+    </LiveColumnsContext.Provider>
   );
 });
 
@@ -1401,6 +1494,190 @@ function LineNotesIndicator({
   );
 }
 
+const LiveColumnsContext = React.createContext<ColumnDef<POVersionLine>[]>([]);
+
+/** The one `cell` the table ever sees: renders the current definition of its column. */
+function LiveCell(context: CellContext<POVersionLine, unknown>) {
+  const live = React.useContext(LiveColumnsContext);
+  const definition = live.find(
+    (column) =>
+      (column.id ?? (column as { accessorKey?: string }).accessorKey) ===
+      context.column.id,
+  );
+  const render = definition?.cell;
+  return (
+    <>{typeof render === 'function' ? render(context) : (render ?? null)}</>
+  );
+}
+
+interface LiveRows {
+  drafts: Record<string, RowDraft>;
+  setDraft: (
+    lineId: string,
+    field: NumericField,
+    value: string | undefined,
+  ) => void;
+  commitNumber: (
+    line: POVersionLine,
+    field: NumericField,
+    label: string,
+  ) => void;
+  savingLineIds: string[];
+}
+
+const LiveRowsContext = React.createContext<LiveRows>({
+  drafts: {},
+  setDraft: () => undefined,
+  commitNumber: () => undefined,
+  savingLineIds: [],
+});
+
+function SavingSpinner({ lineId }: { lineId: string }) {
+  const { savingLineIds } = React.useContext(LiveRowsContext);
+  if (!savingLineIds.includes(lineId)) return null;
+  return (
+    <Loader2
+      className="size-3 animate-spin text-muted-foreground"
+      aria-hidden
+    />
+  );
+}
+
+/**
+ * The Flag cell's row of badges, on one line that never wraps: a badge appearing or going
+ * must not change the row height (owner hand test: the row jumped on every save). The
+ * arithmetic badge follows the typed qty / unit price live.
+ */
+function FlagRow({
+  line,
+  children,
+}: {
+  line: POVersionLine;
+  children: React.ReactNode;
+}) {
+  const { drafts } = React.useContext(LiveRowsContext);
+  const { expected, ok } = liveFigures(line, drafts[line.id]);
+  const arithmetic = ok
+    ? null
+    : expected
+      ? `Should be ${formatMyrExact(expected)}`
+      : 'Does not multiply out';
+  const title = [
+    arithmetic,
+    line.is_cancelled ? 'Cancelled' : null,
+    !line.resolved_product_id ? 'No product' : null,
+    hasSuggestion(line) ? 'Suggested' : null,
+    line.resolution_source === 'manual' ? 'Matched by hand' : null,
+  ]
+    .filter(Boolean)
+    .join(', ');
+  return (
+    <div
+      className="flex items-center gap-1 overflow-hidden whitespace-nowrap"
+      title={title || undefined}
+    >
+      {arithmetic && (
+        <Badge
+          variant="destructive"
+          className="text-[11px]"
+          title={
+            expected
+              ? `Quantity times unit price is ${formatMyrExact(expected)}`
+              : undefined
+          }
+        >
+          {arithmetic}
+        </Badge>
+      )}
+      {children}
+    </div>
+  );
+}
+
+/**
+ * A qty / unit price / amount box: the shared `NumberInput`, controlled by the grid's draft so
+ * it keeps exactly what is typed and is never remounted by a save. Commits on blur or Enter;
+ * Escape puts back what the server holds.
+ */
+function NumberCell({
+  line,
+  field,
+  readOnly,
+  label,
+}: {
+  line: POVersionLine;
+  field: NumericField;
+  readOnly: boolean;
+  label: string;
+}) {
+  const { drafts, setDraft, commitNumber } = React.useContext(LiveRowsContext);
+  const draft = drafts[line.id];
+  const value =
+    field === 'amount'
+      ? amountBox(line, draft)
+      : (draft?.[field] ?? boxFigure(field, line[field]));
+  const invalid = field === 'amount' && !liveFigures(line, draft).ok;
+  const onDraft = (next: string | undefined) => setDraft(line.id, field, next);
+  const onCommit = (name: string) => commitNumber(line, field, name);
+  const escaping = React.useRef(false);
+  const inputRef = React.useRef<HTMLInputElement>(null);
+
+  // The box is uncontrolled so it keeps exactly what is typed ("1." included: a controlled
+  // number box is re-set after every keystroke). A figure from outside - the server's echo,
+  // Escape, a refused save, the live amount - is written in only when it is a DIFFERENT
+  // number from what the box holds, so "1" never turns into "1.0000".
+  React.useLayoutEffect(() => {
+    const node = inputRef.current;
+    if (node && parseNumberDraft(node.value) !== parseNumberDraft(value)) {
+      node.value = value;
+    }
+  }, [value]);
+
+  if (readOnly) {
+    const shown = boxFigure(field, line[field]);
+    return (
+      <span
+        className={`block truncate text-right text-sm tabular-nums ${line.is_cancelled ? 'line-through' : ''}`}
+        title={shown}
+      >
+        {shown || '-'}
+      </span>
+    );
+  }
+
+  return (
+    <NumberInput
+      ref={inputRef}
+      defaultValue={value}
+      aria-label={label}
+      title={value}
+      inputMode="decimal"
+      className={`h-8 text-right tabular-nums ${
+        invalid ? 'border-destructive focus-visible:ring-destructive/30' : ''
+      } ${line.is_cancelled ? 'line-through' : ''}`}
+      onChange={(event) => onDraft(event.target.value)}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          event.currentTarget.blur();
+        }
+        if (event.key === 'Escape') {
+          escaping.current = true;
+          onDraft(undefined);
+          event.currentTarget.blur();
+        }
+      }}
+      onBlur={() => {
+        if (escaping.current) {
+          escaping.current = false;
+          return;
+        }
+        onCommit(label);
+      }}
+    />
+  );
+}
+
 /**
  * Cell-commit editing, deliberately NOT the staged `InlineLineTable` paradigm the
  * quotation editor uses: these rows are the extractor's reading of the customer's paper,
@@ -1412,8 +1689,6 @@ function CellInput({
   line,
   field,
   value,
-  numeric,
-  invalid,
   readOnly,
   label,
   onCommit,
@@ -1421,8 +1696,6 @@ function CellInput({
   line: POVersionLine;
   field: string;
   value: string;
-  numeric?: boolean;
-  invalid?: boolean;
   readOnly: boolean;
   label: string;
   onCommit: (value: string) => void;
@@ -1432,7 +1705,7 @@ function CellInput({
   if (readOnly) {
     return (
       <span
-        className={`block truncate text-sm ${numeric ? 'text-right tabular-nums' : ''} ${line.is_cancelled ? 'line-through' : ''}`}
+        className={`block truncate text-sm ${line.is_cancelled ? 'line-through' : ''}`}
         title={value}
       >
         {value || '-'}
@@ -1449,10 +1722,7 @@ function CellInput({
       defaultValue={value}
       aria-label={label}
       title={value}
-      inputMode={numeric ? 'decimal' : undefined}
-      className={`h-8 ${numeric ? 'text-right tabular-nums' : ''} ${
-        invalid ? 'border-destructive focus-visible:ring-destructive/30' : ''
-      } ${line.is_cancelled ? 'line-through' : ''}`}
+      className={`h-8 ${line.is_cancelled ? 'line-through' : ''}`}
       onKeyDown={(event) => {
         if (event.key === 'Enter') {
           event.preventDefault();
@@ -1466,11 +1736,6 @@ function CellInput({
       onBlur={(event) => {
         const next = event.target.value.trim();
         if (next === value) return;
-        if (numeric && !isDecimalString(next)) {
-          toast.error(`${label} must be a number`);
-          event.target.value = value;
-          return;
-        }
         onCommit(next);
       }}
     />
