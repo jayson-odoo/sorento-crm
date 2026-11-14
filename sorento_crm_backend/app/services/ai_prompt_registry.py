@@ -703,6 +703,58 @@ def _judge_fallback() -> str:
     )
 
 
+def _po_line_matcher_fallback() -> str:
+    """PO-UPLOAD-MATCHING: pick each unmatched PO line's product from ITS OWN candidates.
+
+    The candidates are built in code (the bound quotation's lines, the customer's
+    remembered codes, the catalogue shortlist), and any code the answer names that the
+    line was not offered is dropped before it reaches the line, so the model can choose
+    but never invent. Its pick is a suggestion a person accepts, never a silent match.
+    The answer shape is enforced as a structured-output schema
+    (``project_po_matching.LINE_MATCHER_SCHEMA``).
+    """
+    return (
+        "You match lines of a customer PURCHASE ORDER sent to Sorento Sdn Bhd to products\n"
+        "in Sorento's catalogue.\n"
+        "\n"
+        "The user message is a JSON object with two keys:\n"
+        '- "candidates_for_every_line": candidates offered to EVERY line in "lines".\n'
+        '- "lines": the PO lines to match. Each item is one PO line:\n'
+        '  {"line_no": 4, "stock_code": "...", "description": "...",\n'
+        '   "candidates": [{"code": "SRTWC8518-SH", "name": "...", "source": "catalogue"}]}\n'
+        '  where "candidates" are offered to THAT line only.\n'
+        "A line's candidates are its own \"candidates\" PLUS \"candidates_for_every_line\".\n"
+        '"source" says where a candidate came from: "quotation" (quoted to this customer\n'
+        'on this project), "customer_map" (a code this customer used before) or\n'
+        '"catalogue" (a near match in the catalogue).\n'
+        "\n"
+        "Return STRICT JSON only:\n"
+        '{"matches": [{"line_no": 4, "product_code": "SRTWC8518-SH",\n'
+        '              "confidence": "high", "options": []}]}\n'
+        "\n"
+        "Rules:\n"
+        "- One entry per input line, same line_no.\n"
+        "- \"product_code\" is ONE code copied exactly from THAT line's candidates (its own\n"
+        "  list or candidates_for_every_line), or null. Never a code offered only to another\n"
+        "  line, never a code you made up,\n"
+        "  never a corrected spelling.\n"
+        "- Read the customer's text the way a person would. Ignore brand words (SORENTO,\n"
+        "  CABANA), a customer's own prefix stuck on the front of our code (for example\n"
+        '  "BBT" in "BBTCKS903"), stray spaces inside a code ("SRTWC8518 -SH") and\n'
+        '  trailing marks such as "*" or "**".\n'
+        '- When two or more candidates fit equally well, set "product_code" to null and\n'
+        "  list them in \"options\" (codes from the line's candidates only). Otherwise\n"
+        '  "options" may list the close alternatives, or be empty.\n'
+        "- A VARIANT (a size or finish, e.g. 35MM, or a colour) named in the description\n"
+        "  that only ONE candidate code carries, while another candidate is the bare code\n"
+        "  without it: do not pick. Set \"product_code\" to null and list both codes in\n"
+        "  \"options\" for a person to choose.\n"
+        '- "confidence": "high" when the code is plainly the same product, "medium" when\n'
+        '  it is very likely, "low" when it is a guess. When nothing fits, product_code\n'
+        '  null, options empty, confidence "low".\n'
+    )
+
+
 def _po_extractor_fallback() -> str:
     """One page of a scanned customer purchase order to structured lines and
     handwriting. Measured against the client's own scan before the slice was sized:
@@ -750,7 +802,8 @@ def _po_extractor_fallback() -> str:
         '     "kind": "amend_code",\n'
         '     "proposed_code": "SRTWC8608-RL",\n'
         '     "successor_po_number": null}\n'
-        "  ]\n"
+        "  ],\n"
+        '  "printed_total": 1810640.62\n'
         "}\n"
         "\n"
         "Rules:\n"
@@ -801,6 +854,9 @@ def _po_extractor_fallback() -> str:
         "    guessing: a wrong cancel_line moves money.\n"
         '- "proposed_code" and "successor_po_number" are null unless the note names one.\n'
         "- Numbers: no thousands separators, a dot decimal.\n"
+        '- "printed_total" is the GRAND TOTAL of the whole order exactly as printed on this\n'
+        "  page (the final total, not a page subtotal, not a line amount). Null when this\n"
+        "  page prints no grand total. Never add the lines up yourself.\n"
         "- If a field is absent on this page use null. Report ONLY lines visible on THIS page.\n"
     )
 
@@ -1349,6 +1405,16 @@ PROMPT_KEYS: dict[str, PromptKeySpec] = {
         # `document_extraction._render_page_prompt`.
         variables=["page_no", "page_count", "page_text"],
         fallback=_po_extractor_fallback,
+    ),
+    # PO-UPLOAD-MATCHING: one text-only call per batch of at most 40 unmatched PO lines,
+    # choosing among candidates built in code (`project_po_matching.ask_line_matcher`).
+    "po_line_matcher": PromptKeySpec(
+        name="po_line_matcher",
+        role="PO line matcher - pick each unmatched PO line's product from its candidates",
+        active=True,
+        activates_in=None,
+        variables=[],
+        fallback=_po_line_matcher_fallback,
     ),
     "schedule_extractor": PromptKeySpec(
         name="schedule_extractor",

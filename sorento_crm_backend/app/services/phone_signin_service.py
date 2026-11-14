@@ -501,6 +501,8 @@ def check_code(db: Session, contact: Optional[RespondContact], code: str, *, pur
             PortalOtpCode.contact_id == (contact.id if contact is not None else NIL_OTP_ID),
             PortalOtpCode.consumed_at.is_(None),
             PortalOtpCode.purpose == purpose,
+            # A future-stamped row from before the OTP clock fix never shadows the newest code.
+            PortalOtpCode.created_at <= _utcnow(),
         )
         .order_by(PortalOtpCode.created_at.desc())
         .first()

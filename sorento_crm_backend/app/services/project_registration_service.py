@@ -724,6 +724,9 @@ def portal_submit(
         project.decided_at = None
         project.decided_by = None
         project.owner_user_id = _linked_user_id(db, token.contact_id)
+        if project.primary_owner_user_id is None:
+            # A portal registration has no owner until one is set: the first owner is the primary.
+            project.primary_owner_user_id = project.owner_user_id
         db.commit()
         db.refresh(project)
         db.refresh(profile)
@@ -794,6 +797,7 @@ def crm_register(
                 outcome=OUTCOME_OPEN,
                 approval_state=APPROVAL_DRAFT,
                 owner_user_id=user_id,
+                primary_owner_user_id=user_id,
                 created_by=user_id,
             )
             db.add(project)
@@ -1130,6 +1134,8 @@ def approve(
                 if payload.get(key):
                     setattr(project, key, payload[key])
             project.owner_user_id = owner
+            if project.primary_owner_user_id is None:
+                project.primary_owner_user_id = owner
             project.approval_state = APPROVAL_APPROVED
             project.reject_reason = None
             project.decided_at = _now()

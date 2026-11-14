@@ -45,29 +45,29 @@ def test_title_digits_in_text_are_not_reported_or_redacted():
     """F1: the title repeated verbatim is data text."""
     bad, reply = _check_with_ledger(f"The project is {TITLE}.", _projects())
     assert bad == []
-    assert TITLE in reply and "(not verified)" not in reply
+    assert TITLE in reply and "could not check" not in reply
 
 
 def test_title_in_other_letter_case_is_still_data_text():
     """F1: letter case does not matter."""
     bad, reply = _check_with_ledger("The project is zzt browser 1613 recheck.", _projects())
     assert bad == []
-    assert "zzt browser 1613 recheck" in reply and "(not verified)" not in reply
+    assert "zzt browser 1613 recheck" in reply and "could not check" not in reply
 
 
 def test_name_key_value_is_data_text_too():
     """F1: the key `name` is covered the same way."""
     bad, reply = _check_with_ledger("It is ZZT browser 1613 recheck.", _projects("name"))
     assert bad == []
-    assert TITLE in reply and "(not verified)" not in reply
+    assert TITLE in reply and "could not check" not in reply
 
 
 def test_standalone_figure_is_still_reported_and_only_it_is_redacted():
     """F1: a bad 1613 elsewhere is reported and redacted, the title's 1613 is kept."""
-    bad, reply = _check_with_ledger(f"{TITLE} has 1613 units.", _projects())
+    bad, reply = _check_with_ledger(f"The project is {TITLE}. It has 1613 units.", _projects())
     assert bad == ["1613 units"]  # `_figures` writes the figure with its unit word
     assert TITLE in reply
-    assert reply.count("(not verified)") == 1
+    assert reply.count("could not check") == 1
     assert "1613 units" not in reply
 
 
@@ -76,7 +76,7 @@ def test_name_like_value_still_never_backs_a_figure_elsewhere():
     data = {"data": [{"name": "Basin 600"}]}
     bad, reply = _check("There are 600 units.", data)
     assert bad == ["600 units"]
-    assert "600 units" not in reply and "(not verified)" in reply
+    assert "600 units" not in reply and "could not check" in reply
 
 
 def test_string_without_a_letter_is_a_plain_figure_source():
@@ -102,7 +102,7 @@ def test_rounded_figure_is_backed(text):
     """F2: a source rounded half up to the written decimals backs the figure."""
     bad, reply = _check(f"It took {text}.", SLA)
     assert bad == []
-    assert "(not verified)" not in reply
+    assert "could not check" not in reply
 
 
 @pytest.mark.parametrize("text,written", [
@@ -112,7 +112,7 @@ def test_wrongly_rounded_figure_is_reported_and_redacted(text, written):
     """F2: 3.456789 never backs 3.45, 3.47 or 4; 12.345678 never backs 12.4."""
     bad, reply = _check(f"It took {text}.", SLA)
     assert bad == [written]
-    assert "(not verified)" in reply
+    assert "could not check" in reply
 
 
 def test_whole_source_never_backs_extra_precision():
@@ -166,7 +166,7 @@ def test_data_string_does_not_cover_a_longer_figure_to_its_right(value, key, tex
     """F1 edges: a data string is data text only where it stands whole (not followed by `.` or `,` and a digit)."""
     bad, reply = _edge(f"It costs {text} each.", {"data": [{key: value}]})
     assert bad == [written]
-    assert written not in reply and "(not verified)" in reply
+    assert written not in reply and "could not check" in reply
 
 
 def test_title_does_not_cover_a_thousands_figure_to_its_right():
@@ -195,15 +195,15 @@ def test_whole_title_with_punctuation_and_spaces_around_it_is_still_protected():
     """F1 edges guard: punctuation and spaces around the title are fine."""
     bad, reply = _edge(f"Project {TITLE}, done.", _projects())
     assert bad == []
-    assert TITLE in reply and "(not verified)" not in reply
+    assert TITLE in reply and "could not check" not in reply
 
 
 def test_redaction_keeps_the_title_when_the_standalone_figure_is_written_alike():
     """F1 redaction: "1613" standing alone is redacted once, the title's own 1613 stays."""
-    bad, reply = _edge(f"{TITLE} has 1613 open.", _projects())
+    bad, reply = _edge(f"The project is {TITLE}. It has 1613 open.", _projects())
     assert bad == ["1613"]
     assert TITLE in reply
-    assert reply.count("(not verified)") == 1
+    assert reply.count("could not check") == 1
 
 
 def test_data_text_blanker_is_none_when_the_answer_repeats_no_data_string():

@@ -333,6 +333,15 @@ def tool_schemas(tools: list[ToolDef], catalog: dict[str, dict]) -> list[dict]:
         # The model never chooses the view: dispatch always sends render.
         params["properties"] = {k: v for k, v in params["properties"].items() if k != VIEW_PARAM}
         params["required"] = [r for r in params.get("required") or [] if r != VIEW_PARAM]
+        self_key = SELF_ID_ARGS.get(tool.name)
+        if self_key and isinstance(params["properties"].get(self_key), dict):
+            # A copy: the property dict is the cached catalogue's own (`mcp_schema_to_openai_tool` copies shallowly).
+            prop = params["properties"][self_key] = dict(params["properties"][self_key])
+            prop["description"] = (str(prop.get("description") or "").rstrip() + SELF_HINT).strip()
+            schema["function"]["description"] += SELF_TOOL_NOTE.format(key=self_key)
+        if tool.name in COUNT_TOOLS:
+            schema["function"]["description"] += COUNT_NOTE
+            params["properties"][COUNTS_ONLY] = dict(COUNTS_ONLY_SCHEMA)
         out.append(schema)
     return out
 
@@ -768,6 +777,135 @@ def _clean_ids(args: dict) -> tuple[dict, ToolResult | None]:
         elif key.endswith("_ids") and isinstance(value, list):
             out[key] = [v.strip() if isinstance(v, str) else v for v in value]
     return out, None
+
+
+#: AGENT-PROJECT-SCOPE: an id argument that may name the asker as "me", so "my projects" needs no resolve
+#: round (crew trace 282dec26: the name was refused and crm_resolve was not offered). Tool -> argument.
+SELF_ID_ARGS: dict[str, str] = {"crm_projects_list": "owner_user_ids"}
+SELF_WORD = "me"
+SELF_HINT = ' Write "me" for the person asking ("my projects"); it is sent as their own user id.'
+#: The catalogue's description tells other callers a name is resolved for them; on this seam a name is refused.
+SELF_TOOL_NOTE = (
+    ' HERE: `{key}` takes "me" for the person asking, or ids from crm_resolve; a name is refused.'
+)
+
+
+#: Crew pass on 2343: "who owns them" was answered by the model counting rows, and 16 full rows do not fit the
+#: result cap, so it counted the rows it could see. The count per owner is computed here from every row.
+COUNT_TOOLS = frozenset({"crm_projects_list"})
+COUNT_NOTE = (
+    ' The result carries `count_by_owner` (every matching project) and `your_projects` (how many are the asker\'s):'
+    ' quote them, never count the rows yourself. A row is the asker\'s only when `owner_is_viewer` is true.'
+    ' `quotation_document_count` is how many quotation and proposal documents a project has: it answers whether a'
+    ' project has quotations without another read.'
+)
+NO_OWNER = "No owner"
+COUNTS_ONLY = "counts_only"
+COUNTS_ONLY_SCHEMA = {
+    "type": "boolean",
+    "description": (
+        'true for "how many" or "who owns them": returns the total, count_by_owner and your_projects over every '
+        "matching project, and no rows. Leave it out only when the user asks to see the projects themselves."
+    ),
+}
+
+
+def _truthy(value: Any) -> bool:
+    return value is True or (isinstance(value, str) and value.strip().lower() in ("true", "1", "yes"))
+
+
+#: An empty read of the asker's own rows ("me"): that IS the answer about their own projects (crew pass on 6aef629d:
+#: the model fell back to an unfiltered list and called another owner's rows the asker's).
+NONE_OF_YOURS = (
+    "The person asking owns none: that is the answer about their own projects. Do not answer it from another read "
+    "or from the screen."
+)
+
+
+NONE_OF_YOURS_MATCH = "None of the asker's projects match this read (they may own others that do not)."
+#: Arguments that page or order a read and narrow nothing.
+_NOT_FILTERS = frozenset({"limit", "page", "sort", "dir"})
+
+
+def _empty_message(name: str, filters: dict, self_ids: set[str]) -> str:
+    """The line for an empty read. A "me" read with no other filter says the asker owns none; one that another filter
+    emptied ("my won projects") says none of theirs match, never that they own none (review round 6)."""
+    if not self_ids or SELF_ID_ARGS.get(name) not in filters:
+        return NO_ROWS_MESSAGE
+    others = [k for k, v in filters.items() if k != SELF_ID_ARGS[name] and k not in _NOT_FILTERS and v not in (None, "", [], False)]
+    return NONE_OF_YOURS_MATCH if others else NONE_OF_YOURS
+
+
+def with_owner_counts(name: str, data: Any, *, filtered: bool = False) -> Any:
+    """`data` with `count_by_owner` and `your_projects` (rows whose `owner_is_viewer` is true) when the page holds every
+    matching row, else a note saying how to get them. A read already filtered by owner gets neither: its one owner
+    needs no breakdown, and a breakdown is a figure nobody asked for."""
+    if name not in COUNT_TOOLS or filtered or not isinstance(data, dict) or not isinstance(data.get("data"), list):
+        return data
+    rows = [r for r in data["data"] if isinstance(r, dict)]
+    pagination = data.get("pagination") if isinstance(data.get("pagination"), dict) else {}
+    total = pagination.get("total", data.get("total"))
+    if not isinstance(total, int) or isinstance(total, bool) or len(rows) < total:
+        from app.schemas.common import MAX_PAGE_LIMIT
+
+        ask = (
+            f"call again with limit={total} to count them by owner"
+            if isinstance(total, int) and total <= MAX_PAGE_LIMIT
+            else "narrow the read with a filter to count them by owner"
+        )
+        return {**data, "count_by_owner_note": f"{total} projects match but this page holds {len(rows)}: {ask}."}
+    counts: dict[str, int] = {}
+    for row in rows:
+        owner = str(row.get("owner_name") or "").strip() or NO_OWNER
+        counts[owner] = counts.get(owner, 0) + 1
+    ordered = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    return {
+        **data,
+        "count_by_owner": [{"owner": o, "projects": n} for o, n in ordered],
+        "your_projects": sum(1 for row in rows if row.get("owner_is_viewer") is True),
+    }
+
+
+#: Crew pass on 2343: a project was named by its short name in one answer and its long legal title in the next.
+#: The model is handed one label, `name`, by the Projects list's rule (`project_service.project_display_name`).
+PROJECT_NAME_TOOLS = frozenset({"crm_projects_list", "crm_project_detail"})
+
+
+def _named_project(row: Any) -> Any:
+    if not isinstance(row, dict) or "title" not in row:
+        return row
+    from app.services.project_service import clean_project_name
+
+    out = {k: v for k, v in row.items() if k != "title"}
+    out["name"] = clean_project_name(row.get("name")) or (row.get("title") or "")
+    return out
+
+
+def with_project_names(name: str, data: Any) -> Any:
+    """Each project row with `name` as the Projects list shows it and no `title`, for a project tool."""
+    if name not in PROJECT_NAME_TOOLS or not isinstance(data, dict):
+        return data
+    if isinstance(data.get("data"), list):
+        return {**data, "data": [_named_project(r) for r in data["data"]]}
+    return _named_project(data)
+
+
+def _is_self(value: Any) -> bool:
+    return isinstance(value, str) and value.strip().lower() == SELF_WORD
+
+
+def _swap_self(name: str, args: dict, ctx: Any) -> tuple[dict, set[str]]:
+    """`args` with "me" in the tool's self argument replaced by the asker's user id, and that id as the one extra
+    id `_check_ids` may accept (the model never sees the asker's own id). Any other value is left for `_check_ids`.
+    The turn's own `seen` set is not replaced: the ids this call returns are collected into it."""
+    key = SELF_ID_ARGS.get(name)
+    if not key or key not in args or not getattr(ctx, "user_id", None):
+        return args, set()
+    values = _id_args({key: args[key]}).get(key, [])
+    if not any(_is_self(v) for v in values):
+        return args, set()
+    me = str(ctx.user_id)
+    return {**args, key: [me if _is_self(v) else v for v in values]}, {me.lower()}
 
 
 def _check_ids(args: dict, seen: set[str]) -> ToolResult | None:
@@ -1399,6 +1537,10 @@ def _dispatch_inner(
         return ToolResult("error", message=f"{name} is not available right now.")
     schema = meta.get("inputSchema") if isinstance(meta.get("inputSchema"), dict) else {}
     allowed = set((schema.get("properties") or {}).keys()) | set(GUARD_PARAMS) | {VIEW_PARAM}
+    # The agent seam's own mode, never sent to the route (crew live round 3: "who owns them" read every row, and
+    # the answer listed them all).
+    counts_only = name in COUNT_TOOLS and _truthy(args.get(COUNTS_ONLY))
+    args = {k: v for k, v in args.items() if k != COUNTS_ONLY} if name in COUNT_TOOLS else args
     if tool.name == GUIDES:
         # A model-supplied contact or space is dropped, never forwarded.
         args = {k: v for k, v in args.items() if k not in GUARD_PARAMS and k != VIEW_PARAM}
@@ -1439,7 +1581,8 @@ def _dispatch_inner(
         # Owner rule: the sales basis is never defaulted (an outstanding kind is a basis of its own).
         return ToolResult("invalid", message=SALES_BASIS_MESSAGE)
 
-    bad_id = _check_ids(args, seen)
+    args, self_ids = _swap_self(name, args, ctx)
+    bad_id = _check_ids(args, seen | self_ids)
     if bad_id is not None:
         return bad_id
 
@@ -1456,6 +1599,10 @@ def _dispatch_inner(
         clean[VIEW_PARAM] = "render"
 
     try:
+        if counts_only:
+            from app.schemas.common import MAX_PAGE_LIMIT
+
+            clean = {**{k: v for k, v in clean.items() if k != "page"}, "limit": MAX_PAGE_LIMIT}
         raw = call(name, clean)
     except ToolNotAllowed as exc:
         return ToolResult("denied", message=str(exc) or f"{name} is not allowed for this contact.")
@@ -1474,6 +1621,8 @@ def _dispatch_inner(
     failure = _body_failure(data, f"tool {name} user {ctx.user_id}")
     if failure is not None:
         return failure
+    # Before the cap below cuts rows: the counts are over every row the route returned.
+    data = with_owner_counts(name, with_project_names(name, data), filtered=bool(clean.get("owner_user_ids")))
     if tool.render:
         # Fail closed: a presenter tool's result that is not a render envelope has not been
         # through the presenter, so nothing in it can be trusted to be field-scoped.
@@ -1483,7 +1632,13 @@ def _dispatch_inner(
         axis = clean.get("group_by")
         drop_restricted_fields(data, set(ctx.grants), axis if isinstance(axis, str) else None)
     if _is_empty(data, tool.render):
-        return ToolResult("empty", data={"applied_filters": filters}, message=NO_ROWS_MESSAGE)
+        return ToolResult("empty", data={"applied_filters": filters}, message=_empty_message(name, filters, self_ids))
+    if counts_only and isinstance(data, dict):
+        pagination = data.get("pagination") if isinstance(data.get("pagination"), dict) else {}
+        data = {
+            "total": pagination.get("total", data.get("total")),
+            **{k: data[k] for k in ("count_by_owner", "your_projects", "count_by_owner_note") if k in data},
+        }
     data, more = cap_result(_tidy_read_data(data))
     _collect_uuids(data, seen)
     message = (
