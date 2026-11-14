@@ -1331,6 +1331,8 @@ class ProjectQuotationResponse(ProjectQuotationBase):
     document_id: Optional[str] = None
     document_no: Optional[str] = None
     document_kind: Optional[str] = None
+    # AGENT-PROPOSAL-INSIGHTS A4: the document creator's name (Prepared By), never the project owner.
+    prepared_by: Optional[str] = None
 
     version_count: int = 0
     # There is no `current_version_id` COLUMN (AC-E3a); this is computed as
@@ -2316,7 +2318,7 @@ class ProjectQuotationDocumentResponse(ProjectQuotationDocumentBase):
     document_no: str
     # What the customer quotes back: the number plus the revision they hold.
     our_ref: Optional[str] = None
-    # The project's salesperson (owner, else the creator), as the cover page prints it.
+    # Prepared By: the document's creator, never the project owner (owner, 11 Nov 2026).
     prepared_by: Optional[str] = None
 
     recipient_party_id: Optional[str] = None

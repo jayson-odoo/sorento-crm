@@ -6,6 +6,7 @@ import { toast } from '@/lib/toast';
 import {
   lookupSoLineAttachments,
   uploadSoLineAttachments,
+  type AttachmentTargetKind,
   type SoLineAttachmentsByLine,
 } from '../services/soLineAttachmentService';
 
@@ -21,14 +22,21 @@ const EMPTY: SoLineAttachmentsByLine = {};
 /** One lookup call for a whole grid's worth of core line ids (AC-U2) - never one per
  * row. `lineIds` is de-duplicated and order-independent, so a caller re-rendering with
  * the same set in a different order does not refetch. */
-export function useSoLineAttachmentLookup(lineIds: (string | null | undefined)[]) {
+export function useSoLineAttachmentLookup(
+  lineIds: (string | null | undefined)[],
+  kind: AttachmentTargetKind = 'sales_order_line',
+) {
   const ids = useMemo(
     () => Array.from(new Set(lineIds.filter((id): id is string => Boolean(id)))).sort(),
     [lineIds],
   );
   const query = useQuery({
-    queryKey: [...SO_LINE_ATTACHMENTS_KEY, ids],
-    queryFn: () => lookupSoLineAttachments(ids),
+    // The sales-order-line key stays exactly as it was; an OI row lookup adds its kind.
+    queryKey:
+      kind === 'sales_order_line'
+        ? [...SO_LINE_ATTACHMENTS_KEY, ids]
+        : [...SO_LINE_ATTACHMENTS_KEY, kind, ids],
+    queryFn: () => lookupSoLineAttachments(ids, kind),
     enabled: ids.length > 0,
   });
   return { ...query, data: query.data ?? EMPTY };
@@ -37,8 +45,18 @@ export function useSoLineAttachmentLookup(lineIds: (string | null | undefined)[]
 export function useUploadSoLineAttachments() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ lineId, files }: { lineId: string; files: File[] }) =>
-      uploadSoLineAttachments(lineId, files),
+    mutationFn: ({
+      lineId,
+      files,
+      kind = 'sales_order_line',
+    }: {
+      lineId: string;
+      files: File[];
+      kind?: AttachmentTargetKind;
+    }) =>
+      kind === 'sales_order_line'
+        ? uploadSoLineAttachments(lineId, files)
+        : uploadSoLineAttachments(lineId, files, kind),
     onSuccess: (_attachments, variables) => {
       toast.success(
         variables.files.length === 1 ? 'File added' : `${variables.files.length} files added`,

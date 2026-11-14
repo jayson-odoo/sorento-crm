@@ -3,7 +3,12 @@
 import Link from 'next/link';
 import { Card, CardHeader, CardHeading, CardTitle } from '@/components/ui/card';
 import { EventTimeline, type TimelineEvent } from '@/components/common/EventTimeline';
-import { formatDateInMalaysia } from '@/lib/helpers';
+import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
+import { formatMoneyExact } from '../../../_shared/lib/money';
+import {
+  isSparePartInquiry,
+  sparePartRequestStatusLabel,
+} from '../../../_shared/lib/sparePartRequest';
 import type { OrderInquiryHeaderDetail } from '../../../_shared/types/orderInquiry.types';
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
@@ -17,6 +22,81 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 function NotStated() {
   return <span className="font-normal text-muted-foreground">Not stated</span>;
+}
+
+/** What the Request and Approval cards read: the OI header on the OI page, the request's own
+ *  detail on its record page (`SparePartRequestRecord`). */
+export type SparePartGeneralFields = Pick<
+  OrderInquiryHeaderDetail,
+  | 'state'
+  | 'currency'
+  | 'needed_by'
+  | 'default_location'
+  | 'reason'
+  | 'requested_by_name'
+  | 'submitted_at'
+  | 'approved_at'
+  | 'approved_by_name'
+  | 'reject_reason'
+  | 'total'
+>;
+
+/** A spare part request's Request and Approval cards (UAC P4, G3). */
+export function SparePartRequestGeneralCards({ header }: { header: SparePartGeneralFields }) {
+  return (
+    <>
+      <Card>
+        <CardHeader>
+          <CardHeading>
+            <CardTitle>Request</CardTitle>
+          </CardHeading>
+        </CardHeader>
+        <section aria-label="Request" className="grid grid-cols-1 gap-4 p-4 sm:grid-cols-2">
+          <Field label="Requested by">{header.requested_by_name ?? <NotStated />}</Field>
+          <Field label="Needed by">
+            {header.needed_by ? formatDateInMalaysia(header.needed_by) : <NotStated />}
+          </Field>
+          <Field label="Currency">{header.currency ?? <NotStated />}</Field>
+          <Field label="Default location">{header.default_location ?? <NotStated />}</Field>
+          <Field label="Total">
+            {header.total != null ? formatMoneyExact(header.total, header.currency) : <NotStated />}
+          </Field>
+          <div className="min-w-0 sm:col-span-2">
+            <dt className="text-xs text-muted-foreground">Reason</dt>
+            <dd className="whitespace-pre-line break-words text-sm font-medium">
+              {header.reason ?? <NotStated />}
+            </dd>
+          </div>
+        </section>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardHeading>
+            <CardTitle>Approval</CardTitle>
+          </CardHeading>
+        </CardHeader>
+        <section aria-label="Approval" className="grid grid-cols-1 gap-4 p-4 sm:grid-cols-2">
+          <Field label="Status">{sparePartRequestStatusLabel(header.state)}</Field>
+          <Field label="Submitted at">
+            {header.submitted_at ? formatDateTimeInMalaysia(header.submitted_at) : <NotStated />}
+          </Field>
+          <Field label="Approved by">{header.approved_by_name ?? <NotStated />}</Field>
+          <Field label="Approved at">
+            {header.approved_at ? formatDateTimeInMalaysia(header.approved_at) : <NotStated />}
+          </Field>
+          {header.reject_reason ? (
+            <div className="min-w-0 sm:col-span-2">
+              <dt className="text-xs text-muted-foreground">Reject reason</dt>
+              <dd className="whitespace-pre-line break-words text-sm font-medium">
+                {header.reject_reason}
+              </dd>
+            </div>
+          ) : null}
+        </section>
+      </Card>
+    </>
+  );
 }
 
 /**
@@ -36,6 +116,30 @@ export function OrderInquiryGeneralTab({ header }: { header: OrderInquiryHeaderD
       at: entry.at,
       tone: index === 0 ? 'current' : 'default',
     }));
+
+  const raiseHistory = (
+    <Card>
+      <CardHeader>
+        <CardHeading>
+          <CardTitle>Raise history</CardTitle>
+        </CardHeading>
+      </CardHeader>
+      <div className="p-4">
+        <EventTimeline events={events} emptyTitle="No raise recorded yet" />
+      </div>
+    </Card>
+  );
+
+  // SPARE-PART-ORDER-REQUEST (UAC P4): a spare part request has no sales order or
+  // customer; its General tab reads the request and its approval in the same card layout.
+  if (isSparePartInquiry(header)) {
+    return (
+      <div className="space-y-4">
+        <SparePartRequestGeneralCards header={header} />
+        {raiseHistory}
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -83,16 +187,7 @@ export function OrderInquiryGeneralTab({ header }: { header: OrderInquiryHeaderD
         </section>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardHeading>
-            <CardTitle>Raise history</CardTitle>
-          </CardHeading>
-        </CardHeader>
-        <div className="p-4">
-          <EventTimeline events={events} emptyTitle="No raise recorded yet" />
-        </div>
-      </Card>
+      {raiseHistory}
     </div>
   );
 }
