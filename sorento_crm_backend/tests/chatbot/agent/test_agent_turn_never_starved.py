@@ -109,3 +109,51 @@ def test_T4_the_final_answer_itself_failing_is_still_an_error(db, contact, timeo
     assert result.status == "failed", (result.status, result.reply_text)
     assert result.reply_text == "The agent could not answer: the model provider failed."
     assert _offered(provider.seen[-1]) == ["answer"]
+
+
+# ------------------------------------------------------------------ review round: 12c on a staff panel turn
+
+
+def _staff_run(db, contact, provider, **kw):
+    """The same turn on the staff panel: `forced_final` then answers "What I read: ..." when the final call fails,
+    instead of raising, so the outcome is set by the round path that called it."""
+    from tests.chatbot.agent._ported_reads_support import panel_turn
+
+    with panel_turn(contact["user_id"]):
+        return run(db, contact, provider, Mcp(), **kw)
+
+
+def _ended_in_error(result) -> None:
+    """12c: the final answer failed, so the turn is an error, as the old round-timeout path set it; never
+    answered (an answered turn can also arm the knowledge-miss offer)."""
+    assert result.status == "limited", (result.status, result.limit_hit, result.reply_text)
+    assert result.limit_hit == "error", (result.status, result.limit_hit, result.reply_text)
+
+
+def test_T4b_staff_panel_too_little_time_then_the_final_answer_fails_is_an_error(db, contact):
+    """12a then 12c: too little time left for a round, the final answer call fails."""
+    from app.services.chatbot.agent import loop
+
+    budget = loop.budgets_from_settings(db).max_seconds
+    left = loop.ROUND_MIN_SECONDS - 0.5
+    clock = {"t": 0.0}
+    provider = ScriptedProvider(
+        [asks(call()), TimeoutError("slow again")],
+        on_call=lambda n: clock.__setitem__("t", budget - left) if n == 1 else None,
+    )
+    result = _staff_run(db, contact, provider, clock=lambda: clock["t"])
+
+    assert _offered(provider.seen[-1]) == ["answer"]
+    assert "could not finish the answer" in result.reply_text, result.reply_text
+    _ended_in_error(result)
+
+
+@pytest.mark.parametrize("timeout", _timeouts(), ids=["TimedOut", "TimeoutError"])
+def test_T4c_staff_panel_round_timeout_then_the_final_answer_fails_is_an_error(db, contact, timeout):
+    """12b then 12c: a round times out with a tool result in hand, the final answer call fails too."""
+    provider = ScriptedProvider([asks(call()), timeout, TimeoutError("slow again")])
+    result = _staff_run(db, contact, provider)
+
+    assert _offered(provider.seen[-1]) == ["answer"]
+    assert "could not finish the answer" in result.reply_text, result.reply_text
+    _ended_in_error(result)
