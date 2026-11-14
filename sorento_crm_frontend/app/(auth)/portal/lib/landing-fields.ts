@@ -68,6 +68,11 @@ const KIND_FIELDS: Record<PortalLandingKind, LandingField[]> = {
     { key: 'customer_name', label: 'Customer', type: 'text' },
     { key: 'project_title', label: 'Project', type: 'text' },
   ],
+  // Not offered on the landing until its portal pages ship (PORTAL_PAGES_PENDING, UAC I6).
+  order_change_notice: [
+    { key: 'customer_name', label: 'Customer', type: 'text' },
+    { key: 'customer_po_no', label: 'Customer PO', type: 'text' },
+  ],
   sales_opportunity: [
     { key: 'title', label: 'Title', type: 'text' },
     { key: 'customer_name', label: 'Customer or prospect', type: 'text' },

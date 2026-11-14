@@ -295,6 +295,19 @@ PERMISSION_REGISTRY.extend([
     {"slug": "procurement.new_product_applications.approve", "name": "Approve New Product Applications", "description": "Approve or reject a submitted new product application, and revise one. Approvers are told when one is submitted."},
     {"slug": "procurement.new_product_applications.open_code", "name": "Open Codes for New Product Applications", "description": "Purchasing grant: link each line of an approved application to the product AutoCount sent, or close it as not opening. Told when one is approved."},
 ])
+# OCN-ORDER-CHANGE-NOTICE: the order change notice, on the purchase request's approval chain.
+# Seeded and granted (from the matching purchase request slug holders) by migration
+# `ocn_0001_order_change_notice`.
+PERMISSION_REGISTRY.extend([
+    {"slug": "procurement.order_change_notices.view", "name": "View Order Change Notices", "description": "See every order change notice of your companies."},
+    {"slug": "procurement.order_change_notices.view_own", "name": "View Own Order Change Notices", "description": "See only the order change notices you raised, are the customer service in charge of, or are the user linked to the Requested by contact of. Ignored when View Order Change Notices is also held."},
+    {"slug": "procurement.order_change_notices.create", "name": "Create Order Change Notices", "description": "Raise, edit and submit your own order change notices."},
+    {"slug": "procurement.order_change_notices.edit", "name": "Edit Order Change Notices", "description": "Send an order change notice for approval or back to its raiser, edit, void or revise it. Includes seeing every notice."},
+    {"slug": "procurement.order_change_notices.delete", "name": "Delete Order Change Notices", "description": "Delete an order change notice."},
+    {"slug": "procurement.order_change_notices.approve", "name": "Approve Order Change Notices", "description": "Approve or reject an order change notice that is pending approval. Includes seeing every notice."},
+    {"slug": "procurement.order_change_notices.process", "name": "Mark Order Change Notices Done", "description": "Customer service: mark an approved order change notice done. Includes seeing every notice."},
+    {"slug": "procurement.order_change_notices.report", "name": "Order Change Notice Report", "description": "Read the order change notice report."},
+])
 PERMISSION_REGISTRY.extend(_crud("procurement", "purchase_requests", "Purchase Requests"))
 PERMISSION_REGISTRY.extend(_crud("procurement", "sponsorship_forms", "Sponsorship Forms"))
 PERMISSION_REGISTRY.extend([

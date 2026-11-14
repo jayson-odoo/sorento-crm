@@ -6,7 +6,7 @@
  * shows the same fields in the same order.
  */
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Loader2, LoaderCircleIcon, Plus } from 'lucide-react';
 import { toast } from '@/lib/toast';
@@ -17,9 +17,9 @@ import { Input } from '@/components/ui/input';
 import { DatePicker, parseDateInput, toIsoDate } from '@/components/ui/date-picker';
 import type { SubmissionPaths } from '@/app/(auth)/portal/lib/submission-client';
 import { myRequestsPaths } from '@/services/myRequestsSubmissionClient';
-import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
+import { DocField, ReadValue } from '@/components/common/DocField';
 import { SampleRequestLines } from '@/components/common/SampleRequestLines';
 import { SampleRequestFooterFields } from '@/components/common/SampleRequestFooterFields';
 import {
@@ -30,7 +30,6 @@ import { useSampleRequestPrefill } from '@/hooks/useSampleRequestPrefill';
 import { AsyncCombobox } from '@/app/(auth)/portal/components/AsyncCombobox';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
-import { cn } from '@/lib/utils';
 import { SampleRequestError } from '@/types/sampleRequest';
 import {
   EMPTY_FORM,
@@ -62,38 +61,6 @@ import {
 } from '../services/sampleRequestService';
 
 const BASE_PATH = '/project-sales/sample-requests';
-
-function DocField({
-  label,
-  htmlFor,
-  className,
-  error,
-  children,
-}: {
-  label: string;
-  htmlFor?: string;
-  className?: string;
-  error?: string;
-  children: ReactNode;
-}) {
-  return (
-    <div className={cn('min-w-0', className)}>
-      {htmlFor ? (
-        <Label htmlFor={htmlFor} className="text-sm font-normal text-muted-foreground">
-          {label}
-        </Label>
-      ) : (
-        <p className="text-sm text-muted-foreground">{label}</p>
-      )}
-      <div className="mt-1.5">{children}</div>
-      {error && <p className="mt-1 text-xs text-destructive">{error}</p>}
-    </div>
-  );
-}
-
-const ReadValue = ({ children }: { children: ReactNode }) => (
-  <p className="min-h-9 break-words py-2 text-sm">{children || '-'}</p>
-);
 
 interface SampleRequestFormProps {
   /** Edit mode: the draft to change. */

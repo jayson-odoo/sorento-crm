@@ -20,7 +20,7 @@ import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from '@/lib/toast';
-import { orderLandingKinds } from '@/lib/portal-form-kinds';
+import { PORTAL_PAGES_PENDING, orderLandingKinds } from '@/lib/portal-form-kinds';
 import {
   LANDING_KINDS,
   LANDING_LABELS,
@@ -63,7 +63,8 @@ const WA_NO_FORMS_TEXT = 'Hi, I would like to submit a form.';
  */
 function landingKindsFor(contact: PortalContact | null): PortalLandingKind[] {
   const visible = contact?.visible_form_types ?? [];
-  return orderLandingKinds(visible);
+  // A kind whose portal pages have not shipped is never offered (UAC I6), even when visible.
+  return orderLandingKinds(visible).filter((k) => !PORTAL_PAGES_PENDING.includes(k));
 }
 
 const EMPTY_LISTS: Record<PortalLandingKind, PortalSubmissionSummary[]> = {
@@ -75,6 +76,7 @@ const EMPTY_LISTS: Record<PortalLandingKind, PortalSubmissionSummary[]> = {
   price_tag_request: [],
   sample_request: [],
   new_product_application: [],
+  order_change_notice: [],
   sales_opportunity: [],
   customer_asks: [],
   conversation: [],
@@ -344,6 +346,7 @@ export function PortalLanding({ slug, embedded = false }: { slug?: string; embed
       price_tag_request: 0,
       sample_request: 0,
       new_product_application: 0,
+      order_change_notice: 0,
       sales_opportunity: 0,
       customer_asks: 0,
       conversation: 0,
