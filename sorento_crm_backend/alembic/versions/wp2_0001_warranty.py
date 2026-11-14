@@ -9,7 +9,7 @@ touched.
 - The v15 policy seed (kinds, defect set, rules) and each company's v15 policy, idempotent.
 
 Revision ID: wp2_0001_warranty
-Revises: ptag_0023_line_package
+Revises: ocn_0001_order_change_notice
 Create Date: 2026-11-13
 """
 import sqlalchemy as sa
@@ -17,7 +17,7 @@ from alembic import op
 from sqlalchemy.orm import Session
 
 revision = "wp2_0001_warranty"
-down_revision = "ptag_0023_line_package"
+down_revision = "ocn_0001_order_change_notice"
 branch_labels = None
 depends_on = None
 
