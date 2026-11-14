@@ -551,7 +551,7 @@ function SingleModeDialog({
                 )}
               />
               {stateRef.current.showErrors && row.getIsSelected() && stateRef.current.rowError(row.original) ? (
-                <p className="mt-1 truncate text-xs text-destructive" role="alert">
+                <p className="mt-1 truncate text-xs text-destructive" role="alert" title={stateRef.current.rowError(row.original)}>
                   {stateRef.current.rowError(row.original)}
                 </p>
               ) : null}
@@ -998,7 +998,7 @@ function ManageDialog({
                   }}
                 />
                 {stateRef.current.showErrors && stateRef.current.effective(r) && stateRef.current.rowError(r) ? (
-                  <p className="mt-1 truncate text-xs text-destructive" role="alert">
+                  <p className="mt-1 truncate text-xs text-destructive" role="alert" title={stateRef.current.rowError(r)}>
                     {stateRef.current.rowError(r)}
                   </p>
                 ) : null}
@@ -1052,7 +1052,7 @@ function ManageDialog({
                 options={options}
               />
               {stateRef.current.showErrors && stateRef.current.effective(r) && stateRef.current.rowError(r) ? (
-                <p className="mt-1 truncate text-xs text-destructive" role="alert">
+                <p className="mt-1 truncate text-xs text-destructive" role="alert" title={stateRef.current.rowError(r)}>
                   {stateRef.current.rowError(r)}
                 </p>
               ) : null}

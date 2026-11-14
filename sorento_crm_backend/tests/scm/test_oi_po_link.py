@@ -349,6 +349,21 @@ def test_oi_link_refuses_a_po_line_of_another_product_and_sends_nothing(scm_app,
     assert not [r for r in fake_ss.calls if r.url.path in (PO_LINKS, BATCH, UNLINK)]
 
 
+def test_oi_change_to_a_po_line_of_another_product_is_refused_and_sends_nothing(scm_app, fake_ss):
+    """AC-HT1-b on /change (reviewer, 14 Nov): the SO line of product A, covered by one PO line of
+    A, cannot be changed to product B's PO line; refused before the unlink half is sent."""
+    w = _add_second_product(_oi_world(scm_app))
+    _po_line(w["db"], w["product"], w["hq"], qty=20, so_ref=w["so_line"].source_ref, doc_key=12100, dtl_key=12101)
+    w["db"].flush()
+    resp = w["c"].post(f"{OI}/po-link/change", json={
+        "row_ids": _ids(w, "a", "b2"),
+        "changes": [{"sales_order_line_id": w["so_line"].id, "po_line_id": w["po_line_b"].id}],
+    })
+    assert resp.status_code == 422, resp.text
+    assert "different product" in resp.text and w["po_b"].po_number in resp.text
+    assert not [r for r in fake_ss.calls if r.url.path in (PO_LINKS, BATCH, UNLINK)]
+
+
 def test_oi_options_with_only_rows_outside_autocount_are_refused(scm_app, fake_ss):
     w = _oi_world(scm_app)
     resp = w["c"].post(f"{OI}/po-link/options", json={"row_ids": _ids(w, "none")})
