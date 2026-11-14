@@ -3,6 +3,7 @@ import { toast } from '@/lib/toast';
 import {
   DealerAccessGrantError,
   grant,
+  retryRespond,
   updatePerson,
   type DealerAccessGrantBody,
   type DealerAccessUpdateBody,
@@ -34,6 +35,21 @@ export function useDealerAccessUpdate() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: DEALER_ACCESS_KEY });
       toast.success('Access updated');
+    },
+  });
+}
+
+/** "Try again in Respond.io" (N5.5). A Respond.io failure is an answer the caller shows, not a toast. */
+export function useDealerAccessRespondRetry() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (contactId: string) => retryRespond(contactId),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: DEALER_ACCESS_KEY });
+      if (result.respond === 'ok') toast.success('Now in Respond.io');
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || 'Failed to reach Respond.io');
     },
   });
 }
