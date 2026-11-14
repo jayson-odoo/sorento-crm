@@ -57,7 +57,9 @@ When the typed code is close to a set but not the same:
 When a dealer types a set WITH a quantity (`CWC604-P-RL x 2`), the bot answers each part of the set at that
 quantity, one line per part, the same way it answers a single code ("CWCX604-P-RL x 2: Got stock.", "CWCY604 x 2: Only
 1 got stock."). A part that counts more than once in the set is asked at that multiple. A part also typed on its own in
-the same message is asked at the total. With no quantity, the bot still asks how many units are needed.
+the same message is asked at the total. With no quantity, the bot still asks how many units are needed; one number in
+reply (for example "4") counts for every part of that set. After the parts of one set were answered, a new number on
+its own ("4") asks again for every part at that quantity.
 
 Picking a set gives the same answer as typing the set code. A set with a member the dealer may not see is never
 offered or answered.
