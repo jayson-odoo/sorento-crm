@@ -4,7 +4,7 @@ Staff copy for the project spec sheet. Nullable; the spec sheet falls back to
 `products.description` when it is empty. Additive only.
 
 Revision ID: ssd_0001_product_spec_desc
-Revises: plr_0001_primary_owner
+Revises: srv2_0003_contact_phone_width
 Create Date: 2026-11-11
 """
 from __future__ import annotations
@@ -12,7 +12,7 @@ from __future__ import annotations
 from alembic import op
 
 revision = "ssd_0001_product_spec_desc"
-down_revision = "plr_0001_primary_owner"
+down_revision = "srv2_0003_contact_phone_width"
 branch_labels = None
 depends_on = None
 
