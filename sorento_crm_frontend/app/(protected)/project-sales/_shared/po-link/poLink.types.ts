@@ -45,6 +45,12 @@ export interface PoLinkSkippedRow {
   inquiry_no: string | null;
   item_code: string | null;
   reason: string;
+  /** The CRM copy's own values (null when the row has no CRM sales order line). */
+  so_number?: string | null;
+  line_no?: number | null;
+  location_code?: string | null;
+  delivery_date?: string | null;
+  open_qty?: number | null;
 }
 
 /** Options of ticked Order Inquiry rows: Stock Debt's shape plus the lines and the left-out rows. */

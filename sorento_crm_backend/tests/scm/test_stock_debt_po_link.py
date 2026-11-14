@@ -261,33 +261,58 @@ def test_options_list_open_unlinked_po_lines_with_po_qty_and_free(scm_app, fake_
     assert by_qty[30]["free_qty"] == 20
 
 
-def test_capabilities_come_from_ss_with_plain_reasons(scm_app, fake_ss):
+def test_options_make_no_call_to_the_shared_service(scm_app, fake_ss):
+    """B-1 (rewrites test_capabilities_come_from_ss_with_plain_reasons): the popup reads CRM tables only."""
     w = _world(scm_app, fake_ss)
-    caps = w["c"].get(_url(w)).json()["capabilities"]
-    assert caps["split_link"] == {"enabled": True, "reason": None}
-    assert caps["link_row"] == {"enabled": False, "reason": "Waiting for AutoCount"}
-    assert caps["unlink_row"]["reason"] == "Waiting for AutoCount"
-    assert caps["relink_row"]["enabled"] is False
-    sent = [r for r in fake_ss.calls if r.url.path.endswith("write-capabilities")]
-    assert sent and sent[0].url.params["companyCode"]
-    assert sent[0].headers["X-API-Key"] == "fxa_link_test"
+    assert w["c"].get(_url(w)).status_code == 200
+    assert fake_ss.calls == []
 
 
-def test_writes_switched_off_reads_as_switched_off_here(scm_app, fake_ss):
+def test_options_capabilities_are_all_enabled_whatever_the_feed_says(scm_app, fake_ss):
+    """B-1/B-2 (rewrites test_writes_switched_off_reads_as_switched_off_here): the feed is ignored."""
     w = _world(scm_app, fake_ss)
     fake_ss.answers["/api/v1/autocount/write-capabilities"] = (200, {"capabilities": [
         {**e, "enabled": False, "reasonCode": "WRITE_NOT_ALLOWED"} for e in ALL_ON
     ]})
-    caps = w["c"].get(_url(w)).json()["capabilities"]
-    assert caps["split_link"] == {"enabled": False, "reason": "Changes to AutoCount are switched off here"}
+    resp = w["c"].get(_url(w))
+    assert resp.status_code == 200, resp.text
+    caps = resp.json()["capabilities"]
+    assert set(caps) >= {"split_link", "link_row", "unlink_row", "relink_row"}
+    assert all(v == {"enabled": True, "reason": None} for v in caps.values()), caps
+    assert fake_ss.calls == []
 
 
-def test_ss_unreachable_disables_every_action(scm_app, fake_ss):
+@pytest.mark.parametrize("code", ["VENDOR_UNSUPPORTED", "WRITE_NOT_ALLOWED"])
+def test_a_save_the_shared_service_refuses_answers_refused_with_its_code(scm_app, fake_ss, code):
+    """B-3 (rewrites test_writes_switched_off_reads_as_switched_off_here): the screen words the code."""
     w = _world(scm_app, fake_ss)
-    fake_ss.answers["/api/v1/autocount/write-capabilities"] = (500, {"code": "INTERNAL", "message": "x"})
-    caps = w["c"].get(_url(w)).json()["capabilities"]
-    assert all(not v["enabled"] for v in caps.values())
-    assert caps["split_link"]["reason"] == "Could not reach AutoCount"
+    fake_ss.answers["/api/v1/autocount/po-links"] = (409, {
+        "operationId": None, "outcome": "refused", "errorCode": code, "message": "", "document": None,
+    })
+    resp = w["c"].post(_url(w, "/link"), json={"lines": [
+        {"sales_order_line_id": w["so_line"].id, "po_line_id": w["po_line"].id, "qty": 120},
+    ]})
+    assert resp.status_code == 200, resp.text
+    (result,) = resp.json()["results"]
+    assert result["outcome"] == "refused"
+    assert result["error_code"] == code
+
+
+def test_ss_unreachable_at_save_answers_vendor_error_in_plain_words(scm_app, fake_ss):
+    """B-3 (rewrites test_ss_unreachable_disables_every_action): unreachable is met at Save, not at open."""
+    w = _world(scm_app, fake_ss)
+
+    def down(request):
+        raise httpx.ConnectError("down", request=request)
+
+    fake_ss.answers["/api/v1/autocount/po-links"] = down
+    resp = w["c"].post(_url(w, "/link"), json={"lines": [
+        {"sales_order_line_id": w["so_line"].id, "po_line_id": w["po_line"].id, "qty": 120},
+    ]})
+    assert resp.status_code == 200, resp.text
+    (result,) = resp.json()["results"]
+    assert result["outcome"] == "vendor_error"
+    assert "Could not reach AutoCount" in result["message"]
 
 
 # --------------------------------------------------------------------------- link

@@ -30,7 +30,8 @@ It only appears once an admin has switched on the AutoCount link setting (see
 ## What the count means
 
 **n** is the number of ticked rows whose sales order line is already in AutoCount. When some are
-not, it reads like **2 of 3**, and only the 2 are sent. The item is greyed with
+not, it reads like **2 of 3**, and only the 2 are sent. The other line still shows in the popup as its own row,
+marked **Not in AutoCount yet**, with nothing to pick for it. The item is greyed with
 **Not in AutoCount yet** when none of the ticked rows has its sales order line in AutoCount.
 
 ## What you see afterwards

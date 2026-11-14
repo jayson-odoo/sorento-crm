@@ -257,6 +257,83 @@ def test_oi_options_have_one_line_per_distinct_so_line_and_name_the_skipped_rows
     assert "Not in AutoCount yet" in skipped
 
 
+def _oi_options(w, *keys):
+    return w["c"].post(f"{OI}/po-link/options", json={"row_ids": _ids(w, *keys)})
+
+
+def test_oi_options_make_no_call_to_the_shared_service(scm_app, fake_ss):
+    """B-1: nothing is sent, even when the fake's capabilities answer says everything is off."""
+    w = _oi_world(scm_app)
+    fake_ss.answers["/api/v1/autocount/write-capabilities"] = (200, {"capabilities": [
+        {**e, "enabled": False, "reasonCode": "WRITE_NOT_ALLOWED"} for e in ALL_ON
+    ]})
+    assert _oi_options(w, "a", "b", "c").status_code == 200
+    assert fake_ss.calls == []
+
+
+def test_oi_options_capabilities_are_all_enabled_whatever_the_feed_says(scm_app, fake_ss):
+    """B-2."""
+    w = _oi_world(scm_app)
+    fake_ss.answers["/api/v1/autocount/write-capabilities"] = (200, {"capabilities": [
+        {**e, "enabled": False, "reasonCode": "WRITE_NOT_ALLOWED"} for e in ALL_ON
+    ]})
+    caps = _oi_options(w, "a", "c").json()["capabilities"]
+    assert set(caps) >= {"split_link", "link_row", "unlink_row", "relink_row"}
+    assert all(v == {"enabled": True, "reason": None} for v in caps.values()), caps
+
+
+def test_oi_skipped_row_without_a_crm_so_line_carries_the_keys_with_nulls(scm_app, fake_ss):
+    """B-4: the none row has no CRM sales order line, so the CRM copy keys are null."""
+    w = _oi_world(scm_app)
+    resp = _oi_options(w, "a", "none")
+    assert resp.status_code == 200, resp.text
+    (entry,) = resp.json()["skipped"]
+    assert entry["inquiry_no"] == w["inquiry"].inquiry_no
+    assert entry["item_code"] == w["product"].product_code
+    assert entry["reason"] == "Not in AutoCount yet"
+    for key in ("so_number", "line_no", "location_code", "delivery_date", "open_qty"):
+        assert key in entry, key
+        assert entry[key] is None, key
+
+
+def test_oi_skipped_row_with_a_crm_so_line_carries_the_crm_copy_values(scm_app, fake_ss):
+    """B-4: a CRM sales order line not yet in AutoCount is skipped with its own values."""
+    w = _oi_world(scm_app)
+    from app.models.project_so import (
+        ACK_ACKNOWLEDGED, INQUIRY_RAISED, IV_ORDER, OrderInquiryRow, ProjectSalesOrderLine,
+    )
+
+    db = w["db"]
+    order_c, line_c = _demand(
+        db, w["product"], w["mwh"], qty=7, required_date=_months_ahead(1), so_number=f"{w['marker']}-SOC")
+    line_c.line_no = 30
+    pl = ProjectSalesOrderLine(
+        id=_u(), company_id=SORENTO_COMPANY_ID, project_sales_order_id=w["pso"].id,
+        core_sales_order_line_id=line_c.id, line_no=8, product_id=w["product"].id, qty=Decimal("7"),
+    )
+    db.add(pl)
+    db.flush()
+    row = OrderInquiryRow(
+        id=_u(), company_id=SORENTO_COMPANY_ID, order_inquiry_id=w["inquiry"].id, so_line_id=pl.id,
+        item_code=w["product"].product_code, qty=Decimal("7"), verb=IV_ORDER, state=INQUIRY_RAISED,
+        ack_state=ACK_ACKNOWLEDGED,
+    )
+    db.add(row)
+    db.flush()
+    w["rows"]["crm_only"] = row
+    resp = _oi_options(w, "a", "crm_only")
+    assert resp.status_code == 200, resp.text
+    (entry,) = resp.json()["skipped"]
+    assert entry.get("so_number") == order_c.so_number
+    assert entry.get("line_no") == 30
+    assert entry.get("location_code") == w["mwh"].warehouse_code
+    assert entry.get("delivery_date")
+    assert float(entry.get("open_qty") or -1) == 7
+    assert entry["inquiry_no"] == w["inquiry"].inquiry_no
+    assert entry["item_code"] == w["product"].product_code
+    assert entry["reason"] == "Not in AutoCount yet"
+
+
 def _add_second_product(w):
     """A second product on the same OI: its own AutoCount SO line (doc 12500, dtl 12501, 5 at MWH),
     project SO line, OI row, and an open PO line of 300 at HQ (doc 12400, dtl 12401)."""

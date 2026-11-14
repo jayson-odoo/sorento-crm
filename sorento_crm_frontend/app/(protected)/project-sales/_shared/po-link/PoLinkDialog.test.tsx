@@ -877,6 +877,73 @@ describe('Link PO popup: rows of several products and the Qty / Action columns',
     expect(headers[columnOf(action)]).toBe('Action');
   });
 
+  // OI-PO-LINK B (14 Nov) B-5: a ticked line not in AutoCount is a row of its own.
+  function renderWithSkipped(lines: SnapshotLine[], skipped: object[]) {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <PoLinkDialog
+          mode={'manage' as never}
+          target={snapshotPoLinkTarget('snap', 'row')}
+          lines={lines}
+          allLines={lines}
+          capabilities={MANAGE_CAPS}
+          poLines={PRODUCT_PO_LINES}
+          soBooks={{ 'sol-1': 'DB3' }}
+          {...({ soProducts: { 'sol-1': 'prod-A' }, skipped } as object)}
+          onClose={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+    return screen.getByTestId('po-link-dialog');
+  }
+  const SKIPPED = [{
+    inquiry_no: 'OI-ZZ-1', item_code: 'ITEM-X', reason: 'Not in AutoCount yet',
+    so_number: 'SO900001', line_no: 30, location_code: 'MWH', delivery_date: '2026-12-01', open_qty: 7,
+  }];
+
+  it('B-5: a skipped line is its own body row with "Not in AutoCount yet" in the PO column and no inputs', () => {
+    const dialog = renderWithSkipped([newLine('sol-1', 'SO425045')], SKIPPED);
+    const bodyRows = within(dialog).getAllByRole('row').slice(1);
+    expect(bodyRows).toHaveLength(2);
+    const row = rowOf(dialog, 'SO900001');
+    expect(row).toBeTruthy();
+    expect(row).toHaveTextContent('Not in AutoCount yet');
+    expect(row.querySelector('input, select, [role="combobox"], [role="checkbox"]')).toBeNull();
+    expect(within(row).queryByRole('checkbox')).toBeNull();
+    expect(within(row).queryByRole('combobox')).toBeNull();
+  });
+
+  it('B-5: the skipped line is not counted in Save (n) and no note sits under the grid', () => {
+    const dialog = renderWithSkipped([newLine('sol-1', 'SO425045')], SKIPPED);
+    fireEvent.change(dialog.querySelector('[id="po-manage-po-sol-1:new"]') as HTMLSelectElement, {
+      target: { value: 'po-3' },
+    });
+    expect(within(dialog).getByRole('button', { name: 'Save (1)' })).toBeInTheDocument();
+    expect(within(dialog).queryByTestId('po-link-skipped')).toBeNull();
+  });
+
+  // Review round (B): the header box must not treat a skipped row as tickable.
+  it('B-5: the header box ticks only the AutoCount rows, never the skipped one', () => {
+    const dialog = renderWithSkipped([newLine('sol-1', 'SO425045')], SKIPPED);
+    const [header, only] = within(dialog).getAllByRole('checkbox');
+    fireEvent.click(only);
+    // The one real row ticked is every tickable row: the header box is fully ticked, not mixed.
+    expect(header).toHaveAttribute('aria-checked', 'true');
+    expect(rowOf(dialog, 'SO900001').querySelector('[role="checkbox"]')).toBeNull();
+  });
+
+  it('B-5: a skipped line with no CRM sales order shows "-" as its sales order and names the item on hover', () => {
+    const dialog = renderWithSkipped([newLine('sol-1', 'SO425045')], [{
+      inquiry_no: 'OI-ZZ-2', item_code: 'ITEM-Y', reason: 'Not in AutoCount yet',
+      so_number: null, line_no: null, location_code: null, delivery_date: null, open_qty: null,
+    }]);
+    const row = within(dialog).getAllByRole('row').slice(1).find((r) => r.textContent?.includes('Not in AutoCount yet')) as HTMLElement;
+    expect(row).toBeTruthy();
+    expect(row).not.toHaveTextContent('OI-ZZ-2');
+    expect(row.querySelector('[title*="ITEM-Y"]')).not.toBeNull();
+  });
+
   // Crew db3 pass on fb7c04172 (14 Nov): at 1280 px the popup's grid area is 974 px wide, the
   // seven columns of a new + linked popup summed 1015 px and the Action picker was cut off. The
   // columns of the fullest popup must fit that area with no sideways scroll.

@@ -150,8 +150,9 @@ describe('poLinkMenu: one manage state (owner, 13 Nov 18:55)', () => {
     const none = poLinkMenu({ ticked: 0, linked: 0, capabilities: CAPS, loading: false }) as unknown as Record<string, unknown>;
     expect(none.manage).toEqual({ enabled: false, reason: 'Tick the lines to decide on' });
     const loading = poLinkMenu({ ticked: 1, linked: 0, capabilities: null, loading: true }) as unknown as Record<string, unknown>;
-    expect(loading.manage).toEqual({ enabled: false, reason: 'Checking AutoCount…' });
+    // OI-PO-LINK B: the popup reads only the CRM copies, so the wait is not on AutoCount.
+    expect(loading.manage).toEqual({ enabled: false, reason: 'Getting the PO lines' });
     const down = poLinkMenu({ ticked: 1, linked: 0, capabilities: null, loading: false }) as unknown as Record<string, unknown>;
-    expect(down.manage).toEqual({ enabled: false, reason: 'Could not reach AutoCount' });
+    expect(down.manage).toEqual({ enabled: false, reason: 'Could not load the PO lines' });
   });
 });
