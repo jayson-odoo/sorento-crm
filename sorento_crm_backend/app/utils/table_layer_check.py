@@ -34,6 +34,10 @@ def table_props_problem(props: Any) -> str | None:
         return "A table's cells must match its rows and columns."
     if not _colour(props.get("color")):
         return "A table has a colour that is not a plain colour."
+    # SPEC-SHEET-PARITY-B2 v3: Header row / ALL CAPS are on or off (a string "false" reads as on).
+    for flag in ("headerRow", "uppercase"):
+        if props.get(flag) is not None and not isinstance(props.get(flag), bool):
+            return "A table setting must be on or off."
     for row in cells:
         for cell in row:
             if not isinstance(cell, dict):

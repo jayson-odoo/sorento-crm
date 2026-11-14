@@ -184,7 +184,6 @@ import {
 } from 'lucide-react';
 import type { ImperativePanelHandle } from 'react-resizable-panels';
 import { AssetPickerDialog } from './AssetPickerDialog';
-import { FontUploadDialog } from './FontUploadDialog';
 import { ProductPickDialog, type PickMode } from './ProductPickDialog';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -193,6 +192,7 @@ import { getProductTagData, comboOptions } from '../../services/tagDataService';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { toast } from '@/lib/toast';
 import { CanvasToolbar, type CanvasTool, type ToolbarTrailingAction } from './CanvasToolbar';
+import { ManageFontsDialog } from './ManageFontsDialog';
 import { TableEdgeHandles } from './TableEdgeHandles';
 import { TableToolbarActions } from './TableToolbarActions';
 import { CanvasRulers, RULER_THICKNESS as RULER_BASE } from './CanvasRulers';
@@ -283,6 +283,7 @@ import {
   type CardEditTarget,
 } from '@/lib/dealer-kit/accessory-card';
 import {
+  cellAnchor,
   cellAt,
   defaultTableProps,
   deleteColumn,
@@ -469,6 +470,22 @@ const CROP_HANDLE_SIZE_PX = 8;
 
 const ZOOM_LIMITS = { min: CANVAS_MIN_ZOOM, max: CANVAS_MAX_ZOOM };
 
+/**
+ * Every table's height set to its laid-out rows; the SAME array when none changes (a host compares
+ * identities to tell its own echo from an edit).
+ */
+function fitTableHeights(layers: TagLayer[]): TagLayer[] {
+  let changed = false;
+  const next = layers.map((layer) => {
+    if (layer.props.kind !== 'table') return layer;
+    const height = tableLayout(layer.props, layer.width_mm, tableMeasure(layer.props)).height_mm;
+    if (Math.abs(height - layer.height_mm) <= 0.05) return layer;
+    changed = true;
+    return { ...layer, height_mm: height };
+  });
+  return changed ? next : layers;
+}
+
 /** A start position so a box of `size` starting there stays inside `0..limit` (mm). */
 function clampInto(start: number, size: number, limit: number): number {
   return Math.max(0, Math.min(start, limit - size));
@@ -503,6 +520,8 @@ export interface EmbeddedController {
   tableCell?: () => { layerId: string; row: number; col: number } | null;
   /** v3 (AC-C3.2): open this canvas's field picker for the selected table's picked cell. */
   insertField?: () => void;
+  /** v3 review S2: a brand font was renamed; this page's layers follow it, as the designer's do. */
+  renameFontFamily?: (oldName: string, newName: string) => void;
 }
 
 export interface EmbeddedMode {
@@ -709,7 +728,21 @@ export function TagCanvasEditor({
 }: TagCanvasEditorProps) {
   // An embedded canvas has no rulers, so its artboard sits at the stage's corner.
   const RULER_THICKNESS = embedded ? 0 : RULER_BASE;
-  const [layers, setLayers] = useState<TagLayer[]>(doc.layers);
+  // B4: a table's height follows its laid-out rows (a row grows to fit its text). Fitted inside
+  // every layer change, so an edit and its fitted height are ONE state, one report to a host and
+  // one undo step there (v3 browser F1: a separate fit-up made each table edit two page undo
+  // steps, and Undo seemed to do nothing). A read-only page is left exactly as it came.
+  const fitTablesRef = useRef(!embedded?.readOnly);
+  fitTablesRef.current = !embedded?.readOnly;
+  const [layers, setLayersState] = useState<TagLayer[]>(() =>
+    fitTablesRef.current ? fitTableHeights(doc.layers) : doc.layers,
+  );
+  const setLayers = useCallback<React.Dispatch<React.SetStateAction<TagLayer[]>>>((update) => {
+    setLayersState((prev) => {
+      const next = typeof update === 'function' ? update(prev) : update;
+      return fitTablesRef.current ? fitTableHeights(next) : next;
+    });
+  }, []);
   /** Which change-request marker has its comment open (r9 S2/D6). */
   const [openPinId, setOpenPinId] = useState<string | null>(null);
   // Embedded (spec sheet reader): start from the host's selection, so a canvas the host restarts
@@ -2084,7 +2117,9 @@ export function TagCanvasEditor({
         const found = point
           ? cellAt(tableLayout(drawn, target.width_mm, tableMeasure(drawn)), point.x_mm - target.x_mm, point.y_mm - target.y_mm)
           : null;
-        const at = found ?? (tableCell?.layerId === target.id ? { row: tableCell.row, col: tableCell.col } : { row: 0, col: 0 });
+        const at =
+          found ??
+          (tableCell?.layerId === target.id ? cellAnchor(target.props, tableCell.row, tableCell.col) : { row: 0, col: 0 });
         setTableCell({ layerId: target.id, ...at });
         setEditingCell(at);
         setEditingLayerId(target.id);
@@ -3514,20 +3549,6 @@ export function TagCanvasEditor({
     [view, layers, entered, selectedIds, resolveTarget, konvaLayerIdAt],
   );
 
-  // B4: a table's height follows its laid-out rows (a row grows to fit its text). Not a history
-  // entry: undo restores the older layers and this puts the height right again.
-  useEffect(() => {
-    if (embedded?.readOnly) return;
-    const fixes = new Map<string, number>();
-    for (const layer of layers) {
-      if (layer.props.kind !== 'table') continue;
-      const height = tableLayout(layer.props, layer.width_mm, tableMeasure(layer.props)).height_mm;
-      if (Math.abs(height - layer.height_mm) > 0.05) fixes.set(layer.id, height);
-    }
-    if (fixes.size === 0) return;
-    setLayers((prev) => prev.map((l) => (fixes.has(l.id) ? { ...l, height_mm: fixes.get(l.id) as number } : l)));
-  }, [layers, embedded?.readOnly]);
-
   // -- Undo / Redo -----------------------------------------------------------
 
   const handleUndo = useCallback(() => {
@@ -3768,8 +3789,16 @@ export function TagCanvasEditor({
         const table = layers.find((l) => l.id === tableCell.layerId);
         if (table && table.props.kind === 'table' && !table.locked) {
           e.preventDefault();
+          // The cell that is there now (review B3), so the editor always has a cell to open on.
+          const at = cellAnchor(table.props, tableCell.row, tableCell.col);
+          setTableCell({ layerId: table.id, ...at });
+          // "{" opens the field picker (AC-C3.2); the field goes after the cell's text.
+          if (e.key === '{') {
+            setInsertFieldOpen(true);
+            return;
+          }
           typedIntoCellRef.current = e.key;
-          setEditingCell({ row: tableCell.row, col: tableCell.col });
+          setEditingCell(at);
           setEditingLayerId(table.id);
           return;
         }
@@ -4283,6 +4312,7 @@ export function TagCanvasEditor({
         ungroupSelected: ungroupSelectedLayers,
         tableCell: () => tableCellRef.current,
         insertField: () => setInsertFieldOpen(true),
+        renameFontFamily: renameFontFamilyInOpenDoc,
       };
     }
     return () => {
@@ -4303,6 +4333,7 @@ export function TagCanvasEditor({
     duplicateSelectedLayers,
     groupSelectedLayers,
     ungroupSelectedLayers,
+    renameFontFamilyInOpenDoc,
   ]);
   // Layers the host changed (undo, redo, apply): adopted when they are not what this canvas holds.
   useEffect(() => {
@@ -4323,7 +4354,7 @@ export function TagCanvasEditor({
   const tableMenu = useMemo(() => {
     if (!selectedLayer || selectedLayer.props.kind !== 'table') return null;
     const props = selectedLayer.props;
-    const at = tableCell?.layerId === selectedLayer.id ? tableCell : { row: 0, col: 0 };
+    const at = tableCell?.layerId === selectedLayer.id ? cellAnchor(props, tableCell.row, tableCell.col) : { row: 0, col: 0 };
     const cell = props.cells[at.row]?.[at.col];
     return {
       layerId: selectedLayer.id,
@@ -4442,10 +4473,19 @@ export function TagCanvasEditor({
   /** The table cell an edit of `layerId` reads and writes: the one being typed in, else the picked one. */
   const cellOf = useCallback(
     (layerId: string): { row: number; col: number } | null => {
-      if (editingCell && editingLayerId === layerId) return editingCell;
-      return tableCell?.layerId === layerId ? { row: tableCell.row, col: tableCell.col } : null;
+      const layer = layers.find((l) => l.id === layerId);
+      if (!layer || layer.props.kind !== 'table') return null;
+      const raw =
+        editingCell && editingLayerId === layerId
+          ? editingCell
+          : tableCell?.layerId === layerId
+            ? tableCell
+            : null;
+      // v3 review B3: a pick made before a row / column went (Delete, Undo, a merge) means the
+      // cell that is there now.
+      return raw ? cellAnchor(layer.props, raw.row, raw.col) : null;
     },
-    [editingCell, editingLayerId, tableCell],
+    [layers, editingCell, editingLayerId, tableCell],
   );
 
   const contentFor = useCallback(
@@ -4674,6 +4714,30 @@ export function TagCanvasEditor({
         }
       : null;
   }, [editingLayer, editingCell]);
+
+  // Never an edit with nothing to type in (review B3): the keyboard would be dead until a click.
+  useEffect(() => {
+    if (editingLayerId && editingLayer?.props.kind === 'table' && !editingCellRect) cancelInlineEdit();
+  }, [editingLayerId, editingLayer, editingCellRect, cancelInlineEdit]);
+
+  /** v3 (AC-C3.1, review B2): the picked cell of the selected table, outlined on the canvas. */
+  const pickedCellRect = useMemo(() => {
+    if (editingLayerId || !selectedLayer || selectedLayer.props.kind !== 'table') return null;
+    if (tableCell?.layerId !== selectedLayer.id) return null;
+    const at = cellAnchor(selectedLayer.props, tableCell.row, tableCell.col);
+    const drawn = drawnTableRef.current(selectedLayer);
+    const laid = tableLayout(drawn, selectedLayer.width_mm, tableMeasure(drawn));
+    const hit = laid.cells.find((c) => c.row === at.row && c.col === at.col);
+    return hit
+      ? {
+          ...at,
+          x_mm: selectedLayer.x_mm + hit.x_mm,
+          y_mm: selectedLayer.y_mm + hit.y_mm,
+          width_mm: hit.width_mm,
+          height_mm: hit.height_mm,
+        }
+      : null;
+  }, [editingLayerId, selectedLayer, tableCell]);
 
   /**
    * v3 (AC-C3.2): the field picker hands back ONE field for a table: into the open cell editor at
@@ -5146,8 +5210,11 @@ export function TagCanvasEditor({
                               'bottom-right',
                               'middle-left',
                               'middle-right',
-                              'top-center',
-                              'bottom-center',
+                              // A table's height follows its rows: its bottom edge drags a row
+                              // instead (v3 AC-C5.1), so no top / bottom centre handle.
+                              ...(selectedLayer?.props.kind === 'table' && selectedIds.size === 1
+                                ? []
+                                : (['top-center', 'bottom-center'] as const)),
                             ]
                       }
                       boundBoxFunc={(_oldBox, newBox) => {
@@ -5597,6 +5664,21 @@ export function TagCanvasEditor({
                     const typed = typedIntoCellRef.current;
                     typedIntoCellRef.current = null;
                     if (typed) editor.chain().focus('end').insertContent(typed).run();
+                  }}
+                />
+              )}
+              {pickedCellRect && !selectedLayer?.rotation_deg && (
+                <div
+                  data-testid="table-cell-outline"
+                  data-row={pickedCellRect.row}
+                  data-col={pickedCellRect.col}
+                  aria-hidden
+                  className="pointer-events-none absolute z-10 border-2 border-primary"
+                  style={{
+                    left: RULER_THICKNESS + view.panX + pickedCellRect.x_mm * scale,
+                    top: RULER_THICKNESS + view.panY + pickedCellRect.y_mm * scale,
+                    width: pickedCellRect.width_mm * scale,
+                    height: pickedCellRect.height_mm * scale,
                   }}
                 />
               )}
@@ -6172,7 +6254,6 @@ export function TagCanvasEditor({
               onUploadFont={() => setFontUploadOpen(true)}
               onInsertField={() => setInsertFieldOpen(true)}
               tableCell={tableCell && selectedLayer && tableCell.layerId === selectedLayer.id ? tableCell : null}
-              onTableCellChange={(row, col) => selectedLayer && setTableCell({ layerId: selectedLayer.id, row, col })}
               onContentEditorReady={(editor) => {
                 contentEditorRef.current = editor;
               }}
@@ -6328,31 +6409,10 @@ export function TagCanvasEditor({
         onPick={fieldPickForTable ? pickFieldIntoCell : undefined}
       />
 
-      <FontUploadDialog
+      <ManageFontsDialog
         open={fontUploadOpen}
-        fonts={library.fonts}
-        onCancel={() => {
-          setFontUploadOpen(false);
-          // A delete started inside the dialog keeps counting down after it
-          // closes (D7 - the window is the server's, not the dialog's), so
-          // whatever happened while it was open - a commit, a cancel, a
-          // failure - has to be caught up on here, or the Font Family
-          // dropdown can go on offering a family the server already deleted.
-          void library.reload();
-        }}
-        onUploaded={(asset) => {
-          library.remember(asset);
-          setFontUploadOpen(false);
-        }}
-        onRenamed={(asset, oldName) => {
-          library.rename(asset.id, asset.name);
-          renameFontFamilyInOpenDoc(oldName, asset.name);
-          void library.reload();
-        }}
-        onDeleted={(id) => {
-          library.forget(id);
-          void library.reload();
-        }}
+        onClose={() => setFontUploadOpen(false)}
+        onFamilyRenamed={renameFontFamilyInOpenDoc}
       />
 
       {/* Save bar (sticky bottom). Absent when the host owns saving. */}

@@ -442,14 +442,8 @@ export function CanvasToolbar({
       </div>
     );
   }
-  return (
-    // `relative` is load-bearing, not decoration (r4d): each button's label is
-    // an `sr-only` span, which is `position: absolute`, and a static row is not
-    // in its containing-block chain - so `overflow-x-auto` never clipped the
-    // labels and they grew the document instead. At 375px that left
-    // `documentElement.scrollWidth` at 898 and the whole page scrolling
-    // sideways while the toolbar itself sat still.
-    <div className="relative flex h-10 min-w-0 shrink-0 flex-nowrap items-center gap-1 overflow-x-auto border-b bg-background px-2">
+  const body = (
+    <>
       {/* Tools */}
       {!viewOnly && tool && onToolChange && (
         <>
@@ -627,13 +621,6 @@ export function CanvasToolbar({
         </>
       )}
 
-      {(fullScreen || saveState) && (
-        <div className="ml-auto flex shrink-0 items-center gap-1">
-          {fullScreen}
-          {saveState}
-        </div>
-      )}
-
       {trailing && trailing.length > 0 && (
         <>
           {/* `ml-auto` pushes this group to the true right end (AC-S7-6)
@@ -727,6 +714,36 @@ export function CanvasToolbar({
           </DropdownMenu>
         </>
       )}
+    </>
+  );
+
+  // `relative` is load-bearing, not decoration (r4d): each button's label is
+  // an `sr-only` span, which is `position: absolute`, and a static row is not
+  // in its containing-block chain - so `overflow-x-auto` never clipped the
+  // labels and they grew the document instead. At 375px that left
+  // `documentElement.scrollWidth` at 898 and the whole page scrolling
+  // sideways while the toolbar itself sat still.
+  if (fullScreen || saveState) {
+    // v3 (browser F2): full screen and the save state sit OUTSIDE the scrolling tools, pinned at
+    // the right, so a wide contextual group never pushes "Saved" off screen.
+    return (
+      <div className="relative flex h-10 min-w-0 shrink-0 items-center border-b bg-background">
+        <div
+          data-testid="canvas-toolbar-tools"
+          className="relative flex h-full min-w-0 flex-1 flex-nowrap items-center gap-1 overflow-x-auto px-2"
+        >
+          {body}
+        </div>
+        <div className="flex shrink-0 items-center gap-1 border-l border-border px-2">
+          {fullScreen}
+          {saveState}
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="relative flex h-10 min-w-0 shrink-0 flex-nowrap items-center gap-1 overflow-x-auto border-b bg-background px-2">
+      {body}
     </div>
   );
 }

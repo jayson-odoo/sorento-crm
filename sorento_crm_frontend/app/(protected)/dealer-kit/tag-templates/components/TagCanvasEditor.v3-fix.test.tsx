@@ -223,12 +223,16 @@ describe('a picked cell that is gone (B3)', () => {
   });
 
   it('after Undo takes away the picked row, typing goes into the last row that is left', async () => {
-    const { container, latest } = renderDesigner();
-    rightClick(container, 2, 0);
-    fireEvent.click(screen.getByRole('menuitem', { name: /^Insert row below/ }));
+    const { latest } = renderDesigner();
+    // The toolbar's Add row (a closing context menu leaves the page aria-hidden in jsdom).
+    pick(2, 0);
+    fireEvent.click(screen.getByRole('button', { name: /(\+ ?|add )row/i }));
     pick(3, 0);
     fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
     expect(tableOf(latest.layers).rows).toHaveLength(3);
+    // Undo clears the canvas selection here; the Layers panel picks the table again, keeping
+    // the (now stale) cell pick.
+    fireEvent.click(screen.getByTitle('Table'));
     fireEvent.keyDown(window, { key: 'x' });
     const dom = await cellEditor();
     fireEvent.keyDown(dom, { key: 'Enter', bubbles: true });

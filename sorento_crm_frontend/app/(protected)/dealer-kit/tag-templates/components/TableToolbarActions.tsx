@@ -2,14 +2,17 @@
 
 /**
  * SPEC-SHEET-PARITY-B2 v3 (AC-C1.4, AC-C4.1): a selected table's actions in the toolbar row, the
- * same in the template designer and on a spec sheet page: + Row (below the picked cell), + Column
- * (to its right), Merge (with the cell to its right), Header row (on / off) and Insert field.
+ * same in the template designer and on a spec sheet page: Add row (below the picked cell), Add
+ * column (to its right), Merge right, Header row (on / off) and Insert field.
  * Every change goes through `onChange` with the whole new props, so it is one undo step.
  */
 
-import { Button } from '@/components/ui/button';
-import { insertColumn, insertRow, mergeCells } from '@/lib/dealer-kit/table-layout';
+import { BetweenHorizontalEnd, BetweenVerticalEnd, Braces, PanelTop, TableCellsMerge } from 'lucide-react';
+
+import { cellAnchor, insertColumn, insertRow, mergeCells } from '@/lib/dealer-kit/table-layout';
 import type { TableLayerProps } from '@/lib/dealer-kit/tag-template-types';
+
+import { ToolbarButton } from './CanvasToolbar';
 
 export function TableToolbarActions({
   props,
@@ -25,45 +28,35 @@ export function TableToolbarActions({
 }) {
   const at = () => {
     const picked = typeof cell === 'function' ? cell() : cell;
-    const row = Math.min(picked?.row ?? 0, props.rows.length - 1);
-    const col = Math.min(picked?.col ?? 0, props.columns.length - 1);
+    const { row, col } = cellAnchor(props, picked?.row ?? 0, picked?.col ?? 0);
     const anchor = props.cells[row]?.[col];
     return { row, col, rowSpan: Math.max(1, anchor?.rowSpan ?? 1), colSpan: Math.max(1, anchor?.colSpan ?? 1) };
   };
   const now = at();
-  const canMerge = now.col + now.colSpan < props.columns.length || typeof cell === 'function';
-  const button = 'h-8 shrink-0 px-2 text-xs';
+  const canMerge = now.col + now.colSpan < props.columns.length;
+  // Icon buttons (the toolbar's own), named for screen readers and tooltips: the row keeps room
+  // for zoom, full screen and the save state at 1280 (v3 browser F2).
   return (
     <div role="group" aria-label="Table" className="flex shrink-0 items-center gap-1">
-      <Button
-        type="button"
-        variant="ghost"
-        size="sm"
-        className={button}
+      <ToolbarButton
+        icon={BetweenHorizontalEnd}
+        label="Add row"
         onClick={() => {
           const { row, rowSpan } = at();
           onChange(insertRow(props, row + rowSpan));
         }}
-      >
-        + Row
-      </Button>
-      <Button
-        type="button"
-        variant="ghost"
-        size="sm"
-        className={button}
+      />
+      <ToolbarButton
+        icon={BetweenVerticalEnd}
+        label="Add column"
         onClick={() => {
           const { col, colSpan } = at();
           onChange(insertColumn(props, col + colSpan));
         }}
-      >
-        + Column
-      </Button>
-      <Button
-        type="button"
-        variant="ghost"
-        size="sm"
-        className={button}
+      />
+      <ToolbarButton
+        icon={TableCellsMerge}
+        label="Merge right"
         disabled={!canMerge}
         onClick={() => {
           const { row, col, rowSpan, colSpan } = at();
@@ -71,24 +64,14 @@ export function TableToolbarActions({
             onChange(mergeCells(props, row, col, row + rowSpan - 1, col + colSpan));
           }
         }}
-      >
-        Merge
-      </Button>
-      <Button
-        type="button"
-        variant={props.headerRow ? 'primary' : 'ghost'}
-        size="sm"
-        className={button}
-        aria-pressed={Boolean(props.headerRow)}
+      />
+      <ToolbarButton
+        icon={PanelTop}
+        label="Header row"
+        active={Boolean(props.headerRow)}
         onClick={() => onChange({ ...props, headerRow: !props.headerRow })}
-      >
-        Header row
-      </Button>
-      {onInsertField && (
-        <Button type="button" variant="ghost" size="sm" className={button} onClick={onInsertField}>
-          Insert field
-        </Button>
-      )}
+      />
+      {onInsertField && <ToolbarButton icon={Braces} label="Insert field" onClick={onInsertField} />}
     </div>
   );
 }

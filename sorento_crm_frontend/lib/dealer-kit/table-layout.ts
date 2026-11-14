@@ -9,10 +9,15 @@ export const TABLE_MAX_LINES = 50;
 export const DEFAULT_TABLE_FONT_PT = 10;
 export const DEFAULT_TABLE_PADDING_MM = 1;
 export const DEFAULT_TABLE_ROW_MM = 6;
+/** v3 (AC-C5.1): the smallest row / column a drag or the Inspector can set, mm. */
+export const TABLE_ROW_MIN_MM = 2;
+export const TABLE_COLUMN_MIN_MM = 5;
 const PT_TO_MM = 0.3528;
 const TEXT_LINE_HEIGHT = 1.2;
 /** Average advance of a character, in em: generous, so the estimate errs towards a taller row. */
 const EM_PER_CHAR = 0.55;
+/** The same for bold text (a Header row, v3 review N4): bold faces run about a tenth wider. */
+const EM_PER_CHAR_BOLD = 0.6;
 
 const SIDES = ['top', 'right', 'bottom', 'left'] as const;
 export type TableSide = (typeof SIDES)[number];
@@ -61,20 +66,22 @@ export function defaultTableProps(rows: number, cols: number, width_mm: number):
 }
 
 /** A text height estimate (mm) for `text` wrapped to `width_mm`; the one measure canvas and print share. */
-export function estimateTableTextHeight(text: string, width_mm: number, fontSize_pt: number): number {
+export function estimateTableTextHeight(text: string, width_mm: number, fontSize_pt: number, bold = false): number {
   if (!text) return 0;
-  const perLine = Math.max(1, Math.floor(width_mm / (EM_PER_CHAR * fontSize_pt * PT_TO_MM)));
+  const em = bold ? EM_PER_CHAR_BOLD : EM_PER_CHAR;
+  const perLine = Math.max(1, Math.floor(width_mm / (em * fontSize_pt * PT_TO_MM)));
   const lines = text
     .split('\n')
     .reduce((sum, line) => sum + Math.max(1, Math.ceil(line.length / perLine)), 0);
   return lines * fontSize_pt * PT_TO_MM * TEXT_LINE_HEIGHT;
 }
 
-export type TableMeasure = (text: string, width_mm: number) => number;
+/** A text's height (mm) wrapped to `width_mm`; `bold` for a Header row cell. */
+export type TableMeasure = (text: string, width_mm: number, bold?: boolean) => number;
 
 export function tableMeasure(props: Pick<TableLayerProps, 'fontSize'>): TableMeasure {
   const size = props.fontSize ?? DEFAULT_TABLE_FONT_PT;
-  return (text, width) => estimateTableTextHeight(text, width, size);
+  return (text, width, bold) => estimateTableTextHeight(text, width, size, bold);
 }
 
 export interface LaidOutCell {
@@ -168,7 +175,8 @@ export function tableLayout(source: TableLayerProps, layerWidth_mm: number, meas
       const pad = cell.padding_mm ?? DEFAULT_TABLE_PADDING_MM;
       // ALL CAPS (AC-C5.2) changes only what prints, so it is measured as printed.
       const text = props.uppercase ? cell.text.toUpperCase() : cell.text;
-      const need = text ? measure(text, Math.max(0, width - 2 * pad)) + 2 * pad : 0;
+      // A Header row prints bold, so it is measured bold (v3 review N4).
+      const need = text ? measure(text, Math.max(0, width - 2 * pad), isHeaderCell(props, r)) + 2 * pad : 0;
       anchors.push({ r, c, cell, text, rs, cs, width, need });
     }),
   );
@@ -339,6 +347,17 @@ function trimSpans(cell: TableCell): TableCell {
     ...(span(rowSpan) > 1 ? { rowSpan } : {}),
     ...(span(colSpan) > 1 ? { colSpan } : {}),
   };
+}
+
+/**
+ * v3 review B3: the cell a picked position means now: clamped into the grid (a deleted row or
+ * column, an undo that took one away) and then the anchor that owns it (a merge that covers it).
+ */
+export function cellAnchor(props: TableLayerProps, row: number, col: number): { row: number; col: number } {
+  const r = Math.max(0, Math.min(row, props.rows.length - 1));
+  const c = Math.max(0, Math.min(col, props.columns.length - 1));
+  const owner = ownerOf(props, r, c);
+  return { row: owner.r, col: owner.c };
 }
 
 /** The anchor that owns (r, c): itself, or the merge that covers it. */

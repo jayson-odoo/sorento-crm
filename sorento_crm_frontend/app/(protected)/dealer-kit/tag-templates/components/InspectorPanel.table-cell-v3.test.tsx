@@ -58,7 +58,6 @@ function mount(tableCell = { row: 1, col: 1 }) {
       onUpdate={vi.fn()}
       onUpdateProps={onUpdateProps}
       tableCell={tableCell}
-      onTableCellChange={vi.fn()}
       onInsertField={vi.fn()}
     />,
   );

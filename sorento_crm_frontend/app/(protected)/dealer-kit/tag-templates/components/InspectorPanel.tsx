@@ -14,7 +14,7 @@ import type {
   FeatureIconsLayerProps,
 } from '@/lib/dealer-kit/tag-template-types';
 import { featureIconFit } from '@/lib/dealer-kit/feature-icons';
-import { setCellBorder } from '@/lib/dealer-kit/table-layout';
+import { cellAnchor, setCellBorder, TABLE_COLUMN_MIN_MM, TABLE_ROW_MIN_MM } from '@/lib/dealer-kit/table-layout';
 import {
   accessoryBoxLayout,
   accessoryHeaderStyle,
@@ -304,7 +304,6 @@ interface InspectorPanelProps {
   accessoryHeaderSelected?: AccessoryRect | null;
   /** B4: the table cell the Inspector edits (a right-click picks it); null = the first cell. */
   tableCell?: { row: number; col: number } | null;
-  onTableCellChange?: (row: number, col: number) => void;
 }
 
 export function InspectorPanel({
@@ -651,6 +650,8 @@ export function InspectorPanel({
               props={layer.props}
               cellAt={tableCell ?? { row: 0, col: 0 }}
               onChange={updateProps}
+              layerWidth={layer.width_mm}
+              onResize={(width_mm) => onUpdate(layer.id, { width_mm })}
               usedColours={usedColours}
             />
           )}
@@ -1276,6 +1277,9 @@ function withShape(
   };
 }
 
+/** A millimetre value to 0.1 mm, as the boxes show it (v3 browser F3). */
+const tenthMm = (value: number) => Math.round(value * 10) / 10;
+
 const TABLE_SIDE_OPTIONS = [
   { value: 'all', label: 'All sides' },
   { value: 'top', label: 'Top' },
@@ -1292,16 +1296,44 @@ function TableInspector({
   props,
   cellAt,
   onChange,
+  layerWidth,
+  onResize,
   usedColours,
 }: {
   props: Extract<TagLayerProps, { kind: 'table' }>;
   cellAt: { row: number; col: number };
   onChange: (changes: Partial<TagLayerProps>) => void;
+  /** The table layer's width (mm): stored column widths are relative to it (v3 review S1). */
+  layerWidth: number;
+  /** A one-column table's Column width is the table's own width. */
+  onResize: (width_mm: number) => void;
   usedColours: string[];
 }) {
   const [side, setSide] = useState('all');
-  const row = Math.min(cellAt.row, props.rows.length - 1);
-  const col = Math.min(cellAt.col, props.columns.length - 1);
+  const { row, col } = cellAnchor(props, cellAt.row, cellAt.col);
+  // Stored widths are relative: the layout scales them to the layer width (`tableLayout`), the
+  // same scale the canvas edge drag converts through (`TableEdgeHandles`).
+  const storedTotal = props.columns.reduce((sum, c) => sum + c.width_mm, 0);
+  const scale = storedTotal > 0 ? layerWidth / storedTotal : 1;
+  const printedWidth = (index: number) => props.columns[index].width_mm * scale;
+  /** Column width (printed mm): the neighbour (right, else left) gives the width up. */
+  const setColumnWidth = (value: number) => {
+    if (props.columns.length === 1) {
+      onResize(tenthMm(Math.max(TABLE_COLUMN_MIN_MM, value)));
+      return;
+    }
+    const other = col + 1 < props.columns.length ? col + 1 : col - 1;
+    const pair = printedWidth(col) + printedWidth(other);
+    const mine = Math.min(pair - TABLE_COLUMN_MIN_MM, Math.max(TABLE_COLUMN_MIN_MM, value));
+    const stored = tenthMm(mine / scale);
+    const pairStored = props.columns[col].width_mm + props.columns[other].width_mm;
+    onChange({
+      ...props,
+      columns: props.columns.map((c, i) =>
+        i === col ? { ...c, width_mm: stored } : i === other ? { ...c, width_mm: tenthMm(pairStored - stored) } : c,
+      ),
+    });
+  };
   const cell = props.cells[row][col];
   const shown = cell.border?.[side === 'all' ? 'top' : (side as 'top' | 'right' | 'bottom' | 'left')] ?? {
     color: '#000000',
@@ -1342,21 +1374,20 @@ function TableInspector({
         <div className="grid grid-cols-2 gap-2">
           <NumberInput
             label="Row height (mm)"
-            value={props.rows[row].height_mm}
+            value={tenthMm(props.rows[row].height_mm)}
             step={0.5}
-            min={1}
-            onChange={(v) =>
-              onChange({ ...props, rows: props.rows.map((r, i) => (i === row ? { ...r, height_mm: v } : r)) })
-            }
+            min={TABLE_ROW_MIN_MM}
+            onChange={(v) => {
+              const height_mm = tenthMm(Math.max(TABLE_ROW_MIN_MM, v));
+              onChange({ ...props, rows: props.rows.map((r, i) => (i === row ? { ...r, height_mm } : r)) });
+            }}
           />
           <NumberInput
             label="Column width (mm)"
-            value={props.columns[col].width_mm}
+            value={tenthMm(props.columns.length === 1 ? layerWidth : printedWidth(col))}
             step={0.5}
-            min={1}
-            onChange={(v) =>
-              onChange({ ...props, columns: props.columns.map((c, i) => (i === col ? { ...c, width_mm: v } : c)) })
-            }
+            min={TABLE_COLUMN_MIN_MM}
+            onChange={setColumnWidth}
           />
         </div>
         <div className="flex flex-col gap-1">

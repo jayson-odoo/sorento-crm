@@ -13,13 +13,13 @@
 
 import { useState } from 'react';
 
-import { tableLayout, tableMeasure } from '@/lib/dealer-kit/table-layout';
+import { TABLE_COLUMN_MIN_MM, TABLE_ROW_MIN_MM, tableLayout, tableMeasure } from '@/lib/dealer-kit/table-layout';
 import type { TableLayerProps, TagLayer } from '@/lib/dealer-kit/tag-template-types';
 
-export const TABLE_ROW_MIN_MM = 2;
-export const TABLE_COLUMN_MIN_MM = 5;
 /** Hit strip thickness, screen px. */
 const STRIP_PX = 8;
+/** Room left free at each end of the bottom edge for the Transformer's corner handles, px. */
+const CORNER_PX = 14;
 
 const tenth = (value: number) => Math.round(value * 10) / 10;
 
@@ -111,15 +111,25 @@ export function TableEdgeHandles({
 
   return (
     <>
-      {rows.map((_, i) => (
-        <div
-          key={`row-${i}`}
-          data-testid={`table-row-edge-${i}`}
-          className="absolute z-20 cursor-row-resize touch-none"
-          style={{ left, top: top + rowEnds[i] * scale - STRIP_PX / 2, width, height: STRIP_PX }}
-          {...handlers('row', i)}
-        />
-      ))}
+      {rows.map((_, i) => {
+        // The table's bottom edge stops short of the Transformer's corner handles (review N5);
+        // a table has no top / bottom centre handle (its height follows its rows).
+        const inset = i === rows.length - 1 ? Math.min(CORNER_PX, width / 4) : 0;
+        return (
+          <div
+            key={`row-${i}`}
+            data-testid={`table-row-edge-${i}`}
+            className="absolute z-20 cursor-row-resize touch-none"
+            style={{
+              left: left + inset,
+              top: top + rowEnds[i] * scale - STRIP_PX / 2,
+              width: width - 2 * inset,
+              height: STRIP_PX,
+            }}
+            {...handlers('row', i)}
+          />
+        );
+      })}
       {cols.slice(0, -1).map((_, j) => (
         <div
           key={`col-${j}`}

@@ -1740,6 +1740,9 @@ APPLY_PROPS_KEYS = frozenset(
         "strokeWidth",
         "cornerRadius",
         "maskShape",
+        # SPEC-SHEET-PARITY-B2 v3: ALL CAPS (text, table) and a table's Header row are style too.
+        "uppercase",
+        "headerRow",
     }
 )
 
