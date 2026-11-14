@@ -444,9 +444,14 @@ def plan(db, user: dict, args: dict) -> dict:
     # A question about the company or role comes only once every check that could refuse the row has passed, and
     # names the person only by what the user gave (their typed name, else the phone), never the stored name: an
     # own-scope user learns nothing of a person they may not change (security review B1, S2).
-    label = name or phone
     staff = _is_staff(db, phone, str(contact.id) if contact is not None else None)
     in_scope = own_agents is None or (contact is not None and writes.contact_in_scope(db, uid, str(contact.id)))
+    # A name read from an attached picture can be misread (crew pass 4): on such a turn (`_from_attachment`, set by the
+    # batch tool, never the model) a person the user may change shows by their record's name. A typed name stays.
+    record_name = (
+        contact.name if args.get("_from_attachment") and contact is not None and contact.name and in_scope else ""
+    )
+    label = record_name or name or phone
     if "company" in needs:
         if staff or not in_scope:
             raise _refuse("Name the company as SRT (Sorento) or MCH (Mocha).")  # as before: nothing told
@@ -562,7 +567,8 @@ def plan(db, user: dict, args: dict) -> dict:
     if own_agents is not None:
         before["other_links"] = len(others)
     return {
-        "phone": phone, "name": name or (contact.name if contact is not None else "") or "", "contact": contact,
+        "phone": phone, "name": record_name or name or (contact.name if contact is not None else "") or "",
+        "contact": contact,
         "contact_id": cid, "desired": desired, "todo": todo, "changed": changed, "add_links": add_links,
         "lines": lines, "snap": snap, "held": held, "add_tags": add_tags, "held_tags": [h["name"] for h in held_tags],
         "before": before,

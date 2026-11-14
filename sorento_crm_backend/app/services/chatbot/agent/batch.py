@@ -265,7 +265,7 @@ def propose_rows(
     previous_typed: list[dict] | None = None, expired_waiting: list[dict] | None = None,
     previous_skipped: list[dict] | None = None, left_out: list[dict] | None = None,
     previous_card: list[str] | None = None, previous_ready: list[str] | None = None, attached: bool = False,
-    earlier_keys: set | None = None, asked: list[dict] | None = None,
+    earlier_keys: set | None = None, asked: list[dict] | None = None, held_keys: list | None = None,
 ) -> tuple[list[dict], list[dict], list[dict]]:
     """(steps, skipped, waiting) for the rows, in input order. A skipped row: {"row", "reason", "cells"}. A waiting
     item (a row whose only problem is a customer name that fits several accounts; one per such name):
@@ -326,6 +326,10 @@ def propose_rows(
             if use_given and valid(given):
                 n = given
         key = definition.batch_key(args) if definition.batch_key is not None and isinstance(args, dict) else None
+        if this_message and key is not None and key in (held_keys or ()) and isinstance(args, dict):
+            # A row the last question held: its role was read from the record and the question did not name it, so the
+            # answer is not its role (crew pass 4 addendum: 'employee' made a Business owner an Employee).
+            args = {**args, "role": "unknown", "access_as_written": ""}
         if (
             this_message and key is not None and key not in table_keys
             and (not attached or key in (earlier_keys or set()))
@@ -369,7 +373,8 @@ def propose_rows(
                 skipped.append({"row": n, "key": key, "reason": unlisted, "cells": _cells(definition, args, None)})
                 continue
         mark = {"typed": typed} if typed is not None else {}
-        out, step = writes.propose_step(db, ctx, write, args, seen_ids=seen_ids)
+        from_picture = {"_from_attachment": True} if attached and write == contact_grant.GRANT else None
+        out, step = writes.propose_step(db, ctx, write, args, seen_ids=seen_ids, loop_args=from_picture)
         if step is None:
             needs = (out.data or {}).get("needs") if isinstance(out.data, dict) else None
             if needs and asked is not None:
@@ -542,6 +547,7 @@ def propose(
         closed=closed, previous_typed=(previous or {}).get("typed"), expired_waiting=(previous or {}).get("expired"),
         previous_skipped=(previous or {}).get("skipped"), left_out=left, previous_card=(previous or {}).get("card"),
         previous_ready=(previous or {}).get("ready"), attached=attached, earlier_keys=earlier_keys, asked=asked,
+        held_keys=(previous or {}).get("held"),
     )
     if asked:
         # A row lacks what the user did not say: no card yet. The ready rows wait with them, so the answer gives ONE
