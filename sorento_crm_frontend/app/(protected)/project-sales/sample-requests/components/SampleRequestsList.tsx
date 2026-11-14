@@ -54,7 +54,6 @@ const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: 'draft', label: 'Draft' },
   { value: 'submitted', label: 'Submitted' },
   { value: 'processing', label: 'Processing' },
-  { value: 'customer_confirmed', label: 'Customer confirmed' },
   { value: 'delivered', label: 'Delivered' },
   { value: 'cancelled', label: 'Cancelled' },
 ];
@@ -63,7 +62,7 @@ const STAGE_OPTIONS = Object.entries(STAGE_LABELS).map(([value, label]) => ({ va
 
 type DeliveryCellRow = Pick<
   SampleRequestRow,
-  'delivery_date' | 'date_feasible' | 'proposed_delivery_date'
+  'delivery_date' | 'date_feasible' | 'proposed_delivery_date' | 'status' | 'delivered_at'
 >;
 
 /** The date shown, which is the sample team's proposed date when it gave one (PS-SAMPLE-TRACKING). */
@@ -75,9 +74,18 @@ export function deliveryText(row: DeliveryCellRow) {
 export function DeliveryCell({ row }: { row: DeliveryCellRow }) {
   const { isNew } = shownDeliveryDate(row);
   return (
-    <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-      <span className="truncate tabular-nums">{deliveryText(row)}</span>
-      {isNew && <Badge variant="warning">New date</Badge>}
+    // One line per row (owner standing rule, 11 Nov): the pill sits inline, never on a second line.
+    <div
+      data-testid="sample-request-delivery-cell"
+      className="flex min-w-0 flex-nowrap items-center gap-1.5 overflow-hidden whitespace-nowrap"
+      title={isNew ? `${deliveryText(row)} (new date)` : deliveryText(row)}
+    >
+      <span className="shrink-0 tabular-nums">{deliveryText(row)}</span>
+      {isNew && (
+        <Badge variant="warning" className="shrink-0">
+          New date
+        </Badge>
+      )}
     </div>
   );
 }
@@ -222,7 +230,7 @@ function StaffSampleRequestsList() {
       {
         accessorKey: 'delivery_date',
         header: ({ column }) => <DataGridColumnHeader title="Delivery" column={column} />,
-        size: 150,
+        size: 220,
         cell: ({ row }) => <DeliveryCell row={row.original} />,
         meta: { headerTitle: 'Delivery', skeleton: <Skeleton className="h-4 w-20" /> },
       },
