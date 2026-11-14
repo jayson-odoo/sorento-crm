@@ -1,6 +1,6 @@
 """Integration logging service for business logic."""
 from sqlalchemy.orm import Session
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from datetime import datetime, timedelta
 import json
 import logging
@@ -381,13 +381,21 @@ class RespondClient:
         return base
 
     @staticmethod
-    def _http(timeout: float = 15) -> httpx.Client:
+    def _http(timeout: float = 15) -> Any:
         """The ONE place a Respond.io HTTP client is built (lane CHAT-LOCAL-FIRST, R6):
         every request passes through `respond_call_counter.httpx_request_hook`, so the
-        per-minute call count is a fact rather than a log grep."""
+        per-minute call count is a fact rather than a log grep.
+
+        CHATBOT-SPEED: a shared keep-alive client per timeout (`http_keepalive`), lent for
+        the `with` block and never closed, so the inbox's per-turn takeover lookup reuses an
+        open connection instead of a new TLS handshake to respond.io."""
+        from app.services import http_keepalive
         from app.services.respond_call_counter import httpx_request_hook
 
-        return httpx.Client(timeout=timeout, event_hooks={"request": [httpx_request_hook]})
+        client = http_keepalive.shared_client(
+            f"respond:{timeout}", timeout=timeout, event_hooks={"request": [httpx_request_hook]}
+        )
+        return http_keepalive.Borrowed(client)
 
     def _contact_api_identifier(self, identifier: str) -> str:
         """Format contact identifier for API path: use id:xxxx for plain IDs, keep phone: etc. as-is.
