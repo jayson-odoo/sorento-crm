@@ -1966,8 +1966,13 @@ describe('Group / Ungroup on the page toolbar (B6 fix round)', () => {
     report(['k1', 'k2']);
     await screen.findByTestId('live-canvas-k1');
     fireEvent.pointerDown(screen.getByTestId('spec-page-k2'));
-    expect(screen.getByRole('button', { name: 'Group' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Ungroup' })).toBeInTheDocument();
+    // v3 AC-C1.3: Group / Ungroup live in the toolbar's More menu, not as visible buttons.
+    expect(screen.queryByRole('button', { name: 'Group' })).toBeNull();
+    const more = within(screen.getByTestId('spec-sheet-toolbar-row')).getAllByRole('button', { name: /^More( actions)?$/ })[0];
+    fireEvent.pointerDown(more, new MouseEvent('pointerdown', { bubbles: true, button: 0 }));
+    const menu = await screen.findByRole('menu');
+    expect(within(menu).getByRole('menuitem', { name: /^Group/ })).toBeInTheDocument();
+    expect(within(menu).getByRole('menuitem', { name: /^Ungroup/ })).toBeInTheDocument();
   });
 });
 

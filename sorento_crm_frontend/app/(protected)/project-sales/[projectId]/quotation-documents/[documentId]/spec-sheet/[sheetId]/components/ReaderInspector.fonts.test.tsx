@@ -7,6 +7,7 @@
  * as the real one does (`InspectorPanel.tsx` Typography block).
  */
 import { fireEvent, render, screen } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { describe, expect, it, vi } from 'vitest';
 
 if (!(globalThis as { ResizeObserver?: unknown }).ResizeObserver) {
@@ -17,11 +18,16 @@ if (!(globalThis as { ResizeObserver?: unknown }).ResizeObserver) {
   };
 }
 
-vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn(), custom: vi.fn() } }));
+vi.mock('@/lib/toast', () => ({
+  toast: { success: vi.fn(), error: vi.fn(), custom: vi.fn() },
+}));
 vi.mock('@/services/pendingActionService', () => ({
   createPendingAction: vi.fn(),
   cancelPendingAction: vi.fn(),
-  getCurrentPendingAction: vi.fn(async () => ({ pending: null, last_outcome: null })),
+  getCurrentPendingAction: vi.fn(async () => ({
+    pending: null,
+    last_outcome: null,
+  })),
 }));
 vi.mock('@/app/(protected)/dealer-kit/services/assetService', () => ({
   uploadAsset: vi.fn(),
@@ -36,27 +42,33 @@ const library = vi.hoisted(() => ({
   rename: vi.fn(),
   forget: vi.fn(),
 }));
-vi.mock('@/app/(protected)/dealer-kit/tag-templates/components/useTagBindings', () => ({
-  useKitLibrary: () => ({
-    assetUrls: {},
-    thumbUrls: {},
-    fonts: [{ id: 'font-1', name: 'Brand Serif', kind: 'font', url: '' }],
-    specKeys: [],
-    fontOptions: [{ value: 'Brand Serif', label: 'Brand Serif' }],
-    ...library,
+vi.mock(
+  '@/app/(protected)/dealer-kit/tag-templates/components/useTagBindings',
+  () => ({
+    useKitLibrary: () => ({
+      assetUrls: {},
+      thumbUrls: {},
+      fonts: [{ id: 'font-1', name: 'Brand Serif', kind: 'font', url: '' }],
+      specKeys: [],
+      fontOptions: [{ value: 'Brand Serif', label: 'Brand Serif' }],
+      ...library,
+    }),
   }),
-}));
-vi.mock('@/app/(protected)/dealer-kit/tag-templates/components/InspectorPanel', () => ({
-  InspectorPanel: ({ onUploadFont }: { onUploadFont?: () => void }) => (
-    <div data-testid="inspector">
-      {onUploadFont && (
-        <button type="button" onClick={onUploadFont}>
-          Manage fonts
-        </button>
-      )}
-    </div>
-  ),
-}));
+);
+vi.mock(
+  '@/app/(protected)/dealer-kit/tag-templates/components/InspectorPanel',
+  () => ({
+    InspectorPanel: ({ onUploadFont }: { onUploadFont?: () => void }) => (
+      <div data-testid="inspector">
+        {onUploadFont && (
+          <button type="button" onClick={onUploadFont}>
+            Manage fonts
+          </button>
+        )}
+      </div>
+    ),
+  }),
+);
 
 import type { TagLayer } from '@/lib/dealer-kit/tag-template-types';
 import { ReaderInspector } from './ReaderInspector';
@@ -71,27 +83,44 @@ const LAYER = {
   rotation_deg: 0,
   z_index: 1,
   visible: true,
-  props: { kind: 'text', text: 'Title', fontFamily: 'DM Sans', fontSize: 12, color: '#000', align: 'left' },
+  props: {
+    kind: 'text',
+    text: 'Title',
+    fontFamily: 'DM Sans',
+    fontSize: 12,
+    color: '#000',
+    align: 'left',
+  },
 } as unknown as TagLayer;
 
 function mount() {
+  // The app always has a QueryClient; the font dialog's rows use it (deferred delete).
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   render(
-    <ReaderInspector
-      pageKey="k1"
-      layer={LAYER}
-      layers={[LAYER]}
-      controller={{ updateLayer: vi.fn(), updateLayerProps: vi.fn() } as never}
-      mode="page"
-      onModeChange={vi.fn()}
-      onApplyAll={vi.fn()}
-    />,
+    <QueryClientProvider client={client}>
+      <ReaderInspector
+        pageKey="k1"
+        layer={LAYER}
+        layers={[LAYER]}
+        controller={
+          { updateLayer: vi.fn(), updateLayerProps: vi.fn() } as never
+        }
+        mode="page"
+        onModeChange={vi.fn()}
+        onApplyAll={vi.fn()}
+      />
+    </QueryClientProvider>,
   );
 }
 
 describe('Manage fonts on the spec sheet Inspector (AC-C6.1)', () => {
   it('is offered next to Font Family', () => {
     mount();
-    expect(screen.getByRole('button', { name: 'Manage fonts' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Manage fonts' }),
+    ).toBeInTheDocument();
   });
 
   it('opens the template designer font dialog listing the kit fonts', async () => {
