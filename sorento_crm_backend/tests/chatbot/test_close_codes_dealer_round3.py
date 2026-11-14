@@ -1,7 +1,7 @@
 """CHATBOT-CLOSE-CODES round 3: red tests from the lane review.
 
 UAC (FINAL): `documentation/plans/chatbot/chatbot-close-codes-acceptance-criteria.md` (AC-6, AC-9, AC-10, AC-20,
-AC-22). Same harness as `test_code_match_dealer_offers.py`: `engine.run_turn` over seeded Postgres rows in a blank
+AC-22, AC-36, AC-38). Same harness as `test_code_match_dealer_offers.py`: `engine.run_turn` over seeded Postgres rows in a blank
 schema, the parser verdict and the tool reads stubbed. "Dealer" is the console's default availability-only contact.
 Codes are made-up catalogue-shaped codes; no customer, phone or price appears.
 
@@ -199,12 +199,13 @@ def test_r3_5_a_greeting_first_gets_the_same_offer_as_without_it(session_factory
     assert _option_codes(c) == plain_options, (c.stored_question, plain_options)
 
 
-# --------------------------------------------------------------------------- 6. parser-corrected codes (crew (a), 13 Nov)
+# --------------------------------------------------------------------------- 6. parser-picked codes (AC-36, round 10)
 #
-# The parser stub hands `canonical_code` = the catalogue code. Crew ruling (a): the parser's correction does not make a
-# direct answer. Only a raw equal to the code but for case, dashes and spaces (R5), or a raw the resolver narrows to the
-# code by its own words (R2, the colour words), is answered; a typo in the code or its words (R1, R3) and a lone prefix
-# (R4) are offered.
+# The parser stub hands `canonical_code` = the catalogue code and no `code_match` (prod v72's prompt). AC-36 (owner
+# 14 Nov): a parser code whose `turn_state.token_key` differs from the typed raw's is offered "Did you mean X?", never
+# answered; no letter, fuzzy or word-list rule decides (AC-39). So a typo in the code or its words (R1, R3), colour
+# words the parser mapped onto a code part (R2) and a lone prefix (R4, AC-38) are offered; only a raw equal to the code
+# but for case, dashes and spaces (R5) is answered.
 
 INLET = "SRTUB668-BACK INLET"
 GM = "SRTWT8259-GM"
@@ -252,11 +253,12 @@ def test_r3_6_r1_a_typo_word_the_parser_corrected_is_offered(session_factory, mo
 
 
 @WHO
-def test_r3_6_r2_a_code_with_colour_words_the_parser_mapped_is_answered_directly(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+def test_r3_6_r2_a_code_with_colour_words_the_parser_mapped_is_offered(session_factory, monkeypatch, stub_access, who):  # noqa: F811
+    """AC-36: "gun metal" -> -GM is the parser's pick, not the typed code. Was: answered directly (AC-33, superseded)."""
     raw = "SRTWT8259 gun metal"
     c = _who(session_factory, monkeypatch, stub_access, who, [GM])
     text = c.say(f"{raw} x 2 stock", _corrected(raw, GM, 2))
-    _assert_answered(text, who, GM, 2)
+    _assert_offered_not_answered(c, text, who, raw, GM)
 
 
 @WHO
@@ -300,10 +302,11 @@ GR = "SRTWT8259-GR"
 
 @WHO
 @pytest.mark.parametrize(("raw", "code"), [("SRTWT8259 gun metal", GM), ("SRTWT8259 grey", GR)], ids=["gun_metal", "grey"])
-def test_r4_2_guard_colour_words_the_parser_mapped_are_answered_directly(session_factory, monkeypatch, stub_access, who, raw, code):  # noqa: F811
+def test_r4_2_colour_words_the_parser_mapped_are_offered(session_factory, monkeypatch, stub_access, who, raw, code):  # noqa: F811
+    """AC-36: colour words the parser mapped onto a code part are offered. Was: answered directly (guard, AC-33)."""
     c = _who(session_factory, monkeypatch, stub_access, who, [GM, GR])
     text = c.say(f"{raw} x 2 stock", _corrected(raw, code, 2))
-    _assert_answered(text, who, code, 2)
+    _assert_offered_not_answered(c, text, who, raw, code)
 
 
 TWO = ["SRTWC287-S-150", "SRTWC287-S-200"]  # SRTWC287-S-150 is the console's own seed
@@ -334,21 +337,21 @@ def test_r4_4_a_malay_stock_ask_with_a_one_letter_typo_gets_the_same_offer(sessi
     assert _option_codes(c) == english_options, (c.stored_question, english_options)
 
 
-# --------------------------------------------------------------------------- round 5 (AC-33, reviewer probe)
+# --------------------------------------------------------------------------- round 5 (AC-36, was AC-33)
 #
-# Lead ruling: a typed word that holds every letter of the code part in order and is longer than it ("gold" -> GLD,
-# "grey" -> GRY) is the customer saying the code in words (AC-33, answered directly); otherwise the distance rule
-# applies (offered).
+# AC-36: a word the parser read as a code part ("gold" -> GLD, "grey" -> GRY), or letters out of order ("GDL"), leaves
+# the parser's code differing from the typed raw: offered, never answered. Was (AC-33, superseded): a word holding the
+# code part's letters in order was answered directly.
 
 GLD, GRY = "SRTWT8259-GLD", "SRTWT8259-GRY"
 
 
 @WHO
 @pytest.mark.parametrize(("raw", "code"), [("SRTWT8259 gold", GLD), ("SRTWT8259 grey", GRY)], ids=["gold", "grey"])
-def test_r5_1_a_word_spelling_out_the_code_part_is_answered_directly(session_factory, monkeypatch, stub_access, who, raw, code):  # noqa: F811
+def test_r5_1_a_word_spelling_out_the_code_part_is_offered(session_factory, monkeypatch, stub_access, who, raw, code):  # noqa: F811
     c = _who(session_factory, monkeypatch, stub_access, who, [GLD, GRY])
     text = c.say(f"{raw} x 2 stock", _corrected(raw, code, 2))
-    _assert_answered(text, who, code, 2)
+    _assert_offered_not_answered(c, text, who, raw, code)
 
 
 @WHO
@@ -359,39 +362,11 @@ def test_r5_2_letters_out_of_order_are_offered_not_answered(session_factory, mon
     _assert_offered_not_answered(c, text, who, raw, GLD)
 
 
-# --------------------------------------------------------------------------- round 6 (reviewer probe, crew ruling)
+# --------------------------------------------------------------------------- round 6, end to end (AC-36)
 #
-# Crew ruling: a colour/finish word typed AFTER the code that holds every letter of a letters-only code part in order
-# and is longer than it is the code said in words (answered directly). Any change inside the typed code token itself is
-# a correction (offered, never answered): a letter or digit added, dropped, changed or swapped.
-
-from app.services.chatbot.lanes.business.answer import corrects_or_completes  # noqa: E402
-
-
-@pytest.mark.parametrize(
-    ("typed", "code", "expected"),
-    [
-        # corrections the reviewer found answered directly (must be True)
-        ("SRTWT8259 gold", "SRTWT825-GLD", True),  # the word is fine, the digits are not
-        ("SRTWT82259", "SRTWT8259", True),  # a digit added
-        ("SRTWTC287", "SRTWC287", True),  # a letter added inside the code
-        ("SRTWCC287", "SRTWC287", True),  # a letter doubled inside the code
-        ("INLETT", "INLET", True),  # a letter added to a code word
-        ("SRTUB668-BACK INLETT", INLET, True),
-        # guards: the code said in words, or a real swap
-        ("SRTWT8259 gold", GLD, False),
-        ("SRTWT8259 grey", GRY, False),
-        ("SRTWT8259 gun metal", GM, False),
-        ("SRTWT8259 GDL", GLD, True),
-    ],
-    ids=[
-        "gold_vs_825_GLD", "digit_added", "letter_added_SRTWTC", "letter_doubled_SRTWCC", "INLETT", "BACK_INLETT",
-        "guard_gold", "guard_grey", "guard_gun_metal", "guard_GDL_swap",
-    ],
-)
-def test_r6_corrects_or_completes_reads_a_change_inside_the_code_as_a_correction(typed, code, expected):
-    assert corrects_or_completes(typed, code) is expected, (typed, code)
-
+# A change inside the typed code token itself (a digit or letter added) leaves the parser's code with a different
+# `turn_state.token_key` from the typed raw's: offered, never answered (AC-36). The unit tests that pinned
+# `answer.corrects_or_completes` are gone with the function (AC-39).
 
 T8259 = "SRTWT8259"
 
@@ -405,58 +380,8 @@ def test_r6_a_digit_added_to_the_code_is_offered_never_answered(session_factory,
 
 
 @WHO
-def test_r6_a_letter_added_to_a_code_word_is_offered_never_answered(session_factory, monkeypatch, stub_access, who):  # noqa: F811
-    raw = "SRTUB668-BACK INLETT"
+@pytest.mark.parametrize("raw", ["SRTUB668-BACK INLETT", "SRTUB668-BACK INLLET"], ids=["INLETT", "INLLET"])
+def test_r6_a_letter_added_to_a_code_word_is_offered_never_answered(session_factory, monkeypatch, stub_access, who, raw):  # noqa: F811
     c = _who(session_factory, monkeypatch, stub_access, who, [INLET])
     text = c.say(f"{raw} x 2 stock", _corrected(raw, INLET, 2))
     _assert_offered_not_answered(c, text, who, raw, INLET)
-
-
-@pytest.mark.parametrize(
-    "typed,code,expected",
-    [
-        ("SRTWT8259 in gold?", "SRTWT8259-GLD", False),
-        ("SRTWT8259 gold, please", "SRTWT8259-GLD", False),
-        ("SRTWT8259 (gold)", "SRTWT8259-GLD", False),
-        ("SRTWT8259 grey!", "SRTWT8259-GRY", False),
-        ("SRTWT8259 Gold.", "SRTWT8259-GLD", False),
-        # guards: a real swap or a truncated name is still offered
-        ("SRTWT8259 GDL!", "SRTWT8259-GLD", True),
-        ("SRTUB668-BACK INLT?", "SRTUB668-BACK INLET", True),
-    ],
-    ids=[
-        "in_gold_q", "gold_comma_please", "paren_gold", "grey_bang", "Gold_dot",
-        "guard_GDL_bang", "guard_BACK_INLT_q",
-    ],
-)
-def test_r7_punctuation_around_a_colour_word_is_still_said_in_words(typed, code, expected):
-    assert corrects_or_completes(typed, code) is expected, (typed, code)
-
-
-@pytest.mark.parametrize(
-    ("typed", "code", "expected"),
-    [
-        ("SRTWT8259 “gold”", "SRTWT8259-GLD", False),
-        ("SRTWT8259 gold…", "SRTWT8259-GLD", False),
-        ("SRTWT8259 ‘grey’", "SRTWT8259-GRY", False),
-        ("SRTWT8259 “GDL”", "SRTWT8259-GLD", True),  # a scrambled word is still offered
-    ],
-)
-def test_r9_phone_smart_punctuation_around_a_colour_word_is_still_said_in_words(typed, code, expected):
-    assert corrects_or_completes(typed, code) is expected, (typed, code)
-
-
-# Crew ruling Q1 (a), 13 Nov: a letters-only code part typed in order as its own word plus extra letters is meant (answered); a changed, dropped or swapped letter is offered.
-@pytest.mark.parametrize(
-    "typed,code,expected",
-    [
-        ("SRTUB668-BACK INLLET", "SRTUB668-BACK INLET", False),
-        ("SRTUB668-BACK INLEAT", "SRTUB668-BACK INLET", False),
-        ("SRTUB668-BACK INLT", "SRTUB668-BACK INLET", True),
-        ("SRTUB668-BACK INELT", "SRTUB668-BACK INLET", True),
-        ("SRTUB668-BACK INXXT", "SRTUB668-BACK INLET", True),
-    ],
-    ids=["extra_L", "extra_A", "dropped_E", "swapped_EL", "changed_XX"],
-)
-def test_r8_q1_a_letter_added_to_a_separate_code_word_is_answered(typed, code, expected):
-    assert corrects_or_completes(typed, code) is expected, (typed, code)
