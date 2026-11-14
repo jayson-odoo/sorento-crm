@@ -14,7 +14,7 @@ Each line the customer printed is matched to one of our catalogue products, in t
 
 When two products fit equally (for example a code that exists in two finishes), nothing is picked. Open the product picker on that line: the possible products are listed first, choose one.
 
-When a line's description names a variant (a size or finish) that only one of the possible products carries, while another product has exactly the printed code, nothing is picked either: both are offered.
+When a line's description names a variant (a size or finish, such as 35MM) that another product carries, the line is not matched to the printed code straight away, even when the code is exactly one of ours: both products are offered and you choose.
 
 When no product fits, the line stays without a product. You can still confirm it if it has the customer's stock code.
 
@@ -26,6 +26,10 @@ Hover the **Suggested** pill to see why the line was suggested.
 - **All lines:** click **Accept all suggestions (N)** above the lines.
 - **Check them first:** choose the **Suggested (N)** view to see only the lines with a suggestion.
 - **Wrong suggestion:** pick the right product on that line instead. That choice is remembered for this customer.
+
+## Cancelling lines
+
+To cancel several lines at once, tick them (Shift-click a second box to tick every line in between), then click **Cancel lines (N)**. If the ticked lines are already cancelled, the button reads **Put back (N)** instead. Cancelled lines stay on the PO, marked cancelled, and are left out of the total. A line that could not be changed is named in the message that follows; the others still go through. Right-click a single line to cancel or put back just that one.
 
 ## Which customer the codes belong to
 
